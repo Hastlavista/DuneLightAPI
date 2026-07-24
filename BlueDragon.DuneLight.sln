@@ -1,0 +1,34 @@
+
+Microsoft Visual Studio Solution File, Format Version 12.00
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "BlueDragon.DuneLight.API", "BlueDragon.DuneLight.API\BlueDragon.DuneLight.API.csproj", "{6401A0D1-568B-4646-9254-7C1380D8ABC3}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "BlueDragon.DuneLight.Core", "BlueDragon.DuneLight.Core\BlueDragon.DuneLight.Core.csproj", "{1755CAEF-6E03-4C1C-95B4-D3C4CB49391D}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "BlueDragon.DuneLight.Infrastructure", "BlueDragon.DuneLight.Infrastructure\BlueDragon.DuneLight.Infrastructure.csproj", "{0776DDEF-64A5-4FE4-B0E2-E1ED1CC13A6D}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "BlueDragon.DuneLight.DatabaseMigration", "BlueDragon.DuneLight.DatabaseMigration\BlueDragon.DuneLight.DatabaseMigration.csproj", "{AC68365F-F779-468A-B767-DF796997C5AE}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{6401A0D1-568B-4646-9254-7C1380D8ABC3}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{6401A0D1-568B-4646-9254-7C1380D8ABC3}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{6401A0D1-568B-4646-9254-7C1380D8ABC3}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{6401A0D1-568B-4646-9254-7C1380D8ABC3}.Release|Any CPU.Build.0 = Release|Any CPU
+		{1755CAEF-6E03-4C1C-95B4-D3C4CB49391D}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{1755CAEF-6E03-4C1C-95B4-D3C4CB49391D}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{1755CAEF-6E03-4C1C-95B4-D3C4CB49391D}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{1755CAEF-6E03-4C1C-95B4-D3C4CB49391D}.Release|Any CPU.Build.0 = Release|Any CPU
+		{0776DDEF-64A5-4FE4-B0E2-E1ED1CC13A6D}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{0776DDEF-64A5-4FE4-B0E2-E1ED1CC13A6D}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{0776DDEF-64A5-4FE4-B0E2-E1ED1CC13A6D}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{0776DDEF-64A5-4FE4-B0E2-E1ED1CC13A6D}.Release|Any CPU.Build.0 = Release|Any CPU
+		{AC68365F-F779-468A-B767-DF796997C5AE}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{AC68365F-F779-468A-B767-DF796997C5AE}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{AC68365F-F779-468A-B767-DF796997C5AE}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{AC68365F-F779-468A-B767-DF796997C5AE}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+EndGlobal

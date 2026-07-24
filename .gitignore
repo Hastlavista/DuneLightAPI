@@ -1,0 +1,19 @@
+# Build output
+bin/
+obj/
+
+# User-specific files
+*.user
+*.suo
+.vs/
+
+# Sensitive config - never commit
+appsettings.Development.json
+appsettings.*.json
+!appsettings.json
+
+# Rider
+.idea/
+publish/
+sqlscript.sql
+NuGet.Config

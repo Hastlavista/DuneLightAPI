@@ -1,0 +1,31 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+    <PropertyGroup>
+        <TargetFramework>net10.0</TargetFramework>
+    </PropertyGroup>
+
+    <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|AnyCPU'">
+        <DocumentationFile>bin\Debug\$(TargetFramework)\BlueDragon.DuneLight.API.xml</DocumentationFile>
+        <GenerateDocumentationFile>true</GenerateDocumentationFile>
+        <NoWarn>1701;1702;1705;1591</NoWarn>
+    </PropertyGroup>
+
+    <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|AnyCPU'">
+        <DocumentationFile>bin\Release\$(TargetFramework)\BlueDragon.DuneLight.API.xml</DocumentationFile>
+        <GenerateDocumentationFile>true</GenerateDocumentationFile>
+        <NoWarn>1701;1702;1705;1591</NoWarn>
+    </PropertyGroup>
+
+    <ItemGroup>
+        <PackageReference Include="Serilog.AspNetCore" Version="10.0.0" />
+        <PackageReference Include="Serilog.Enrichers.Environment" Version="3.0.0" />
+        <PackageReference Include="Serilog.Sinks.Seq" Version="9.0.0" />
+        <PackageReference Include="Swashbuckle.AspNetCore" Version="10.1.6" />
+        <PackageReference Include="X.PortUtility" Version="1.2.0" />
+    </ItemGroup>
+
+    <ItemGroup>
+        <ProjectReference Include="..\BlueDragon.DuneLight.Infrastructure\BlueDragon.DuneLight.Infrastructure.csproj" />
+    </ItemGroup>
+
+</Project>

@@ -1,0 +1,106 @@
+using System;
+using System.Threading.Tasks;
+using BlueDragon.DuneLight.Core.DTOs.Auth;
+using BlueDragon.DuneLight.Core.Enums;
+using BlueDragon.DuneLight.Core.Interfaces;
+using BlueDragon.DuneLight.Core.Shared;
+using BlueDragon.DuneLight.Core.Shared.Exceptions;
+using BlueDragon.DuneLight.Infrastructure.Domain.Models;
+using BlueDragon.DuneLight.Infrastructure.Domain.Settings;
+using BlueDragon.DuneLight.Infrastructure.Handlers.Interfaces;
+using BlueDragon.DuneLight.Infrastructure.Utils;
+
+namespace BlueDragon.DuneLight.Infrastructure.Services;
+
+public class AuthService : IAuthService
+{
+    private readonly IAuthHandler _authHandler;
+    private readonly IJwtService _jwtService;
+    private readonly JwtSettings _jwtSettings;
+
+    public AuthService(IAuthHandler authHandler, IJwtService jwtService, JwtSettings jwtSettings)
+    {
+        _authHandler = authHandler;
+        _jwtService = jwtService;
+        _jwtSettings = jwtSettings;
+    }
+
+    public async Task<AuthResponse> Register(RegisterRequest request)
+    {
+        string slug = SlugGenerator.Generate(request.OrganizationName);
+
+        bool slugExists = await _authHandler.SlugExists(slug);
+        if (slugExists)
+            throw new BusinessRuleException(ErrorCodes.AuthOrganizationSlugTaken, "Organizacija s ovim nazivom već postoji.");
+
+        Organization organization = new Organization();
+        organization.Id = Guid.NewGuid();
+        organization.Name = request.OrganizationName;
+        organization.Slug = slug;
+        organization.CreatedAt = DateTimeOffset.UtcNow;
+
+        await _authHandler.AddOrganization(organization);
+
+        User user = new User();
+        user.Id = Guid.NewGuid();
+        user.OrganizationId = organization.Id.GetValueOrDefault();
+        user.Email = request.Email;
+        user.PasswordHash = PasswordHasher.Hash(request.Password);
+        user.ApiKey = Guid.NewGuid().ToString("N");
+        user.Role = UserRole.Admin;
+        user.IsActive = true;
+        user.CreatedAt = DateTimeOffset.UtcNow;
+
+        await _authHandler.AddUser(user);
+
+        return ToAuthResponse(user, organization);
+    }
+
+    public async Task<AuthResponse> Login(LoginRequest request)
+    {
+        Organization organization = await _authHandler.GetOrganizationBySlug(request.OrganizationSlug);
+        if (organization == null)
+            throw new UnauthorizedAppException(ErrorCodes.AuthInvalidCredentials, "Neispravan email ili lozinka.");
+
+        string passwordHash = PasswordHasher.Hash(request.Password);
+        User user = await _authHandler.GetUserByCredentials(organization.Id.GetValueOrDefault(), request.Email, passwordHash);
+
+        if (user == null || !user.IsActive)
+            throw new UnauthorizedAppException(ErrorCodes.AuthInvalidCredentials, "Neispravan email ili lozinka.");
+
+        return ToAuthResponse(user, organization);
+    }
+
+    public async Task ChangePassword(Guid userId, ChangePasswordRequest request)
+    {
+        User user = await _authHandler.GetUserById(userId);
+        if (user == null || !user.IsActive)
+            throw new UnauthorizedAppException(ErrorCodes.AuthCurrentPasswordInvalid, "Trenutna lozinka nije ispravna.");
+
+        if (user.PasswordHash != PasswordHasher.Hash(request.CurrentPassword))
+            throw new UnauthorizedAppException(ErrorCodes.AuthCurrentPasswordInvalid, "Trenutna lozinka nije ispravna.");
+
+        await _authHandler.UpdatePasswordHash(user.Id.GetValueOrDefault(), PasswordHasher.Hash(request.NewPassword));
+    }
+
+    private AuthResponse ToAuthResponse(User user, Organization organization)
+    {
+        string token = _jwtService.GenerateToken(
+            user.Id.GetValueOrDefault(),
+            user.Email,
+            organization.Id.GetValueOrDefault(),
+            UserRoleClaims.ToClaimValue(user.Role));
+
+        AuthResponse response = new AuthResponse();
+        response.UserId = user.Id;
+        response.Email = user.Email;
+        response.ApiKey = user.ApiKey;
+        response.Role = UserRoleClaims.ToClaimValue(user.Role);
+        response.OrganizationId = organization.Id;
+        response.OrganizationName = organization.Name;
+        response.OrganizationSlug = organization.Slug;
+        response.Token = token;
+        response.TokenExpiration = DateTime.UtcNow.AddHours(_jwtSettings.ExpirationHours);
+        return response;
+    }
+}
