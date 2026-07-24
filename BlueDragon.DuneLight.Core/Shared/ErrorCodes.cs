@@ -40,4 +40,10 @@ public static class ErrorCodes
     public const string PriceOverlap = "PRICE_OVERLAP";
     public const string ClientAnonymized = "CLIENT_ANONYMIZED";
     public const string AppointmentNotMovable = "APPOINTMENT_NOT_MOVABLE";
+    public const string AppointmentOverlap = "APPOINTMENT_OVERLAP";
+    public const string RecurringConflict = "RECURRING_CONFLICT";
+
+    // RECURRING_CONFLICT details.conflicts[].reason vrijednosti
+    public const string RecurringConflictReasonAppointment = "EXISTING_APPOINTMENT";
+    public const string RecurringConflictReasonRosterAbsence = "ROSTER_ABSENCE";
 }

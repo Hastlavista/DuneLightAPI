@@ -121,7 +121,7 @@ public class AppointmentHandler : IAppointmentHandler
             .Where(a =>
                 a.OrganizationId == organizationId &&
                 a.EmployeeId == employeeId &&
-                a.Status != AppointmentStatus.Cancelled &&
+                a.Status != AppointmentStatus.Cancelled && a.Status != AppointmentStatus.NoShow &&
                 a.StartsAt >= windowStart && a.StartsAt <= windowEnd &&
                 (excludeId == null || a.Id != excludeId))
             .ToListAsync();
@@ -141,7 +141,7 @@ public class AppointmentHandler : IAppointmentHandler
             .Include(a => a.Clients)
             .Where(a =>
                 a.OrganizationId == organizationId &&
-                a.Status != AppointmentStatus.Cancelled &&
+                a.Status != AppointmentStatus.Cancelled && a.Status != AppointmentStatus.NoShow &&
                 a.StartsAt >= windowStart && a.StartsAt <= windowEnd &&
                 a.Clients.Any(ac => clientIds.Contains(ac.ClientId)) &&
                 (excludeId == null || a.Id != excludeId))

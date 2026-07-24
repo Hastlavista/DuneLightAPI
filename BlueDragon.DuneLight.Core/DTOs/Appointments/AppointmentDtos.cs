@@ -166,6 +166,10 @@ public class AppointmentCancelRequest
 
 public class RecurringAppointmentCreateRequest
 {
+    /// <summary>Daily = svaki kalendarski dan uključivo vikend; Weekly = +7 dana (postojeće ponašanje).</summary>
+    [Required]
+    public RecurrenceType RecurrenceType { get; set; }
+
     [Required]
     public Guid ServiceId { get; set; }
 
@@ -187,4 +191,13 @@ public class RecurringAppointmentCreateRequest
     public DateTimeOffset EndDate { get; set; }
 
     public string Note { get; set; }
+}
+
+/// <summary>Jedan sudarajući datum u nizu — dio { conflicts: [...] } priloga uz 409 RECURRING_CONFLICT.</summary>
+public class RecurringConflictDetail
+{
+    public DateTimeOffset Date { get; set; }
+
+    /// <summary>ErrorCodes.RecurringConflictReasonAppointment ili ErrorCodes.RecurringConflictReasonRosterAbsence.</summary>
+    public string Reason { get; set; }
 }

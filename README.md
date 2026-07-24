@@ -105,6 +105,7 @@ Sve greške (validacijske, poslovne, auth, framework-level 401/403) vraćaju se 
 | `INACTIVE_TYPE` | 409 | Roster zapis referencira neaktivnu vrstu rostera. |
 | `PRICE_OVERLAP` | 409 | Preklapanje razdoblja aktivnih stavki cjenika za istu kombinaciju usluge/paketa i lokacije. |
 | `CLIENT_ANONYMIZED` | 409 | Klijent je anonimiziran (GDPR) i više se ne može uređivati. |
+| `APPOINTMENT_OVERLAP` | 409 | Trener ili klijent već ima drugi termin koji se preklapa s novim/izmijenjenim terminom (`schedule`, `complete`, `{id}/complete`, `PUT {id}`, `{id}/move`). |
 
 ## Modul Katalog
 
@@ -245,15 +246,15 @@ Svi (Admin i Member) vide sve termine. Member smije kreirati/mijenjati/otkazivat
 | `GET /api/appointments/schedule?from=&to=&locationId=&employeeId=&serviceId=&serviceCategoryId=&status=` | Raspored za razdoblje. `locationId` zadano = sve lokacije. Uključuje otkazane/no-show termine (za precrtani prikaz). Ćelija nosi `form`/`groupId`/`groupName`/`attendanceCount`/`expectedCount` za grupne termine (vidi Model ispod) — `clientNames` je prazan za grupne, frontend prikazuje `groupName` umjesto imena klijenata. |
 | `GET /api/appointments/{id}` | Puni detalj termina (za klik na ćeliju rasporeda). |
 | `GET /api/appointments/by-client/{clientId}` | Povijest termina klijenta, paginirano, najnoviji prvi. |
-| `POST /api/appointments/schedule` | **"Zakaži"** — status `Scheduled`, bez naplate. Cijena/trajanje se predlažu iz kataloga i snapshotiraju na termin. |
-| `POST /api/appointments/complete` | **"Upiši odrađeno"** — novi termin odmah u statusu `Completed`, naplata odmah (`PaymentMethod` obavezan). |
-| `PATCH /api/appointments/{id}/complete` | Prijelaz postojećeg (obično `Scheduled`) termina u `Completed` — trenutak naplate za termine zakazane unaprijed. |
-| `PUT /api/appointments/{id}` | Izmjena vremena/usluge/trenera/lokacije/klijenata/napomene/iznosa. Ne dira plaćanje/paket. |
-| `PATCH /api/appointments/{id}/move` | **Brzo pomicanje** (drag-and-drop na rasporedu) — mijenja samo `startsAt` i po potrebi `employeeId`/`locationId`; sve ostalo (usluga, klijenti, iznos, napomena, plaćanje, paket) ostaje netaknuto. `409 APPOINTMENT_NOT_MOVABLE` za `Cancelled`/`NoShow` termine. Vidi primjer ispod. |
+| `POST /api/appointments/schedule` | **"Zakaži"** — status `Scheduled`, bez naplate. Cijena/trajanje se predlažu iz kataloga i snapshotiraju na termin. `409 APPOINTMENT_OVERLAP` za preklapanje. |
+| `POST /api/appointments/complete` | **"Upiši odrađeno"** — novi termin odmah u statusu `Completed`, naplata odmah (`PaymentMethod` obavezan). `409 APPOINTMENT_OVERLAP` za preklapanje. |
+| `PATCH /api/appointments/{id}/complete` | Prijelaz postojećeg (obično `Scheduled`) termina u `Completed` — trenutak naplate za termine zakazane unaprijed. `409 APPOINTMENT_OVERLAP` za preklapanje. |
+| `PUT /api/appointments/{id}` | Izmjena vremena/usluge/trenera/lokacije/klijenata/napomene/iznosa. Ne dira plaćanje/paket. `409 APPOINTMENT_OVERLAP` za preklapanje. |
+| `PATCH /api/appointments/{id}/move` | **Brzo pomicanje** (drag-and-drop na rasporedu) — mijenja samo `startsAt` i po potrebi `employeeId`/`locationId`; sve ostalo (usluga, klijenti, iznos, napomena, plaćanje, paket) ostaje netaknuto. `409 APPOINTMENT_NOT_MOVABLE` za `Cancelled`/`NoShow` termine, `409 APPOINTMENT_OVERLAP` za preklapanje. Vidi primjer ispod. |
 | `POST /api/appointments/{id}/cancel` | Otkazivanje (`Status=Cancelled`, termin ostaje vidljiv precrtan). `ReturnEntryForClientIds` — eksplicitni popis klijenata kojima se vraća skinuti ulazak (ništa se ne vraća automatski). |
 | `POST /api/appointments/{id}/no-show` | Isto kao cancel, `Status=NoShow` — zaseban status, isti prompt/mehanizam za vraćanje ulaska. |
 | `DELETE /api/appointments/{id}` | Trajno brisanje — samo `Admin`, samo ako je termin unesen isti dan (pogrešan unos); inače koristiti otkazivanje. |
-| `POST /api/appointments/recurring` | Generira niz individualnih termina (isti klijent(i)/usluga/trener/lokacija/dan-u-tjednu/vrijeme) tjedno do `EndDate`. Izmjena/otkaz pojedinačnog termina iz niza ne dira ostale. |
+| `POST /api/appointments/recurring` | Generira niz individualnih termina (isti klijent(i)/usluga/trener/lokacija/vrijeme) do `EndDate` — `recurrenceType`: `Weekly` (+7 dana) ili `Daily` (svaki kalendarski dan, uključivo vikend). Izmjena/otkaz pojedinačnog termina iz niza ne dira ostale. **Tvrda unaprijedna provjera** (samo ovaj endpoint, vidi napomenu u Model ispod): ako se ijedan datum iz niza sudara s postojećim terminom trenera ili roster odsutnošću, cijeli zahtjev pada s `409 RECURRING_CONFLICT`, ništa se ne sprema. |
 
 #### `PATCH /api/appointments/{id}/move` — primjer
 
@@ -267,7 +268,7 @@ Svi (Admin i Member) vide sve termine. Member smije kreirati/mijenjati/otkazivat
   "locationId": "…"
 }
 
-// 200 OK — puni AppointmentDto, uklj. warnings
+// 200 OK — puni AppointmentDto
 {
   "id": "…", "startsAt": "2026-07-23T10:00:00+02:00", "durationMinutes": 60,
   "serviceId": "…", "serviceName": "Individualni trening",
@@ -276,22 +277,62 @@ Svi (Admin i Member) vide sve termine. Member smije kreirati/mijenjati/otkazivat
   "amount": 20.00, "suggestedAmount": 20.00, "isAmountManuallyOverridden": false,
   "paymentMethod": null, "isPaid": false, "status": "Scheduled", "note": null,
   "clients": [{ "clientId": "…", "clientName": "Ivana Kovač", "clientPackageId": null, "packageEntryDeducted": false, "packageEntryReturned": false }],
-  "warnings": ["Trener već ima termin u ovom vremenskom razdoblju."],
+  "warnings": [],
   "createdAt": "…", "updatedAt": "…"
 }
 
 // 409 Conflict — termin je otkazan/no-show
 { "error": { "code": "APPOINTMENT_NOT_MOVABLE", "message": "Otkazan ili izostao termin se ne može pomicati." } }
+
+// 409 Conflict — preklapanje (trener ili klijent već zauzet u tom vremenu)
+{ "error": { "code": "APPOINTMENT_OVERLAP", "message": "Trener već ima termin u ovom vremenskom razdoblju.", "details": null } }
+// ili, ako je problem klijent:
+{ "error": { "code": "APPOINTMENT_OVERLAP", "message": "Klijent Ana Anić je već zakazan u ovom vremenskom razdoblju.", "details": null } }
 ```
 
-Vlasništvo (ne-admin smije pomicati samo svoje termine → `409 NOT_OWNER`) i postojanje `employeeId`/`locationId` (`404 NOT_FOUND`) provjeravaju se isto kao kod `PUT /{id}`. Preklapanje (trener/klijenti) se provjerava isto kao svugdje — **upozorenje, ne blokada**.
+Vlasništvo (ne-admin smije pomicati samo svoje termine → `409 NOT_OWNER`) i postojanje `employeeId`/`locationId` (`404 NOT_FOUND`) provjeravaju se isto kao kod `PUT /{id}`. Preklapanje (trener/klijenti) se provjerava **prije spremanja** i blokira kao `409 APPOINTMENT_OVERLAP` — vidi napomenu o preklapanju u sekciji Model ispod. Trener se provjerava prvi; ako trener nema preklapanje, provjeravaju se klijenti redom i vraća se prva pronađena poruka (ne oboje odjednom).
+
+#### `POST /api/appointments/recurring` — primjer
+
+```json
+// Request — Daily, uključivo vikend
+{
+  "recurrenceType": "Daily",
+  "serviceId": "…",
+  "employeeId": "…",
+  "locationId": "…",
+  "clientIds": ["…"],
+  "firstOccurrenceStartsAt": "2026-08-03T17:00:00+02:00",
+  "endDate": "2026-08-09T17:00:00+02:00",
+  "note": null
+}
+
+// 200 OK — niz od 7 AppointmentDto (3.8. - 9.8., svaki dan uklj. subotu/nedjelju), isti recurrenceGroupId
+
+// 409 Conflict — barem jedan datum u nizu se sudara; NIŠTA nije spremljeno
+{
+  "error": {
+    "code": "RECURRING_CONFLICT",
+    "message": "Neki termini u nizu se sudaraju s postojećim obavezama.",
+    "details": {
+      "conflicts": [
+        { "date": "2026-08-04T17:00:00+02:00", "reason": "EXISTING_APPOINTMENT" },
+        { "date": "2026-08-07T17:00:00+02:00", "reason": "ROSTER_ABSENCE" }
+      ]
+    }
+  }
+}
+```
+
+`details.conflicts` nabraja **svaki** sudarajući datum iz generiranog niza (ne samo prvi) — `reason` je `EXISTING_APPOINTMENT` (trener već ima termin, jednokratni ili ponavljajući) ili `ROSTER_ABSENCE` (godišnji/bolovanje i sl. na taj datum). Ako datum ima oba problema, prijavljuje se `EXISTING_APPOINTMENT`. Otkazani/no-show termini se ne računaju kao sudar.
 
 ### Model
 
 - Zajednička polja: `StartsAt` (UTC, proizvoljno vrijeme), `DurationMinutes` (snapshot iz `Service.DefaultDurationMinutes`), `Amount`/`SuggestedAmount`/`IsAmountManuallyOverridden` (predložena cijena iz `IPriceResolutionService`, ručna izmjena se bilježi), `PaymentMethod`, `IsPaid`, `Status` (`Scheduled`/`Completed`/`Cancelled`/`NoShow`), `Note`.
 - Individualni termin dopušta jednog ili više klijenata (`AppointmentClient`, npr. par/duo trening) — naplata (`Amount`/`PaymentMethod`) je i dalje jedna po terminu. Duo/par varijante se rješavaju odabirom druge usluge iz kataloga (npr. "Individualni trening u paru"), ne posebnom logikom.
 - **Plaćanje iz paketa je po klijentu, ne po terminu**: kod duo termina svaki klijent skida ulazak iz svog vlastitog `ClientPackage`-a, neovisno o ostalima na istom terminu (`AppointmentClient.ClientPackageId`/`PackageEntryDeducted`). Kad je `PaymentMethod=Package`, zahtjev mora sadržavati odabir paketa za svakog klijenta na terminu (`PackageSelections`), svaki provjeren protiv `GET .../packages/eligible`.
-- Preklapanja (trener već zauzet / klijent već zakazan u to vrijeme) vraćaju upozorenje u odgovoru (`AppointmentDto.Warnings`) i **ne** blokiraju spremanje — na istom slotu smiju postojati i otkazani i novi termin.
+- Preklapanja (trener već zauzet / klijent već zakazan u to vrijeme) su **tvrda greška** — provjeravaju se prije spremanja na svih pet mutirajućih endpointa (`schedule`, `complete`, `{id}/complete`, `PUT {id}`, `{id}/move`) i blokiraju spremanje s `409 APPOINTMENT_OVERLAP` ako se dogode; termin se u tom slučaju uopće ne sprema. Kod izmjene/pomicanja postojećeg termina, taj isti termin se isključuje iz vlastite provjere preklapanja. Otkazani i no-show termini se ne računaju kao preklapanje — na istom slotu smiju postojati i otkazani i novi termin. `AppointmentDto.Warnings` polje ostaje u DTO-u (za eventualnu buduću upotrebu), ali se više ne puni preklapanjem — uvijek prazno.
+- **`POST /recurring` ima zaseban, stroži mehanizam** koji NE dira gornju provjeru na pojedinačnim endpointima: prije bilo kakvog spremanja generira se cijeli niz datuma (`Daily`/`Weekly`) i za SVAKI datum se provjerava (a) preklapanje s postojećim terminom trenera (jednokratnim ili ponavljajućim, isto pravilo isključivanja otkazanih/no-show) i (b) preklapanje s roster odsutnošću trenera (`RosterType.IsAbsence`) na taj datum. Ako ijedan datum ima sudar, baca se `409 RECURRING_CONFLICT` s popisom SVIH sudarajućih datuma (`details.conflicts`, vidi primjer iznad) i **ništa se ne sprema** — ni termini bez sudara. Tek ako nijedan datum nema sudar, cijeli niz se generira odjednom, svi u `Scheduled`.
 - Nema vremenskih ograničenja unosa — termini se kreiraju/mijenjaju slobodno u prošlost i budućnost.
 - Bez pravog brisanja osim istog dana unosa — inače samo promjena statusa; termin nikad ne nestaje iz rasporeda.
 - `AppointmentAuditLog` bilježi tko/kada za ručnu izmjenu iznosa i vraćanje ulaska iz paketa (isti obrazac kao `EmployeeAuditLog`) — kod grupnih termina isti zapis bilježi i automatsko vraćanje ulaska pri poništavanju prisutnosti (vidi modul Grupe).

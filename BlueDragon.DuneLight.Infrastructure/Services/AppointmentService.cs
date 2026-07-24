@@ -16,6 +16,7 @@ using BlueDragon.DuneLight.Infrastructure.Domain.Models.Appointments;
 using BlueDragon.DuneLight.Infrastructure.Domain.Models.Catalog;
 using BlueDragon.DuneLight.Infrastructure.Domain.Models.Clients;
 using BlueDragon.DuneLight.Infrastructure.Domain.Models.Employees;
+using BlueDragon.DuneLight.Infrastructure.Domain.Models.Roster;
 using BlueDragon.DuneLight.Infrastructure.Handlers.Interfaces;
 using ServiceEntity = BlueDragon.DuneLight.Infrastructure.Domain.Models.Catalog.Service;
 
@@ -31,6 +32,7 @@ public class AppointmentService : IAppointmentService
     private readonly IEmployeeHandler _employeeHandler;
     private readonly ILocationHandler _locationHandler;
     private readonly IClientHandler _clientHandler;
+    private readonly IRosterEntryHandler _rosterEntryHandler;
 
     public AppointmentService(
         IAppointmentHandler appointmentHandler,
@@ -40,7 +42,8 @@ public class AppointmentService : IAppointmentService
         IServiceHandler serviceHandler,
         IEmployeeHandler employeeHandler,
         ILocationHandler locationHandler,
-        IClientHandler clientHandler)
+        IClientHandler clientHandler,
+        IRosterEntryHandler rosterEntryHandler)
     {
         _appointmentHandler = appointmentHandler;
         _auditLogHandler = auditLogHandler;
@@ -50,6 +53,7 @@ public class AppointmentService : IAppointmentService
         _employeeHandler = employeeHandler;
         _locationHandler = locationHandler;
         _clientHandler = clientHandler;
+        _rosterEntryHandler = rosterEntryHandler;
     }
 
     public Task<AppointmentDto> Create(Guid organizationId, Guid userId, bool isAdmin, AppointmentCreateRequest request)
@@ -110,7 +114,7 @@ public class AppointmentService : IAppointmentService
             });
         }
 
-        List<string> warnings = await ComputeOverlapWarnings(
+        await EnsureNoOverlap(
             organizationId, request.EmployeeId, clients, request.StartsAt, appointment.DurationMinutes, excludeId: null);
 
         await _appointmentHandler.Add(appointment);
@@ -119,7 +123,6 @@ public class AppointmentService : IAppointmentService
             await _clientPackageService.DeductEntry(organizationId, kvp.Value, request.ServiceId, userId);
 
         AppointmentDto dto = await GetByIdInternal(organizationId, appointmentId);
-        dto.Warnings = warnings;
         return dto;
     }
 
@@ -165,7 +168,7 @@ public class AppointmentService : IAppointmentService
         appointment.UpdatedAt = DateTimeOffset.UtcNow;
         appointment.UpdatedBy = userId;
 
-        List<string> warnings = await ComputeOverlapWarnings(
+        await EnsureNoOverlap(
             organizationId, request.EmployeeId, clients, request.StartsAt, appointment.DurationMinutes, excludeId: id);
 
         await _appointmentHandler.UpdateWithClients(appointment, request.ClientIds.Distinct().ToList());
@@ -184,7 +187,6 @@ public class AppointmentService : IAppointmentService
         }
 
         AppointmentDto dto = await GetByIdInternal(organizationId, id);
-        dto.Warnings = warnings;
         return dto;
     }
 
@@ -220,13 +222,12 @@ public class AppointmentService : IAppointmentService
         appointment.UpdatedAt = DateTimeOffset.UtcNow;
         appointment.UpdatedBy = userId;
 
-        List<string> warnings = await ComputeOverlapWarnings(
+        await EnsureNoOverlap(
             organizationId, request.EmployeeId, clients, request.StartsAt, appointment.DurationMinutes, excludeId: id);
 
         await _appointmentHandler.UpdateWithClients(appointment, request.ClientIds.Distinct().ToList());
 
         AppointmentDto dto = await GetByIdInternal(organizationId, id);
-        dto.Warnings = warnings;
         return dto;
     }
 
@@ -260,13 +261,12 @@ public class AppointmentService : IAppointmentService
         appointment.UpdatedAt = DateTimeOffset.UtcNow;
         appointment.UpdatedBy = userId;
 
-        List<string> warnings = await ComputeOverlapWarnings(
+        await EnsureNoOverlap(
             organizationId, effectiveEmployeeId, clients, request.StartsAt, appointment.DurationMinutes, excludeId: id);
 
         await _appointmentHandler.UpdateScalar(appointment);
 
         AppointmentDto dto = await GetByIdInternal(organizationId, id);
-        dto.Warnings = warnings;
         return dto;
     }
 
@@ -297,10 +297,15 @@ public class AppointmentService : IAppointmentService
         if (request.EndDate < request.FirstOccurrenceStartsAt)
             throw new ValidationAppException("Datum kraja ne smije biti prije prvog termina.");
 
+        ServiceEntity service = await LoadServiceOrThrow(organizationId, request.ServiceId);
+        List<DateTimeOffset> occurrences = BuildOccurrenceDates(request.RecurrenceType, request.FirstOccurrenceStartsAt, request.EndDate);
+
+        await EnsureNoRecurringConflicts(organizationId, request.EmployeeId, occurrences, service.DefaultDurationMinutes);
+
         Guid recurrenceGroupId = Guid.NewGuid();
         List<AppointmentDto> created = new List<AppointmentDto>();
 
-        for (DateTimeOffset occurrence = request.FirstOccurrenceStartsAt; occurrence <= request.EndDate; occurrence = occurrence.AddDays(7))
+        foreach (DateTimeOffset occurrence in occurrences)
         {
             AppointmentCreateRequest occurrenceRequest = new AppointmentCreateRequest
             {
@@ -316,6 +321,56 @@ public class AppointmentService : IAppointmentService
         }
 
         return created;
+    }
+
+    /// <summary>Weekly = postojeće ponašanje (+7 dana). Daily = svaki kalendarski dan uključivo vikend, bez preskakanja.</summary>
+    private static List<DateTimeOffset> BuildOccurrenceDates(RecurrenceType recurrenceType, DateTimeOffset first, DateTimeOffset end)
+    {
+        int stepDays = recurrenceType == RecurrenceType.Daily ? 1 : 7;
+
+        List<DateTimeOffset> occurrences = new List<DateTimeOffset>();
+        for (DateTimeOffset occurrence = first; occurrence <= end; occurrence = occurrence.AddDays(stepDays))
+            occurrences.Add(occurrence);
+
+        return occurrences;
+    }
+
+    /// <summary>Tvrda, unaprijedna provjera SAMO za /recurring — ako bilo koji datum u nizu sudara s postojećim
+    /// terminom trenera (jednokratnim ili ponavljajućim) ili s roster odsutnošću, baca RECURRING_CONFLICT (409)
+    /// prije nego se bilo što spremi. Ne dira meki mehanizam pojedinačnih endpointa.</summary>
+    private async Task EnsureNoRecurringConflicts(
+        Guid organizationId, Guid employeeId, List<DateTimeOffset> occurrences, int durationMinutes)
+    {
+        List<RosterEntry> absences = (await _rosterEntryHandler.GetForPeriod(
+                organizationId, new List<Guid> { employeeId }, occurrences[0], occurrences[^1]))
+            .Where(e => e.RosterType.IsAbsence)
+            .ToList();
+
+        List<RecurringConflictDetail> conflicts = new List<RecurringConflictDetail>();
+
+        foreach (DateTimeOffset occurrence in occurrences)
+        {
+            List<Appointment> overlapping = await _appointmentHandler.GetOverlappingForEmployee(
+                organizationId, employeeId, occurrence, durationMinutes, excludeId: null);
+
+            if (overlapping.Count > 0)
+            {
+                conflicts.Add(new RecurringConflictDetail { Date = occurrence, Reason = ErrorCodes.RecurringConflictReasonAppointment });
+                continue;
+            }
+
+            bool absenceHit = absences.Any(a =>
+                a.DateFrom.Date <= occurrence.Date && (a.DateTo == null || occurrence.Date <= a.DateTo.Value.Date));
+
+            if (absenceHit)
+                conflicts.Add(new RecurringConflictDetail { Date = occurrence, Reason = ErrorCodes.RecurringConflictReasonRosterAbsence });
+        }
+
+        if (conflicts.Count > 0)
+            throw new BusinessRuleException(
+                ErrorCodes.RecurringConflict,
+                "Neki termini u nizu se sudaraju s postojećim obavezama.",
+                new { conflicts });
     }
 
     public async Task<List<AppointmentScheduleCellDto>> GetSchedule(Guid organizationId, AppointmentScheduleQuery query)
@@ -382,13 +437,12 @@ public class AppointmentService : IAppointmentService
             });
         }
 
-        List<string> warnings = await ComputeOverlapWarnings(
+        await EnsureNoOverlap(
             organizationId, request.EmployeeId, clients, request.StartsAt, appointment.DurationMinutes, excludeId: null);
 
         await _appointmentHandler.Add(appointment);
 
         AppointmentDto dto = await GetByIdInternal(organizationId, appointmentId);
-        dto.Warnings = warnings;
         return dto;
     }
 
@@ -542,15 +596,15 @@ public class AppointmentService : IAppointmentService
         return result;
     }
 
-    private async Task<List<string>> ComputeOverlapWarnings(
+    /// <summary>Baca APPOINTMENT_OVERLAP (409) prije spremanja ako se termin preklapa s postojećim
+    /// (trener ili bilo koji od klijenata) — trener se provjerava prvi, zatim klijenti redom.</summary>
+    private async Task EnsureNoOverlap(
         Guid organizationId, Guid employeeId, List<Client> clients, DateTimeOffset startsAt, int durationMinutes, Guid? excludeId)
     {
-        List<string> warnings = new List<string>();
-
         List<Appointment> employeeOverlaps = await _appointmentHandler.GetOverlappingForEmployee(
             organizationId, employeeId, startsAt, durationMinutes, excludeId);
         if (employeeOverlaps.Count > 0)
-            warnings.Add("Trener već ima termin u ovom vremenskom razdoblju.");
+            throw new BusinessRuleException(ErrorCodes.AppointmentOverlap, "Trener već ima termin u ovom vremenskom razdoblju.");
 
         List<Guid> clientIds = clients.Select(c => c.Id.GetValueOrDefault()).ToList();
         List<Appointment> clientOverlaps = await _appointmentHandler.GetOverlappingForClients(
@@ -560,10 +614,8 @@ public class AppointmentService : IAppointmentService
         {
             bool hasOverlap = clientOverlaps.Any(a => a.Clients.Any(ac => ac.ClientId == client.Id));
             if (hasOverlap)
-                warnings.Add($"Klijent {client.FirstName} {client.LastName} je već zakazan u ovom vremenskom razdoblju.");
+                throw new BusinessRuleException(ErrorCodes.AppointmentOverlap, $"Klijent {client.FirstName} {client.LastName} je već zakazan u ovom vremenskom razdoblju.");
         }
-
-        return warnings;
     }
 
     private async Task LogAmountChange(Guid appointmentId, decimal oldAmount, decimal newAmount, Guid userId)

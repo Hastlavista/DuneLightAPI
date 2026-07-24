@@ -57,7 +57,7 @@ public class ExceptionHandlingMiddleware
         }
         catch (BusinessRuleException ex)
         {
-            await WriteError(context, HttpStatusCode.Conflict, ex.Code, ex.Message);
+            await WriteError(context, HttpStatusCode.Conflict, ex.Code, ex.Message, ex.Details);
         }
         catch (Exception ex)
         {
@@ -68,7 +68,7 @@ public class ExceptionHandlingMiddleware
 
     private async Task WriteError(
         HttpContext context, HttpStatusCode statusCode, string code, string message,
-        System.Collections.Generic.IDictionary<string, string[]> details = null)
+        object details = null)
     {
         context.Response.ContentType = "application/json";
         context.Response.StatusCode = (int)statusCode;
