@@ -150,12 +150,40 @@ public class AppointmentHandler : IAppointmentHandler
         return candidates.Where(a => a.StartsAt < newEnd && startsAt < a.StartsAt.AddMinutes(a.DurationMinutes)).ToList();
     }
 
+    public async Task<List<Appointment>> GetForEmployeeInRange(
+        Guid organizationId, Guid employeeId, DateTimeOffset rangeFrom, DateTimeOffset rangeTo)
+    {
+        await using DatabaseContext context = DatabaseContext.GenerateContext(_databaseSettings.ConnectionString);
+        return await context.Appointments
+            .Where(a =>
+                a.OrganizationId == organizationId &&
+                a.EmployeeId == employeeId &&
+                a.Status != AppointmentStatus.Cancelled && a.Status != AppointmentStatus.NoShow &&
+                a.StartsAt >= rangeFrom && a.StartsAt <= rangeTo)
+            .ToListAsync();
+    }
+
+    public async Task<List<Appointment>> GetForClientsInRange(
+        Guid organizationId, List<Guid> clientIds, DateTimeOffset rangeFrom, DateTimeOffset rangeTo)
+    {
+        await using DatabaseContext context = DatabaseContext.GenerateContext(_databaseSettings.ConnectionString);
+        return await context.Appointments
+            .Include(a => a.Clients)
+            .Where(a =>
+                a.OrganizationId == organizationId &&
+                a.Status != AppointmentStatus.Cancelled && a.Status != AppointmentStatus.NoShow &&
+                a.StartsAt >= rangeFrom && a.StartsAt <= rangeTo &&
+                a.Clients.Any(ac => clientIds.Contains(ac.ClientId)))
+            .ToListAsync();
+    }
+
     public async Task<List<Appointment>> GetForSchedule(Guid organizationId, AppointmentScheduleQuery query)
     {
         await using DatabaseContext context = DatabaseContext.GenerateContext(_databaseSettings.ConnectionString);
         IQueryable<Appointment> q = IncludeGraph(context.Appointments)
             .Include(a => a.Group).ThenInclude(g => g.Members.Where(m => m.IsActive))
             .Include(a => a.Attendances)
+            .AsSplitQuery()
             .Where(a => a.OrganizationId == organizationId && a.StartsAt >= query.From && a.StartsAt <= query.To);
 
         if (query.LocationId.HasValue)
@@ -210,5 +238,15 @@ public class AppointmentHandler : IAppointmentHandler
         return await context.AppointmentClients.AnyAsync(ac =>
             ac.ClientId == clientId &&
             context.Appointments.Any(a => a.Id == ac.AppointmentId && a.OrganizationId == organizationId));
+    }
+
+    public async Task AddRange(List<Appointment> appointments)
+    {
+        if (appointments.Count == 0)
+            return;
+
+        await using DatabaseContext context = DatabaseContext.GenerateContext(_databaseSettings.ConnectionString);
+        context.Appointments.AddRange(appointments);
+        await context.SaveChangesAsync();
     }
 }

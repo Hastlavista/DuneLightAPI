@@ -152,15 +152,4 @@ public class PriceListItemHandler : IPriceListItemHandler
             .ToListAsync();
     }
 
-    public async Task<bool> IsServiceReferenced(Guid organizationId, Guid serviceId)
-    {
-        await using DatabaseContext context = DatabaseContext.GenerateContext(_databaseSettings.ConnectionString);
-        return await context.PriceListItems.AnyAsync(p => p.OrganizationId == organizationId && p.ServiceId == serviceId);
-    }
-
-    public async Task<bool> IsPackageReferenced(Guid organizationId, Guid packageId)
-    {
-        await using DatabaseContext context = DatabaseContext.GenerateContext(_databaseSettings.ConnectionString);
-        return await context.PriceListItems.AnyAsync(p => p.OrganizationId == organizationId && p.PackageId == packageId);
-    }
 }

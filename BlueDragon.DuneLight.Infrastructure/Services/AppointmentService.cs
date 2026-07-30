@@ -302,23 +302,62 @@ public class AppointmentService : IAppointmentService
 
         await EnsureNoRecurringConflicts(organizationId, request.EmployeeId, occurrences, service.DefaultDurationMinutes);
 
+        await ValidateOwnership(organizationId, userId, isAdmin, request.EmployeeId);
+        await EnsureEmployeeExists(organizationId, request.EmployeeId);
+        await EnsureLocationExists(organizationId, request.LocationId);
+        List<Client> clients = await EnsureClientsExist(organizationId, request.ClientIds);
+
+        await EnsureNoRecurringClientOverlap(organizationId, clients, occurrences, service.DefaultDurationMinutes);
+
         Guid recurrenceGroupId = Guid.NewGuid();
-        List<AppointmentDto> created = new List<AppointmentDto>();
+        List<Appointment> toCreate = new List<Appointment>();
 
         foreach (DateTimeOffset occurrence in occurrences)
         {
-            AppointmentCreateRequest occurrenceRequest = new AppointmentCreateRequest
+            decimal suggestedAmount = await ResolveSuggestedAmount(organizationId, request.ServiceId, request.LocationId, occurrence);
+
+            Guid appointmentId = Guid.NewGuid();
+            Appointment appointment = new Appointment
             {
+                Id = appointmentId,
+                OrganizationId = organizationId,
+                Form = AppointmentForm.Individual,
                 StartsAt = occurrence,
+                DurationMinutes = service.DefaultDurationMinutes,
                 ServiceId = request.ServiceId,
                 EmployeeId = request.EmployeeId,
                 LocationId = request.LocationId,
-                ClientIds = request.ClientIds,
-                Note = request.Note
+                Amount = suggestedAmount,
+                SuggestedAmount = suggestedAmount,
+                IsAmountManuallyOverridden = false,
+                PaymentMethod = null,
+                IsPaid = false,
+                Status = AppointmentStatus.Scheduled,
+                Note = request.Note,
+                RecurrenceGroupId = recurrenceGroupId,
+                CreatedAt = DateTimeOffset.UtcNow,
+                CreatedBy = userId
             };
 
-            created.Add(await CreateInternal(organizationId, userId, isAdmin, occurrenceRequest, recurrenceGroupId));
+            foreach (Client client in clients)
+            {
+                appointment.Clients.Add(new AppointmentClient
+                {
+                    Id = Guid.NewGuid(),
+                    AppointmentId = appointmentId,
+                    ClientId = client.Id.GetValueOrDefault(),
+                    CreatedAt = DateTimeOffset.UtcNow
+                });
+            }
+
+            toCreate.Add(appointment);
         }
+
+        await _appointmentHandler.AddRange(toCreate);
+
+        List<AppointmentDto> created = new List<AppointmentDto>();
+        foreach (Appointment appointment in toCreate)
+            created.Add(await GetByIdInternal(organizationId, appointment.Id.GetValueOrDefault()));
 
         return created;
     }
@@ -337,10 +376,19 @@ public class AppointmentService : IAppointmentService
 
     /// <summary>Tvrda, unaprijedna provjera SAMO za /recurring — ako bilo koji datum u nizu sudara s postojećim
     /// terminom trenera (jednokratnim ili ponavljajućim) ili s roster odsutnošću, baca RECURRING_CONFLICT (409)
-    /// prije nego se bilo što spremi. Ne dira meki mehanizam pojedinačnih endpointa.</summary>
+    /// prije nego se bilo što spremi. Pojedinačni endpointi umjesto ovoga koriste EnsureNoOverlap (isto tvrda
+    /// blokada, ali baca AppointmentOverlap za prvi sudar bez liste svih konflikata).
+    /// Kandidati (termini trenera + roster odsutnosti) dohvaćaju se JEDNOM za cijeli raspon niza, precizna
+    /// provjera po occurrenceu radi se u memoriji — izbjegava upit po occurrenceu za duge nizove.</summary>
     private async Task EnsureNoRecurringConflicts(
         Guid organizationId, Guid employeeId, List<DateTimeOffset> occurrences, int durationMinutes)
     {
+        DateTimeOffset rangeFrom = occurrences[0].AddDays(-1);
+        DateTimeOffset rangeTo = occurrences[^1].AddDays(1);
+
+        List<Appointment> candidateAppointments = await _appointmentHandler.GetForEmployeeInRange(
+            organizationId, employeeId, rangeFrom, rangeTo);
+
         List<RosterEntry> absences = (await _rosterEntryHandler.GetForPeriod(
                 organizationId, new List<Guid> { employeeId }, occurrences[0], occurrences[^1]))
             .Where(e => e.RosterType.IsAbsence)
@@ -350,10 +398,12 @@ public class AppointmentService : IAppointmentService
 
         foreach (DateTimeOffset occurrence in occurrences)
         {
-            List<Appointment> overlapping = await _appointmentHandler.GetOverlappingForEmployee(
-                organizationId, employeeId, occurrence, durationMinutes, excludeId: null);
+            DateTimeOffset occurrenceEnd = occurrence.AddMinutes(durationMinutes);
 
-            if (overlapping.Count > 0)
+            bool appointmentHit = candidateAppointments.Any(a =>
+                a.StartsAt < occurrenceEnd && occurrence < a.StartsAt.AddMinutes(a.DurationMinutes));
+
+            if (appointmentHit)
             {
                 conflicts.Add(new RecurringConflictDetail { Date = occurrence, Reason = ErrorCodes.RecurringConflictReasonAppointment });
                 continue;
@@ -371,6 +421,37 @@ public class AppointmentService : IAppointmentService
                 ErrorCodes.RecurringConflict,
                 "Neki termini u nizu se sudaraju s postojećim obavezama.",
                 new { conflicts });
+    }
+
+    /// <summary>Provjera preklapanja klijenata za /recurring — odgovara klijentskoj grani EnsureNoOverlap, ali
+    /// nad cijelim nizom odjednom: kandidati se dohvaćaju JEDNOM za cijeli raspon, a za prvi occurrence (kronološki)
+    /// s pogođenim klijentom baca se APPOINTMENT_OVERLAP (409), isto ponašanje/kod kao i za pojedinačne termine.</summary>
+    private async Task EnsureNoRecurringClientOverlap(
+        Guid organizationId, List<Client> clients, List<DateTimeOffset> occurrences, int durationMinutes)
+    {
+        List<Guid> clientIds = clients.Select(c => c.Id.GetValueOrDefault()).ToList();
+
+        DateTimeOffset rangeFrom = occurrences[0].AddDays(-1);
+        DateTimeOffset rangeTo = occurrences[^1].AddDays(1);
+
+        List<Appointment> candidateAppointments = await _appointmentHandler.GetForClientsInRange(
+            organizationId, clientIds, rangeFrom, rangeTo);
+
+        foreach (DateTimeOffset occurrence in occurrences)
+        {
+            DateTimeOffset occurrenceEnd = occurrence.AddMinutes(durationMinutes);
+
+            List<Appointment> overlapping = candidateAppointments
+                .Where(a => a.StartsAt < occurrenceEnd && occurrence < a.StartsAt.AddMinutes(a.DurationMinutes))
+                .ToList();
+
+            foreach (Client client in clients)
+            {
+                bool hasOverlap = overlapping.Any(a => a.Clients.Any(ac => ac.ClientId == client.Id));
+                if (hasOverlap)
+                    throw new BusinessRuleException(ErrorCodes.AppointmentOverlap, $"Klijent {client.FirstName} {client.LastName} je već zakazan u ovom vremenskom razdoblju.");
+            }
+        }
     }
 
     public async Task<List<AppointmentScheduleCellDto>> GetSchedule(Guid organizationId, AppointmentScheduleQuery query)

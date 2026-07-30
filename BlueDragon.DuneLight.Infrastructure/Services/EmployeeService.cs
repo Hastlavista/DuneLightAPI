@@ -259,6 +259,7 @@ public class EmployeeService : IEmployeeService
             throw new BusinessRuleException(ErrorCodes.ReferencedCannotDelete, "Zaposlenik je referenciran (povijest promjena i/ili budući termini) i ne može se trajno obrisati — deaktivirajte ga umjesto toga.");
 
         await _employeeHandler.Delete(employee);
+        await _authHandler.SetActive(employee.UserId, false);
     }
 
     public async Task<EmployeeDto> UpdateRole(Guid organizationId, Guid userId, Guid id, UserRole newRole)

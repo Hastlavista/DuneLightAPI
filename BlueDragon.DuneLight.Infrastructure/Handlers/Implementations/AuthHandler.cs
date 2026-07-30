@@ -69,18 +69,6 @@ public class AuthHandler : IAuthHandler
         return await context.Users.SingleOrDefaultAsync(u => u.Id == userId);
     }
 
-    public async Task UpdateApiKey(Guid userId, string apiKey)
-    {
-        await using DatabaseContext context = DatabaseContext.GenerateContext(_databaseSettings.ConnectionString);
-        User existing = await context.Users.SingleOrDefaultAsync(u => u.Id == userId);
-        if (existing == null)
-            throw new ArgumentException($"User with id {userId} does not exist");
-
-        existing.ApiKey = apiKey;
-        context.Users.Update(existing);
-        await context.SaveChangesAsync();
-    }
-
     public async Task UpdatePasswordHash(Guid userId, string passwordHash)
     {
         await using DatabaseContext context = DatabaseContext.GenerateContext(_databaseSettings.ConnectionString);
@@ -90,17 +78,6 @@ public class AuthHandler : IAuthHandler
 
         existing.PasswordHash = passwordHash;
         context.Users.Update(existing);
-        await context.SaveChangesAsync();
-    }
-
-    public async Task DeleteUser(Guid userId)
-    {
-        await using DatabaseContext context = DatabaseContext.GenerateContext(_databaseSettings.ConnectionString);
-        User existing = await context.Users.SingleOrDefaultAsync(u => u.Id == userId);
-        if (existing == null)
-            throw new ArgumentException($"User with id {userId} does not exist");
-
-        context.Users.Remove(existing);
         await context.SaveChangesAsync();
     }
 

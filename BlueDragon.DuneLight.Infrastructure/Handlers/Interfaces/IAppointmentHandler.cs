@@ -34,7 +34,18 @@ public interface IAppointmentHandler
 
     Task<List<Appointment>> GetOverlappingForClients(Guid organizationId, List<Guid> clientIds, DateTimeOffset startsAt, int durationMinutes, Guid? excludeId);
 
+    /// <summary>Svi termini trenera unutar raspona (bez otkazanih/izostalih) — kandidati za preklapanje cijelog
+    /// recurring niza odjednom, precizna provjera po occurrenceu radi se u servisu u memoriji.</summary>
+    Task<List<Appointment>> GetForEmployeeInRange(Guid organizationId, Guid employeeId, DateTimeOffset rangeFrom, DateTimeOffset rangeTo);
+
+    /// <summary>Svi termini bilo kojeg od klijenata unutar raspona (bez otkazanih/izostalih) — kandidati za
+    /// preklapanje cijelog recurring niza odjednom, precizna provjera po occurrenceu radi se u servisu u memoriji.</summary>
+    Task<List<Appointment>> GetForClientsInRange(Guid organizationId, List<Guid> clientIds, DateTimeOffset rangeFrom, DateTimeOffset rangeTo);
+
     Task<List<Appointment>> GetForSchedule(Guid organizationId, AppointmentScheduleQuery query);
+
+    /// <summary>Batch insert za recurring niz — appointment.Clients mora biti popunjen za svaki termin prije poziva, jedan SaveChangesAsync za cijeli niz.</summary>
+    Task AddRange(List<Appointment> appointments);
 
     Task<(List<Appointment> Items, int TotalCount)> GetByClient(Guid organizationId, Guid clientId, PagedRequest request);
 

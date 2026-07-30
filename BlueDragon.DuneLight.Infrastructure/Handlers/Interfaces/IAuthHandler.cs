@@ -16,9 +16,7 @@ public interface IAuthHandler
     Task<User> GetUserByCredentials(Guid organizationId, string email, string passwordHash);
     Task<User> GetUserByApiKey(string apiKey);
     Task<User> GetUserById(Guid userId);
-    Task UpdateApiKey(Guid userId, string apiKey);
     Task UpdatePasswordHash(Guid userId, string passwordHash);
-    Task DeleteUser(Guid userId);
 
     /// <summary>Koristi modul Zaposlenici pri promjeni uloge zaposlenika.</summary>
     Task UpdateRole(Guid userId, UserRole role);

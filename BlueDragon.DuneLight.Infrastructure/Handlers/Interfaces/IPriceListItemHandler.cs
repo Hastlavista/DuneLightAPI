@@ -29,7 +29,4 @@ public interface IPriceListItemHandler
 
     /// <summary>Sve aktivne stavke važeće na dani datum za lokaciju ILI "sve lokacije" — za pregledni cjenik.</summary>
     Task<List<PriceListItem>> GetActiveForLocation(Guid organizationId, Guid? locationId, DateTimeOffset date);
-
-    Task<bool> IsServiceReferenced(Guid organizationId, Guid serviceId);
-    Task<bool> IsPackageReferenced(Guid organizationId, Guid packageId);
 }

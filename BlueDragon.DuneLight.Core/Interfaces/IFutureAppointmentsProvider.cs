@@ -4,9 +4,9 @@ using System.Threading.Tasks;
 namespace BlueDragon.DuneLight.Core.Interfaces;
 
 /// <summary>
-/// Mjesto pripremljeno za budući modul Termina: provjerava ima li zaposlenik zakazane
-/// buduće termine, radi upozorenja (ne zabrane) pri deaktivaciji. Dok Termini ne postoje,
-/// koristi se placeholder implementacija koja uvijek vraća false.
+/// Provjerava ima li zaposlenik zakazane buduće termine, radi upozorenja (ne zabrane) pri
+/// deaktivaciji. Implementacija (FutureAppointmentsProvider) upitava modul Termina; koristi
+/// je EmployeeService.SetActive/Delete.
 /// </summary>
 public interface IFutureAppointmentsProvider
 {

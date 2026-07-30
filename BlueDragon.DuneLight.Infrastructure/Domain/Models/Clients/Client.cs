@@ -11,9 +11,9 @@ namespace BlueDragon.DuneLight.Infrastructure.Domain.Models.Clients;
 /// Klijent studija. HomeLocationId/HomeTrainerId su čisto informativni — ne ograničavaju
 /// pristup (svi treneri vide sve klijente), služe samo za redoslijed prikaza.
 ///
-/// Buduća proširenja (ne implementirano sada): SoldPackages (prodani paketi klijenta) i
-/// Appointments/povijest dolazaka doći će s modulima Termina/Prodaje kao FK na ovaj entitet —
-/// namjerno nema stub navigacijskih kolekcija dok te tablice ne postoje.
+/// Prodani paketi (ClientPackage) i termini/dolasci (AppointmentClient, AppointmentAttendance)
+/// referenciraju ovaj entitet preko ClientId, ali namjerno nema stub navigacijskih kolekcija
+/// ovdje — pristupa im se preko odgovarajućih handlera/servisa.
 /// </summary>
 [Table("clients")]
 public class Client

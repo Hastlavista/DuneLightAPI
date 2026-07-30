@@ -4,10 +4,9 @@ using System.Threading.Tasks;
 namespace BlueDragon.DuneLight.Core.Interfaces;
 
 /// <summary>
-/// Mjesto pripremljeno za buduće module Termina i Prodanih paketa: provjerava je li klijent
-/// ikad referenciran (budući ili povijesni termin, prodani paket), radi blokade tvrdog
-/// brisanja. Dok ti moduli ne postoje, koristi se placeholder implementacija koja uvijek
-/// vraća false.
+/// Provjerava je li klijent ikad referenciran (budući ili povijesni termin, prodani paket),
+/// radi blokade tvrdog brisanja. Implementacija (ClientFutureActivityProvider) upitava module
+/// Termina i Prodanih paketa; koristi je ClientService.Delete.
 /// </summary>
 public interface IClientFutureActivityProvider
 {
