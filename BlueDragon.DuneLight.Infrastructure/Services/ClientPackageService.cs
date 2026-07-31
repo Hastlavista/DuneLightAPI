@@ -13,11 +13,14 @@ using BlueDragon.DuneLight.Infrastructure.Domain.Models.Catalog;
 using BlueDragon.DuneLight.Infrastructure.Domain.Models.Clients;
 using BlueDragon.DuneLight.Infrastructure.Handlers.Interfaces;
 using BlueDragon.DuneLight.Infrastructure.Utils;
+using Microsoft.EntityFrameworkCore;
 
 namespace BlueDragon.DuneLight.Infrastructure.Services;
 
 public class ClientPackageService : IClientPackageService
 {
+    private const int MaxConcurrencyRetries = 3;
+
     private readonly IClientPackageHandler _clientPackageHandler;
     private readonly IClientHandler _clientHandler;
     private readonly IPackageHandler _packageHandler;
@@ -108,64 +111,51 @@ public class ClientPackageService : IClientPackageService
         return packages.Select(ToDto).ToList();
     }
 
-    public async Task DeductEntry(Guid organizationId, Guid clientPackageId, Guid serviceId, Guid userId)
+    public Task DeductEntry(Guid organizationId, Guid clientPackageId, Guid serviceId, Guid userId)
     {
-        ClientPackage clientPackage = await _clientPackageHandler.GetById(organizationId, clientPackageId);
-        if (clientPackage == null)
-            throw new NotFoundAppException("ClientPackage", clientPackageId);
-
-        if (clientPackage.EntryMode == PackageEntryMode.SharedPool)
-        {
-            if (clientPackage.RemainingSharedEntries.HasValue)
-            {
-                clientPackage.RemainingSharedEntries -= 1;
-                if (clientPackage.RemainingSharedEntries <= 0)
-                    clientPackage.Status = ClientPackageStatus.Depleted;
-            }
-        }
-        else
-        {
-            ClientPackageServiceEntry entry = clientPackage.ServiceEntries.FirstOrDefault(e => e.ServiceId == serviceId);
-            if (entry == null)
-                throw new BusinessRuleException(ErrorCodes.PackageServiceNotCovered, "Odabrani paket ne pokriva ovu uslugu.");
-
-            if (entry.RemainingEntries.HasValue)
-            {
-                entry.RemainingEntries -= 1;
-                if (clientPackage.ServiceEntries.All(e => e.RemainingEntries.HasValue && e.RemainingEntries <= 0))
-                    clientPackage.Status = ClientPackageStatus.Depleted;
-            }
-        }
-
-        clientPackage.UpdatedAt = DateTimeOffset.UtcNow;
-        clientPackage.UpdatedBy = userId;
-        await _clientPackageHandler.Update(clientPackage);
+        return MutateWithConcurrencyRetry(organizationId, clientPackageId, userId,
+            clientPackage => ClientPackageEntryMutator.Deduct(clientPackage, serviceId));
     }
 
-    public async Task ReturnEntry(Guid organizationId, Guid clientPackageId, Guid serviceId, Guid userId)
+    public Task ReturnEntry(Guid organizationId, Guid clientPackageId, Guid serviceId, Guid userId)
     {
-        ClientPackage clientPackage = await _clientPackageHandler.GetById(organizationId, clientPackageId);
-        if (clientPackage == null)
-            throw new NotFoundAppException("ClientPackage", clientPackageId);
+        return MutateWithConcurrencyRetry(organizationId, clientPackageId, userId,
+            clientPackage => ClientPackageEntryMutator.Return(clientPackage, serviceId));
+    }
 
-        if (clientPackage.EntryMode == PackageEntryMode.SharedPool)
+    /// <summary>Čita paket, primjenjuje `mutate` i sprema — uz retry na optimistic-concurrency sudar (xmin token,
+    /// vidi DatabaseContext). Bez ovoga bi dva paralelna check-ina na isti paket (npr. dva klijenta na istom
+    /// grupnom terminu) mogla izgubiti jedan od dva dekrementa (lost update).</summary>
+    private async Task MutateWithConcurrencyRetry(
+        Guid organizationId, Guid clientPackageId, Guid userId, Action<ClientPackage> mutate)
+    {
+        for (int attempt = 1; ; attempt++)
         {
-            if (clientPackage.RemainingSharedEntries.HasValue)
-                clientPackage.RemainingSharedEntries += 1;
-        }
-        else
-        {
-            ClientPackageServiceEntry entry = clientPackage.ServiceEntries.FirstOrDefault(e => e.ServiceId == serviceId);
-            if (entry != null && entry.RemainingEntries.HasValue)
-                entry.RemainingEntries += 1;
-        }
+            ClientPackage clientPackage = await _clientPackageHandler.GetById(organizationId, clientPackageId);
+            if (clientPackage == null)
+                throw new NotFoundAppException("ClientPackage", clientPackageId);
 
-        if (clientPackage.Status == ClientPackageStatus.Depleted)
-            clientPackage.Status = ClientPackageStatus.Active;
+            mutate(clientPackage);
 
-        clientPackage.UpdatedAt = DateTimeOffset.UtcNow;
-        clientPackage.UpdatedBy = userId;
-        await _clientPackageHandler.Update(clientPackage);
+            clientPackage.UpdatedAt = DateTimeOffset.UtcNow;
+            clientPackage.UpdatedBy = userId;
+
+            try
+            {
+                await _clientPackageHandler.Update(clientPackage);
+                return;
+            }
+            catch (DbUpdateConcurrencyException) when (attempt < MaxConcurrencyRetries)
+            {
+                // netko drugi je paralelno promijenio isti paket — ponovi s najsvježijim stanjem
+            }
+            catch (DbUpdateConcurrencyException)
+            {
+                throw new BusinessRuleException(
+                    ErrorCodes.ConcurrencyConflict,
+                    "Paket je upravo promijenjen od strane drugog zahtjeva — pokušajte ponovno.");
+            }
+        }
     }
 
     private async Task<decimal> ResolveSuggestedPrice(Guid organizationId, Guid packageId, Guid? locationId, DateTimeOffset date)

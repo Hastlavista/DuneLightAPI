@@ -5,6 +5,7 @@ using BlueDragon.DuneLight.Infrastructure.Domain.Contexts;
 using BlueDragon.DuneLight.Infrastructure.Domain.Models;
 using BlueDragon.DuneLight.Infrastructure.Domain.Settings;
 using BlueDragon.DuneLight.Infrastructure.Handlers.Interfaces;
+using BlueDragon.DuneLight.Infrastructure.UnitOfWork;
 using Microsoft.EntityFrameworkCore;
 
 namespace BlueDragon.DuneLight.Infrastructure.Handlers.Implementations;
@@ -31,6 +32,12 @@ public class AuthHandler : IAuthHandler
         await context.SaveChangesAsync();
     }
 
+    public async Task AddOrganization(IUnitOfWork uow, Organization organization)
+    {
+        uow.Context.Organizations.Add(organization);
+        await uow.Context.SaveChangesAsync();
+    }
+
     public async Task<Organization> GetOrganizationBySlug(string slug)
     {
         await using DatabaseContext context = DatabaseContext.GenerateContext(_databaseSettings.ConnectionString);
@@ -42,6 +49,12 @@ public class AuthHandler : IAuthHandler
         await using DatabaseContext context = DatabaseContext.GenerateContext(_databaseSettings.ConnectionString);
         context.Users.Add(user);
         await context.SaveChangesAsync();
+    }
+
+    public async Task AddUser(IUnitOfWork uow, User user)
+    {
+        uow.Context.Users.Add(user);
+        await uow.Context.SaveChangesAsync();
     }
 
     public async Task<bool> EmailExists(Guid organizationId, string email)
@@ -81,26 +94,14 @@ public class AuthHandler : IAuthHandler
         await context.SaveChangesAsync();
     }
 
-    public async Task UpdateRole(Guid userId, UserRole role)
+    public async Task UpdateRole(Guid organizationId, Guid userId, UserRole role)
     {
         await using DatabaseContext context = DatabaseContext.GenerateContext(_databaseSettings.ConnectionString);
-        User existing = await context.Users.SingleOrDefaultAsync(u => u.Id == userId);
+        User existing = await context.Users.SingleOrDefaultAsync(u => u.Id == userId && u.OrganizationId == organizationId);
         if (existing == null)
             throw new ArgumentException($"User with id {userId} does not exist");
 
         existing.Role = role;
-        context.Users.Update(existing);
-        await context.SaveChangesAsync();
-    }
-
-    public async Task SetActive(Guid userId, bool isActive)
-    {
-        await using DatabaseContext context = DatabaseContext.GenerateContext(_databaseSettings.ConnectionString);
-        User existing = await context.Users.SingleOrDefaultAsync(u => u.Id == userId);
-        if (existing == null)
-            throw new ArgumentException($"User with id {userId} does not exist");
-
-        existing.IsActive = isActive;
         context.Users.Update(existing);
         await context.SaveChangesAsync();
     }

@@ -68,6 +68,12 @@ public class ClientPackage
     [Column("updated_by")]
     public Guid? UpdatedBy { get; set; }
 
+    /// <summary>Postgres sistemska xmin kolona kao optimistic-concurrency token (konfigurirano u DatabaseContext) —
+    /// mora biti stvarni CLR property (ne shadow) jer entitet putuje detached kroz zaseban DbContext po pozivu;
+    /// vidi ClientPackageService.MutateWithConcurrencyRetry.</summary>
+    [Column("xmin")]
+    public uint Version { get; set; }
+
     public Client Client { get; set; }
     public Package Package { get; set; }
     public List<ClientPackageServiceEntry> ServiceEntries { get; set; } = new();

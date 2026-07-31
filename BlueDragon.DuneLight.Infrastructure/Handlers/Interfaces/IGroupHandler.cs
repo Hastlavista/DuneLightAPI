@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Threading.Tasks;
 using BlueDragon.DuneLight.Infrastructure.Domain.Models.Appointments;
 using BlueDragon.DuneLight.Infrastructure.Domain.Models.Groups;
+using BlueDragon.DuneLight.Infrastructure.UnitOfWork;
 
 namespace BlueDragon.DuneLight.Infrastructure.Handlers.Interfaces;
 
@@ -21,16 +22,26 @@ public interface IGroupHandler
 
     Task UpdateScalar(Group group);
 
-    Task<GroupSlot> GetSlotById(Guid groupId, Guid slotId);
+    /// <summary>Kao <see cref="UpdateScalar(Group)"/>, ali unutar zajedničke transakcije s audit logom — vidi IUnitOfWork.</summary>
+    Task UpdateScalar(IUnitOfWork uow, Group group);
+
+    Task<GroupSlot> GetSlotById(Guid organizationId, Guid groupId, Guid slotId);
     Task<int> CountActiveSlots(Guid groupId);
     Task AddSlot(GroupSlot slot);
     Task UpdateSlot(GroupSlot slot);
 
-    Task<GroupMember> GetActiveMember(Guid groupId, Guid clientId);
-    Task<GroupMember> GetMemberById(Guid groupId, Guid memberId);
+    Task<GroupMember> GetActiveMember(Guid organizationId, Guid groupId, Guid clientId);
+    Task<GroupMember> GetMemberById(Guid organizationId, Guid groupId, Guid memberId);
     Task<int> CountActiveMembers(Guid groupId);
     Task AddMember(GroupMember member);
+
+    /// <summary>Kao <see cref="AddMember(GroupMember)"/>, ali unutar zajedničke transakcije s audit logom — vidi IUnitOfWork.</summary>
+    Task AddMember(IUnitOfWork uow, GroupMember member);
+
     Task UpdateMember(GroupMember member);
+
+    /// <summary>Kao <see cref="UpdateMember(GroupMember)"/>, ali unutar zajedničke transakcije s audit logom — vidi IUnitOfWork.</summary>
+    Task UpdateMember(IUnitOfWork uow, GroupMember member);
 
     /// <summary>Grupe (aktivne i povijesne) čiji je klijent član — za dopunu Klijent detalja.</summary>
     Task<List<GroupMember>> GetMembershipsByClient(Guid organizationId, Guid clientId);

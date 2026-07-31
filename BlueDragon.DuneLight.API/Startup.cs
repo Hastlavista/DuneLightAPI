@@ -20,6 +20,7 @@ using BlueDragon.DuneLight.Infrastructure.Domain.Settings;
 using BlueDragon.DuneLight.Infrastructure.Handlers.Implementations;
 using BlueDragon.DuneLight.Infrastructure.Handlers.Interfaces;
 using BlueDragon.DuneLight.Infrastructure.Services;
+using BlueDragon.DuneLight.Infrastructure.UnitOfWork;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Authorization;
@@ -69,6 +70,12 @@ public class Startup
 
         JwtSettings jwtSettings = Configuration.GetSection("JwtSettings").Get<JwtSettings>();
         services.AddSingleton(jwtSettings);
+
+        #endregion
+
+        #region UnitOfWork
+
+        services.AddSingleton<IUnitOfWorkFactory, UnitOfWorkFactory>();
 
         #endregion
 

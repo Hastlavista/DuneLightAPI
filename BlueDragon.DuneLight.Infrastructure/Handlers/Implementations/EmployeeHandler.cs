@@ -102,7 +102,7 @@ public class EmployeeHandler : IEmployeeHandler
     {
         await using DatabaseContext context = DatabaseContext.GenerateContext(_databaseSettings.ConnectionString);
 
-        Employee trackedEmployee = await context.Employees.SingleAsync(e => e.Id == employee.Id);
+        Employee trackedEmployee = await context.Employees.SingleAsync(e => e.Id == employee.Id && e.OrganizationId == employee.OrganizationId);
         trackedEmployee.FirstName = employee.FirstName;
         trackedEmployee.LastName = employee.LastName;
         trackedEmployee.Phone = employee.Phone;
@@ -166,10 +166,11 @@ public class EmployeeHandler : IEmployeeHandler
         await context.SaveChangesAsync();
     }
 
-    public async Task SetActiveAndStamp(Guid employeeId, bool isActive, DateTimeOffset updatedAt, Guid? updatedBy)
+    public async Task SetActiveWithLogin(Guid organizationId, Guid employeeId, Guid userId, bool isActive, DateTimeOffset updatedAt, Guid? updatedBy)
     {
         await using DatabaseContext context = DatabaseContext.GenerateContext(_databaseSettings.ConnectionString);
-        Employee employee = await context.Employees.SingleOrDefaultAsync(e => e.Id == employeeId);
+
+        Employee employee = await context.Employees.SingleOrDefaultAsync(e => e.Id == employeeId && e.OrganizationId == organizationId);
         if (employee == null)
             throw new ArgumentException($"Employee with id {employeeId} does not exist");
 
@@ -177,13 +178,25 @@ public class EmployeeHandler : IEmployeeHandler
         employee.UpdatedAt = updatedAt;
         employee.UpdatedBy = updatedBy;
 
+        User user = await context.Users.SingleOrDefaultAsync(u => u.Id == userId && u.OrganizationId == organizationId);
+        if (user == null)
+            throw new ArgumentException($"User with id {userId} does not exist");
+
+        user.IsActive = isActive;
+
         await context.SaveChangesAsync();
     }
 
-    public async Task Delete(Employee employee)
+    public async Task DeleteWithLoginDeactivation(Employee employee)
     {
         await using DatabaseContext context = DatabaseContext.GenerateContext(_databaseSettings.ConnectionString);
+
         context.Employees.Remove(employee);
+
+        User user = await context.Users.SingleOrDefaultAsync(u => u.Id == employee.UserId && u.OrganizationId == employee.OrganizationId);
+        if (user != null)
+            user.IsActive = false;
+
         await context.SaveChangesAsync();
     }
 

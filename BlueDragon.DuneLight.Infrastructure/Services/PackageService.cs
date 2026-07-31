@@ -134,10 +134,13 @@ public class PackageService : IPackageService
         if (entryMode == PackageEntryMode.PerService && services.Any(s => !s.EntryCount.HasValue || s.EntryCount <= 0))
             throw new ValidationAppException("Kod PerService načina svaka stavka paketa mora imati definiran broj ulazaka veći od nule.");
 
+        List<Guid> serviceIds = services.Select(s => s.ServiceId).ToList();
+        Dictionary<Guid, Domain.Models.Catalog.Service> servicesById = (await _serviceHandler.GetByIds(organizationId, serviceIds))
+            .ToDictionary(s => s.Id.GetValueOrDefault());
+
         foreach (PackageServiceItemRequest item in services)
         {
-            Domain.Models.Catalog.Service service = await _serviceHandler.GetById(organizationId, item.ServiceId);
-            if (service == null)
+            if (!servicesById.TryGetValue(item.ServiceId, out Domain.Models.Catalog.Service service))
                 throw new NotFoundAppException("Service", item.ServiceId);
 
             bool isGrandfathered = grandfatheredServiceIds != null && grandfatheredServiceIds.Contains(item.ServiceId);

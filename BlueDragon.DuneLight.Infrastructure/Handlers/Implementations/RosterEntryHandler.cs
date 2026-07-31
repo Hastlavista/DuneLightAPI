@@ -7,6 +7,7 @@ using BlueDragon.DuneLight.Infrastructure.Domain.Contexts;
 using BlueDragon.DuneLight.Infrastructure.Domain.Models.Roster;
 using BlueDragon.DuneLight.Infrastructure.Domain.Settings;
 using BlueDragon.DuneLight.Infrastructure.Handlers.Interfaces;
+using BlueDragon.DuneLight.Infrastructure.UnitOfWork;
 using Microsoft.EntityFrameworkCore;
 
 namespace BlueDragon.DuneLight.Infrastructure.Handlers.Implementations;
@@ -106,6 +107,12 @@ public class RosterEntryHandler : IRosterEntryHandler
         await context.SaveChangesAsync();
     }
 
+    public async Task Add(IUnitOfWork uow, RosterEntry entry)
+    {
+        uow.Context.RosterEntries.Add(entry);
+        await uow.Context.SaveChangesAsync();
+    }
+
     public async Task Update(RosterEntry entry)
     {
         await using DatabaseContext context = DatabaseContext.GenerateContext(_databaseSettings.ConnectionString);
@@ -113,10 +120,22 @@ public class RosterEntryHandler : IRosterEntryHandler
         await context.SaveChangesAsync();
     }
 
+    public async Task Update(IUnitOfWork uow, RosterEntry entry)
+    {
+        uow.Context.RosterEntries.Update(entry);
+        await uow.Context.SaveChangesAsync();
+    }
+
     public async Task Delete(RosterEntry entry)
     {
         await using DatabaseContext context = DatabaseContext.GenerateContext(_databaseSettings.ConnectionString);
         context.RosterEntries.Remove(entry);
         await context.SaveChangesAsync();
+    }
+
+    public async Task Delete(IUnitOfWork uow, RosterEntry entry)
+    {
+        uow.Context.RosterEntries.Remove(entry);
+        await uow.Context.SaveChangesAsync();
     }
 }

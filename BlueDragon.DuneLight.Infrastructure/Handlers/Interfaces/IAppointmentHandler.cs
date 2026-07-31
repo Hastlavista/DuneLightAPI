@@ -4,6 +4,7 @@ using System.Threading.Tasks;
 using BlueDragon.DuneLight.Core.DTOs.Appointments;
 using BlueDragon.DuneLight.Core.Shared;
 using BlueDragon.DuneLight.Infrastructure.Domain.Models.Appointments;
+using BlueDragon.DuneLight.Infrastructure.UnitOfWork;
 
 namespace BlueDragon.DuneLight.Infrastructure.Handlers.Interfaces;
 
@@ -12,21 +13,34 @@ public interface IAppointmentHandler
     /// <summary>appointment.Clients mora biti popunjen prije poziva — cascade insert.</summary>
     Task Add(Appointment appointment);
 
+    /// <summary>Kao <see cref="Add(Appointment)"/>, ali unutar zajedničke transakcije (npr. termin + odbijanje ulaska
+    /// iz paketa + audit log kao jedna atomična cjelina) — vidi IUnitOfWork.</summary>
+    Task Add(IUnitOfWork uow, Appointment appointment);
+
     Task<Appointment> GetById(Guid organizationId, Guid id);
 
     /// <summary>Bare redak, BEZ Clients/Service/Employee/Location navigacija — za pripremu mutacije (izbjegava EF tracking sudar).</summary>
     Task<Appointment> GetByIdLight(Guid organizationId, Guid id);
 
-    /// <summary>Jedan AppointmentClient redak, bare — za ciljanu mutaciju plaćanja/paketa jednog klijenta.</summary>
-    Task<AppointmentClient> GetAppointmentClient(Guid organizationId, Guid appointmentId, Guid clientId);
+    /// <summary>Batch verzija za listu klijenata u jednom upitu (izbjegava N+1) — unutar zajedničke transakcije.</summary>
+    Task<List<AppointmentClient>> GetAppointmentClients(IUnitOfWork uow, Guid organizationId, Guid appointmentId, List<Guid> clientIds);
 
     /// <summary>Samo skalarna polja termina, bez diranja Clients retka — koristi se za Complete/Cancel/NoShow prijelaze.</summary>
     Task UpdateScalar(Appointment appointment);
 
+    /// <summary>Kao <see cref="UpdateScalar(Appointment)"/>, ali unutar zajedničke transakcije — vidi IUnitOfWork.</summary>
+    Task UpdateScalar(IUnitOfWork uow, Appointment appointment);
+
     /// <summary>Puna izmjena uklj. popis klijenata — spaja postojeće AppointmentClient retke (čuva plaćanje/paket), uklanja izbačene, dodaje nove.</summary>
     Task UpdateWithClients(Appointment appointment, List<Guid> clientIds);
 
+    /// <summary>Kao <see cref="UpdateWithClients(Appointment, List{Guid})"/>, ali unutar zajedničke transakcije — vidi IUnitOfWork.</summary>
+    Task UpdateWithClients(IUnitOfWork uow, Appointment appointment, List<Guid> clientIds);
+
     Task UpdateAppointmentClient(AppointmentClient appointmentClient);
+
+    /// <summary>Kao <see cref="UpdateAppointmentClient(AppointmentClient)"/>, ali unutar zajedničke transakcije — vidi IUnitOfWork.</summary>
+    Task UpdateAppointmentClient(IUnitOfWork uow, AppointmentClient appointmentClient);
 
     Task Delete(Appointment appointment);
 

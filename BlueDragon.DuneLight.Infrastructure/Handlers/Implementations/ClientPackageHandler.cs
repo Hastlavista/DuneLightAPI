@@ -7,6 +7,7 @@ using BlueDragon.DuneLight.Infrastructure.Domain.Contexts;
 using BlueDragon.DuneLight.Infrastructure.Domain.Models.Clients;
 using BlueDragon.DuneLight.Infrastructure.Domain.Settings;
 using BlueDragon.DuneLight.Infrastructure.Handlers.Interfaces;
+using BlueDragon.DuneLight.Infrastructure.UnitOfWork;
 using Microsoft.EntityFrameworkCore;
 
 namespace BlueDragon.DuneLight.Infrastructure.Handlers.Implementations;
@@ -30,7 +31,17 @@ public class ClientPackageHandler : IClientPackageHandler
     public async Task<ClientPackage> GetById(Guid organizationId, Guid id)
     {
         await using DatabaseContext context = DatabaseContext.GenerateContext(_databaseSettings.ConnectionString);
-        return await context.ClientPackages
+        return await GetByIdCore(context, organizationId, id);
+    }
+
+    public Task<ClientPackage> GetById(IUnitOfWork uow, Guid organizationId, Guid id)
+    {
+        return GetByIdCore(uow.Context, organizationId, id);
+    }
+
+    private static Task<ClientPackage> GetByIdCore(DatabaseContext context, Guid organizationId, Guid id)
+    {
+        return context.ClientPackages
             .Include(cp => cp.Package)
             .Include(cp => cp.ServiceEntries).ThenInclude(e => e.Service)
             .SingleOrDefaultAsync(cp => cp.OrganizationId == organizationId && cp.Id == id);
@@ -73,6 +84,12 @@ public class ClientPackageHandler : IClientPackageHandler
         await using DatabaseContext context = DatabaseContext.GenerateContext(_databaseSettings.ConnectionString);
         context.ClientPackages.Update(clientPackage);
         await context.SaveChangesAsync();
+    }
+
+    public async Task Update(IUnitOfWork uow, ClientPackage clientPackage)
+    {
+        uow.Context.ClientPackages.Update(clientPackage);
+        await uow.Context.SaveChangesAsync();
     }
 
     public async Task<bool> HasAnyForClient(Guid organizationId, Guid clientId)

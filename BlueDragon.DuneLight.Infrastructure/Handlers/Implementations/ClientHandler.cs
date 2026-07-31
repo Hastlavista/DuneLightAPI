@@ -81,6 +81,14 @@ public class ClientHandler : IClientHandler
         return await context.Clients.SingleOrDefaultAsync(c => c.OrganizationId == organizationId && c.Id == id);
     }
 
+    public async Task<List<Client>> GetByIds(Guid organizationId, List<Guid> ids)
+    {
+        await using DatabaseContext context = DatabaseContext.GenerateContext(_databaseSettings.ConnectionString);
+        return await context.Clients
+            .Where(c => c.OrganizationId == organizationId && c.Id.HasValue && ids.Contains(c.Id.Value))
+            .ToListAsync();
+    }
+
     public async Task Add(Client client)
     {
         await using DatabaseContext context = DatabaseContext.GenerateContext(_databaseSettings.ConnectionString);
@@ -92,7 +100,7 @@ public class ClientHandler : IClientHandler
     {
         await using DatabaseContext context = DatabaseContext.GenerateContext(_databaseSettings.ConnectionString);
 
-        Client trackedClient = await context.Clients.SingleAsync(c => c.Id == client.Id);
+        Client trackedClient = await context.Clients.SingleAsync(c => c.Id == client.Id && c.OrganizationId == client.OrganizationId);
         trackedClient.MemberNumber = client.MemberNumber;
         trackedClient.FirstName = client.FirstName;
         trackedClient.LastName = client.LastName;
@@ -136,10 +144,10 @@ public class ClientHandler : IClientHandler
         await context.SaveChangesAsync();
     }
 
-    public async Task SetActiveAndStamp(Guid clientId, bool isActive, DateTimeOffset updatedAt, Guid? updatedBy)
+    public async Task SetActiveAndStamp(Guid organizationId, Guid clientId, bool isActive, DateTimeOffset updatedAt, Guid? updatedBy)
     {
         await using DatabaseContext context = DatabaseContext.GenerateContext(_databaseSettings.ConnectionString);
-        Client client = await context.Clients.SingleOrDefaultAsync(c => c.Id == clientId);
+        Client client = await context.Clients.SingleOrDefaultAsync(c => c.Id == clientId && c.OrganizationId == organizationId);
         if (client == null)
             throw new ArgumentException($"Client with id {clientId} does not exist");
 
@@ -150,10 +158,10 @@ public class ClientHandler : IClientHandler
         await context.SaveChangesAsync();
     }
 
-    public async Task Anonymize(Guid clientId, DateTimeOffset anonymizedAt, Guid? anonymizedBy)
+    public async Task Anonymize(Guid organizationId, Guid clientId, DateTimeOffset anonymizedAt, Guid? anonymizedBy)
     {
         await using DatabaseContext context = DatabaseContext.GenerateContext(_databaseSettings.ConnectionString);
-        Client client = await context.Clients.SingleOrDefaultAsync(c => c.Id == clientId);
+        Client client = await context.Clients.SingleOrDefaultAsync(c => c.Id == clientId && c.OrganizationId == organizationId);
         if (client == null)
             throw new ArgumentException($"Client with id {clientId} does not exist");
 

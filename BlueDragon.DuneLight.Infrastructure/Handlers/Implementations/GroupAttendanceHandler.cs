@@ -6,6 +6,7 @@ using BlueDragon.DuneLight.Infrastructure.Domain.Contexts;
 using BlueDragon.DuneLight.Infrastructure.Domain.Models.Appointments;
 using BlueDragon.DuneLight.Infrastructure.Domain.Settings;
 using BlueDragon.DuneLight.Infrastructure.Handlers.Interfaces;
+using BlueDragon.DuneLight.Infrastructure.UnitOfWork;
 using Microsoft.EntityFrameworkCore;
 
 namespace BlueDragon.DuneLight.Infrastructure.Handlers.Implementations;
@@ -31,11 +32,12 @@ public class GroupAttendanceHandler : IGroupAttendanceHandler
                 a.OrganizationId == organizationId && a.Id == appointmentId && a.Form == AppointmentForm.Group);
     }
 
-    public async Task<AppointmentAttendance> GetAttendanceRow(Guid appointmentId, Guid clientId)
+    public async Task<AppointmentAttendance> GetAttendanceRow(Guid organizationId, Guid appointmentId, Guid clientId)
     {
         await using DatabaseContext context = DatabaseContext.GenerateContext(_databaseSettings.ConnectionString);
         return await context.AppointmentAttendances
-            .SingleOrDefaultAsync(a => a.AppointmentId == appointmentId && a.ClientId == clientId);
+            .SingleOrDefaultAsync(a => a.AppointmentId == appointmentId && a.ClientId == clientId &&
+                context.Appointments.Any(app => app.Id == appointmentId && app.OrganizationId == organizationId));
     }
 
     public async Task AddAttendance(AppointmentAttendance attendance)
@@ -45,10 +47,22 @@ public class GroupAttendanceHandler : IGroupAttendanceHandler
         await context.SaveChangesAsync();
     }
 
+    public async Task AddAttendance(IUnitOfWork uow, AppointmentAttendance attendance)
+    {
+        uow.Context.AppointmentAttendances.Add(attendance);
+        await uow.Context.SaveChangesAsync();
+    }
+
     public async Task UpdateAttendance(AppointmentAttendance attendance)
     {
         await using DatabaseContext context = DatabaseContext.GenerateContext(_databaseSettings.ConnectionString);
         context.AppointmentAttendances.Update(attendance);
         await context.SaveChangesAsync();
+    }
+
+    public async Task UpdateAttendance(IUnitOfWork uow, AppointmentAttendance attendance)
+    {
+        uow.Context.AppointmentAttendances.Update(attendance);
+        await uow.Context.SaveChangesAsync();
     }
 }

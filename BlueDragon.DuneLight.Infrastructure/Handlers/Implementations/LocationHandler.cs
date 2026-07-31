@@ -48,6 +48,14 @@ public class LocationHandler : ILocationHandler
         return await context.Locations.SingleOrDefaultAsync(l => l.OrganizationId == organizationId && l.Id == id);
     }
 
+    public async Task<List<Location>> GetByIds(Guid organizationId, List<Guid> ids)
+    {
+        await using DatabaseContext context = DatabaseContext.GenerateContext(_databaseSettings.ConnectionString);
+        return await context.Locations
+            .Where(l => l.OrganizationId == organizationId && l.Id.HasValue && ids.Contains(l.Id.Value))
+            .ToListAsync();
+    }
+
     public async Task Add(Location location)
     {
         await using DatabaseContext context = DatabaseContext.GenerateContext(_databaseSettings.ConnectionString);

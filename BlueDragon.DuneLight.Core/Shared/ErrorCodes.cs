@@ -42,6 +42,7 @@ public static class ErrorCodes
     public const string AppointmentNotMovable = "APPOINTMENT_NOT_MOVABLE";
     public const string AppointmentOverlap = "APPOINTMENT_OVERLAP";
     public const string RecurringConflict = "RECURRING_CONFLICT";
+    public const string ConcurrencyConflict = "CONCURRENCY_CONFLICT";
 
     // RECURRING_CONFLICT details.conflicts[].reason vrijednosti
     public const string RecurringConflictReasonAppointment = "EXISTING_APPOINTMENT";

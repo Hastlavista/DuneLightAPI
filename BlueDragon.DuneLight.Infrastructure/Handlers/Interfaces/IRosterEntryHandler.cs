@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Threading.Tasks;
 using BlueDragon.DuneLight.Core.Shared;
 using BlueDragon.DuneLight.Infrastructure.Domain.Models.Roster;
+using BlueDragon.DuneLight.Infrastructure.UnitOfWork;
 
 namespace BlueDragon.DuneLight.Infrastructure.Handlers.Interfaces;
 
@@ -26,6 +27,17 @@ public interface IRosterEntryHandler
         Guid organizationId, List<Guid> employeeIds, DateTimeOffset periodFrom, DateTimeOffset periodTo);
 
     Task Add(RosterEntry entry);
+
+    /// <summary>Kao <see cref="Add(RosterEntry)"/>, ali unutar zajedničke transakcije s audit logom — vidi IUnitOfWork.</summary>
+    Task Add(IUnitOfWork uow, RosterEntry entry);
+
     Task Update(RosterEntry entry);
+
+    /// <summary>Kao <see cref="Update(RosterEntry)"/>, ali unutar zajedničke transakcije s audit logom — vidi IUnitOfWork.</summary>
+    Task Update(IUnitOfWork uow, RosterEntry entry);
+
     Task Delete(RosterEntry entry);
+
+    /// <summary>Kao <see cref="Delete(RosterEntry)"/>, ali unutar zajedničke transakcije s audit logom — vidi IUnitOfWork.</summary>
+    Task Delete(IUnitOfWork uow, RosterEntry entry);
 }

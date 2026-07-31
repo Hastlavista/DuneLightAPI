@@ -9,6 +9,7 @@ using BlueDragon.DuneLight.Infrastructure.Domain.Contexts;
 using BlueDragon.DuneLight.Infrastructure.Domain.Models.Appointments;
 using BlueDragon.DuneLight.Infrastructure.Domain.Settings;
 using BlueDragon.DuneLight.Infrastructure.Handlers.Interfaces;
+using BlueDragon.DuneLight.Infrastructure.UnitOfWork;
 using Microsoft.EntityFrameworkCore;
 
 namespace BlueDragon.DuneLight.Infrastructure.Handlers.Implementations;
@@ -38,6 +39,12 @@ public class AppointmentHandler : IAppointmentHandler
         await context.SaveChangesAsync();
     }
 
+    public async Task Add(IUnitOfWork uow, Appointment appointment)
+    {
+        uow.Context.Appointments.Add(appointment);
+        await uow.Context.SaveChangesAsync();
+    }
+
     public async Task<Appointment> GetById(Guid organizationId, Guid id)
     {
         await using DatabaseContext context = DatabaseContext.GenerateContext(_databaseSettings.ConnectionString);
@@ -52,13 +59,13 @@ public class AppointmentHandler : IAppointmentHandler
             .SingleOrDefaultAsync(a => a.OrganizationId == organizationId && a.Id == id);
     }
 
-    public async Task<AppointmentClient> GetAppointmentClient(Guid organizationId, Guid appointmentId, Guid clientId)
+    public Task<List<AppointmentClient>> GetAppointmentClients(IUnitOfWork uow, Guid organizationId, Guid appointmentId, List<Guid> clientIds)
     {
-        await using DatabaseContext context = DatabaseContext.GenerateContext(_databaseSettings.ConnectionString);
-        return await context.AppointmentClients
-            .Where(ac => ac.AppointmentId == appointmentId && ac.ClientId == clientId &&
+        DatabaseContext context = uow.Context;
+        return context.AppointmentClients
+            .Where(ac => ac.AppointmentId == appointmentId && clientIds.Contains(ac.ClientId) &&
                 context.Appointments.Any(a => a.Id == appointmentId && a.OrganizationId == organizationId))
-            .SingleOrDefaultAsync();
+            .ToListAsync();
     }
 
     public async Task UpdateScalar(Appointment appointment)
@@ -68,10 +75,27 @@ public class AppointmentHandler : IAppointmentHandler
         await context.SaveChangesAsync();
     }
 
+    public async Task UpdateScalar(IUnitOfWork uow, Appointment appointment)
+    {
+        uow.Context.Appointments.Update(appointment);
+        await uow.Context.SaveChangesAsync();
+    }
+
     public async Task UpdateWithClients(Appointment appointment, List<Guid> clientIds)
     {
         await using DatabaseContext context = DatabaseContext.GenerateContext(_databaseSettings.ConnectionString);
+        await UpdateWithClientsCore(context, appointment, clientIds);
+        await context.SaveChangesAsync();
+    }
 
+    public async Task UpdateWithClients(IUnitOfWork uow, Appointment appointment, List<Guid> clientIds)
+    {
+        await UpdateWithClientsCore(uow.Context, appointment, clientIds);
+        await uow.Context.SaveChangesAsync();
+    }
+
+    private static async Task UpdateWithClientsCore(DatabaseContext context, Appointment appointment, List<Guid> clientIds)
+    {
         List<AppointmentClient> existing = await context.AppointmentClients
             .Where(ac => ac.AppointmentId == appointment.Id)
             .ToListAsync();
@@ -92,7 +116,6 @@ public class AppointmentHandler : IAppointmentHandler
         }
 
         context.Appointments.Update(appointment);
-        await context.SaveChangesAsync();
     }
 
     public async Task UpdateAppointmentClient(AppointmentClient appointmentClient)
@@ -100,6 +123,12 @@ public class AppointmentHandler : IAppointmentHandler
         await using DatabaseContext context = DatabaseContext.GenerateContext(_databaseSettings.ConnectionString);
         context.AppointmentClients.Update(appointmentClient);
         await context.SaveChangesAsync();
+    }
+
+    public async Task UpdateAppointmentClient(IUnitOfWork uow, AppointmentClient appointmentClient)
+    {
+        uow.Context.AppointmentClients.Update(appointmentClient);
+        await uow.Context.SaveChangesAsync();
     }
 
     public async Task Delete(Appointment appointment)

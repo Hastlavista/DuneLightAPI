@@ -7,6 +7,7 @@ using BlueDragon.DuneLight.Infrastructure.Domain.Models.Appointments;
 using BlueDragon.DuneLight.Infrastructure.Domain.Models.Groups;
 using BlueDragon.DuneLight.Infrastructure.Domain.Settings;
 using BlueDragon.DuneLight.Infrastructure.Handlers.Interfaces;
+using BlueDragon.DuneLight.Infrastructure.UnitOfWork;
 using Microsoft.EntityFrameworkCore;
 
 namespace BlueDragon.DuneLight.Infrastructure.Handlers.Implementations;
@@ -69,10 +70,17 @@ public class GroupHandler : IGroupHandler
         await context.SaveChangesAsync();
     }
 
-    public async Task<GroupSlot> GetSlotById(Guid groupId, Guid slotId)
+    public async Task UpdateScalar(IUnitOfWork uow, Group group)
+    {
+        uow.Context.Groups.Update(group);
+        await uow.Context.SaveChangesAsync();
+    }
+
+    public async Task<GroupSlot> GetSlotById(Guid organizationId, Guid groupId, Guid slotId)
     {
         await using DatabaseContext context = DatabaseContext.GenerateContext(_databaseSettings.ConnectionString);
-        return await context.GroupSlots.SingleOrDefaultAsync(s => s.GroupId == groupId && s.Id == slotId);
+        return await context.GroupSlots.SingleOrDefaultAsync(s =>
+            s.GroupId == groupId && s.Id == slotId && s.Group.OrganizationId == organizationId);
     }
 
     public async Task<int> CountActiveSlots(Guid groupId)
@@ -95,17 +103,18 @@ public class GroupHandler : IGroupHandler
         await context.SaveChangesAsync();
     }
 
-    public async Task<GroupMember> GetActiveMember(Guid groupId, Guid clientId)
+    public async Task<GroupMember> GetActiveMember(Guid organizationId, Guid groupId, Guid clientId)
     {
         await using DatabaseContext context = DatabaseContext.GenerateContext(_databaseSettings.ConnectionString);
         return await context.GroupMembers
-            .SingleOrDefaultAsync(m => m.GroupId == groupId && m.ClientId == clientId && m.IsActive);
+            .SingleOrDefaultAsync(m => m.GroupId == groupId && m.ClientId == clientId && m.IsActive && m.Group.OrganizationId == organizationId);
     }
 
-    public async Task<GroupMember> GetMemberById(Guid groupId, Guid memberId)
+    public async Task<GroupMember> GetMemberById(Guid organizationId, Guid groupId, Guid memberId)
     {
         await using DatabaseContext context = DatabaseContext.GenerateContext(_databaseSettings.ConnectionString);
-        return await context.GroupMembers.SingleOrDefaultAsync(m => m.GroupId == groupId && m.Id == memberId);
+        return await context.GroupMembers.SingleOrDefaultAsync(m =>
+            m.GroupId == groupId && m.Id == memberId && m.Group.OrganizationId == organizationId);
     }
 
     public async Task<int> CountActiveMembers(Guid groupId)
@@ -121,11 +130,23 @@ public class GroupHandler : IGroupHandler
         await context.SaveChangesAsync();
     }
 
+    public async Task AddMember(IUnitOfWork uow, GroupMember member)
+    {
+        uow.Context.GroupMembers.Add(member);
+        await uow.Context.SaveChangesAsync();
+    }
+
     public async Task UpdateMember(GroupMember member)
     {
         await using DatabaseContext context = DatabaseContext.GenerateContext(_databaseSettings.ConnectionString);
         context.GroupMembers.Update(member);
         await context.SaveChangesAsync();
+    }
+
+    public async Task UpdateMember(IUnitOfWork uow, GroupMember member)
+    {
+        uow.Context.GroupMembers.Update(member);
+        await uow.Context.SaveChangesAsync();
     }
 
     public async Task<List<GroupMember>> GetMembershipsByClient(Guid organizationId, Guid clientId)

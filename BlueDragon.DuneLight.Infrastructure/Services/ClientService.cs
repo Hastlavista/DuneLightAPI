@@ -145,7 +145,7 @@ public class ClientService : IClientService
             EnsureNotAnonymized(client);
 
         if (isActive != client.IsActive)
-            await _clientHandler.SetActiveAndStamp(id, isActive, DateTimeOffset.UtcNow, userId);
+            await _clientHandler.SetActiveAndStamp(organizationId, id, isActive, DateTimeOffset.UtcNow, userId);
 
         return await GetById(organizationId, id);
     }
@@ -170,7 +170,7 @@ public class ClientService : IClientService
             throw new NotFoundAppException("Client", id);
 
         if (!client.IsAnonymized)
-            await _clientHandler.Anonymize(id, DateTimeOffset.UtcNow, userId);
+            await _clientHandler.Anonymize(organizationId, id, DateTimeOffset.UtcNow, userId);
 
         return await GetById(organizationId, id);
     }
@@ -255,11 +255,16 @@ public class ClientService : IClientService
         if (tagIds == null)
             return;
 
-        foreach (Guid tagId in tagIds.Distinct())
+        List<Guid> distinctIds = tagIds.Distinct().ToList();
+        if (distinctIds.Count == 0)
+            return;
+
+        List<ClientTag> tags = await _clientTagHandler.GetByIds(organizationId, distinctIds);
+        if (tags.Count != distinctIds.Count)
         {
-            ClientTag tag = await _clientTagHandler.GetById(organizationId, tagId);
-            if (tag == null)
-                throw new NotFoundAppException("ClientTag", tagId);
+            HashSet<Guid> foundIds = tags.Select(t => t.Id.GetValueOrDefault()).ToHashSet();
+            Guid missingId = distinctIds.First(id => !foundIds.Contains(id));
+            throw new NotFoundAppException("ClientTag", missingId);
         }
     }
 

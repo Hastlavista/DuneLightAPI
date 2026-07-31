@@ -221,8 +221,7 @@ public class EmployeeService : IEmployeeService
         }
 
         DateTimeOffset now = DateTimeOffset.UtcNow;
-        await _employeeHandler.SetActiveAndStamp(id, isActive, now, userId);
-        await _authHandler.SetActive(employee.UserId, isActive);
+        await _employeeHandler.SetActiveWithLogin(organizationId, id, employee.UserId, isActive, now, userId);
 
         await _auditLogHandler.Add(new EmployeeAuditLog
         {
@@ -258,8 +257,7 @@ public class EmployeeService : IEmployeeService
         if (hasHistory || hasFutureAppointments)
             throw new BusinessRuleException(ErrorCodes.ReferencedCannotDelete, "Zaposlenik je referenciran (povijest promjena i/ili budući termini) i ne može se trajno obrisati — deaktivirajte ga umjesto toga.");
 
-        await _employeeHandler.Delete(employee);
-        await _authHandler.SetActive(employee.UserId, false);
+        await _employeeHandler.DeleteWithLoginDeactivation(employee);
     }
 
     public async Task<EmployeeDto> UpdateRole(Guid organizationId, Guid userId, Guid id, UserRole newRole)
@@ -279,7 +277,7 @@ public class EmployeeService : IEmployeeService
                 throw new BusinessRuleException(ErrorCodes.LastActiveAdmin, "Mora postojati barem jedan aktivan Admin — nije moguće promijeniti ulogu zadnjeg.");
         }
 
-        await _authHandler.UpdateRole(employee.UserId, newRole);
+        await _authHandler.UpdateRole(organizationId, employee.UserId, newRole);
 
         await _auditLogHandler.Add(new EmployeeAuditLog
         {
@@ -341,10 +339,13 @@ public class EmployeeService : IEmployeeService
 
     private async Task EnsureLocationsUsable(Guid organizationId, List<Guid> locationIds, HashSet<Guid> grandfatheredLocationIds)
     {
-        foreach (Guid locationId in locationIds.Distinct())
+        List<Guid> distinctIds = locationIds.Distinct().ToList();
+        Dictionary<Guid, Location> byId = (await _locationHandler.GetByIds(organizationId, distinctIds))
+            .ToDictionary(l => l.Id.GetValueOrDefault());
+
+        foreach (Guid locationId in distinctIds)
         {
-            Location location = await _locationHandler.GetById(organizationId, locationId);
-            if (location == null)
+            if (!byId.TryGetValue(locationId, out Location location))
                 throw new NotFoundAppException("Location", locationId);
 
             bool isGrandfathered = grandfatheredLocationIds != null && grandfatheredLocationIds.Contains(locationId);
@@ -368,10 +369,13 @@ public class EmployeeService : IEmployeeService
         if (serviceIds == null)
             return;
 
-        foreach (Guid serviceId in serviceIds.Distinct())
+        List<Guid> distinctIds = serviceIds.Distinct().ToList();
+        Dictionary<Guid, Service> byId = (await _serviceHandler.GetByIds(organizationId, distinctIds))
+            .ToDictionary(s => s.Id.GetValueOrDefault());
+
+        foreach (Guid serviceId in distinctIds)
         {
-            Service service = await _serviceHandler.GetById(organizationId, serviceId);
-            if (service == null)
+            if (!byId.TryGetValue(serviceId, out Service service))
                 throw new NotFoundAppException("Service", serviceId);
 
             bool isGrandfathered = grandfatheredServiceIds != null && grandfatheredServiceIds.Contains(serviceId);

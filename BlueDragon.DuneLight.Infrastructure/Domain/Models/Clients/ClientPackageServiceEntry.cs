@@ -33,6 +33,11 @@ public class ClientPackageServiceEntry
     [Column("remaining_entries")]
     public int? RemainingEntries { get; set; }
 
+    /// <summary>Postgres sistemska xmin kolona kao optimistic-concurrency token (konfigurirano u DatabaseContext) —
+    /// vidi ClientPackageService.MutateWithConcurrencyRetry.</summary>
+    [Column("xmin")]
+    public uint Version { get; set; }
+
     public ClientPackage ClientPackage { get; set; }
     public Service Service { get; set; }
 }

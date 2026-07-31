@@ -72,7 +72,7 @@ public class PackageHandler : IPackageHandler
     {
         await using DatabaseContext context = DatabaseContext.GenerateContext(_databaseSettings.ConnectionString);
 
-        Package trackedPackage = await context.Packages.SingleAsync(p => p.Id == package.Id);
+        Package trackedPackage = await context.Packages.SingleAsync(p => p.Id == package.Id && p.OrganizationId == package.OrganizationId);
         trackedPackage.Name = package.Name;
         trackedPackage.Description = package.Description;
         trackedPackage.EntryMode = package.EntryMode;

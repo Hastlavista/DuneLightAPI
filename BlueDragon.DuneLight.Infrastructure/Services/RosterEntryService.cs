@@ -9,6 +9,7 @@ using BlueDragon.DuneLight.Core.Shared.Exceptions;
 using BlueDragon.DuneLight.Infrastructure.Domain.Models.Employees;
 using BlueDragon.DuneLight.Infrastructure.Domain.Models.Roster;
 using BlueDragon.DuneLight.Infrastructure.Handlers.Interfaces;
+using BlueDragon.DuneLight.Infrastructure.UnitOfWork;
 using BlueDragon.DuneLight.Infrastructure.Utils;
 
 namespace BlueDragon.DuneLight.Infrastructure.Services;
@@ -19,17 +20,20 @@ public class RosterEntryService : IRosterEntryService
     private readonly IRosterTypeHandler _rosterTypeHandler;
     private readonly IEmployeeHandler _employeeHandler;
     private readonly IRosterAuditLogHandler _auditLogHandler;
+    private readonly IUnitOfWorkFactory _unitOfWorkFactory;
 
     public RosterEntryService(
         IRosterEntryHandler rosterEntryHandler,
         IRosterTypeHandler rosterTypeHandler,
         IEmployeeHandler employeeHandler,
-        IRosterAuditLogHandler auditLogHandler)
+        IRosterAuditLogHandler auditLogHandler,
+        IUnitOfWorkFactory unitOfWorkFactory)
     {
         _rosterEntryHandler = rosterEntryHandler;
         _rosterTypeHandler = rosterTypeHandler;
         _employeeHandler = employeeHandler;
         _auditLogHandler = auditLogHandler;
+        _unitOfWorkFactory = unitOfWorkFactory;
     }
 
     public async Task<PagedResult<RosterEntryDto>> GetPaged(
@@ -87,18 +91,23 @@ public class RosterEntryService : IRosterEntryService
             CreatedBy = userId
         };
 
-        await _rosterEntryHandler.Add(entry);
-
-        await _auditLogHandler.Add(new RosterAuditLog
+        await using (IUnitOfWork uow = await _unitOfWorkFactory.Begin())
         {
-            Id = Guid.NewGuid(),
-            RosterEntryId = entryId,
-            ChangeType = "Created",
-            OldValue = null,
-            NewValue = BuildAuditSummary(entry, employee, type),
-            ChangedAt = DateTimeOffset.UtcNow,
-            ChangedBy = userId
-        });
+            await _rosterEntryHandler.Add(uow, entry);
+
+            await _auditLogHandler.Add(uow, new RosterAuditLog
+            {
+                Id = Guid.NewGuid(),
+                RosterEntryId = entryId,
+                ChangeType = "Created",
+                OldValue = null,
+                NewValue = BuildAuditSummary(entry, employee, type),
+                ChangedAt = DateTimeOffset.UtcNow,
+                ChangedBy = userId
+            });
+
+            await uow.CommitAsync();
+        }
 
         RosterEntry refreshed = await _rosterEntryHandler.GetById(organizationId, entryId);
         RosterEntryDto dto = ToDto(refreshed);
@@ -148,18 +157,23 @@ public class RosterEntryService : IRosterEntryService
         entry.UpdatedAt = DateTimeOffset.UtcNow;
         entry.UpdatedBy = userId;
 
-        await _rosterEntryHandler.Update(entry);
-
-        await _auditLogHandler.Add(new RosterAuditLog
+        await using (IUnitOfWork uow = await _unitOfWorkFactory.Begin())
         {
-            Id = Guid.NewGuid(),
-            RosterEntryId = id,
-            ChangeType = "Updated",
-            OldValue = oldSummary,
-            NewValue = BuildAuditSummary(entry, employee, type),
-            ChangedAt = DateTimeOffset.UtcNow,
-            ChangedBy = userId
-        });
+            await _rosterEntryHandler.Update(uow, entry);
+
+            await _auditLogHandler.Add(uow, new RosterAuditLog
+            {
+                Id = Guid.NewGuid(),
+                RosterEntryId = id,
+                ChangeType = "Updated",
+                OldValue = oldSummary,
+                NewValue = BuildAuditSummary(entry, employee, type),
+                ChangedAt = DateTimeOffset.UtcNow,
+                ChangedBy = userId
+            });
+
+            await uow.CommitAsync();
+        }
 
         RosterEntry refreshed = await _rosterEntryHandler.GetById(organizationId, id);
         RosterEntryDto dto = ToDto(refreshed);
@@ -175,8 +189,12 @@ public class RosterEntryService : IRosterEntryService
 
         await ValidateOwnership(organizationId, userId, isAdmin, existing.EmployeeId);
 
+        RosterEntry entry = await _rosterEntryHandler.GetByIdLight(organizationId, id);
+
+        await using IUnitOfWork uow = await _unitOfWorkFactory.Begin();
+
         // Audit se piše prije fizičkog brisanja — mora preživjeti brisanje retka (vidi RosterAuditLog).
-        await _auditLogHandler.Add(new RosterAuditLog
+        await _auditLogHandler.Add(uow, new RosterAuditLog
         {
             Id = Guid.NewGuid(),
             RosterEntryId = id,
@@ -187,8 +205,9 @@ public class RosterEntryService : IRosterEntryService
             ChangedBy = userId
         });
 
-        RosterEntry entry = await _rosterEntryHandler.GetByIdLight(organizationId, id);
-        await _rosterEntryHandler.Delete(entry);
+        await _rosterEntryHandler.Delete(uow, entry);
+
+        await uow.CommitAsync();
     }
 
     public async Task<RosterTeamMonthlyDto> GetTeamMonthly(Guid organizationId, int year, int month, Guid? locationId)

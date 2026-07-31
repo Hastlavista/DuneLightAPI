@@ -28,8 +28,11 @@ public interface IEmployeeHandler
     /// <summary>`employee` NE SMIJE imati popunjene Locations/Services navigacijske kolekcije (koristiti GetByIdLight).</summary>
     Task Update(Employee employee, List<EmployeeLocation> newLocations, List<EmployeeServiceAssignment> newServices);
 
-    Task SetActiveAndStamp(Guid employeeId, bool isActive, DateTimeOffset updatedAt, Guid? updatedBy);
-    Task Delete(Employee employee);
+    /// <summary>Postavlja Employee.IsActive i povezani User.IsActive u jednom DbContextu / jednom SaveChanges-u (atomično) — sprječava da deaktivirani zaposlenik ostane s aktivnim loginom.</summary>
+    Task SetActiveWithLogin(Guid organizationId, Guid employeeId, Guid userId, bool isActive, DateTimeOffset updatedAt, Guid? updatedBy);
+
+    /// <summary>Briše Employee i deaktivira povezani login (User.IsActive = false) u jednom DbContextu / jednom SaveChanges-u (atomično).</summary>
+    Task DeleteWithLoginDeactivation(Employee employee);
 
     Task<bool> IsUserAlreadyLinked(Guid organizationId, Guid userId, Guid? excludeEmployeeId);
     Task<int> CountActiveAdmins(Guid organizationId);

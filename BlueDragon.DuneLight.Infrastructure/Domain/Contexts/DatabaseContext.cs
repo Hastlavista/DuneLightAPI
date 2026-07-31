@@ -271,6 +271,16 @@ public class DatabaseContext : DbContext
             .HasForeignKey(cp => cp.PackageId)
             .OnDelete(DeleteBehavior.Restrict);
 
+        // Postgres sistemska kolona xmin kao optimistic-concurrency token (bez migracije) — RemainingSharedEntries/
+        // RemainingEntries se čitaju-mijenjaju-spremaju u odvojenim DbContextima (vidi ClientPackageService), pa bez
+        // ovoga paralelni check-in-i mogu izgubiti jedan od dva dekrementa (lost update).
+        modelBuilder.Entity<ClientPackage>()
+            .Property(cp => cp.Version)
+            .HasColumnName("xmin")
+            .HasColumnType("xid")
+            .ValueGeneratedOnAddOrUpdate()
+            .IsConcurrencyToken();
+
         modelBuilder.Entity<ClientPackageServiceEntry>().HasKey(e => e.Id);
         modelBuilder.Entity<ClientPackageServiceEntry>()
             .HasIndex(e => new { e.ClientPackageId, e.ServiceId })
@@ -285,6 +295,12 @@ public class DatabaseContext : DbContext
             .WithMany()
             .HasForeignKey(e => e.ServiceId)
             .OnDelete(DeleteBehavior.Restrict);
+        modelBuilder.Entity<ClientPackageServiceEntry>()
+            .Property(e => e.Version)
+            .HasColumnName("xmin")
+            .HasColumnType("xid")
+            .ValueGeneratedOnAddOrUpdate()
+            .IsConcurrencyToken();
     }
 
     private static void ConfigureAppointments(ModelBuilder modelBuilder)

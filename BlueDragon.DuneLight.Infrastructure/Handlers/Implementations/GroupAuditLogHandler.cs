@@ -3,6 +3,7 @@ using BlueDragon.DuneLight.Infrastructure.Domain.Contexts;
 using BlueDragon.DuneLight.Infrastructure.Domain.Models.Groups;
 using BlueDragon.DuneLight.Infrastructure.Domain.Settings;
 using BlueDragon.DuneLight.Infrastructure.Handlers.Interfaces;
+using BlueDragon.DuneLight.Infrastructure.UnitOfWork;
 
 namespace BlueDragon.DuneLight.Infrastructure.Handlers.Implementations;
 
@@ -20,5 +21,11 @@ public class GroupAuditLogHandler : IGroupAuditLogHandler
         await using DatabaseContext context = DatabaseContext.GenerateContext(_databaseSettings.ConnectionString);
         context.GroupAuditLog.Add(entry);
         await context.SaveChangesAsync();
+    }
+
+    public async Task Add(IUnitOfWork uow, GroupAuditLog entry)
+    {
+        uow.Context.GroupAuditLog.Add(entry);
+        await uow.Context.SaveChangesAsync();
     }
 }

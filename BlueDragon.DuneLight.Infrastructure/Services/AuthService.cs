@@ -8,7 +8,10 @@ using BlueDragon.DuneLight.Core.Shared.Exceptions;
 using BlueDragon.DuneLight.Infrastructure.Domain.Models;
 using BlueDragon.DuneLight.Infrastructure.Domain.Settings;
 using BlueDragon.DuneLight.Infrastructure.Handlers.Interfaces;
+using BlueDragon.DuneLight.Infrastructure.UnitOfWork;
 using BlueDragon.DuneLight.Infrastructure.Utils;
+using Microsoft.EntityFrameworkCore;
+using Npgsql;
 
 namespace BlueDragon.DuneLight.Infrastructure.Services;
 
@@ -17,12 +20,14 @@ public class AuthService : IAuthService
     private readonly IAuthHandler _authHandler;
     private readonly IJwtService _jwtService;
     private readonly JwtSettings _jwtSettings;
+    private readonly IUnitOfWorkFactory _unitOfWorkFactory;
 
-    public AuthService(IAuthHandler authHandler, IJwtService jwtService, JwtSettings jwtSettings)
+    public AuthService(IAuthHandler authHandler, IJwtService jwtService, JwtSettings jwtSettings, IUnitOfWorkFactory unitOfWorkFactory)
     {
         _authHandler = authHandler;
         _jwtService = jwtService;
         _jwtSettings = jwtSettings;
+        _unitOfWorkFactory = unitOfWorkFactory;
     }
 
     public async Task<AuthResponse> Register(RegisterRequest request)
@@ -39,8 +44,6 @@ public class AuthService : IAuthService
         organization.Slug = slug;
         organization.CreatedAt = DateTimeOffset.UtcNow;
 
-        await _authHandler.AddOrganization(organization);
-
         User user = new User();
         user.Id = Guid.NewGuid();
         user.OrganizationId = organization.Id.GetValueOrDefault();
@@ -51,9 +54,28 @@ public class AuthService : IAuthService
         user.IsActive = true;
         user.CreatedAt = DateTimeOffset.UtcNow;
 
-        await _authHandler.AddUser(user);
+        try
+        {
+            await using IUnitOfWork uow = await _unitOfWorkFactory.Begin();
+
+            await _authHandler.AddOrganization(uow, organization);
+            await _authHandler.AddUser(uow, user);
+
+            await uow.CommitAsync();
+        }
+        catch (DbUpdateException ex) when (IsUniqueSlugViolation(ex))
+        {
+            // SlugExists gore je samo brza provjera (TOCTOU) — jedinstveni indeks na organizations.slug je
+            // stvarni izvor istine kod dvije istovremene registracije s istim nazivom organizacije.
+            throw new BusinessRuleException(ErrorCodes.AuthOrganizationSlugTaken, "Organizacija s ovim nazivom već postoji.");
+        }
 
         return ToAuthResponse(user, organization);
+    }
+
+    private static bool IsUniqueSlugViolation(DbUpdateException ex)
+    {
+        return ex.InnerException is PostgresException pgEx && pgEx.SqlState == PostgresErrorCodes.UniqueViolation;
     }
 
     public async Task<AuthResponse> Login(LoginRequest request)

@@ -58,6 +58,14 @@ public class ServiceHandler : IServiceHandler
             .SingleOrDefaultAsync(s => s.OrganizationId == organizationId && s.Id == id);
     }
 
+    public async Task<List<Service>> GetByIds(Guid organizationId, List<Guid> ids)
+    {
+        await using DatabaseContext context = DatabaseContext.GenerateContext(_databaseSettings.ConnectionString);
+        return await context.Services
+            .Where(s => s.OrganizationId == organizationId && s.Id.HasValue && ids.Contains(s.Id.Value))
+            .ToListAsync();
+    }
+
     public async Task<List<Service>> GetAllActive(Guid organizationId)
     {
         await using DatabaseContext context = DatabaseContext.GenerateContext(_databaseSettings.ConnectionString);
@@ -104,7 +112,7 @@ public class ServiceHandler : IServiceHandler
         if (inPriceList)
             return true;
 
-        return await context.PackageServiceItems.AnyAsync(ps => ps.ServiceId == id);
+        return await context.PackageServiceItems.AnyAsync(ps => ps.ServiceId == id && ps.Package.OrganizationId == organizationId);
     }
 
     public async Task<bool> HasActiveServicesInCategory(Guid organizationId, Guid serviceCategoryId)

@@ -50,6 +50,14 @@ public class ClientTagHandler : IClientTagHandler
         return await context.ClientTags.SingleOrDefaultAsync(t => t.OrganizationId == organizationId && t.Id == id);
     }
 
+    public async Task<List<ClientTag>> GetByIds(Guid organizationId, List<Guid> ids)
+    {
+        await using DatabaseContext context = DatabaseContext.GenerateContext(_databaseSettings.ConnectionString);
+        return await context.ClientTags
+            .Where(t => t.OrganizationId == organizationId && t.Id.HasValue && ids.Contains(t.Id.Value))
+            .ToListAsync();
+    }
+
     public async Task<bool> NameExistsAmongActive(Guid organizationId, string name, Guid? excludeId)
     {
         await using DatabaseContext context = DatabaseContext.GenerateContext(_databaseSettings.ConnectionString);

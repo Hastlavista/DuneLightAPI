@@ -18,6 +18,9 @@ using BlueDragon.DuneLight.Infrastructure.Domain.Models.Clients;
 using BlueDragon.DuneLight.Infrastructure.Domain.Models.Employees;
 using BlueDragon.DuneLight.Infrastructure.Domain.Models.Roster;
 using BlueDragon.DuneLight.Infrastructure.Handlers.Interfaces;
+using BlueDragon.DuneLight.Infrastructure.UnitOfWork;
+using BlueDragon.DuneLight.Infrastructure.Utils;
+using Microsoft.EntityFrameworkCore;
 using ServiceEntity = BlueDragon.DuneLight.Infrastructure.Domain.Models.Catalog.Service;
 
 namespace BlueDragon.DuneLight.Infrastructure.Services;
@@ -27,33 +30,39 @@ public class AppointmentService : IAppointmentService
     private readonly IAppointmentHandler _appointmentHandler;
     private readonly IAppointmentAuditLogHandler _auditLogHandler;
     private readonly IClientPackageService _clientPackageService;
+    private readonly IClientPackageHandler _clientPackageHandler;
     private readonly IPricingService _pricingService;
     private readonly IServiceHandler _serviceHandler;
     private readonly IEmployeeHandler _employeeHandler;
     private readonly ILocationHandler _locationHandler;
     private readonly IClientHandler _clientHandler;
     private readonly IRosterEntryHandler _rosterEntryHandler;
+    private readonly IUnitOfWorkFactory _unitOfWorkFactory;
 
     public AppointmentService(
         IAppointmentHandler appointmentHandler,
         IAppointmentAuditLogHandler auditLogHandler,
         IClientPackageService clientPackageService,
+        IClientPackageHandler clientPackageHandler,
         IPricingService pricingService,
         IServiceHandler serviceHandler,
         IEmployeeHandler employeeHandler,
         ILocationHandler locationHandler,
         IClientHandler clientHandler,
-        IRosterEntryHandler rosterEntryHandler)
+        IRosterEntryHandler rosterEntryHandler,
+        IUnitOfWorkFactory unitOfWorkFactory)
     {
         _appointmentHandler = appointmentHandler;
         _auditLogHandler = auditLogHandler;
         _clientPackageService = clientPackageService;
+        _clientPackageHandler = clientPackageHandler;
         _pricingService = pricingService;
         _serviceHandler = serviceHandler;
         _employeeHandler = employeeHandler;
         _locationHandler = locationHandler;
         _clientHandler = clientHandler;
         _rosterEntryHandler = rosterEntryHandler;
+        _unitOfWorkFactory = unitOfWorkFactory;
     }
 
     public Task<AppointmentDto> Create(Guid organizationId, Guid userId, bool isAdmin, AppointmentCreateRequest request)
@@ -117,10 +126,22 @@ public class AppointmentService : IAppointmentService
         await EnsureNoOverlap(
             organizationId, request.EmployeeId, clients, request.StartsAt, appointment.DurationMinutes, excludeId: null);
 
-        await _appointmentHandler.Add(appointment);
+        try
+        {
+            await using IUnitOfWork uow = await _unitOfWorkFactory.Begin();
 
-        foreach (KeyValuePair<Guid, Guid> kvp in packageByClient)
-            await _clientPackageService.DeductEntry(organizationId, kvp.Value, request.ServiceId, userId);
+            await _appointmentHandler.Add(uow, appointment);
+
+            foreach (KeyValuePair<Guid, Guid> kvp in packageByClient)
+                await DeductPackageEntryInTransaction(uow, organizationId, kvp.Value, request.ServiceId, userId);
+
+            await uow.CommitAsync();
+        }
+        catch (DbUpdateConcurrencyException)
+        {
+            throw new BusinessRuleException(
+                ErrorCodes.ConcurrencyConflict, "Paket je upravo promijenjen od strane drugog zahtjeva — pokušajte ponovno.");
+        }
 
         AppointmentDto dto = await GetByIdInternal(organizationId, appointmentId);
         return dto;
@@ -150,8 +171,8 @@ public class AppointmentService : IAppointmentService
             organizationId, clients.Select(c => c.Id.GetValueOrDefault()).ToList(),
             request.ServiceId, request.StartsAt, request.PaymentMethod, request.PackageSelections);
 
-        if (amount != appointment.Amount)
-            await LogAmountChange(id, appointment.Amount, amount, userId);
+        bool amountChanged = amount != appointment.Amount;
+        decimal previousAmount = appointment.Amount;
 
         appointment.StartsAt = request.StartsAt;
         appointment.DurationMinutes = service.DefaultDurationMinutes;
@@ -171,19 +192,37 @@ public class AppointmentService : IAppointmentService
         await EnsureNoOverlap(
             organizationId, request.EmployeeId, clients, request.StartsAt, appointment.DurationMinutes, excludeId: id);
 
-        await _appointmentHandler.UpdateWithClients(appointment, request.ClientIds.Distinct().ToList());
-
-        foreach (KeyValuePair<Guid, Guid> kvp in packageByClient)
+        try
         {
-            AppointmentClient clientRow = await _appointmentHandler.GetAppointmentClient(organizationId, id, kvp.Key);
-            if (clientRow == null)
-                continue;
+            await using IUnitOfWork uow = await _unitOfWorkFactory.Begin();
 
-            await _clientPackageService.DeductEntry(organizationId, kvp.Value, request.ServiceId, userId);
+            if (amountChanged)
+                await LogAmountChangeInTransaction(uow, id, previousAmount, amount, userId);
 
-            clientRow.ClientPackageId = kvp.Value;
-            clientRow.PackageEntryDeducted = true;
-            await _appointmentHandler.UpdateAppointmentClient(clientRow);
+            await _appointmentHandler.UpdateWithClients(uow, appointment, request.ClientIds.Distinct().ToList());
+
+            Dictionary<Guid, AppointmentClient> clientRowsByClientId = (await _appointmentHandler.GetAppointmentClients(
+                    uow, organizationId, id, packageByClient.Keys.ToList()))
+                .ToDictionary(ac => ac.ClientId);
+
+            foreach (KeyValuePair<Guid, Guid> kvp in packageByClient)
+            {
+                if (!clientRowsByClientId.TryGetValue(kvp.Key, out AppointmentClient clientRow))
+                    continue;
+
+                await DeductPackageEntryInTransaction(uow, organizationId, kvp.Value, request.ServiceId, userId);
+
+                clientRow.ClientPackageId = kvp.Value;
+                clientRow.PackageEntryDeducted = true;
+                await _appointmentHandler.UpdateAppointmentClient(uow, clientRow);
+            }
+
+            await uow.CommitAsync();
+        }
+        catch (DbUpdateConcurrencyException)
+        {
+            throw new BusinessRuleException(
+                ErrorCodes.ConcurrencyConflict, "Podaci su upravo promijenjeni od strane drugog zahtjeva — pokušajte ponovno.");
         }
 
         AppointmentDto dto = await GetByIdInternal(organizationId, id);
@@ -541,42 +580,59 @@ public class AppointmentService : IAppointmentService
         appointment.UpdatedAt = DateTimeOffset.UtcNow;
         appointment.UpdatedBy = userId;
 
-        await _appointmentHandler.UpdateScalar(appointment);
-
-        await _auditLogHandler.Add(new AppointmentAuditLog
+        try
         {
-            Id = Guid.NewGuid(),
-            AppointmentId = id,
-            ChangeType = "Status",
-            OldValue = oldStatus.ToString(),
-            NewValue = newStatus.ToString(),
-            ChangedAt = DateTimeOffset.UtcNow,
-            ChangedBy = userId
-        });
+            await using IUnitOfWork uow = await _unitOfWorkFactory.Begin();
 
-        foreach (Guid clientId in (request.ReturnEntryForClientIds ?? new List<Guid>()).Distinct())
-        {
-            AppointmentClient clientRow = await _appointmentHandler.GetAppointmentClient(organizationId, id, clientId);
-            if (clientRow == null || !clientRow.PackageEntryDeducted || clientRow.PackageEntryReturned || clientRow.ClientPackageId == null)
-                continue;
+            await _appointmentHandler.UpdateScalar(uow, appointment);
 
-            await _clientPackageService.ReturnEntry(organizationId, clientRow.ClientPackageId.Value, appointment.ServiceId, userId);
-
-            clientRow.PackageEntryReturned = true;
-            clientRow.PackageEntryReturnedAt = DateTimeOffset.UtcNow;
-            clientRow.PackageEntryReturnedBy = userId;
-            await _appointmentHandler.UpdateAppointmentClient(clientRow);
-
-            await _auditLogHandler.Add(new AppointmentAuditLog
+            await _auditLogHandler.Add(uow, new AppointmentAuditLog
             {
                 Id = Guid.NewGuid(),
                 AppointmentId = id,
-                ChangeType = "PackageEntryReturn",
-                OldValue = "Deducted",
-                NewValue = "Returned",
+                ChangeType = "Status",
+                OldValue = oldStatus.ToString(),
+                NewValue = newStatus.ToString(),
                 ChangedAt = DateTimeOffset.UtcNow,
                 ChangedBy = userId
             });
+
+            List<Guid> returnClientIds = (request.ReturnEntryForClientIds ?? new List<Guid>()).Distinct().ToList();
+            Dictionary<Guid, AppointmentClient> clientRowsByClientId = returnClientIds.Count == 0
+                ? new Dictionary<Guid, AppointmentClient>()
+                : (await _appointmentHandler.GetAppointmentClients(uow, organizationId, id, returnClientIds)).ToDictionary(ac => ac.ClientId);
+
+            foreach (Guid clientId in returnClientIds)
+            {
+                if (!clientRowsByClientId.TryGetValue(clientId, out AppointmentClient clientRow) ||
+                    !clientRow.PackageEntryDeducted || clientRow.PackageEntryReturned || clientRow.ClientPackageId == null)
+                    continue;
+
+                await ReturnPackageEntryInTransaction(uow, organizationId, clientRow.ClientPackageId.Value, appointment.ServiceId, userId);
+
+                clientRow.PackageEntryReturned = true;
+                clientRow.PackageEntryReturnedAt = DateTimeOffset.UtcNow;
+                clientRow.PackageEntryReturnedBy = userId;
+                await _appointmentHandler.UpdateAppointmentClient(uow, clientRow);
+
+                await _auditLogHandler.Add(uow, new AppointmentAuditLog
+                {
+                    Id = Guid.NewGuid(),
+                    AppointmentId = id,
+                    ChangeType = "PackageEntryReturn",
+                    OldValue = "Deducted",
+                    NewValue = "Returned",
+                    ChangedAt = DateTimeOffset.UtcNow,
+                    ChangedBy = userId
+                });
+            }
+
+            await uow.CommitAsync();
+        }
+        catch (DbUpdateConcurrencyException)
+        {
+            throw new BusinessRuleException(
+                ErrorCodes.ConcurrencyConflict, "Podaci su upravo promijenjeni od strane drugog zahtjeva — pokušajte ponovno.");
         }
 
         return await GetByIdInternal(organizationId, id);
@@ -617,14 +673,14 @@ public class AppointmentService : IAppointmentService
 
     private async Task<List<Client>> EnsureClientsExist(Guid organizationId, List<Guid> clientIds)
     {
-        List<Client> clients = new List<Client>();
-        foreach (Guid clientId in clientIds.Distinct())
-        {
-            Client client = await _clientHandler.GetByIdLight(organizationId, clientId);
-            if (client == null)
-                throw new NotFoundAppException("Client", clientId);
+        List<Guid> distinctIds = clientIds.Distinct().ToList();
+        List<Client> clients = await _clientHandler.GetByIds(organizationId, distinctIds);
 
-            clients.Add(client);
+        if (clients.Count != distinctIds.Count)
+        {
+            HashSet<Guid> foundIds = clients.Select(c => c.Id.GetValueOrDefault()).ToHashSet();
+            Guid missingId = distinctIds.First(id => !foundIds.Contains(id));
+            throw new NotFoundAppException("Client", missingId);
         }
 
         return clients;
@@ -711,6 +767,50 @@ public class AppointmentService : IAppointmentService
             ChangedAt = DateTimeOffset.UtcNow,
             ChangedBy = userId
         });
+    }
+
+    private async Task LogAmountChangeInTransaction(IUnitOfWork uow, Guid appointmentId, decimal oldAmount, decimal newAmount, Guid userId)
+    {
+        await _auditLogHandler.Add(uow, new AppointmentAuditLog
+        {
+            Id = Guid.NewGuid(),
+            AppointmentId = appointmentId,
+            ChangeType = "Amount",
+            OldValue = oldAmount.ToString(CultureInfo.InvariantCulture),
+            NewValue = newAmount.ToString(CultureInfo.InvariantCulture),
+            ChangedAt = DateTimeOffset.UtcNow,
+            ChangedBy = userId
+        });
+    }
+
+    /// <summary>Odbija ulazak iz paketa unutar zajedničke transakcije s terminom (vidi IUnitOfWork) — bez ovoga bi
+    /// spremanje termina i odbijanje ulaska bila dva neovisna SaveChanges-a, pa bi pad usred niza mogao ostaviti
+    /// termin spremljen a ulazak neodbjen (ili obrnuto).</summary>
+    private async Task DeductPackageEntryInTransaction(IUnitOfWork uow, Guid organizationId, Guid clientPackageId, Guid serviceId, Guid userId)
+    {
+        ClientPackage clientPackage = await _clientPackageHandler.GetById(uow, organizationId, clientPackageId);
+        if (clientPackage == null)
+            throw new NotFoundAppException("ClientPackage", clientPackageId);
+
+        ClientPackageEntryMutator.Deduct(clientPackage, serviceId);
+        clientPackage.UpdatedAt = DateTimeOffset.UtcNow;
+        clientPackage.UpdatedBy = userId;
+
+        await _clientPackageHandler.Update(uow, clientPackage);
+    }
+
+    /// <summary>Vraća ulazak u paket unutar zajedničke transakcije s terminom — vidi DeductPackageEntryInTransaction.</summary>
+    private async Task ReturnPackageEntryInTransaction(IUnitOfWork uow, Guid organizationId, Guid clientPackageId, Guid serviceId, Guid userId)
+    {
+        ClientPackage clientPackage = await _clientPackageHandler.GetById(uow, organizationId, clientPackageId);
+        if (clientPackage == null)
+            throw new NotFoundAppException("ClientPackage", clientPackageId);
+
+        ClientPackageEntryMutator.Return(clientPackage, serviceId);
+        clientPackage.UpdatedAt = DateTimeOffset.UtcNow;
+        clientPackage.UpdatedBy = userId;
+
+        await _clientPackageHandler.Update(uow, clientPackage);
     }
 
     private async Task<AppointmentDto> GetByIdInternal(Guid organizationId, Guid id)

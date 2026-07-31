@@ -14,6 +14,7 @@ using BlueDragon.DuneLight.Infrastructure.Domain.Models.Clients;
 using BlueDragon.DuneLight.Infrastructure.Domain.Models.Employees;
 using BlueDragon.DuneLight.Infrastructure.Domain.Models.Groups;
 using BlueDragon.DuneLight.Infrastructure.Handlers.Interfaces;
+using BlueDragon.DuneLight.Infrastructure.UnitOfWork;
 using ServiceEntity = BlueDragon.DuneLight.Infrastructure.Domain.Models.Catalog.Service;
 
 namespace BlueDragon.DuneLight.Infrastructure.Services;
@@ -26,6 +27,7 @@ public class GroupService : IGroupService
     private readonly ILocationHandler _locationHandler;
     private readonly IEmployeeHandler _employeeHandler;
     private readonly IClientHandler _clientHandler;
+    private readonly IUnitOfWorkFactory _unitOfWorkFactory;
 
     public GroupService(
         IGroupHandler groupHandler,
@@ -33,7 +35,8 @@ public class GroupService : IGroupService
         IServiceHandler serviceHandler,
         ILocationHandler locationHandler,
         IEmployeeHandler employeeHandler,
-        IClientHandler clientHandler)
+        IClientHandler clientHandler,
+        IUnitOfWorkFactory unitOfWorkFactory)
     {
         _groupHandler = groupHandler;
         _auditLogHandler = auditLogHandler;
@@ -41,6 +44,7 @@ public class GroupService : IGroupService
         _locationHandler = locationHandler;
         _employeeHandler = employeeHandler;
         _clientHandler = clientHandler;
+        _unitOfWorkFactory = unitOfWorkFactory;
     }
 
     public async Task<GroupDto> Create(Guid organizationId, Guid userId, GroupCreateRequest request)
@@ -99,33 +103,10 @@ public class GroupService : IGroupService
 
         DateTimeOffset now = DateTimeOffset.UtcNow;
 
-        if (existing.DefaultTrainerId != request.DefaultTrainerId)
-        {
-            await _auditLogHandler.Add(new GroupAuditLog
-            {
-                Id = Guid.NewGuid(),
-                GroupId = id,
-                ChangeType = "DefaultTrainer",
-                OldValue = existing.DefaultTrainerId?.ToString(),
-                NewValue = request.DefaultTrainerId?.ToString(),
-                ChangedAt = now,
-                ChangedBy = userId
-            });
-        }
-
-        if (existing.Capacity != request.Capacity)
-        {
-            await _auditLogHandler.Add(new GroupAuditLog
-            {
-                Id = Guid.NewGuid(),
-                GroupId = id,
-                ChangeType = "Capacity",
-                OldValue = existing.Capacity.ToString(),
-                NewValue = request.Capacity.ToString(),
-                ChangedAt = now,
-                ChangedBy = userId
-            });
-        }
+        bool trainerChanged = existing.DefaultTrainerId != request.DefaultTrainerId;
+        bool capacityChanged = existing.Capacity != request.Capacity;
+        string oldTrainerId = existing.DefaultTrainerId?.ToString();
+        string oldCapacity = existing.Capacity.ToString();
 
         existing.Name = request.Name;
         existing.ServiceId = request.ServiceId;
@@ -136,7 +117,41 @@ public class GroupService : IGroupService
         existing.UpdatedAt = now;
         existing.UpdatedBy = userId;
 
-        await _groupHandler.UpdateScalar(existing);
+        await using (IUnitOfWork uow = await _unitOfWorkFactory.Begin())
+        {
+            await _groupHandler.UpdateScalar(uow, existing);
+
+            if (trainerChanged)
+            {
+                await _auditLogHandler.Add(uow, new GroupAuditLog
+                {
+                    Id = Guid.NewGuid(),
+                    GroupId = id,
+                    ChangeType = "DefaultTrainer",
+                    OldValue = oldTrainerId,
+                    NewValue = request.DefaultTrainerId?.ToString(),
+                    ChangedAt = now,
+                    ChangedBy = userId
+                });
+            }
+
+            if (capacityChanged)
+            {
+                await _auditLogHandler.Add(uow, new GroupAuditLog
+                {
+                    Id = Guid.NewGuid(),
+                    GroupId = id,
+                    ChangeType = "Capacity",
+                    OldValue = oldCapacity,
+                    NewValue = request.Capacity.ToString(),
+                    ChangedAt = now,
+                    ChangedBy = userId
+                });
+            }
+
+            await uow.CommitAsync();
+        }
+
         return await GetDtoById(organizationId, id);
     }
 
@@ -150,21 +165,28 @@ public class GroupService : IGroupService
             return await GetDtoById(organizationId, id);
 
         DateTimeOffset now = DateTimeOffset.UtcNow;
+        bool wasActive = existing.IsActive;
         existing.IsActive = isActive;
         existing.UpdatedAt = now;
         existing.UpdatedBy = userId;
-        await _groupHandler.UpdateScalar(existing);
 
-        await _auditLogHandler.Add(new GroupAuditLog
+        await using (IUnitOfWork uow = await _unitOfWorkFactory.Begin())
         {
-            Id = Guid.NewGuid(),
-            GroupId = id,
-            ChangeType = "Active",
-            OldValue = existing.IsActive ? "false" : "true",
-            NewValue = isActive ? "true" : "false",
-            ChangedAt = now,
-            ChangedBy = userId
-        });
+            await _groupHandler.UpdateScalar(uow, existing);
+
+            await _auditLogHandler.Add(uow, new GroupAuditLog
+            {
+                Id = Guid.NewGuid(),
+                GroupId = id,
+                ChangeType = "Active",
+                OldValue = wasActive ? "true" : "false",
+                NewValue = isActive ? "true" : "false",
+                ChangedAt = now,
+                ChangedBy = userId
+            });
+
+            await uow.CommitAsync();
+        }
 
         return await GetDtoById(organizationId, id);
     }
@@ -227,7 +249,7 @@ public class GroupService : IGroupService
     {
         await EnsureGroupExists(organizationId, groupId);
 
-        GroupSlot slot = await _groupHandler.GetSlotById(groupId, slotId);
+        GroupSlot slot = await _groupHandler.GetSlotById(organizationId, groupId, slotId);
         if (slot == null)
             throw new NotFoundAppException("GroupSlot", slotId);
 
@@ -245,7 +267,7 @@ public class GroupService : IGroupService
     {
         await EnsureGroupExists(organizationId, groupId);
 
-        GroupSlot slot = await _groupHandler.GetSlotById(groupId, slotId);
+        GroupSlot slot = await _groupHandler.GetSlotById(organizationId, groupId, slotId);
         if (slot == null)
             throw new NotFoundAppException("GroupSlot", slotId);
 
@@ -272,31 +294,37 @@ public class GroupService : IGroupService
         if (client == null)
             throw new NotFoundAppException("Client", request.ClientId);
 
-        GroupMember existingActive = await _groupHandler.GetActiveMember(groupId, request.ClientId);
+        GroupMember existingActive = await _groupHandler.GetActiveMember(organizationId, groupId, request.ClientId);
         if (existingActive != null)
             throw new BusinessRuleException(ErrorCodes.AlreadyMember, "Klijent je već aktivan član ove grupe.");
 
         DateTimeOffset now = DateTimeOffset.UtcNow;
-        await _groupHandler.AddMember(new GroupMember
-        {
-            Id = Guid.NewGuid(),
-            GroupId = groupId,
-            ClientId = request.ClientId,
-            JoinedAt = now,
-            IsActive = true,
-            CreatedAt = now
-        });
 
-        await _auditLogHandler.Add(new GroupAuditLog
+        await using (IUnitOfWork uow = await _unitOfWorkFactory.Begin())
         {
-            Id = Guid.NewGuid(),
-            GroupId = groupId,
-            ChangeType = "MemberAdded",
-            OldValue = null,
-            NewValue = request.ClientId.ToString(),
-            ChangedAt = now,
-            ChangedBy = userId
-        });
+            await _groupHandler.AddMember(uow, new GroupMember
+            {
+                Id = Guid.NewGuid(),
+                GroupId = groupId,
+                ClientId = request.ClientId,
+                JoinedAt = now,
+                IsActive = true,
+                CreatedAt = now
+            });
+
+            await _auditLogHandler.Add(uow, new GroupAuditLog
+            {
+                Id = Guid.NewGuid(),
+                GroupId = groupId,
+                ChangeType = "MemberAdded",
+                OldValue = null,
+                NewValue = request.ClientId.ToString(),
+                ChangedAt = now,
+                ChangedBy = userId
+            });
+
+            await uow.CommitAsync();
+        }
 
         GroupDto dto = await GetDtoById(organizationId, groupId);
 
@@ -311,7 +339,7 @@ public class GroupService : IGroupService
     {
         await EnsureGroupExists(organizationId, groupId);
 
-        GroupMember member = await _groupHandler.GetMemberById(groupId, memberId);
+        GroupMember member = await _groupHandler.GetMemberById(organizationId, groupId, memberId);
         if (member == null)
             throw new NotFoundAppException("GroupMember", memberId);
 
@@ -319,18 +347,24 @@ public class GroupService : IGroupService
             return await GetDtoById(organizationId, groupId);
 
         member.IsActive = false;
-        await _groupHandler.UpdateMember(member);
 
-        await _auditLogHandler.Add(new GroupAuditLog
+        await using (IUnitOfWork uow = await _unitOfWorkFactory.Begin())
         {
-            Id = Guid.NewGuid(),
-            GroupId = groupId,
-            ChangeType = "MemberRemoved",
-            OldValue = member.ClientId.ToString(),
-            NewValue = null,
-            ChangedAt = DateTimeOffset.UtcNow,
-            ChangedBy = userId
-        });
+            await _groupHandler.UpdateMember(uow, member);
+
+            await _auditLogHandler.Add(uow, new GroupAuditLog
+            {
+                Id = Guid.NewGuid(),
+                GroupId = groupId,
+                ChangeType = "MemberRemoved",
+                OldValue = member.ClientId.ToString(),
+                NewValue = null,
+                ChangedAt = DateTimeOffset.UtcNow,
+                ChangedBy = userId
+            });
+
+            await uow.CommitAsync();
+        }
 
         return await GetDtoById(organizationId, groupId);
     }

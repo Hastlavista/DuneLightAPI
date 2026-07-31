@@ -10,6 +10,9 @@ public interface ILocationHandler
 {
     Task<(List<Location> Items, int TotalCount)> GetPaged(Guid organizationId, PagedRequest request);
     Task<Location> GetById(Guid organizationId, Guid id);
+
+    /// <summary>Batch dohvat po ID-evima u jednom upitu — izbjegava N+1 kod validacije liste lokacija.</summary>
+    Task<List<Location>> GetByIds(Guid organizationId, List<Guid> ids);
     Task Add(Location location);
     Task Update(Location location);
     Task Delete(Location location);
