@@ -14,6 +14,7 @@ using BlueDragon.DuneLight.Core.Interfaces.Catalog;
 using BlueDragon.DuneLight.Core.Interfaces.Clients;
 using BlueDragon.DuneLight.Core.Interfaces.Employees;
 using BlueDragon.DuneLight.Core.Interfaces.Groups;
+using BlueDragon.DuneLight.Core.Interfaces.Permissions;
 using BlueDragon.DuneLight.Core.Interfaces.Roster;
 using BlueDragon.DuneLight.Core.Shared;
 using BlueDragon.DuneLight.Infrastructure.Domain.Settings;
@@ -61,6 +62,7 @@ public class Startup
             .AddJsonOptions(ConfigureJsonOptions)
             .ConfigureApiBehaviorOptions(ConfigureApiBehavior);
         services.AddOptions();
+        services.AddMemoryCache();
 
         #endregion
 
@@ -113,7 +115,7 @@ public class Startup
         services.AddScoped<IJwtService, JwtService>();
         services.AddScoped<IAuthService, AuthService>();
 
-        services.AddScoped<ILocationService, LocationService>();
+        services.AddScoped<ICompanyService, CompanyService>();
         services.AddScoped<IServiceCategoryService, ServiceCategoryService>();
         services.AddScoped<IServiceCatalogService, ServiceCatalogService>();
         services.AddScoped<IPricingService, PricingService>();
@@ -136,6 +138,13 @@ public class Startup
 
         services.AddScoped<IRosterTypeService, RosterTypeService>();
         services.AddScoped<IRosterEntryService, RosterEntryService>();
+        services.AddScoped<IWorkingHoursTemplateService, WorkingHoursTemplateService>();
+        services.AddScoped<IEmployeeLeaveSettingsService, EmployeeLeaveSettingsService>();
+        services.AddScoped<ILeaveFundService, LeaveFundService>();
+
+        services.AddScoped<IGrantResolver, GrantResolver>();
+        services.AddScoped<IGrantGroupService, GrantGroupService>();
+        services.AddScoped<IRoleService, RoleService>();
 
         #endregion
 
@@ -143,7 +152,7 @@ public class Startup
 
         services.AddSingleton<IAuthHandler, AuthHandler>();
 
-        services.AddSingleton<ILocationHandler, LocationHandler>();
+        services.AddSingleton<ICompanyHandler, CompanyHandler>();
         services.AddSingleton<IServiceCategoryHandler, ServiceCategoryHandler>();
         services.AddSingleton<IServiceHandler, ServiceHandler>();
         services.AddSingleton<IPriceListItemHandler, PriceListItemHandler>();
@@ -167,6 +176,12 @@ public class Startup
         services.AddSingleton<IRosterTypeHandler, RosterTypeHandler>();
         services.AddSingleton<IRosterEntryHandler, RosterEntryHandler>();
         services.AddSingleton<IRosterAuditLogHandler, RosterAuditLogHandler>();
+        services.AddSingleton<IWorkingHoursTemplateHandler, WorkingHoursTemplateHandler>();
+        services.AddSingleton<IEmployeeLeaveSettingsHandler, EmployeeLeaveSettingsHandler>();
+        services.AddSingleton<ILeaveFundHandler, LeaveFundHandler>();
+
+        services.AddSingleton<IGrantGroupHandler, GrantGroupHandler>();
+        services.AddSingleton<IRoleHandler, RoleHandler>();
 
         #endregion
 

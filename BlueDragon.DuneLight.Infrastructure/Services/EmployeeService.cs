@@ -20,35 +20,53 @@ public class EmployeeService : IEmployeeService
 {
     private readonly IEmployeeHandler _employeeHandler;
     private readonly IEngagementTypeHandler _engagementTypeHandler;
-    private readonly ILocationHandler _locationHandler;
+    private readonly ICompanyHandler _companyHandler;
     private readonly IServiceHandler _serviceHandler;
     private readonly IAuthHandler _authHandler;
     private readonly IEmployeeAuditLogHandler _auditLogHandler;
     private readonly IFutureAppointmentsProvider _futureAppointmentsProvider;
+    private readonly IGrantGroupHandler _grantGroupHandler;
+    private readonly IRoleHandler _roleHandler;
 
     public EmployeeService(
         IEmployeeHandler employeeHandler,
         IEngagementTypeHandler engagementTypeHandler,
-        ILocationHandler locationHandler,
+        ICompanyHandler companyHandler,
         IServiceHandler serviceHandler,
         IAuthHandler authHandler,
         IEmployeeAuditLogHandler auditLogHandler,
-        IFutureAppointmentsProvider futureAppointmentsProvider)
+        IFutureAppointmentsProvider futureAppointmentsProvider,
+        IGrantGroupHandler grantGroupHandler,
+        IRoleHandler roleHandler)
     {
         _employeeHandler = employeeHandler;
         _engagementTypeHandler = engagementTypeHandler;
-        _locationHandler = locationHandler;
+        _companyHandler = companyHandler;
         _serviceHandler = serviceHandler;
         _authHandler = authHandler;
         _auditLogHandler = auditLogHandler;
         _futureAppointmentsProvider = futureAppointmentsProvider;
+        _grantGroupHandler = grantGroupHandler;
+        _roleHandler = roleHandler;
     }
 
     public async Task<PagedResult<EmployeeDto>> GetPaged(
-        Guid organizationId, PagedRequest request, Guid? locationId, Guid? engagementTypeId, UserRole? role)
+        Guid organizationId, PagedRequest request, Guid? companyId, Guid? engagementTypeId, UserRole? role)
     {
-        (List<Employee> items, int totalCount) = await _employeeHandler.GetPaged(organizationId, request, locationId, engagementTypeId, role);
-        return PagedResult<EmployeeDto>.Create(items.Select(ToDto).ToList(), totalCount, request.Page, request.PageSize);
+        (List<Employee> items, int totalCount) = await _employeeHandler.GetPaged(organizationId, request, companyId, engagementTypeId, role);
+
+        List<Guid> userIds = items.Select(e => e.UserId).Distinct().ToList();
+        Dictionary<Guid, List<string>> grantGroupNamesByUserId = await _grantGroupHandler.GetGrantGroupNamesByUserIds(organizationId, userIds);
+        Dictionary<Guid, List<string>> roleNamesByUserId = await _roleHandler.GetRoleNamesByUserIds(organizationId, userIds);
+
+        List<EmployeeDto> dtos = items
+            .Select(e => ToDto(
+                e,
+                grantGroupNamesByUserId.GetValueOrDefault(e.UserId, new List<string>()),
+                roleNamesByUserId.GetValueOrDefault(e.UserId, new List<string>())))
+            .ToList();
+
+        return PagedResult<EmployeeDto>.Create(dtos, totalCount, request.Page, request.PageSize);
     }
 
     public async Task<EmployeeDto> GetById(Guid organizationId, Guid id)
@@ -57,14 +75,14 @@ public class EmployeeService : IEmployeeService
         if (employee == null)
             throw new NotFoundAppException("Employee", id);
 
-        return ToDto(employee);
+        return await ToDtoSingle(organizationId, employee);
     }
 
     public async Task<EmployeeDto> Create(Guid organizationId, Guid userId, EmployeeCreateRequest request)
     {
-        ValidateLocations(request.LocationIds, request.PrimaryLocationId);
+        ValidateCompanies(request.CompanyIds, request.PrimaryCompanyId);
         ValidateEmploymentDates(request.EmploymentStartDate, request.EmploymentEndDate);
-        await EnsureLocationsUsable(organizationId, request.LocationIds, grandfatheredLocationIds: null);
+        await EnsureCompaniesUsable(organizationId, request.CompanyIds, grandfatheredCompanyIds: null);
         await EnsureEngagementTypeIsUsable(organizationId, request.EngagementTypeId);
         await EnsureServicesUsable(organizationId, request.ServiceIds, grandfatheredServiceIds: null);
         await EnsureUserIsLinkable(organizationId, request.UserId, excludeEmployeeId: null);
@@ -93,7 +111,7 @@ public class EmployeeService : IEmployeeService
             CreatedBy = userId
         };
 
-        employee.Locations = BuildLocations(request.LocationIds, request.PrimaryLocationId);
+        employee.Companies = BuildCompanies(request.CompanyIds, request.PrimaryCompanyId);
         employee.Services = BuildServices(request.ServiceIds);
 
         await _employeeHandler.Add(employee);
@@ -102,15 +120,18 @@ public class EmployeeService : IEmployeeService
 
     public async Task<EmployeeWithLoginCreateResponse> CreateWithLogin(Guid organizationId, Guid currentUserId, EmployeeWithLoginCreateRequest request)
     {
-        ValidateLocations(request.LocationIds, request.PrimaryLocationId);
+        ValidateCompanies(request.CompanyIds, request.PrimaryCompanyId);
         ValidateEmploymentDates(request.EmploymentStartDate, request.EmploymentEndDate);
-        await EnsureLocationsUsable(organizationId, request.LocationIds, grandfatheredLocationIds: null);
+        await EnsureCompaniesUsable(organizationId, request.CompanyIds, grandfatheredCompanyIds: null);
         await EnsureEngagementTypeIsUsable(organizationId, request.EngagementTypeId);
         await EnsureServicesUsable(organizationId, request.ServiceIds, grandfatheredServiceIds: null);
 
         bool emailExists = await _authHandler.EmailExists(organizationId, request.Email);
         if (emailExists)
             throw new BusinessRuleException(ErrorCodes.EmailAlreadyInUse, "Korisnik s ovom email adresom već postoji u organizaciji.");
+
+        await EnsureGrantGroupsUsable(organizationId, request.GrantGroupIds);
+        await EnsureRolesUsable(organizationId, request.RoleIds);
 
         User user = new User
         {
@@ -119,7 +140,11 @@ public class EmployeeService : IEmployeeService
             Email = request.Email,
             PasswordHash = PasswordHasher.Hash(request.Password),
             ApiKey = Guid.NewGuid().ToString("N"),
-            Role = request.Role,
+            // Legacy UserRole stupac se uklanja u sljedećem koraku migracije s grant sustava — do tada je
+            // ovo samo kozmetička/tranzicijska vrijednost, autorizacija ide isključivo kroz GrantGroupIds.
+            Role = UserRole.Member,
+            MustChangeCredentialsOnFirstLogin = request.MustChangeCredentialsOnFirstLogin,
+            PinHash = string.IsNullOrEmpty(request.Pin) ? null : PasswordHasher.Hash(request.Pin),
             IsActive = true,
             CreatedAt = DateTimeOffset.UtcNow
         };
@@ -146,19 +171,48 @@ public class EmployeeService : IEmployeeService
             IsActive = true,
             CreatedAt = DateTimeOffset.UtcNow,
             CreatedBy = currentUserId,
-            Locations = BuildLocations(request.LocationIds, request.PrimaryLocationId),
+            Companies = BuildCompanies(request.CompanyIds, request.PrimaryCompanyId),
             Services = BuildServices(request.ServiceIds)
         };
 
         await _employeeHandler.AddWithLogin(user, employee);
+
+        await _grantGroupHandler.SetUserGrantGroups(organizationId, user.Id.GetValueOrDefault(), request.GrantGroupIds);
+        await _roleHandler.SetUserRoles(organizationId, user.Id.GetValueOrDefault(), request.RoleIds ?? new List<Guid>());
 
         return new EmployeeWithLoginCreateResponse
         {
             EmployeeId = employee.Id.GetValueOrDefault(),
             UserId = user.Id.GetValueOrDefault(),
             Email = user.Email,
-            Role = UserRoleClaims.ToClaimValue(user.Role)
+            GrantGroupIds = request.GrantGroupIds
         };
+    }
+
+    private async Task EnsureGrantGroupsUsable(Guid organizationId, List<Guid> grantGroupIds)
+    {
+        List<Guid> distinctIds = grantGroupIds.Distinct().ToList();
+        HashSet<Guid> validIds = (await _grantGroupHandler.GetAll(organizationId))
+            .Select(g => g.Id.GetValueOrDefault())
+            .ToHashSet();
+
+        foreach (Guid grantGroupId in distinctIds)
+            if (!validIds.Contains(grantGroupId))
+                throw new NotFoundAppException("GrantGroup", grantGroupId);
+    }
+
+    private async Task EnsureRolesUsable(Guid organizationId, List<Guid> roleIds)
+    {
+        if (roleIds == null || roleIds.Count == 0)
+            return;
+
+        HashSet<Guid> validIds = (await _roleHandler.GetAll(organizationId))
+            .Select(r => r.Id.GetValueOrDefault())
+            .ToHashSet();
+
+        foreach (Guid roleId in roleIds.Distinct())
+            if (!validIds.Contains(roleId))
+                throw new NotFoundAppException("Role", roleId);
     }
 
     public async Task<EmployeeDto> Update(Guid organizationId, Guid userId, Guid id, EmployeeUpdateRequest request)
@@ -167,13 +221,13 @@ public class EmployeeService : IEmployeeService
         if (existing == null)
             throw new NotFoundAppException("Employee", id);
 
-        ValidateLocations(request.LocationIds, request.PrimaryLocationId);
+        ValidateCompanies(request.CompanyIds, request.PrimaryCompanyId);
         ValidateEmploymentDates(request.EmploymentStartDate, request.EmploymentEndDate);
 
-        HashSet<Guid> grandfatheredLocationIds = existing.Locations.Select(el => el.LocationId).ToHashSet();
+        HashSet<Guid> grandfatheredCompanyIds = existing.Companies.Select(el => el.CompanyId).ToHashSet();
         HashSet<Guid> grandfatheredServiceIds = existing.Services.Select(es => es.ServiceId).ToHashSet();
 
-        await EnsureLocationsUsable(organizationId, request.LocationIds, grandfatheredLocationIds);
+        await EnsureCompaniesUsable(organizationId, request.CompanyIds, grandfatheredCompanyIds);
         await EnsureEngagementTypeIsUsable(organizationId, request.EngagementTypeId);
         await EnsureServicesUsable(organizationId, request.ServiceIds, grandfatheredServiceIds);
 
@@ -194,10 +248,10 @@ public class EmployeeService : IEmployeeService
         existing.UpdatedAt = DateTimeOffset.UtcNow;
         existing.UpdatedBy = userId;
 
-        List<EmployeeLocation> newLocations = BuildLocations(request.LocationIds, request.PrimaryLocationId);
+        List<EmployeeCompany> newCompanies = BuildCompanies(request.CompanyIds, request.PrimaryCompanyId);
         List<EmployeeServiceAssignment> newServices = BuildServices(request.ServiceIds);
 
-        await _employeeHandler.Update(existing, newLocations, newServices);
+        await _employeeHandler.Update(existing, newCompanies, newServices);
         return await GetById(organizationId, id);
     }
 
@@ -208,7 +262,7 @@ public class EmployeeService : IEmployeeService
             throw new NotFoundAppException("Employee", id);
 
         if (isActive == employee.IsActive)
-            return ToDto(employee);
+            return await ToDtoSingle(organizationId, employee);
 
         if (!isActive)
         {
@@ -268,7 +322,7 @@ public class EmployeeService : IEmployeeService
 
         UserRole oldRole = employee.User.Role;
         if (oldRole == newRole)
-            return ToDto(employee);
+            return await ToDtoSingle(organizationId, employee);
 
         if (oldRole == UserRole.Admin && newRole != UserRole.Admin)
         {
@@ -306,29 +360,33 @@ public class EmployeeService : IEmployeeService
             throw new NotFoundAppException("Employee", userId);
 
         Employee full = await _employeeHandler.GetById(organizationId, employee.Id.GetValueOrDefault());
+        (bool isOwner, HashSet<string> grants) = await _grantGroupHandler.ResolveEffective(organizationId, userId);
+
         return new EmployeeMeDto
         {
             EmployeeId = full.Id.GetValueOrDefault(),
             FirstName = full.FirstName,
             LastName = full.LastName,
             Role = full.User != null ? UserRoleClaims.ToClaimValue(full.User.Role) : null,
+            IsOwner = isOwner,
+            Grants = grants.ToList(),
             ColorHex = full.ColorHex,
-            Locations = full.Locations.Select(el => new EmployeeLocationDto
+            Companies = full.Companies.Select(el => new EmployeeCompanyDto
             {
-                LocationId = el.LocationId,
-                LocationName = el.Location?.Name,
+                CompanyId = el.CompanyId,
+                CompanyName = el.Company?.Name,
                 IsPrimary = el.IsPrimary
             }).ToList()
         };
     }
 
-    private static void ValidateLocations(List<Guid> locationIds, Guid primaryLocationId)
+    private static void ValidateCompanies(List<Guid> companyIds, Guid primaryCompanyId)
     {
-        if (locationIds == null || locationIds.Count == 0)
-            throw new ValidationAppException("Zaposlenik mora imati barem jednu lokaciju.");
+        if (companyIds == null || companyIds.Count == 0)
+            throw new ValidationAppException("Zaposlenik mora imati barem jednu tvrtku.");
 
-        if (!locationIds.Contains(primaryLocationId))
-            throw new ValidationAppException("Matična lokacija mora biti među dodijeljenim lokacijama.");
+        if (!companyIds.Contains(primaryCompanyId))
+            throw new ValidationAppException("Matična tvrtka mora biti među dodijeljenim tvrtkama.");
     }
 
     private static void ValidateEmploymentDates(DateTimeOffset start, DateTimeOffset? end)
@@ -337,20 +395,20 @@ public class EmployeeService : IEmployeeService
             throw new ValidationAppException("Datum prestanka ne smije biti prije datuma početka.");
     }
 
-    private async Task EnsureLocationsUsable(Guid organizationId, List<Guid> locationIds, HashSet<Guid> grandfatheredLocationIds)
+    private async Task EnsureCompaniesUsable(Guid organizationId, List<Guid> companyIds, HashSet<Guid> grandfatheredCompanyIds)
     {
-        List<Guid> distinctIds = locationIds.Distinct().ToList();
-        Dictionary<Guid, Location> byId = (await _locationHandler.GetByIds(organizationId, distinctIds))
+        List<Guid> distinctIds = companyIds.Distinct().ToList();
+        Dictionary<Guid, Company> byId = (await _companyHandler.GetByIds(organizationId, distinctIds))
             .ToDictionary(l => l.Id.GetValueOrDefault());
 
-        foreach (Guid locationId in distinctIds)
+        foreach (Guid companyId in distinctIds)
         {
-            if (!byId.TryGetValue(locationId, out Location location))
-                throw new NotFoundAppException("Location", locationId);
+            if (!byId.TryGetValue(companyId, out Company company))
+                throw new NotFoundAppException("Company", companyId);
 
-            bool isGrandfathered = grandfatheredLocationIds != null && grandfatheredLocationIds.Contains(locationId);
-            if (!location.IsActive && !isGrandfathered)
-                throw new ValidationAppException($"Odabrana lokacija '{location.Name}' nije aktivna.");
+            bool isGrandfathered = grandfatheredCompanyIds != null && grandfatheredCompanyIds.Contains(companyId);
+            if (!company.IsActive && !isGrandfathered)
+                throw new ValidationAppException($"Odabrana tvrtka '{company.Name}' nije aktivna.");
         }
     }
 
@@ -395,13 +453,13 @@ public class EmployeeService : IEmployeeService
             throw new BusinessRuleException(ErrorCodes.UserAlreadyLinked, "Odabrani korisnički račun je već povezan s drugim zaposlenikom.");
     }
 
-    private static List<EmployeeLocation> BuildLocations(List<Guid> locationIds, Guid primaryLocationId)
+    private static List<EmployeeCompany> BuildCompanies(List<Guid> companyIds, Guid primaryCompanyId)
     {
-        return locationIds.Distinct().Select(locationId => new EmployeeLocation
+        return companyIds.Distinct().Select(companyId => new EmployeeCompany
         {
             Id = Guid.NewGuid(),
-            LocationId = locationId,
-            IsPrimary = locationId == primaryLocationId
+            CompanyId = companyId,
+            IsPrimary = companyId == primaryCompanyId
         }).ToList();
     }
 
@@ -417,7 +475,7 @@ public class EmployeeService : IEmployeeService
         }).ToList();
     }
 
-    private static EmployeeDto ToDto(Employee employee)
+    private static EmployeeDto ToDto(Employee employee, List<string> grantGroupNames, List<string> roleNames)
     {
         return new EmployeeDto
         {
@@ -440,10 +498,12 @@ public class EmployeeService : IEmployeeService
             IsActive = employee.IsActive,
             UserId = employee.UserId,
             Role = employee.User != null ? UserRoleClaims.ToClaimValue(employee.User.Role) : null,
-            Locations = employee.Locations.Select(el => new EmployeeLocationDto
+            GrantGroupNames = grantGroupNames,
+            RoleNames = roleNames,
+            Companies = employee.Companies.Select(el => new EmployeeCompanyDto
             {
-                LocationId = el.LocationId,
-                LocationName = el.Location?.Name,
+                CompanyId = el.CompanyId,
+                CompanyName = el.Company?.Name,
                 IsPrimary = el.IsPrimary
             }).ToList(),
             Services = employee.Services.Select(es => new EmployeeServiceDto
@@ -456,5 +516,20 @@ public class EmployeeService : IEmployeeService
             UpdatedAt = employee.UpdatedAt,
             UpdatedBy = employee.UpdatedBy
         };
+    }
+
+    /// <summary>Single-employee path (GetById and callers that short-circuit before it) - reuses the
+    /// same bulk-friendly handler methods GetPaged uses, just with a one-element userId list, so there's
+    /// only ever the one query shape to reason about.</summary>
+    private async Task<EmployeeDto> ToDtoSingle(Guid organizationId, Employee employee)
+    {
+        List<Guid> userIds = new List<Guid> { employee.UserId };
+        Dictionary<Guid, List<string>> grantGroupNamesByUserId = await _grantGroupHandler.GetGrantGroupNamesByUserIds(organizationId, userIds);
+        Dictionary<Guid, List<string>> roleNamesByUserId = await _roleHandler.GetRoleNamesByUserIds(organizationId, userIds);
+
+        return ToDto(
+            employee,
+            grantGroupNamesByUserId.GetValueOrDefault(employee.UserId, new List<string>()),
+            roleNamesByUserId.GetValueOrDefault(employee.UserId, new List<string>()));
     }
 }

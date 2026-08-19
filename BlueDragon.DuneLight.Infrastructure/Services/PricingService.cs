@@ -19,27 +19,27 @@ public class PricingService : IPricingService
     private readonly IPriceListItemHandler _priceListItemHandler;
     private readonly IServiceHandler _serviceHandler;
     private readonly IPackageHandler _packageHandler;
-    private readonly ILocationHandler _locationHandler;
+    private readonly ICompanyHandler _companyHandler;
     private readonly IPriceResolutionService _priceResolutionService;
 
     public PricingService(
         IPriceListItemHandler priceListItemHandler,
         IServiceHandler serviceHandler,
         IPackageHandler packageHandler,
-        ILocationHandler locationHandler,
+        ICompanyHandler companyHandler,
         IPriceResolutionService priceResolutionService)
     {
         _priceListItemHandler = priceListItemHandler;
         _serviceHandler = serviceHandler;
         _packageHandler = packageHandler;
-        _locationHandler = locationHandler;
+        _companyHandler = companyHandler;
         _priceResolutionService = priceResolutionService;
     }
 
     public async Task<PagedResult<PriceListItemDto>> GetPaged(
-        Guid organizationId, PagedRequest request, Guid? locationId, PricingSubjectType? subjectType)
+        Guid organizationId, PagedRequest request, Guid? companyId, PricingSubjectType? subjectType)
     {
-        (List<PriceListItem> items, int totalCount) = await _priceListItemHandler.GetPaged(organizationId, request, locationId, subjectType);
+        (List<PriceListItem> items, int totalCount) = await _priceListItemHandler.GetPaged(organizationId, request, companyId, subjectType);
         return PagedResult<PriceListItemDto>.Create(items.Select(ToDto).ToList(), totalCount, request.Page, request.PageSize);
     }
 
@@ -56,10 +56,10 @@ public class PricingService : IPricingService
     {
         Guid subjectId = ValidateSubject(request.SubjectType, request.ServiceId, request.PackageId);
         await EnsureSubjectExists(organizationId, request.SubjectType, subjectId);
-        await EnsureLocationExists(organizationId, request.LocationId);
+        await EnsureCompanyExists(organizationId, request.CompanyId);
         ValidateDateRange(request.ValidFrom, request.ValidTo);
 
-        await EnsureNoOverlap(organizationId, request.SubjectType, subjectId, request.LocationId, request.ValidFrom, request.ValidTo, excludeId: null);
+        await EnsureNoOverlap(organizationId, request.SubjectType, subjectId, request.CompanyId, request.ValidFrom, request.ValidTo, excludeId: null);
 
         PriceListItem item = new PriceListItem
         {
@@ -67,7 +67,7 @@ public class PricingService : IPricingService
             OrganizationId = organizationId,
             ServiceId = request.SubjectType == PricingSubjectType.Service ? subjectId : null,
             PackageId = request.SubjectType == PricingSubjectType.Package ? subjectId : null,
-            LocationId = request.LocationId,
+            CompanyId = request.CompanyId,
             Price = request.Price,
             ValidFrom = request.ValidFrom,
             ValidTo = request.ValidTo,
@@ -92,7 +92,7 @@ public class PricingService : IPricingService
         Guid subjectId = item.ServiceId ?? item.PackageId!.Value;
 
         if (item.IsActive)
-            await EnsureNoOverlap(organizationId, subjectType, subjectId, item.LocationId, request.ValidFrom, request.ValidTo, excludeId: id);
+            await EnsureNoOverlap(organizationId, subjectType, subjectId, item.CompanyId, request.ValidFrom, request.ValidTo, excludeId: id);
 
         if (item.Price != request.Price)
         {
@@ -127,7 +127,7 @@ public class PricingService : IPricingService
         {
             PricingSubjectType subjectType = item.ServiceId != null ? PricingSubjectType.Service : PricingSubjectType.Package;
             Guid subjectId = item.ServiceId ?? item.PackageId!.Value;
-            await EnsureNoOverlap(organizationId, subjectType, subjectId, item.LocationId, item.ValidFrom, item.ValidTo, excludeId: id);
+            await EnsureNoOverlap(organizationId, subjectType, subjectId, item.CompanyId, item.ValidFrom, item.ValidTo, excludeId: id);
         }
 
         item.IsActive = isActive;
@@ -151,11 +151,11 @@ public class PricingService : IPricingService
         await _priceListItemHandler.Delete(item);
     }
 
-    public async Task<List<EffectivePriceDto>> GetEffectivePriceList(Guid organizationId, Guid? locationId, DateTimeOffset date)
+    public async Task<List<EffectivePriceDto>> GetEffectivePriceList(Guid organizationId, Guid? companyId, DateTimeOffset date)
     {
         List<ServiceEntity> services = await _serviceHandler.GetAllActive(organizationId);
         List<Package> packages = await _packageHandler.GetAllActive(organizationId);
-        List<PriceListItem> priceItems = await _priceListItemHandler.GetActiveForLocation(organizationId, locationId, date);
+        List<PriceListItem> priceItems = await _priceListItemHandler.GetActiveForCompany(organizationId, companyId, date);
 
         List<EffectivePriceDto> result = new List<EffectivePriceDto>();
 
@@ -165,7 +165,7 @@ public class PricingService : IPricingService
                 .Where(p => p.ServiceId == service.Id)
                 .Select(ToCandidate)
                 .ToList();
-            ResolvedPrice resolved = _priceResolutionService.Resolve(candidates, service.DefaultPrice, locationId, date);
+            ResolvedPrice resolved = _priceResolutionService.Resolve(candidates, service.DefaultPrice, companyId, date);
 
             result.Add(new EffectivePriceDto
             {
@@ -183,7 +183,7 @@ public class PricingService : IPricingService
                 .Where(p => p.PackageId == package.Id)
                 .Select(ToCandidate)
                 .ToList();
-            ResolvedPrice resolved = _priceResolutionService.Resolve(candidates, package.DefaultPrice, locationId, date);
+            ResolvedPrice resolved = _priceResolutionService.Resolve(candidates, package.DefaultPrice, companyId, date);
 
             result.Add(new EffectivePriceDto
             {
@@ -204,16 +204,16 @@ public class PricingService : IPricingService
         decimal defaultPrice = await GetDefaultPrice(organizationId, request.SubjectType, request.SubjectId);
 
         List<PriceListItem> candidates = await _priceListItemHandler.GetActiveCandidates(
-            organizationId, request.SubjectType, request.SubjectId, request.LocationId);
+            organizationId, request.SubjectType, request.SubjectId, request.CompanyId);
 
         ResolvedPrice resolved = _priceResolutionService.Resolve(
-            candidates.Select(ToCandidate), defaultPrice, request.LocationId, date);
+            candidates.Select(ToCandidate), defaultPrice, request.CompanyId, date);
 
         return new ResolvePriceResponse
         {
             SubjectType = request.SubjectType,
             SubjectId = request.SubjectId,
-            LocationId = request.LocationId,
+            CompanyId = request.CompanyId,
             Date = date,
             Price = resolved.Price,
             Source = resolved.Source
@@ -243,26 +243,26 @@ public class PricingService : IPricingService
         await GetDefaultPrice(organizationId, subjectType, subjectId);
     }
 
-    private async Task EnsureLocationExists(Guid organizationId, Guid? locationId)
+    private async Task EnsureCompanyExists(Guid organizationId, Guid? companyId)
     {
-        if (!locationId.HasValue)
+        if (!companyId.HasValue)
             return;
 
-        Location location = await _locationHandler.GetById(organizationId, locationId.Value);
-        if (location == null)
-            throw new NotFoundAppException("Location", locationId.Value);
+        Company company = await _companyHandler.GetById(organizationId, companyId.Value);
+        if (company == null)
+            throw new NotFoundAppException("Company", companyId.Value);
     }
 
     private async Task EnsureNoOverlap(
-        Guid organizationId, PricingSubjectType subjectType, Guid subjectId, Guid? locationId,
+        Guid organizationId, PricingSubjectType subjectType, Guid subjectId, Guid? companyId,
         DateTimeOffset validFrom, DateTimeOffset? validTo, Guid? excludeId)
     {
-        List<PriceListItem> existing = await _priceListItemHandler.GetActiveForExactLocation(
-            organizationId, subjectType, subjectId, locationId, excludeId);
+        List<PriceListItem> existing = await _priceListItemHandler.GetActiveForExactCompany(
+            organizationId, subjectType, subjectId, companyId, excludeId);
 
         bool overlaps = existing.Any(e => DateRangeOverlap.Overlaps(validFrom, validTo, e.ValidFrom, e.ValidTo));
         if (overlaps)
-            throw new BusinessRuleException(ErrorCodes.PriceOverlap, "Već postoji aktivna stavka cjenika za istu kombinaciju usluge/paketa i lokacije koja se preklapa s odabranim razdobljem.");
+            throw new BusinessRuleException(ErrorCodes.PriceOverlap, "Već postoji aktivna stavka cjenika za istu kombinaciju usluge/paketa i tvrtke koja se preklapa s odabranim razdobljem.");
     }
 
     private static void ValidateDateRange(DateTimeOffset validFrom, DateTimeOffset? validTo)
@@ -291,7 +291,7 @@ public class PricingService : IPricingService
     {
         return new PriceCandidate
         {
-            LocationId = item.LocationId,
+            CompanyId = item.CompanyId,
             Price = item.Price,
             ValidFrom = item.ValidFrom,
             ValidTo = item.ValidTo,
@@ -309,8 +309,8 @@ public class PricingService : IPricingService
             ServiceName = item.Service?.Name,
             PackageId = item.PackageId,
             PackageName = item.Package?.Name,
-            LocationId = item.LocationId,
-            LocationName = item.Location?.Name,
+            CompanyId = item.CompanyId,
+            CompanyName = item.Company?.Name,
             Price = item.Price,
             ValidFrom = item.ValidFrom,
             ValidTo = item.ValidTo,

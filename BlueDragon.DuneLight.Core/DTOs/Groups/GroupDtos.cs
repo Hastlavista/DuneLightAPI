@@ -52,8 +52,8 @@ public class GroupDto
     public string Name { get; set; }
     public Guid ServiceId { get; set; }
     public string ServiceName { get; set; }
-    public Guid LocationId { get; set; }
-    public string LocationName { get; set; }
+    public Guid CompanyId { get; set; }
+    public string CompanyName { get; set; }
     public int Capacity { get; set; }
     public Guid? DefaultTrainerId { get; set; }
     public string DefaultTrainerName { get; set; }
@@ -87,7 +87,7 @@ public class GroupCreateRequest
     public Guid ServiceId { get; set; }
 
     [Required]
-    public Guid LocationId { get; set; }
+    public Guid CompanyId { get; set; }
 
     [Range(1, int.MaxValue, ErrorMessage = "Kapacitet mora biti veći od 0.")]
     public int Capacity { get; set; }
@@ -109,7 +109,7 @@ public class GroupUpdateRequest
     public Guid ServiceId { get; set; }
 
     [Required]
-    public Guid LocationId { get; set; }
+    public Guid CompanyId { get; set; }
 
     [Range(1, int.MaxValue, ErrorMessage = "Kapacitet mora biti veći od 0.")]
     public int Capacity { get; set; }

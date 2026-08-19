@@ -80,6 +80,6 @@ public class Employee
 
     public EngagementType EngagementType { get; set; }
     public User User { get; set; }
-    public List<EmployeeLocation> Locations { get; set; } = new();
+    public List<EmployeeCompany> Companies { get; set; } = new();
     public List<EmployeeServiceAssignment> Services { get; set; } = new();
 }

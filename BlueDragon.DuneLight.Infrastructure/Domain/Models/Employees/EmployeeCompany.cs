@@ -5,9 +5,9 @@ using BlueDragon.DuneLight.Infrastructure.Domain.Models.Catalog;
 
 namespace BlueDragon.DuneLight.Infrastructure.Domain.Models.Employees;
 
-/// <summary>Lokacija na kojoj zaposlenik radi. Točno jedna po zaposleniku ima IsPrimary = true (matična).</summary>
-[Table("employee_locations")]
-public class EmployeeLocation
+/// <summary>Tvrtka na kojoj zaposlenik radi. Točno jedna po zaposleniku ima IsPrimary = true (matična).</summary>
+[Table("employee_companies")]
+public class EmployeeCompany
 {
     [Key]
     [DatabaseGenerated(DatabaseGeneratedOption.Identity)]
@@ -17,12 +17,12 @@ public class EmployeeLocation
     [Column("employee_id")]
     public Guid EmployeeId { get; set; }
 
-    [Column("location_id")]
-    public Guid LocationId { get; set; }
+    [Column("company_id")]
+    public Guid CompanyId { get; set; }
 
     [Column("is_primary")]
     public bool IsPrimary { get; set; }
 
     public Employee Employee { get; set; }
-    public Location Location { get; set; }
+    public Company Company { get; set; }
 }

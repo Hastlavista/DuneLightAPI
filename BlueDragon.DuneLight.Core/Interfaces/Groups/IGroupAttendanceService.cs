@@ -10,5 +10,5 @@ public interface IGroupAttendanceService
 
     /// <summary>Trener smije čekirati samo na svom terminu (isto vlasništvo kao kod termina) — Admin bez ograničenja.</summary>
     Task<GroupAttendanceListDto> SetAttendance(
-        Guid organizationId, Guid userId, bool isAdmin, Guid appointmentId, SetGroupAttendanceRequest request);
+        Guid organizationId, Guid userId, bool hasFullScope, Guid appointmentId, SetGroupAttendanceRequest request);
 }

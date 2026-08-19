@@ -1,10 +1,11 @@
 using System;
 using System.Collections.Generic;
 using System.Threading.Tasks;
+using BlueDragon.DuneLight.API.Authorization;
 using BlueDragon.DuneLight.API.Extensions;
 using BlueDragon.DuneLight.Core.DTOs.Groups;
 using BlueDragon.DuneLight.Core.Interfaces.Groups;
-using Microsoft.AspNetCore.Authorization;
+using BlueDragon.DuneLight.Core.Shared;
 using Microsoft.AspNetCore.Mvc;
 
 namespace BlueDragon.DuneLight.API.Controllers.Clients;
@@ -23,7 +24,7 @@ public class ClientGroupsController : ControllerBase
 
     /// <summary>Grupe čiji je klijent član — aktivno i povijesno (za dopunu Klijent detalja).</summary>
     [HttpGet]
-    [Authorize(Roles = "Admin,Member,Reception")]
+    [RequireGrant(Grants.GroupsView)]
     public async Task<ActionResult<List<ClientGroupMembershipDto>>> GetByClient(Guid clientId)
     {
         return Ok(await _groupService.GetMembershipsByClient(this.CurrentOrganizationId(), clientId));

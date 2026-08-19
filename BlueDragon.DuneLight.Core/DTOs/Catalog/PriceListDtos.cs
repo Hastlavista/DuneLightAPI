@@ -12,8 +12,8 @@ public class PriceListItemDto
     public string ServiceName { get; set; }
     public Guid? PackageId { get; set; }
     public string PackageName { get; set; }
-    public Guid? LocationId { get; set; }
-    public string LocationName { get; set; }
+    public Guid? CompanyId { get; set; }
+    public string CompanyName { get; set; }
     public decimal Price { get; set; }
     public DateTimeOffset ValidFrom { get; set; }
     public DateTimeOffset? ValidTo { get; set; }
@@ -35,8 +35,8 @@ public class PriceListItemCreateRequest
     /// <summary>Obavezno kad je SubjectType = Package.</summary>
     public Guid? PackageId { get; set; }
 
-    /// <summary>Null = vrijedi za sve lokacije.</summary>
-    public Guid? LocationId { get; set; }
+    /// <summary>Null = vrijedi za sve tvrtke.</summary>
+    public Guid? CompanyId { get; set; }
 
     [Range(0, double.MaxValue, ErrorMessage = "Cijena ne smije biti negativna.")]
     public decimal Price { get; set; }
@@ -58,7 +58,7 @@ public class PriceListItemUpdateRequest
     public DateTimeOffset? ValidTo { get; set; }
 }
 
-/// <summary>Stavka u pregledu trenutno važećeg cjenika za lokaciju.</summary>
+/// <summary>Stavka u pregledu trenutno važećeg cjenika za tvrtku.</summary>
 public class EffectivePriceDto
 {
     public PricingSubjectType SubjectType { get; set; }
@@ -76,7 +76,7 @@ public class ResolvePriceRequest
     [Required]
     public Guid SubjectId { get; set; }
 
-    public Guid? LocationId { get; set; }
+    public Guid? CompanyId { get; set; }
 
     public DateTimeOffset? Date { get; set; }
 }
@@ -85,7 +85,7 @@ public class ResolvePriceResponse
 {
     public PricingSubjectType SubjectType { get; set; }
     public Guid SubjectId { get; set; }
-    public Guid? LocationId { get; set; }
+    public Guid? CompanyId { get; set; }
     public DateTimeOffset Date { get; set; }
     public decimal Price { get; set; }
     public PriceSource Source { get; set; }
@@ -93,7 +93,7 @@ public class ResolvePriceResponse
 
 public enum PriceSource
 {
-    LocationSpecific,
-    AllLocations,
+    CompanySpecific,
+    AllCompanies,
     Default
 }

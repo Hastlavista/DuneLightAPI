@@ -10,7 +10,7 @@ namespace BlueDragon.DuneLight.Infrastructure.Handlers.Interfaces;
 public interface IPriceListItemHandler
 {
     Task<(List<PriceListItem> Items, int TotalCount)> GetPaged(
-        Guid organizationId, PagedRequest request, Guid? locationId, PricingSubjectType? subjectType);
+        Guid organizationId, PagedRequest request, Guid? companyId, PricingSubjectType? subjectType);
 
     Task<PriceListItem> GetById(Guid organizationId, Guid id);
     Task Add(PriceListItem item);
@@ -19,14 +19,14 @@ public interface IPriceListItemHandler
     Task AddHistory(PriceListItemHistory history);
     Task<bool> HasHistory(Guid priceListItemId);
 
-    /// <summary>Aktivne stavke za TOČNO istu lokaciju (uklj. null) — koristi se za provjeru preklapanja.</summary>
-    Task<List<PriceListItem>> GetActiveForExactLocation(
-        Guid organizationId, PricingSubjectType subjectType, Guid subjectId, Guid? locationId, Guid? excludeId);
+    /// <summary>Aktivne stavke za TOČNO istu tvrtku (uklj. null) — koristi se za provjeru preklapanja.</summary>
+    Task<List<PriceListItem>> GetActiveForExactCompany(
+        Guid organizationId, PricingSubjectType subjectType, Guid subjectId, Guid? companyId, Guid? excludeId);
 
-    /// <summary>Aktivne stavke za lokaciju ILI "sve lokacije" — kandidati za razrješavanje cijene.</summary>
+    /// <summary>Aktivne stavke za tvrtku ILI "sve tvrtke" — kandidati za razrješavanje cijene.</summary>
     Task<List<PriceListItem>> GetActiveCandidates(
-        Guid organizationId, PricingSubjectType subjectType, Guid subjectId, Guid? locationId);
+        Guid organizationId, PricingSubjectType subjectType, Guid subjectId, Guid? companyId);
 
-    /// <summary>Sve aktivne stavke važeće na dani datum za lokaciju ILI "sve lokacije" — za pregledni cjenik.</summary>
-    Task<List<PriceListItem>> GetActiveForLocation(Guid organizationId, Guid? locationId, DateTimeOffset date);
+    /// <summary>Sve aktivne stavke važeće na dani datum za tvrtku ILI "sve tvrtke" — za pregledni cjenik.</summary>
+    Task<List<PriceListItem>> GetActiveForCompany(Guid organizationId, Guid? companyId, DateTimeOffset date);
 }

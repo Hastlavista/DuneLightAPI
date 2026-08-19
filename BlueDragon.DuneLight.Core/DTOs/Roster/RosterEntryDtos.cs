@@ -26,6 +26,9 @@ public class RosterEntryDto
     public decimal? DurationHours { get; set; }
     public string Note { get; set; }
 
+    /// <summary>Samo za work-formu: zamjenjuje WorkingHoursTemplate za ovaj EmployeeId+DateFrom kod izračuna dostupnosti. Uvijek false za odsutnost.</summary>
+    public bool IsOverride { get; set; }
+
     /// <summary>Popunjeno samo kao odgovor na create/update (preklapanje s drugim zapisom istog zaposlenika) — inače prazno.</summary>
     public List<string> Warnings { get; set; } = new();
 
@@ -55,6 +58,9 @@ public class RosterEntryCreateRequest
     public TimeSpan? StartTime { get; set; }
     public TimeSpan? EndTime { get; set; }
     public string Note { get; set; }
+
+    /// <summary>Samo za work-formu — ignorira se za odsutnost. Svi work-redovi istog EmployeeId+DateFrom moraju dijeliti istu vrijednost.</summary>
+    public bool IsOverride { get; set; }
 }
 
 public class RosterEntryUpdateRequest
@@ -72,4 +78,7 @@ public class RosterEntryUpdateRequest
     public TimeSpan? StartTime { get; set; }
     public TimeSpan? EndTime { get; set; }
     public string Note { get; set; }
+
+    /// <summary>Samo za work-formu — ignorira se za odsutnost. Svi work-redovi istog EmployeeId+DateFrom moraju dijeliti istu vrijednost.</summary>
+    public bool IsOverride { get; set; }
 }

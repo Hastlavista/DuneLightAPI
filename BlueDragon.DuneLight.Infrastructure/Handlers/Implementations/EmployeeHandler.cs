@@ -24,14 +24,14 @@ public class EmployeeHandler : IEmployeeHandler
     }
 
     public async Task<(List<Employee> Items, int TotalCount)> GetPaged(
-        Guid organizationId, PagedRequest request, Guid? locationId, Guid? engagementTypeId, UserRole? role)
+        Guid organizationId, PagedRequest request, Guid? companyId, Guid? engagementTypeId, UserRole? role)
     {
         await using DatabaseContext context = DatabaseContext.GenerateContext(_databaseSettings.ConnectionString);
 
         IQueryable<Employee> query = context.Employees
             .Include(e => e.EngagementType)
             .Include(e => e.User)
-            .Include(e => e.Locations).ThenInclude(el => el.Location)
+            .Include(e => e.Companies).ThenInclude(el => el.Company)
             .Include(e => e.Services).ThenInclude(es => es.Service)
             .Where(e => e.OrganizationId == organizationId);
 
@@ -43,8 +43,8 @@ public class EmployeeHandler : IEmployeeHandler
         if (request.IsActive.HasValue)
             query = query.Where(e => e.IsActive == request.IsActive.Value);
 
-        if (locationId.HasValue)
-            query = query.Where(e => e.Locations.Any(el => el.LocationId == locationId.Value));
+        if (companyId.HasValue)
+            query = query.Where(e => e.Companies.Any(el => el.CompanyId == companyId.Value));
 
         if (engagementTypeId.HasValue)
             query = query.Where(e => e.EngagementTypeId == engagementTypeId.Value);
@@ -71,7 +71,7 @@ public class EmployeeHandler : IEmployeeHandler
         return await context.Employees
             .Include(e => e.EngagementType)
             .Include(e => e.User)
-            .Include(e => e.Locations).ThenInclude(el => el.Location)
+            .Include(e => e.Companies).ThenInclude(el => el.Company)
             .Include(e => e.Services).ThenInclude(es => es.Service)
             .SingleOrDefaultAsync(e => e.OrganizationId == organizationId && e.Id == id);
     }
@@ -98,7 +98,7 @@ public class EmployeeHandler : IEmployeeHandler
         await context.SaveChangesAsync();
     }
 
-    public async Task Update(Employee employee, List<EmployeeLocation> newLocations, List<EmployeeServiceAssignment> newServices)
+    public async Task Update(Employee employee, List<EmployeeCompany> newCompanies, List<EmployeeServiceAssignment> newServices)
     {
         await using DatabaseContext context = DatabaseContext.GenerateContext(_databaseSettings.ConnectionString);
 
@@ -122,27 +122,27 @@ public class EmployeeHandler : IEmployeeHandler
         trackedEmployee.UpdatedBy = employee.UpdatedBy;
 
         // Reconcile in place rather than delete-all/insert-all: recreating a row for a
-        // location/service that didn't change would delete and re-insert the same
-        // (employee_id, location_id) / (employee_id, service_id) pair in one batch, which
+        // company/service that didn't change would delete and re-insert the same
+        // (employee_id, company_id) / (employee_id, service_id) pair in one batch, which
         // can violate the unique indexes depending on statement ordering within the batch.
-        List<EmployeeLocation> existingLocations = await context.EmployeeLocations
+        List<EmployeeCompany> existingCompanies = await context.EmployeeCompanies
             .Where(el => el.EmployeeId == employee.Id)
             .ToListAsync();
-        Dictionary<Guid, EmployeeLocation> existingLocationsByLocationId = existingLocations.ToDictionary(el => el.LocationId);
-        HashSet<Guid> newLocationIds = newLocations.Select(l => l.LocationId).ToHashSet();
+        Dictionary<Guid, EmployeeCompany> existingCompaniesByCompanyId = existingCompanies.ToDictionary(el => el.CompanyId);
+        HashSet<Guid> newCompanyIds = newCompanies.Select(l => l.CompanyId).ToHashSet();
 
-        foreach (EmployeeLocation existing in existingLocations)
-            if (!newLocationIds.Contains(existing.LocationId))
-                context.EmployeeLocations.Remove(existing);
+        foreach (EmployeeCompany existing in existingCompanies)
+            if (!newCompanyIds.Contains(existing.CompanyId))
+                context.EmployeeCompanies.Remove(existing);
 
-        foreach (EmployeeLocation location in newLocations)
+        foreach (EmployeeCompany company in newCompanies)
         {
-            if (existingLocationsByLocationId.TryGetValue(location.LocationId, out EmployeeLocation existing))
-                existing.IsPrimary = location.IsPrimary;
+            if (existingCompaniesByCompanyId.TryGetValue(company.CompanyId, out EmployeeCompany existing))
+                existing.IsPrimary = company.IsPrimary;
             else
             {
-                location.EmployeeId = employee.Id.GetValueOrDefault();
-                context.EmployeeLocations.Add(location);
+                company.EmployeeId = employee.Id.GetValueOrDefault();
+                context.EmployeeCompanies.Add(company);
             }
         }
 
@@ -254,7 +254,7 @@ public class EmployeeHandler : IEmployeeHandler
                 LastName = e.LastName,
                 ColorHex = e.ColorHex,
                 IsActive = e.IsActive,
-                Locations = e.Locations.Select(el => el.Location.Name).ToList()
+                Companies = e.Companies.Select(el => el.Company.Name).ToList()
             })
             .ToListAsync();
 

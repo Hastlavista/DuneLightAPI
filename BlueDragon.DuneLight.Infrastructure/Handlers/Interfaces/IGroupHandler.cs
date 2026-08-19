@@ -12,7 +12,7 @@ public interface IGroupHandler
     /// <summary>group.Slots mora biti popunjen prije poziva — cascade insert.</summary>
     Task Add(Group group);
 
-    /// <summary>Puni graf (Service, Location, DefaultTrainer, Slots, Members.Client) — za prikaz/detalj.</summary>
+    /// <summary>Puni graf (Service, Company, DefaultTrainer, Slots, Members.Client) — za prikaz/detalj.</summary>
     Task<Group> GetById(Guid organizationId, Guid id);
 
     /// <summary>Samo osnovni redak, bez navigacijskih kolekcija — za pripremu mutacije.</summary>

@@ -44,8 +44,8 @@ public class Appointment
     [Column("employee_id")]
     public Guid? EmployeeId { get; set; }
 
-    [Column("location_id")]
-    public Guid LocationId { get; set; }
+    [Column("company_id")]
+    public Guid CompanyId { get; set; }
 
     [Column("amount")]
     public decimal Amount { get; set; }
@@ -95,7 +95,7 @@ public class Appointment
 
     public Service Service { get; set; }
     public Employee Employee { get; set; }
-    public Location Location { get; set; }
+    public Company Company { get; set; }
     public Group Group { get; set; }
     public GroupSlot GroupSlot { get; set; }
     public List<AppointmentClient> Clients { get; set; } = new();

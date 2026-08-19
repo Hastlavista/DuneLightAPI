@@ -3,7 +3,7 @@ using System.ComponentModel.DataAnnotations;
 
 namespace BlueDragon.DuneLight.Core.DTOs.Catalog;
 
-public class LocationDto
+public class CompanyDto
 {
     public Guid Id { get; set; }
     public string Name { get; set; }
@@ -19,7 +19,7 @@ public class LocationDto
     public Guid? UpdatedBy { get; set; }
 }
 
-public class LocationCreateRequest
+public class CompanyCreateRequest
 {
     [Required]
     [MaxLength(255)]
@@ -39,7 +39,7 @@ public class LocationCreateRequest
     public int SortOrder { get; set; }
 }
 
-public class LocationUpdateRequest
+public class CompanyUpdateRequest
 {
     [Required]
     [MaxLength(255)]

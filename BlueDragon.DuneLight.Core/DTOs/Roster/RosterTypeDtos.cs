@@ -11,6 +11,9 @@ public class RosterTypeDto
     public bool CountsAsWork { get; set; }
     public bool IsAbsence { get; set; }
     public bool RequiresTime { get; set; }
+
+    /// <summary>Troši li se fond godišnjeg odmora kod upisa ovog tipa (mora biti IsAbsence=true).</summary>
+    public bool DeductsFromLeaveFund { get; set; }
     public bool IsActive { get; set; }
     public int SortOrder { get; set; }
     public DateTimeOffset CreatedAt { get; set; }
@@ -31,6 +34,9 @@ public class RosterTypeCreateRequest
     public bool CountsAsWork { get; set; }
     public bool IsAbsence { get; set; }
     public bool RequiresTime { get; set; }
+
+    /// <summary>Mora biti IsAbsence=true — validirano u servisu (LEAVE_FUND_TYPE_MUST_BE_ABSENCE).</summary>
+    public bool DeductsFromLeaveFund { get; set; }
     public int SortOrder { get; set; }
 }
 
@@ -46,5 +52,8 @@ public class RosterTypeUpdateRequest
     public bool CountsAsWork { get; set; }
     public bool IsAbsence { get; set; }
     public bool RequiresTime { get; set; }
+
+    /// <summary>Mora biti IsAbsence=true — validirano u servisu (LEAVE_FUND_TYPE_MUST_BE_ABSENCE).</summary>
+    public bool DeductsFromLeaveFund { get; set; }
     public int SortOrder { get; set; }
 }

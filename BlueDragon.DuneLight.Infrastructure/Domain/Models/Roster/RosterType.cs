@@ -37,6 +37,10 @@ public class RosterType
     [Column("requires_time")]
     public bool RequiresTime { get; set; }
 
+    /// <summary>Troši li se fond godišnjeg odmora kod upisa ovog tipa — mora biti IsAbsence=true (validirano u RosterTypeService). Vidi LeaveFundAllocator.</summary>
+    [Column("deducts_from_leave_fund")]
+    public bool DeductsFromLeaveFund { get; set; }
+
     [Column("is_active")]
     public bool IsActive { get; set; }
 

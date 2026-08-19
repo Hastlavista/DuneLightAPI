@@ -38,6 +38,7 @@ public class RosterTypeService : IRosterTypeService
     public async Task<RosterTypeDto> Create(Guid organizationId, Guid userId, RosterTypeCreateRequest request)
     {
         await EnsureNameIsUnique(organizationId, request.Name, excludeId: null);
+        EnsureDeductsFromLeaveFundRequiresAbsence(request.DeductsFromLeaveFund, request.IsAbsence);
 
         RosterType rosterType = new RosterType
         {
@@ -48,6 +49,7 @@ public class RosterTypeService : IRosterTypeService
             CountsAsWork = request.CountsAsWork,
             IsAbsence = request.IsAbsence,
             RequiresTime = request.RequiresTime,
+            DeductsFromLeaveFund = request.DeductsFromLeaveFund,
             SortOrder = request.SortOrder,
             IsActive = true,
             CreatedAt = DateTimeOffset.UtcNow,
@@ -65,12 +67,14 @@ public class RosterTypeService : IRosterTypeService
             throw new NotFoundAppException("RosterType", id);
 
         await EnsureNameIsUnique(organizationId, request.Name, excludeId: id);
+        EnsureDeductsFromLeaveFundRequiresAbsence(request.DeductsFromLeaveFund, request.IsAbsence);
 
         rosterType.Name = request.Name;
         rosterType.ColorHex = request.ColorHex;
         rosterType.CountsAsWork = request.CountsAsWork;
         rosterType.IsAbsence = request.IsAbsence;
         rosterType.RequiresTime = request.RequiresTime;
+        rosterType.DeductsFromLeaveFund = request.DeductsFromLeaveFund;
         rosterType.SortOrder = request.SortOrder;
         rosterType.UpdatedAt = DateTimeOffset.UtcNow;
         rosterType.UpdatedBy = userId;
@@ -116,6 +120,14 @@ public class RosterTypeService : IRosterTypeService
             throw new BusinessRuleException(ErrorCodes.DuplicateName, $"Aktivna vrsta rostera s nazivom '{name}' već postoji.");
     }
 
+    private static void EnsureDeductsFromLeaveFundRequiresAbsence(bool deductsFromLeaveFund, bool isAbsence)
+    {
+        if (deductsFromLeaveFund && !isAbsence)
+            throw new BusinessRuleException(
+                ErrorCodes.LeaveFundTypeMustBeAbsence,
+                "Fond godišnjeg odmora mogu trošiti samo vrste rostera koje predstavljaju odsutnost (IsAbsence).");
+    }
+
     private static RosterTypeDto ToDto(RosterType rosterType)
     {
         return new RosterTypeDto
@@ -126,6 +138,7 @@ public class RosterTypeService : IRosterTypeService
             CountsAsWork = rosterType.CountsAsWork,
             IsAbsence = rosterType.IsAbsence,
             RequiresTime = rosterType.RequiresTime,
+            DeductsFromLeaveFund = rosterType.DeductsFromLeaveFund,
             IsActive = rosterType.IsActive,
             SortOrder = rosterType.SortOrder,
             CreatedAt = rosterType.CreatedAt,

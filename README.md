@@ -1,6 +1,6 @@
 # BlueDragon.DuneLight
 
-Web API za vođenje manjeg fitness/wellness obrta koji posluje na više lokacija — zamjena za Excel tablice (raspored, evidencija usluga, blagajna, troškovnik, zaposlenici).
+Web API za vođenje manjeg fitness/wellness obrta koji posluje na više tvrtka — zamjena za Excel tablice (raspored, evidencija usluga, blagajna, troškovnik, zaposlenici).
 
 ## Stack
 
@@ -92,7 +92,7 @@ Sve greške (validacijske, poslovne, auth, framework-level 401/403) vraćaju se 
 | `EMAIL_ALREADY_IN_USE` | 409 | E-mail već postoji kao korisnički račun u organizaciji (`POST /api/employees/with-login`). |
 | `USER_ALREADY_LINKED` | 409 | Odabrani korisnički račun je već povezan s drugim zaposlenikom. |
 | `LAST_ACTIVE_ADMIN` | 409 | Pokušaj deaktivacije ili promjene uloge zadnjeg aktivnog Admina. |
-| `LAST_ACTIVE_LOCATION` | 409 | Pokušaj deaktivacije zadnje aktivne lokacije. |
+| `LAST_ACTIVE_LOCATION` | 409 | Pokušaj deaktivacije zadnje aktivne tvrtke. |
 | `LAST_ACTIVE_SLOT` | 409 | Pokušaj deaktivacije zadnjeg aktivnog slota grupe. |
 | `ALREADY_MEMBER` | 409 | Klijent je već aktivan član grupe. |
 | `ALREADY_COMPLETED` | 409 | Termin je već označen kao odrađen. |
@@ -103,22 +103,22 @@ Sve greške (validacijske, poslovne, auth, framework-level 401/403) vraćaju se 
 | `CATEGORY_IN_USE` | 409 | Kategorija usluge se koristi na aktivnim uslugama — ne može se deaktivirati. |
 | `INACTIVE_EMPLOYEE` | 409 | Roster zapis referencira neaktivnog zaposlenika. |
 | `INACTIVE_TYPE` | 409 | Roster zapis referencira neaktivnu vrstu rostera. |
-| `PRICE_OVERLAP` | 409 | Preklapanje razdoblja aktivnih stavki cjenika za istu kombinaciju usluge/paketa i lokacije. |
+| `PRICE_OVERLAP` | 409 | Preklapanje razdoblja aktivnih stavki cjenika za istu kombinaciju usluge/paketa i tvrtke. |
 | `CLIENT_ANONYMIZED` | 409 | Klijent je anonimiziran (GDPR) i više se ne može uređivati. |
 | `APPOINTMENT_OVERLAP` | 409 | Trener ili klijent već ima drugi termin koji se preklapa s novim/izmijenjenim terminom (`schedule`, `complete`, `{id}/complete`, `PUT {id}`, `{id}/move`). |
 
 ## Modul Katalog
 
-Lokacije, kategorije usluga, usluge, cjenik, paketi. Sve pisanje `Admin`, čitanje `Admin,Member`.
+Tvrtke, kategorije usluga, usluge, cjenik, paketi. Sve pisanje `Admin`, čitanje `Admin,Member`.
 
 | Endpoint | Opis |
 |---|---|
-| `GET/POST/PUT/DELETE /api/catalog/locations`, `PATCH .../{id}/activate`\|`deactivate` | Lokacije. Zadnja aktivna lokacija se ne može deaktivirati. |
+| `GET/POST/PUT/DELETE /api/catalog/companies`, `PATCH .../{id}/activate`\|`deactivate` | Tvrtke. Zadnja aktivna tvrtka se ne može deaktivirati. |
 | `GET/POST/PUT/DELETE /api/catalog/service-categories`, `PATCH .../{id}/activate`\|`deactivate` | Konfigurabilne kategorije usluga (naziv, način izvođenja Individual/Group, boja...). |
 | `GET/POST/PUT/DELETE /api/catalog/services`, `PATCH .../{id}/activate`\|`deactivate` | Usluge (naziv, kategorija, trajanje, zadana cijena). |
-| `GET/POST/PUT/DELETE /api/catalog/price-list`, `PATCH .../{id}/activate`\|`deactivate` | Stavke cjenika (usluga ili paket × lokacija-ili-sve × razdoblje). Zabranjeno preklapanje razdoblja za istu kombinaciju. |
-| `GET /api/catalog/price-list/effective?locationId=&date=` | Trenutno važeći cjenik za lokaciju (pregledni prikaz). |
-| `GET /api/catalog/price-list/resolve?subjectType=&subjectId=&locationId=&date=` | Razriješena cijena — algoritam: lokacija → sve lokacije → zadana cijena. |
+| `GET/POST/PUT/DELETE /api/catalog/price-list`, `PATCH .../{id}/activate`\|`deactivate` | Stavke cjenika (usluga ili paket × tvrtka-ili-sve × razdoblje). Zabranjeno preklapanje razdoblja za istu kombinaciju. |
+| `GET /api/catalog/price-list/effective?companyId=&date=` | Trenutno važeći cjenik za tvrtku (pregledni prikaz). |
+| `GET /api/catalog/price-list/resolve?subjectType=&subjectId=&companyId=&date=` | Razriješena cijena — algoritam: tvrtka → sve tvrtke → zadana cijena. |
 | `GET/POST/PUT/DELETE /api/catalog/packages`, `PATCH .../{id}/activate`\|`deactivate` | Paketi (SharedPool/PerService ulasci, DayCount/EndOfMonth/FixedDate valjanost). |
 
 ## Modul Zaposlenici
@@ -132,7 +132,7 @@ Sve pisanje `Admin`, čitanje `Admin` — jedina iznimka je pogled za kolege.
 | `GET/POST/PUT/DELETE /api/employees/engagement-types`, `PATCH .../{id}/activate`\|`deactivate` | Šifrarnik vrsta angažmana (puno radno vrijeme, pola radnog vremena, honorarno, vanjski suradnik). |
 | `GET/POST/PUT/DELETE /api/employees`, `PATCH .../{id}/activate`\|`deactivate` | Zaposlenici — puni admin prikaz. |
 | `PATCH /api/employees/{id}/role` | Promjena uloge povezanog korisničkog računa (`{ "role": "Admin" \| "Member" \| "Reception" }`). |
-| `GET /api/employees/directory` | **Ograničeni pogled za kolege** (`Admin,Member,Reception`) — samo ime, prezime, boja, lokacije, aktivnost. Zaseban DTO (`EmployeeDirectoryDto`), ne filtriranje punog zapisa. |
+| `GET /api/employees/directory` | **Ograničeni pogled za kolege** (`Admin,Member,Reception`) — samo ime, prezime, boja, tvrtke, aktivnost. Zaseban DTO (`EmployeeDirectoryDto`), ne filtriranje punog zapisa. |
 | `POST /api/employees/with-login` | **Kreira korisnički račun i zaposlenika zajedno**, u jednoj transakciji (`Admin`) — za slučaj kad zaposlenik još nema login (obični `POST /api/employees` i dalje zahtijeva postojeći `UserId`). Vidi primjer ispod. |
 | `GET /api/employees/me` | **"Tko sam ja"** (bilo koja rola) — zaposlenik povezan s prijavljenim korisnikom; `404` ako prijavljeni korisnik nema povezanog zaposlenika (npr. čisti Admin bez Employee zapisa). |
 
@@ -147,7 +147,7 @@ Spaja polja `EmployeeCreateRequest`-a (bez obaveznog `UserId` — korisnik se st
   "email": "ana@dunelight.local",
   "employmentStartDate": "2026-07-21T00:00:00Z",
   "engagementTypeId": "…",
-  "locationIds": ["…"], "primaryLocationId": "…",
+  "companyIds": ["…"], "primaryCompanyId": "…",
   "password": "lozinka123", "role": "Member"
 }
 
@@ -163,7 +163,7 @@ Spaja polja `EmployeeCreateRequest`-a (bez obaveznog `UserId` — korisnik se st
 // 200 OK
 {
   "employeeId": "…", "firstName": "Marko", "lastName": "Trener", "role": "Member", "colorHex": "#3498db",
-  "locations": [{ "locationId": "…", "locationName": "Centar", "isPrimary": true }]
+  "companies": [{ "companyId": "…", "companyName": "Centar", "isPrimary": true }]
 }
 
 // 404 Not Found (prijavljeni korisnik nema povezanog zaposlenika)
@@ -172,7 +172,7 @@ Spaja polja `EmployeeCreateRequest`-a (bez obaveznog `UserId` — korisnik se st
 
 ### Model
 
-- Zaposlenik radi na više lokacija (`EmployeeLocation`, više-na-više), točno jedna je matična (`IsPrimary`) — DB-razina jamči i preko partial unique indeksa.
+- Zaposlenik radi na više tvrtka (`EmployeeCompany`, više-na-više), točno jedna je matična (`IsPrimary`) — DB-razina jamči i preko partial unique indeksa.
 - Popis usluga koje smije izvoditi je opcionalan (`EmployeeService`) — prazan popis = smije sve.
 - Svaki zaposlenik ima obavezan, jedinstven `UserId` — uloga živi na `User.Role`, ne duplicira se na zaposleniku.
 - Deaktivacija zaposlenika automatski postavlja `User.IsActive = false` (onemogućuje login). Mora postojati barem jedan aktivan Admin — deaktivacija/promjena uloge zadnjeg admina je blokirana.
@@ -181,13 +181,13 @@ Spaja polja `EmployeeCreateRequest`-a (bez obaveznog `UserId` — korisnik se st
 
 ### Minimalni seed podaci
 
-Migracija `SeedEmployeesMinimal` kreira demo organizaciju, 2 lokacije, 4 vrste angažmana i 3 zaposlenika za ručno testiranje kroz Swagger (lozinka za sve: `password123`):
+Migracija `SeedEmployeesMinimal` kreira demo organizaciju, 2 tvrtke, 4 vrste angažmana i 3 zaposlenika za ručno testiranje kroz Swagger (lozinka za sve: `password123`):
 
 | Uloga | E-mail | Napomena |
 |---|---|---|
-| Admin | `admin@dunelight.local` | Vlasnica, lokacija Centar |
-| Member | `marko@dunelight.local` | Lokacija Centar |
-| Member | `iva@dunelight.local` | Vanjski suradnik, lokacija Riverside |
+| Admin | `admin@dunelight.local` | Vlasnica, tvrtka Centar |
+| Member | `marko@dunelight.local` | Tvrtka Centar |
+| Member | `iva@dunelight.local` | Vanjski suradnik, tvrtka Riverside |
 
 ## Modul Klijenti
 
@@ -199,7 +199,7 @@ Pristup se namjerno razlikuje od ostalih modula: **svi treneri (i recepcija) vid
 |---|---|
 | `GET/POST/PUT /api/clients/tags`, `PATCH .../{id}/activate`\|`deactivate`, `DELETE` | Šifrarnik oznaka klijenta (naziv, boja). Čitanje `Admin,Member,Reception`, pisanje `Admin`. |
 | `GET/POST/PUT /api/clients`, `PATCH .../{id}/activate`\|`deactivate`, `DELETE` | Klijenti. Čitanje i kreiranje/uređivanje `Admin,Member,Reception`; (de)aktivacija i brisanje `Admin`. |
-| `GET /api/clients?mineFirst=true` | Popis klijenata — kad je `mineFirst=true`, klijenti prijavljenog trenera (matični) idu prvi (redoslijed, ne filter). Filtri: `tagId`, `homeTrainerId`, `homeLocationId`; `search` pretražuje ime/prezime/telefon/e-mail. |
+| `GET /api/clients?mineFirst=true` | Popis klijenata — kad je `mineFirst=true`, klijenti prijavljenog trenera (matični) idu prvi (redoslijed, ne filter). Filtri: `tagId`, `homeTrainerId`, `homeCompanyId`; `search` pretražuje ime/prezime/telefon/e-mail. |
 | `GET /api/clients/birthdays?from=&to=` | Klijenti kojima je rođendan u zadanom razdoblju, sortirano po datumu — izvedeno iz `DateOfBirth`, bez obzira na godinu (uklj. prijelaz preko Nove godine). |
 | `GET /api/clients/next-member-number` | Prijedlog sljedećeg slobodnog broja člana (broj člana se inače ručno unosi, radi uvoza postojećih Excel brojeva). |
 | `POST /api/clients/{id}/anonymize` | **GDPR pravo na zaborav** (`Admin`) — nepovratno uklanja osobne/zdravstvene podatke i oznake, čuva `Id`/broj člana radi referencijalnog integriteta. Idempotentno. |
@@ -207,14 +207,14 @@ Pristup se namjerno razlikuje od ostalih modula: **svi treneri (i recepcija) vid
 ### Model
 
 - `MemberNumber` (broj člana) je jedinstven po organizaciji i unosi se ručno — nema auto-generiranja, radi uvoza postojećih Excel brojeva.
-- `HomeLocationId`/`HomeTrainerId` su opcionalni i čisto informativni — ne ograničavaju tko vidi klijenta.
+- `HomeCompanyId`/`HomeTrainerId` su opcionalni i čisto informativni — ne ograničavaju tko vidi klijenta.
 - `ClientTag` veza je više-na-više (`ClientTagAssignment`), isti obrazac kao kategorije usluga u Katalogu.
 - Anonimizirani klijent (`IsAnonymized = true`) se više ne može uređivati niti reaktivirati (`CLIENT_ANONYMIZED`).
 - `IClientFutureActivityProvider` (`ClientFutureActivityProvider`) blokira tvrdo brisanje klijenta ako je ikad referenciran — bilo koji termin (`AppointmentClient`) ili prodani paket (`ClientPackage`).
 
 ### Minimalni seed podaci
 
-Migracija `SeedClientsMinimal` dodaje 3 oznake (VIP, Radionice, Foto/video pristanak) i 4 klijenta pod istom demo organizacijom: Ivana Kovač (zdravstvena napomena, matična lokacija/trener), Petar Perić (oznaka VIP, matična lokacija/trener), Ana Anić (bez matičnog trenera/lokacije), Marko Novak (oznaka Radionice, bez matičnog trenera).
+Migracija `SeedClientsMinimal` dodaje 3 oznake (VIP, Radionice, Foto/video pristanak) i 4 klijenta pod istom demo organizacijom: Ivana Kovač (zdravstvena napomena, matična tvrtka/trener), Petar Perić (oznaka VIP, matična tvrtka/trener), Ana Anić (bez matičnog trenera/tvrtke), Marko Novak (oznaka Radionice, bez matičnog trenera).
 
 ## Modul Prodani paketi klijenta
 
@@ -243,29 +243,29 @@ Svi (Admin i Member) vide sve termine. Member smije kreirati/mijenjati/otkazivat
 
 | Endpoint | Opis |
 |---|---|
-| `GET /api/appointments/schedule?from=&to=&locationId=&employeeId=&serviceId=&serviceCategoryId=&status=` | Raspored za razdoblje. `locationId` zadano = sve lokacije. Uključuje otkazane/no-show termine (za precrtani prikaz). Ćelija nosi `form`/`groupId`/`groupName`/`attendanceCount`/`expectedCount` za grupne termine (vidi Model ispod) — `clientNames` je prazan za grupne, frontend prikazuje `groupName` umjesto imena klijenata. |
+| `GET /api/appointments/schedule?from=&to=&companyId=&employeeId=&serviceId=&serviceCategoryId=&status=` | Raspored za razdoblje. `companyId` zadano = sve tvrtke. Uključuje otkazane/no-show termine (za precrtani prikaz). Ćelija nosi `form`/`groupId`/`groupName`/`attendanceCount`/`expectedCount` za grupne termine (vidi Model ispod) — `clientNames` je prazan za grupne, frontend prikazuje `groupName` umjesto imena klijenata. |
 | `GET /api/appointments/{id}` | Puni detalj termina (za klik na ćeliju rasporeda). |
 | `GET /api/appointments/by-client/{clientId}` | Povijest termina klijenta, paginirano, najnoviji prvi. |
 | `POST /api/appointments/schedule` | **"Zakaži"** — status `Scheduled`, bez naplate. Cijena/trajanje se predlažu iz kataloga i snapshotiraju na termin. `409 APPOINTMENT_OVERLAP` za preklapanje. |
 | `POST /api/appointments/complete` | **"Upiši odrađeno"** — novi termin odmah u statusu `Completed`, naplata odmah (`PaymentMethod` obavezan). `409 APPOINTMENT_OVERLAP` za preklapanje. |
 | `PATCH /api/appointments/{id}/complete` | Prijelaz postojećeg (obično `Scheduled`) termina u `Completed` — trenutak naplate za termine zakazane unaprijed. `409 APPOINTMENT_OVERLAP` za preklapanje. |
-| `PUT /api/appointments/{id}` | Izmjena vremena/usluge/trenera/lokacije/klijenata/napomene/iznosa. Ne dira plaćanje/paket. `409 APPOINTMENT_OVERLAP` za preklapanje. |
-| `PATCH /api/appointments/{id}/move` | **Brzo pomicanje** (drag-and-drop na rasporedu) — mijenja samo `startsAt` i po potrebi `employeeId`/`locationId`; sve ostalo (usluga, klijenti, iznos, napomena, plaćanje, paket) ostaje netaknuto. `409 APPOINTMENT_NOT_MOVABLE` za `Cancelled`/`NoShow` termine, `409 APPOINTMENT_OVERLAP` za preklapanje. Vidi primjer ispod. |
+| `PUT /api/appointments/{id}` | Izmjena vremena/usluge/trenera/tvrtke/klijenata/napomene/iznosa. Ne dira plaćanje/paket. `409 APPOINTMENT_OVERLAP` za preklapanje. |
+| `PATCH /api/appointments/{id}/move` | **Brzo pomicanje** (drag-and-drop na rasporedu) — mijenja samo `startsAt` i po potrebi `employeeId`/`companyId`; sve ostalo (usluga, klijenti, iznos, napomena, plaćanje, paket) ostaje netaknuto. `409 APPOINTMENT_NOT_MOVABLE` za `Cancelled`/`NoShow` termine, `409 APPOINTMENT_OVERLAP` za preklapanje. Vidi primjer ispod. |
 | `POST /api/appointments/{id}/cancel` | Otkazivanje (`Status=Cancelled`, termin ostaje vidljiv precrtan). `ReturnEntryForClientIds` — eksplicitni popis klijenata kojima se vraća skinuti ulazak (ništa se ne vraća automatski). |
 | `POST /api/appointments/{id}/no-show` | Isto kao cancel, `Status=NoShow` — zaseban status, isti prompt/mehanizam za vraćanje ulaska. |
 | `DELETE /api/appointments/{id}` | Trajno brisanje — samo `Admin`, samo ako je termin unesen isti dan (pogrešan unos); inače koristiti otkazivanje. |
-| `POST /api/appointments/recurring` | Generira niz individualnih termina (isti klijent(i)/usluga/trener/lokacija/vrijeme) do `EndDate` — `recurrenceType`: `Weekly` (+7 dana) ili `Daily` (svaki kalendarski dan, uključivo vikend). Izmjena/otkaz pojedinačnog termina iz niza ne dira ostale. **Tvrda unaprijedna provjera** (samo ovaj endpoint, vidi napomenu u Model ispod): ako se ijedan datum iz niza sudara s postojećim terminom trenera ili roster odsutnošću, cijeli zahtjev pada s `409 RECURRING_CONFLICT`, ništa se ne sprema. |
+| `POST /api/appointments/recurring` | Generira niz individualnih termina (isti klijent(i)/usluga/trener/tvrtka/vrijeme) do `EndDate` — `recurrenceType`: `Weekly` (+7 dana) ili `Daily` (svaki kalendarski dan, uključivo vikend). Izmjena/otkaz pojedinačnog termina iz niza ne dira ostale. **Tvrda unaprijedna provjera** (samo ovaj endpoint, vidi napomenu u Model ispod): ako se ijedan datum iz niza sudara s postojećim terminom trenera ili roster odsutnošću, cijeli zahtjev pada s `409 RECURRING_CONFLICT`, ništa se ne sprema. |
 
 #### `PATCH /api/appointments/{id}/move` — primjer
 
-`employeeId`/`locationId` su opcionalni — šalju se samo ako se stvarno mijenjaju (npr. drag-and-drop na drugi red/lokaciju u rasporedu); izostavljeni = nepromijenjeni. `startsAt` je uvijek obavezan. Trajanje termina se **ne** mijenja (ostaje snapshot iz trenutka kreiranja) jer usluga nije dio zahtjeva.
+`employeeId`/`companyId` su opcionalni — šalju se samo ako se stvarno mijenjaju (npr. drag-and-drop na drugi red/tvrtku u rasporedu); izostavljeni = nepromijenjeni. `startsAt` je uvijek obavezan. Trajanje termina se **ne** mijenja (ostaje snapshot iz trenutka kreiranja) jer usluga nije dio zahtjeva.
 
 ```json
 // Request
 {
   "startsAt": "2026-07-23T10:00:00+02:00",
   "employeeId": "…",
-  "locationId": "…"
+  "companyId": "…"
 }
 
 // 200 OK — puni AppointmentDto
@@ -273,7 +273,7 @@ Svi (Admin i Member) vide sve termine. Member smije kreirati/mijenjati/otkazivat
   "id": "…", "startsAt": "2026-07-23T10:00:00+02:00", "durationMinutes": 60,
   "serviceId": "…", "serviceName": "Individualni trening",
   "employeeId": "…", "employeeName": "Marko Trener",
-  "locationId": "…", "locationName": "Centar",
+  "companyId": "…", "companyName": "Centar",
   "amount": 20.00, "suggestedAmount": 20.00, "isAmountManuallyOverridden": false,
   "paymentMethod": null, "isPaid": false, "status": "Scheduled", "note": null,
   "clients": [{ "clientId": "…", "clientName": "Ivana Kovač", "clientPackageId": null, "packageEntryDeducted": false, "packageEntryReturned": false }],
@@ -290,7 +290,7 @@ Svi (Admin i Member) vide sve termine. Member smije kreirati/mijenjati/otkazivat
 { "error": { "code": "APPOINTMENT_OVERLAP", "message": "Klijent Ana Anić je već zakazan u ovom vremenskom razdoblju.", "details": null } }
 ```
 
-Vlasništvo (ne-admin smije pomicati samo svoje termine → `409 NOT_OWNER`) i postojanje `employeeId`/`locationId` (`404 NOT_FOUND`) provjeravaju se isto kao kod `PUT /{id}`. Preklapanje (trener/klijenti) se provjerava **prije spremanja** i blokira kao `409 APPOINTMENT_OVERLAP` — vidi napomenu o preklapanju u sekciji Model ispod. Trener se provjerava prvi; ako trener nema preklapanje, provjeravaju se klijenti redom i vraća se prva pronađena poruka (ne oboje odjednom).
+Vlasništvo (ne-admin smije pomicati samo svoje termine → `409 NOT_OWNER`) i postojanje `employeeId`/`companyId` (`404 NOT_FOUND`) provjeravaju se isto kao kod `PUT /{id}`. Preklapanje (trener/klijenti) se provjerava **prije spremanja** i blokira kao `409 APPOINTMENT_OVERLAP` — vidi napomenu o preklapanju u sekciji Model ispod. Trener se provjerava prvi; ako trener nema preklapanje, provjeravaju se klijenti redom i vraća se prva pronađena poruka (ne oboje odjednom).
 
 #### `POST /api/appointments/recurring` — primjer
 
@@ -300,7 +300,7 @@ Vlasništvo (ne-admin smije pomicati samo svoje termine → `409 NOT_OWNER`) i p
   "recurrenceType": "Daily",
   "serviceId": "…",
   "employeeId": "…",
-  "locationId": "…",
+  "companyId": "…",
   "clientIds": ["…"],
   "firstOccurrenceStartsAt": "2026-08-03T17:00:00+02:00",
   "endDate": "2026-08-09T17:00:00+02:00",
@@ -345,7 +345,7 @@ Vlasništvo (ne-admin smije pomicati samo svoje termine → `409 NOT_OWNER`) i p
 Migracija `SeedCatalogForAppointments` dodaje minimalni katalog (kategorija "Individualni treninzi", usluge "Individualni trening"/"Individualni trening u paru", paket "Paket 10 individualnih" — SharedPool, 10 ulazaka, 90 dana), jer Katalog dotad nije imao seed podataka. `SeedAppointmentsMinimal` zatim dodaje:
 
 - Jedan prodani paket (Ivana Kovač, "Paket 10 individualnih", 9/10 preostalih ulazaka).
-- 6 individualnih termina kroz tekući tjedan, na obje lokacije, kod oba trenera: 3× `Scheduled`, 2× `Completed` (jedan plaćen gotovinom, jedan iz paketa), 1× `Cancelled`.
+- 6 individualnih termina kroz tekući tjedan, na obje tvrtke, kod oba trenera: 3× `Scheduled`, 2× `Completed` (jedan plaćen gotovinom, jedan iz paketa), 1× `Cancelled`.
 - Jedan termin s dva klijenta (Ivana + Petar, usluga "Individualni trening u paru").
 
 ## Modul Grupe
@@ -358,7 +358,7 @@ Svi (Admin i Member) vide sve grupe/termine/prisutnost. Uređivanje definicije g
 |---|---|
 | `GET /api/groups?isActive=` | Popis grupa. |
 | `GET /api/groups/{id}` | Detalj — slotovi, aktivni članovi, nadolazeći i protekli termini. |
-| `POST/PUT /api/groups`, `PATCH .../{id}/activate`\|`deactivate` | Definicija grupe (naziv, usluga, lokacija, kapacitet, zadani trener, napomena). Kreiranje zahtijeva barem jedan slot. Deaktivacija ne dira već generirane termine, zaustavlja samo buduće generiranje. |
+| `POST/PUT /api/groups`, `PATCH .../{id}/activate`\|`deactivate` | Definicija grupe (naziv, usluga, tvrtka, kapacitet, zadani trener, napomena). Kreiranje zahtijeva barem jedan slot. Deaktivacija ne dira već generirane termine, zaustavlja samo buduće generiranje. |
 | `POST/PUT/DELETE /api/groups/{id}/slots[/{slotId}]` | Tjedni slotovi (dan + vrijeme). `DELETE` je zapravo deaktivacija (nema tvrdog brisanja) — blokirana ako je posljednji aktivan slot grupe. Izmjena dana/vremena ne dira već generirane termine. |
 | `POST/DELETE /api/groups/{id}/members[/{memberId}]` | Članovi grupe. Kapacitet je upozorenje, ne zabrana — dodavanje preko kapaciteta vraća `Warnings`, ali se dopušta. `DELETE` deaktivira članstvo (čuva `JoinedAt` povijest). |
 | `POST /api/groups/generate-appointments` | **Idempotentno** generiranje grupnih termina za zadani raspon — `GroupId=null` generira za sve aktivne grupe. Ponovno pokretanje za isti raspon ne stvara duplikate. |
@@ -370,7 +370,7 @@ Svi (Admin i Member) vide sve grupe/termine/prisutnost. Uređivanje definicije g
 - `Group` traje neograničeno (nema datuma kraja). Trener **nije** dio identiteta grupe — `DefaultTrainerId` je samo prijedlog koji se snapshotira na generirani termin (`Appointment.EmployeeId`) i mijenja se po terminu (zamjene) bez diranja grupe; smije biti prazan, tada se termin generira bez trenera i dodjeljuje se ručno.
 - `GroupSlot` (dan u tjednu + vrijeme) — soft-delete (`IsActive`), nikad tvrdo brisanje, jer generirani `Appointment.GroupSlotId` na njega referencira. Izmjena/deaktivacija slota ne dira već generirane buduće termine (isto načelo kao promjena trenera na terminu) — utječe samo na sljedeća pokretanja generiranja. Grupa mora imati barem jedan aktivan slot.
 - `GroupMember` — "tko normalno dolazi", odvojeno od stvarnog dolaska (`AppointmentAttendance`). Soft-delete kod napuštanja grupe (čuva `JoinedAt`); ponovni upis nakon napuštanja dopušten (partial unique index na `(GroupId, ClientId) WHERE IsActive`).
-- **Idempotentno generiranje**: `Appointment.GroupSlotId` (FK na `GroupSlot`) je eksplicitna poveznica "koji je slot generirao ovaj termin" — provjera duplikata je `(GroupSlotId, StartsAt)`, dodatno osigurano unique indeksom na razini baze. Datum/vrijeme termina računa se iz `FromDate` requesta (nosi offset) + dan u tjednu i vrijeme slota; usluga/trajanje/lokacija/zadani trener se snapshotiraju iz grupe u trenutku generiranja.
+- **Idempotentno generiranje**: `Appointment.GroupSlotId` (FK na `GroupSlot`) je eksplicitna poveznica "koji je slot generirao ovaj termin" — provjera duplikata je `(GroupSlotId, StartsAt)`, dodatno osigurano unique indeksom na razini baze. Datum/vrijeme termina računa se iz `FromDate` requesta (nosi offset) + dan u tjednu i vrijeme slota; usluga/trajanje/tvrtka/zadani trener se snapshotiraju iz grupe u trenutku generiranja.
 - Grupni termin nema vlastiti iznos (`Amount`/`SuggestedAmount`=0, `IsPaid`=false, `Status` ostaje `Scheduled` — nema "odrađeno" prijelaza kao kod individualnog) — naplata ide kroz pakete članova na razini `AppointmentAttendance`. Pauze/praznici/otkazivanje pojedinog termina idu kroz postojeći mehanizam otkazivanja (`POST /api/appointments/{id}/cancel`), isto kao ponavljajući individualni.
 - **Evidencija prisutnosti** (`AppointmentAttendance`, po terminu × klijentu): `Attended` (bool?, null = još nezabilježeno), `CoverageType` (`MonthlyPackage`/`SessionPackage`/`SinglePaid`) određuje kako je dolazak pokriven:
   - `MonthlyPackage` — klijent ima aktivan paket kod kojeg je relevantni brojač ulazaka `null` (neograničeno) → samo se bilježi prisutnost, ništa se ne skida.
@@ -402,7 +402,7 @@ Svi (Admin i Member) vide sve zapise (roster je timski transparentan). Zaposleni
 | `GET /api/roster/entries?employeeId=&rosterTypeId=&from=&to=` | Popis zapisa, paginirano. |
 | `GET /api/roster/entries/{id}` | Detalj jednog zapisa. |
 | `POST/PUT /api/roster/entries`, `DELETE .../{id}` | Upis/izmjena/brisanje. Isti zahtjev za oba oblika (rad/odsutnost) — koja su polja obavezna/zabranjena određuje `RosterType.IsAbsence`, ne posebno polje. Member smije samo na `EmployeeId` koji je njegov vlastiti (i ne smije ga izmjenom prebaciti na drugog zaposlenika). |
-| `GET /api/roster/team-monthly?year=&month=&locationId=` | Timski mjesečni pregled — matrica dani × zaposlenici (kao Excel "R S") sa zbrojevima po vrsti na dnu. `locationId` filtrira zaposlenike po dodijeljenoj lokaciji (`employee_locations`), roster zapis sam po sebi lokaciju ne nosi. |
+| `GET /api/roster/team-monthly?year=&month=&companyId=` | Timski mjesečni pregled — matrica dani × zaposlenici (kao Excel "R S") sa zbrojevima po vrsti na dnu. `companyId` filtrira zaposlenike po dodijeljenoj tvrtki (`employee_companies`), roster zapis sam po sebi tvrtku ne nosi. |
 | `GET /api/roster/personal?employeeId=&from=&to=` | Osobni pregled jednog zaposlenika za proizvoljno razdoblje, sa zbrojevima. Member smije dohvatiti samo svoj `employeeId`. |
 
 ### Model

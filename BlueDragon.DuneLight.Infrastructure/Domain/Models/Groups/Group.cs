@@ -31,8 +31,8 @@ public class Group
     [Column("service_id")]
     public Guid ServiceId { get; set; }
 
-    [Column("location_id")]
-    public Guid LocationId { get; set; }
+    [Column("company_id")]
+    public Guid CompanyId { get; set; }
 
     [Column("capacity")]
     public int Capacity { get; set; }
@@ -60,7 +60,7 @@ public class Group
     public Guid? UpdatedBy { get; set; }
 
     public Service Service { get; set; }
-    public Location Location { get; set; }
+    public Company Company { get; set; }
     public Employee DefaultTrainer { get; set; }
     public List<GroupSlot> Slots { get; set; } = new();
     public List<GroupMember> Members { get; set; } = new();

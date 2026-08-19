@@ -12,14 +12,14 @@ public interface IRosterEntryService
 
     Task<RosterEntryDto> GetById(Guid organizationId, Guid id);
 
-    Task<RosterEntryDto> Create(Guid organizationId, Guid userId, bool isAdmin, RosterEntryCreateRequest request);
+    Task<RosterEntryDto> Create(Guid organizationId, Guid userId, bool hasFullScope, RosterEntryCreateRequest request);
 
-    Task<RosterEntryDto> Update(Guid organizationId, Guid userId, bool isAdmin, Guid id, RosterEntryUpdateRequest request);
+    Task<RosterEntryDto> Update(Guid organizationId, Guid userId, bool hasFullScope, Guid id, RosterEntryUpdateRequest request);
 
-    Task Delete(Guid organizationId, Guid userId, bool isAdmin, Guid id);
+    Task Delete(Guid organizationId, Guid userId, bool hasFullScope, Guid id);
 
-    Task<RosterTeamMonthlyDto> GetTeamMonthly(Guid organizationId, int year, int month, Guid? locationId);
+    Task<RosterTeamMonthlyDto> GetTeamMonthly(Guid organizationId, int year, int month, Guid? companyId);
 
     Task<RosterPersonalReviewDto> GetPersonal(
-        Guid organizationId, Guid userId, bool isAdmin, Guid employeeId, DateTimeOffset from, DateTimeOffset to);
+        Guid organizationId, Guid userId, bool hasFullScope, Guid employeeId, DateTimeOffset from, DateTimeOffset to);
 }

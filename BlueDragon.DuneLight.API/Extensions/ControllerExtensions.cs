@@ -1,7 +1,8 @@
 using System;
 using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
-using BlueDragon.DuneLight.Infrastructure.Utils;
+using BlueDragon.DuneLight.API.Authorization;
+using BlueDragon.DuneLight.Core.Shared;
 using Microsoft.AspNetCore.Mvc;
 
 namespace BlueDragon.DuneLight.API.Extensions;
@@ -25,9 +26,22 @@ public static class ControllerExtensions
         return Guid.Parse(value!);
     }
 
-    /// <summary>Koristi se za provjere vlasništva na razini servisa (npr. trener smije mijenjati samo svoje termine).</summary>
-    public static bool CurrentIsAdmin(this ControllerBase controller)
+    /// <summary>
+    /// Čita GrantContext koji je [RequireGrant]/[RequireOwner] već razriješio za ovaj zahtjev (vidi
+    /// GrantAuthorization) — bez dodatnog DB upita. Koristi se za own/all razlikovanje unutar akcije
+    /// (npr. treba li servisu proslijediti puni opseg ili samo vlastiti employeeId).
+    /// </summary>
+    public static bool HasGrant(this ControllerBase controller, string grant)
     {
-        return controller.User.IsInRole(UserRoleClaims.Admin);
+        return controller.HttpContext.Items.TryGetValue(GrantAuthorization.HttpContextItemsKey, out object cached)
+               && cached is GrantContext grantContext
+               && grantContext.Has(grant);
+    }
+
+    public static bool CurrentIsOwner(this ControllerBase controller)
+    {
+        return controller.HttpContext.Items.TryGetValue(GrantAuthorization.HttpContextItemsKey, out object cached)
+               && cached is GrantContext grantContext
+               && grantContext.IsOwner;
     }
 }

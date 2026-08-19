@@ -12,9 +12,9 @@ namespace BlueDragon.DuneLight.Infrastructure.Handlers.Interfaces;
 public interface IEmployeeHandler
 {
     Task<(List<Employee> Items, int TotalCount)> GetPaged(
-        Guid organizationId, PagedRequest request, Guid? locationId, Guid? engagementTypeId, UserRole? role);
+        Guid organizationId, PagedRequest request, Guid? companyId, Guid? engagementTypeId, UserRole? role);
 
-    /// <summary>Puni graf (EngagementType, User, Locations, Services) — za prikaz/čitanje.</summary>
+    /// <summary>Puni graf (EngagementType, User, Companies, Services) — za prikaz/čitanje.</summary>
     Task<Employee> GetById(Guid organizationId, Guid id);
 
     /// <summary>Samo osnovni redak, bez navigacijskih kolekcija — za pripremu mutacije (izbjegava EF tracking sudar s Update/RemoveRange).</summary>
@@ -25,8 +25,8 @@ public interface IEmployeeHandler
     /// <summary>Stvara User i Employee u jednom DbContextu / jednom SaveChanges-u (atomično) — koristi se pri kreiranju zaposlenika zajedno s loginom.</summary>
     Task AddWithLogin(User user, Employee employee);
 
-    /// <summary>`employee` NE SMIJE imati popunjene Locations/Services navigacijske kolekcije (koristiti GetByIdLight).</summary>
-    Task Update(Employee employee, List<EmployeeLocation> newLocations, List<EmployeeServiceAssignment> newServices);
+    /// <summary>`employee` NE SMIJE imati popunjene Companies/Services navigacijske kolekcije (koristiti GetByIdLight).</summary>
+    Task Update(Employee employee, List<EmployeeCompany> newCompanies, List<EmployeeServiceAssignment> newServices);
 
     /// <summary>Postavlja Employee.IsActive i povezani User.IsActive u jednom DbContextu / jednom SaveChanges-u (atomično) — sprječava da deaktivirani zaposlenik ostane s aktivnim loginom.</summary>
     Task SetActiveWithLogin(Guid organizationId, Guid employeeId, Guid userId, bool isActive, DateTimeOffset updatedAt, Guid? updatedBy);

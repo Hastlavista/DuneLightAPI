@@ -18,26 +18,26 @@ public class ClientService : IClientService
 {
     private readonly IClientHandler _clientHandler;
     private readonly IClientTagHandler _clientTagHandler;
-    private readonly ILocationHandler _locationHandler;
+    private readonly ICompanyHandler _companyHandler;
     private readonly IEmployeeHandler _employeeHandler;
     private readonly IClientFutureActivityProvider _futureActivityProvider;
 
     public ClientService(
         IClientHandler clientHandler,
         IClientTagHandler clientTagHandler,
-        ILocationHandler locationHandler,
+        ICompanyHandler companyHandler,
         IEmployeeHandler employeeHandler,
         IClientFutureActivityProvider futureActivityProvider)
     {
         _clientHandler = clientHandler;
         _clientTagHandler = clientTagHandler;
-        _locationHandler = locationHandler;
+        _companyHandler = companyHandler;
         _employeeHandler = employeeHandler;
         _futureActivityProvider = futureActivityProvider;
     }
 
     public async Task<PagedResult<ClientDto>> GetPaged(
-        Guid organizationId, PagedRequest request, Guid? tagId, Guid? homeTrainerId, Guid? homeLocationId,
+        Guid organizationId, PagedRequest request, Guid? tagId, Guid? homeTrainerId, Guid? homeCompanyId,
         bool mineFirst, Guid currentUserId)
     {
         Guid? mineFirstEmployeeId = null;
@@ -48,7 +48,7 @@ public class ClientService : IClientService
         }
 
         (List<Client> items, int totalCount) = await _clientHandler.GetPaged(
-            organizationId, request, tagId, homeTrainerId, homeLocationId, mineFirstEmployeeId);
+            organizationId, request, tagId, homeTrainerId, homeCompanyId, mineFirstEmployeeId);
 
         return PagedResult<ClientDto>.Create(items.Select(ToDto).ToList(), totalCount, request.Page, request.PageSize);
     }
@@ -67,7 +67,7 @@ public class ClientService : IClientService
         ValidateDateOfBirth(request.DateOfBirth);
         ValidateGdprConsent(request.GdprConsentGiven, request.GdprConsentDate);
         await EnsureMemberNumberIsFree(organizationId, request.MemberNumber, excludeId: null);
-        await EnsureHomeLocationExists(organizationId, request.HomeLocationId);
+        await EnsureHomeCompanyExists(organizationId, request.HomeCompanyId);
         await EnsureHomeTrainerExists(organizationId, request.HomeTrainerId);
         await EnsureTagsExist(organizationId, request.TagIds);
 
@@ -86,7 +86,7 @@ public class ClientService : IClientService
             HealthNote = request.HealthNote,
             GdprConsentGiven = request.GdprConsentGiven,
             GdprConsentDate = request.GdprConsentDate,
-            HomeLocationId = request.HomeLocationId,
+            HomeCompanyId = request.HomeCompanyId,
             HomeTrainerId = request.HomeTrainerId,
             IsActive = true,
             CreatedAt = DateTimeOffset.UtcNow,
@@ -109,7 +109,7 @@ public class ClientService : IClientService
         ValidateDateOfBirth(request.DateOfBirth);
         ValidateGdprConsent(request.GdprConsentGiven, request.GdprConsentDate);
         await EnsureMemberNumberIsFree(organizationId, request.MemberNumber, excludeId: id);
-        await EnsureHomeLocationExists(organizationId, request.HomeLocationId);
+        await EnsureHomeCompanyExists(organizationId, request.HomeCompanyId);
         await EnsureHomeTrainerExists(organizationId, request.HomeTrainerId);
         await EnsureTagsExist(organizationId, request.TagIds);
 
@@ -124,7 +124,7 @@ public class ClientService : IClientService
         existing.HealthNote = request.HealthNote;
         existing.GdprConsentGiven = request.GdprConsentGiven;
         existing.GdprConsentDate = request.GdprConsentDate;
-        existing.HomeLocationId = request.HomeLocationId;
+        existing.HomeCompanyId = request.HomeCompanyId;
         existing.HomeTrainerId = request.HomeTrainerId;
         existing.UpdatedAt = DateTimeOffset.UtcNow;
         existing.UpdatedBy = userId;
@@ -230,14 +230,14 @@ public class ClientService : IClientService
             throw new BusinessRuleException(ErrorCodes.DuplicateMemberNumber, $"Broj člana {memberNumber} je već zauzet.");
     }
 
-    private async Task EnsureHomeLocationExists(Guid organizationId, Guid? homeLocationId)
+    private async Task EnsureHomeCompanyExists(Guid organizationId, Guid? homeCompanyId)
     {
-        if (!homeLocationId.HasValue)
+        if (!homeCompanyId.HasValue)
             return;
 
-        Location location = await _locationHandler.GetById(organizationId, homeLocationId.Value);
-        if (location == null)
-            throw new NotFoundAppException("Location", homeLocationId.Value);
+        Company company = await _companyHandler.GetById(organizationId, homeCompanyId.Value);
+        if (company == null)
+            throw new NotFoundAppException("Company", homeCompanyId.Value);
     }
 
     private async Task EnsureHomeTrainerExists(Guid organizationId, Guid? homeTrainerId)
@@ -314,8 +314,8 @@ public class ClientService : IClientService
             HealthNote = client.HealthNote,
             GdprConsentGiven = client.GdprConsentGiven,
             GdprConsentDate = client.GdprConsentDate,
-            HomeLocationId = client.HomeLocationId,
-            HomeLocationName = client.HomeLocation?.Name,
+            HomeCompanyId = client.HomeCompanyId,
+            HomeCompanyName = client.HomeCompany?.Name,
             HomeTrainerId = client.HomeTrainerId,
             HomeTrainerName = client.HomeTrainer != null ? $"{client.HomeTrainer.FirstName} {client.HomeTrainer.LastName}" : null,
             IsActive = client.IsActive,

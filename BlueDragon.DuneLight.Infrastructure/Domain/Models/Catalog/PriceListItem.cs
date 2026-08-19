@@ -6,7 +6,7 @@ namespace BlueDragon.DuneLight.Infrastructure.Domain.Models.Catalog;
 
 /// <summary>
 /// Stavka cjenika. Predmet cijene je točno jedno od ServiceId/PackageId.
-/// LocationId == null znači "sve lokacije".
+/// CompanyId == null znači "sve tvrtke".
 /// </summary>
 [Table("price_list_items")]
 public class PriceListItem
@@ -25,8 +25,8 @@ public class PriceListItem
     [Column("package_id")]
     public Guid? PackageId { get; set; }
 
-    [Column("location_id")]
-    public Guid? LocationId { get; set; }
+    [Column("company_id")]
+    public Guid? CompanyId { get; set; }
 
     [Column("price")]
     public decimal Price { get; set; }
@@ -54,5 +54,5 @@ public class PriceListItem
 
     public Service Service { get; set; }
     public Package Package { get; set; }
-    public Location Location { get; set; }
+    public Company Company { get; set; }
 }

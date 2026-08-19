@@ -21,13 +21,13 @@ public class ClientHandler : IClientHandler
     }
 
     public async Task<(List<Client> Items, int TotalCount)> GetPaged(
-        Guid organizationId, PagedRequest request, Guid? tagId, Guid? homeTrainerId, Guid? homeLocationId,
+        Guid organizationId, PagedRequest request, Guid? tagId, Guid? homeTrainerId, Guid? homeCompanyId,
         Guid? mineFirstEmployeeId)
     {
         await using DatabaseContext context = DatabaseContext.GenerateContext(_databaseSettings.ConnectionString);
 
         IQueryable<Client> query = context.Clients
-            .Include(c => c.HomeLocation)
+            .Include(c => c.HomeCompany)
             .Include(c => c.HomeTrainer)
             .Include(c => c.Tags).ThenInclude(t => t.Tag)
             .Where(c => c.OrganizationId == organizationId);
@@ -48,8 +48,8 @@ public class ClientHandler : IClientHandler
         if (homeTrainerId.HasValue)
             query = query.Where(c => c.HomeTrainerId == homeTrainerId.Value);
 
-        if (homeLocationId.HasValue)
-            query = query.Where(c => c.HomeLocationId == homeLocationId.Value);
+        if (homeCompanyId.HasValue)
+            query = query.Where(c => c.HomeCompanyId == homeCompanyId.Value);
 
         int totalCount = await query.CountAsync();
 
@@ -69,7 +69,7 @@ public class ClientHandler : IClientHandler
     {
         await using DatabaseContext context = DatabaseContext.GenerateContext(_databaseSettings.ConnectionString);
         return await context.Clients
-            .Include(c => c.HomeLocation)
+            .Include(c => c.HomeCompany)
             .Include(c => c.HomeTrainer)
             .Include(c => c.Tags).ThenInclude(t => t.Tag)
             .SingleOrDefaultAsync(c => c.OrganizationId == organizationId && c.Id == id);
@@ -112,7 +112,7 @@ public class ClientHandler : IClientHandler
         trackedClient.HealthNote = client.HealthNote;
         trackedClient.GdprConsentGiven = client.GdprConsentGiven;
         trackedClient.GdprConsentDate = client.GdprConsentDate;
-        trackedClient.HomeLocationId = client.HomeLocationId;
+        trackedClient.HomeCompanyId = client.HomeCompanyId;
         trackedClient.HomeTrainerId = client.HomeTrainerId;
         trackedClient.IsActive = client.IsActive;
         trackedClient.IsAnonymized = client.IsAnonymized;
@@ -180,7 +180,7 @@ public class ClientHandler : IClientHandler
         client.HealthNote = null;
         client.GdprConsentGiven = false;
         client.GdprConsentDate = null;
-        client.HomeLocationId = null;
+        client.HomeCompanyId = null;
         client.HomeTrainerId = null;
         client.IsActive = false;
         client.IsAnonymized = true;

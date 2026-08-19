@@ -24,7 +24,7 @@ public class GroupService : IGroupService
     private readonly IGroupHandler _groupHandler;
     private readonly IGroupAuditLogHandler _auditLogHandler;
     private readonly IServiceHandler _serviceHandler;
-    private readonly ILocationHandler _locationHandler;
+    private readonly ICompanyHandler _companyHandler;
     private readonly IEmployeeHandler _employeeHandler;
     private readonly IClientHandler _clientHandler;
     private readonly IUnitOfWorkFactory _unitOfWorkFactory;
@@ -33,7 +33,7 @@ public class GroupService : IGroupService
         IGroupHandler groupHandler,
         IGroupAuditLogHandler auditLogHandler,
         IServiceHandler serviceHandler,
-        ILocationHandler locationHandler,
+        ICompanyHandler companyHandler,
         IEmployeeHandler employeeHandler,
         IClientHandler clientHandler,
         IUnitOfWorkFactory unitOfWorkFactory)
@@ -41,7 +41,7 @@ public class GroupService : IGroupService
         _groupHandler = groupHandler;
         _auditLogHandler = auditLogHandler;
         _serviceHandler = serviceHandler;
-        _locationHandler = locationHandler;
+        _companyHandler = companyHandler;
         _employeeHandler = employeeHandler;
         _clientHandler = clientHandler;
         _unitOfWorkFactory = unitOfWorkFactory;
@@ -56,7 +56,7 @@ public class GroupService : IGroupService
             ValidateSlotTime(slot.StartTime);
 
         await EnsureServiceExists(organizationId, request.ServiceId);
-        await EnsureLocationExists(organizationId, request.LocationId);
+        await EnsureCompanyExists(organizationId, request.CompanyId);
         await EnsureTrainerExists(organizationId, request.DefaultTrainerId);
 
         Guid groupId = Guid.NewGuid();
@@ -68,7 +68,7 @@ public class GroupService : IGroupService
             OrganizationId = organizationId,
             Name = request.Name,
             ServiceId = request.ServiceId,
-            LocationId = request.LocationId,
+            CompanyId = request.CompanyId,
             Capacity = request.Capacity,
             DefaultTrainerId = request.DefaultTrainerId,
             IsActive = true,
@@ -98,7 +98,7 @@ public class GroupService : IGroupService
             throw new NotFoundAppException("Group", id);
 
         await EnsureServiceExists(organizationId, request.ServiceId);
-        await EnsureLocationExists(organizationId, request.LocationId);
+        await EnsureCompanyExists(organizationId, request.CompanyId);
         await EnsureTrainerExists(organizationId, request.DefaultTrainerId);
 
         DateTimeOffset now = DateTimeOffset.UtcNow;
@@ -110,7 +110,7 @@ public class GroupService : IGroupService
 
         existing.Name = request.Name;
         existing.ServiceId = request.ServiceId;
-        existing.LocationId = request.LocationId;
+        existing.CompanyId = request.CompanyId;
         existing.Capacity = request.Capacity;
         existing.DefaultTrainerId = request.DefaultTrainerId;
         existing.Note = request.Note;
@@ -427,7 +427,7 @@ public class GroupService : IGroupService
                     Guid appointmentId = Guid.NewGuid();
 
                     // Navigacijska svojstva se namjerno NE postavljaju ovdje — appointment ide u
-                    // AddAppointments preko svježeg DbContext-a, a Service/Location/DefaultTrainer su
+                    // AddAppointments preko svježeg DbContext-a, a Service/Company/DefaultTrainer su
                     // materijalizirani u kontekstu GetAll/GetById poziva pa bi ih EF pokušao ponovno umetnuti.
                     toCreate.Add(new Appointment
                     {
@@ -438,7 +438,7 @@ public class GroupService : IGroupService
                         DurationMinutes = group.Service.DefaultDurationMinutes,
                         ServiceId = group.ServiceId,
                         EmployeeId = group.DefaultTrainerId,
-                        LocationId = group.LocationId,
+                        CompanyId = group.CompanyId,
                         Amount = 0,
                         SuggestedAmount = 0,
                         IsAmountManuallyOverridden = false,
@@ -461,8 +461,8 @@ public class GroupService : IGroupService
                         ServiceCategoryColorHex = group.Service?.ServiceCategory?.ColorHex,
                         EmployeeId = group.DefaultTrainerId,
                         EmployeeName = group.DefaultTrainer != null ? $"{group.DefaultTrainer.FirstName} {group.DefaultTrainer.LastName}" : null,
-                        LocationId = group.LocationId,
-                        LocationName = group.Location?.Name,
+                        CompanyId = group.CompanyId,
+                        CompanyName = group.Company?.Name,
                         Status = AppointmentStatus.Scheduled,
                         IsCancelled = false,
                         Form = AppointmentForm.Group,
@@ -522,11 +522,11 @@ public class GroupService : IGroupService
             throw new NotFoundAppException("Service", serviceId);
     }
 
-    private async Task EnsureLocationExists(Guid organizationId, Guid locationId)
+    private async Task EnsureCompanyExists(Guid organizationId, Guid companyId)
     {
-        Location location = await _locationHandler.GetById(organizationId, locationId);
-        if (location == null)
-            throw new NotFoundAppException("Location", locationId);
+        Company company = await _companyHandler.GetById(organizationId, companyId);
+        if (company == null)
+            throw new NotFoundAppException("Company", companyId);
     }
 
     private async Task EnsureTrainerExists(Guid organizationId, Guid? employeeId)
@@ -556,8 +556,8 @@ public class GroupService : IGroupService
         dto.Name = group.Name;
         dto.ServiceId = group.ServiceId;
         dto.ServiceName = group.Service?.Name;
-        dto.LocationId = group.LocationId;
-        dto.LocationName = group.Location?.Name;
+        dto.CompanyId = group.CompanyId;
+        dto.CompanyName = group.Company?.Name;
         dto.Capacity = group.Capacity;
         dto.DefaultTrainerId = group.DefaultTrainerId;
         dto.DefaultTrainerName = group.DefaultTrainer != null ? $"{group.DefaultTrainer.FirstName} {group.DefaultTrainer.LastName}" : null;
@@ -603,8 +603,8 @@ public class GroupService : IGroupService
             ServiceCategoryColorHex = a.Service?.ServiceCategory?.ColorHex,
             EmployeeId = a.EmployeeId,
             EmployeeName = a.Employee != null ? $"{a.Employee.FirstName} {a.Employee.LastName}" : null,
-            LocationId = a.LocationId,
-            LocationName = a.Location?.Name,
+            CompanyId = a.CompanyId,
+            CompanyName = a.Company?.Name,
             Status = a.Status,
             IsCancelled = a.Status == AppointmentStatus.Cancelled,
             Form = AppointmentForm.Group,

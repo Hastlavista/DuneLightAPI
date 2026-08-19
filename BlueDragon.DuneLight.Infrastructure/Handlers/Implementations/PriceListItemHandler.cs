@@ -22,18 +22,18 @@ public class PriceListItemHandler : IPriceListItemHandler
     }
 
     public async Task<(List<PriceListItem> Items, int TotalCount)> GetPaged(
-        Guid organizationId, PagedRequest request, Guid? locationId, PricingSubjectType? subjectType)
+        Guid organizationId, PagedRequest request, Guid? companyId, PricingSubjectType? subjectType)
     {
         await using DatabaseContext context = DatabaseContext.GenerateContext(_databaseSettings.ConnectionString);
 
         IQueryable<PriceListItem> query = context.PriceListItems
             .Include(p => p.Service)
             .Include(p => p.Package)
-            .Include(p => p.Location)
+            .Include(p => p.Company)
             .Where(p => p.OrganizationId == organizationId);
 
-        if (locationId.HasValue)
-            query = query.Where(p => p.LocationId == locationId.Value);
+        if (companyId.HasValue)
+            query = query.Where(p => p.CompanyId == companyId.Value);
 
         if (subjectType == PricingSubjectType.Service)
             query = query.Where(p => p.ServiceId != null);
@@ -65,7 +65,7 @@ public class PriceListItemHandler : IPriceListItemHandler
         return await context.PriceListItems
             .Include(p => p.Service)
             .Include(p => p.Package)
-            .Include(p => p.Location)
+            .Include(p => p.Company)
             .SingleOrDefaultAsync(p => p.OrganizationId == organizationId && p.Id == id);
     }
 
@@ -103,15 +103,15 @@ public class PriceListItemHandler : IPriceListItemHandler
         return await context.PriceListItemHistory.AnyAsync(h => h.PriceListItemId == priceListItemId);
     }
 
-    public async Task<List<PriceListItem>> GetActiveForExactLocation(
-        Guid organizationId, PricingSubjectType subjectType, Guid subjectId, Guid? locationId, Guid? excludeId)
+    public async Task<List<PriceListItem>> GetActiveForExactCompany(
+        Guid organizationId, PricingSubjectType subjectType, Guid subjectId, Guid? companyId, Guid? excludeId)
     {
         await using DatabaseContext context = DatabaseContext.GenerateContext(_databaseSettings.ConnectionString);
 
         IQueryable<PriceListItem> query = context.PriceListItems.Where(p =>
             p.OrganizationId == organizationId &&
             p.IsActive &&
-            p.LocationId == locationId &&
+            p.CompanyId == companyId &&
             (excludeId == null || p.Id != excludeId));
 
         query = subjectType == PricingSubjectType.Service
@@ -122,14 +122,14 @@ public class PriceListItemHandler : IPriceListItemHandler
     }
 
     public async Task<List<PriceListItem>> GetActiveCandidates(
-        Guid organizationId, PricingSubjectType subjectType, Guid subjectId, Guid? locationId)
+        Guid organizationId, PricingSubjectType subjectType, Guid subjectId, Guid? companyId)
     {
         await using DatabaseContext context = DatabaseContext.GenerateContext(_databaseSettings.ConnectionString);
 
         IQueryable<PriceListItem> query = context.PriceListItems.Where(p =>
             p.OrganizationId == organizationId &&
             p.IsActive &&
-            (p.LocationId == locationId || p.LocationId == null));
+            (p.CompanyId == companyId || p.CompanyId == null));
 
         query = subjectType == PricingSubjectType.Service
             ? query.Where(p => p.ServiceId == subjectId)
@@ -138,7 +138,7 @@ public class PriceListItemHandler : IPriceListItemHandler
         return await query.ToListAsync();
     }
 
-    public async Task<List<PriceListItem>> GetActiveForLocation(Guid organizationId, Guid? locationId, DateTimeOffset date)
+    public async Task<List<PriceListItem>> GetActiveForCompany(Guid organizationId, Guid? companyId, DateTimeOffset date)
     {
         await using DatabaseContext context = DatabaseContext.GenerateContext(_databaseSettings.ConnectionString);
 
@@ -146,7 +146,7 @@ public class PriceListItemHandler : IPriceListItemHandler
             .Where(p =>
                 p.OrganizationId == organizationId &&
                 p.IsActive &&
-                (p.LocationId == locationId || p.LocationId == null) &&
+                (p.CompanyId == companyId || p.CompanyId == null) &&
                 p.ValidFrom <= date &&
                 (p.ValidTo == null || p.ValidTo >= date))
             .ToListAsync();

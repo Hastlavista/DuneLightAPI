@@ -25,8 +25,8 @@ public class AppointmentDto
     public string ServiceCategoryColorHex { get; set; }
     public Guid? EmployeeId { get; set; }
     public string EmployeeName { get; set; }
-    public Guid LocationId { get; set; }
-    public string LocationName { get; set; }
+    public Guid CompanyId { get; set; }
+    public string CompanyName { get; set; }
     public decimal Amount { get; set; }
     public decimal SuggestedAmount { get; set; }
     public bool IsAmountManuallyOverridden { get; set; }
@@ -58,8 +58,8 @@ public class AppointmentScheduleCellDto
     public string ServiceCategoryColorHex { get; set; }
     public Guid? EmployeeId { get; set; }
     public string EmployeeName { get; set; }
-    public Guid LocationId { get; set; }
-    public string LocationName { get; set; }
+    public Guid CompanyId { get; set; }
+    public string CompanyName { get; set; }
     public List<string> ClientNames { get; set; } = new();
     public AppointmentStatus Status { get; set; }
     public bool IsCancelled { get; set; }
@@ -87,7 +87,7 @@ public class AppointmentScheduleQuery
     [Required]
     public DateTimeOffset To { get; set; }
 
-    public Guid? LocationId { get; set; }
+    public Guid? CompanyId { get; set; }
     public Guid? EmployeeId { get; set; }
     public Guid? ServiceId { get; set; }
     public Guid? ServiceCategoryId { get; set; }
@@ -116,7 +116,7 @@ public class AppointmentCreateRequest
     public Guid EmployeeId { get; set; }
 
     [Required]
-    public Guid LocationId { get; set; }
+    public Guid CompanyId { get; set; }
 
     [Required]
     [MinLength(1, ErrorMessage = "Termin mora imati barem jednog klijenta.")]
@@ -139,12 +139,12 @@ public class AppointmentCompleteRequest : AppointmentCreateRequest
     public List<AppointmentClientPackageSelection> PackageSelections { get; set; } = new();
 }
 
-/// <summary>Izmjena vremena/usluge/trenera/lokacije/klijenata/napomene/iznosa. Ne dira plaćanje/paket — za to postoje complete/cancel/no-show.</summary>
+/// <summary>Izmjena vremena/usluge/trenera/tvrtke/klijenata/napomene/iznosa. Ne dira plaćanje/paket — za to postoje complete/cancel/no-show.</summary>
 public class AppointmentUpdateRequest : AppointmentCreateRequest
 {
 }
 
-/// <summary>Brzo pomicanje termina (drag-and-drop) — mijenja samo StartsAt i po potrebi trenera/lokaciju.
+/// <summary>Brzo pomicanje termina (drag-and-drop) — mijenja samo StartsAt i po potrebi trenera/tvrtku.
 /// Ne dira uslugu/klijente/iznos/napomenu/plaćanje/paket.</summary>
 public class AppointmentMoveRequest
 {
@@ -154,8 +154,8 @@ public class AppointmentMoveRequest
     /// <summary>Null = trener se ne mijenja.</summary>
     public Guid? EmployeeId { get; set; }
 
-    /// <summary>Null = lokacija se ne mijenja.</summary>
-    public Guid? LocationId { get; set; }
+    /// <summary>Null = tvrtka se ne mijenja.</summary>
+    public Guid? CompanyId { get; set; }
 }
 
 public class AppointmentCancelRequest
@@ -177,7 +177,7 @@ public class RecurringAppointmentCreateRequest
     public Guid EmployeeId { get; set; }
 
     [Required]
-    public Guid LocationId { get; set; }
+    public Guid CompanyId { get; set; }
 
     [Required]
     [MinLength(1, ErrorMessage = "Termin mora imati barem jednog klijenta.")]

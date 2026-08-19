@@ -9,6 +9,10 @@ namespace BlueDragon.DuneLight.Infrastructure.Domain.Models.Roster;
 /// Jedna evidencija za oba oblika (rad/odsutnost) — oblik je određen RosterType.IsAbsence, ne posebnim poljem.
 /// Rad: DateFrom = jedini dan, DateTo uvijek null, StartTime/EndTime obavezni. Dvokratni rad su dva zasebna retka.
 /// Odsutnost: DateFrom/DateTo = raspon (DateTo null = otvorena odsutnost, još traje), StartTime/EndTime uvijek null.
+/// IsOverride ima smisla samo na work-formi: označava da ovaj redak (ili ovi redovi, za dvokratni rad istog dana)
+/// potpuno zamjenjuje WorkingHoursTemplate za taj EmployeeId+DateFrom kod izračuna dostupnosti (vidi
+/// WorkingHoursCalculator) — svi work-redovi istog zaposlenika/datuma moraju dijeliti istu vrijednost
+/// (validirano u RosterEntryService). Apsencija uvijek blokira dan neovisno o IsOverride.
 /// </summary>
 [Table("roster_entries")]
 public class RosterEntry
@@ -44,6 +48,9 @@ public class RosterEntry
 
     [Column("note")]
     public string Note { get; set; }
+
+    [Column("is_override")]
+    public bool IsOverride { get; set; }
 
     [Column("created_at")]
     public DateTimeOffset CreatedAt { get; set; }

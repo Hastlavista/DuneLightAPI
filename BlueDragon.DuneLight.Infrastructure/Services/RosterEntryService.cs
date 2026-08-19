@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
 using BlueDragon.DuneLight.Core.DTOs.Roster;
+using BlueDragon.DuneLight.Core.Enums;
 using BlueDragon.DuneLight.Core.Interfaces.Roster;
 using BlueDragon.DuneLight.Core.Shared;
 using BlueDragon.DuneLight.Core.Shared.Exceptions;
@@ -20,6 +21,9 @@ public class RosterEntryService : IRosterEntryService
     private readonly IRosterTypeHandler _rosterTypeHandler;
     private readonly IEmployeeHandler _employeeHandler;
     private readonly IRosterAuditLogHandler _auditLogHandler;
+    private readonly IWorkingHoursTemplateHandler _workingHoursTemplateHandler;
+    private readonly ILeaveFundHandler _leaveFundHandler;
+    private readonly IEmployeeLeaveSettingsHandler _employeeLeaveSettingsHandler;
     private readonly IUnitOfWorkFactory _unitOfWorkFactory;
 
     public RosterEntryService(
@@ -27,12 +31,18 @@ public class RosterEntryService : IRosterEntryService
         IRosterTypeHandler rosterTypeHandler,
         IEmployeeHandler employeeHandler,
         IRosterAuditLogHandler auditLogHandler,
+        IWorkingHoursTemplateHandler workingHoursTemplateHandler,
+        ILeaveFundHandler leaveFundHandler,
+        IEmployeeLeaveSettingsHandler employeeLeaveSettingsHandler,
         IUnitOfWorkFactory unitOfWorkFactory)
     {
         _rosterEntryHandler = rosterEntryHandler;
         _rosterTypeHandler = rosterTypeHandler;
         _employeeHandler = employeeHandler;
         _auditLogHandler = auditLogHandler;
+        _workingHoursTemplateHandler = workingHoursTemplateHandler;
+        _leaveFundHandler = leaveFundHandler;
+        _employeeLeaveSettingsHandler = employeeLeaveSettingsHandler;
         _unitOfWorkFactory = unitOfWorkFactory;
     }
 
@@ -52,9 +62,9 @@ public class RosterEntryService : IRosterEntryService
         return ToDto(entry);
     }
 
-    public async Task<RosterEntryDto> Create(Guid organizationId, Guid userId, bool isAdmin, RosterEntryCreateRequest request)
+    public async Task<RosterEntryDto> Create(Guid organizationId, Guid userId, bool hasFullScope, RosterEntryCreateRequest request)
     {
-        await ValidateOwnership(organizationId, userId, isAdmin, request.EmployeeId);
+        await ValidateOwnership(organizationId, userId, hasFullScope, request.EmployeeId);
 
         Employee employee = await _employeeHandler.GetById(organizationId, request.EmployeeId);
         if (employee == null)
@@ -70,6 +80,12 @@ public class RosterEntryService : IRosterEntryService
 
         (DateTimeOffset dateFrom, DateTimeOffset? dateTo, TimeSpan? startTime, TimeSpan? endTime, decimal? durationHours) =
             ValidateAndCompute(type, request.DateFrom, request.DateTo, request.StartTime, request.EndTime);
+
+        EnsureLeaveFundEntryHasEndDate(type, dateTo);
+
+        bool isOverride = !type.IsAbsence && request.IsOverride;
+        if (!type.IsAbsence)
+            await ValidateIsOverrideConsistency(organizationId, request.EmployeeId, dateFrom, isOverride, excludeId: null);
 
         List<string> warnings = await ComputeOverlapWarnings(
             organizationId, request.EmployeeId, type, dateFrom, dateTo, startTime, endTime, excludeId: null);
@@ -87,6 +103,7 @@ public class RosterEntryService : IRosterEntryService
             EndTime = endTime,
             DurationHours = durationHours,
             Note = request.Note,
+            IsOverride = isOverride,
             CreatedAt = DateTimeOffset.UtcNow,
             CreatedBy = userId
         };
@@ -106,6 +123,9 @@ public class RosterEntryService : IRosterEntryService
                 ChangedBy = userId
             });
 
+            if (type.DeductsFromLeaveFund)
+                await AllocateLeaveFund(uow, organizationId, request.EmployeeId, entryId, dateFrom, dateTo!.Value, userId);
+
             await uow.CommitAsync();
         }
 
@@ -115,14 +135,14 @@ public class RosterEntryService : IRosterEntryService
         return dto;
     }
 
-    public async Task<RosterEntryDto> Update(Guid organizationId, Guid userId, bool isAdmin, Guid id, RosterEntryUpdateRequest request)
+    public async Task<RosterEntryDto> Update(Guid organizationId, Guid userId, bool hasFullScope, Guid id, RosterEntryUpdateRequest request)
     {
         RosterEntry existing = await _rosterEntryHandler.GetById(organizationId, id);
         if (existing == null)
             throw new NotFoundAppException("RosterEntry", id);
 
-        await ValidateOwnership(organizationId, userId, isAdmin, existing.EmployeeId);
-        if (!isAdmin && request.EmployeeId != existing.EmployeeId)
+        await ValidateOwnership(organizationId, userId, hasFullScope, existing.EmployeeId);
+        if (!hasFullScope && request.EmployeeId != existing.EmployeeId)
             throw new BusinessRuleException(ErrorCodes.NotOwner, "Smijete upravljati samo svojim vlastitim zapisima rostera.");
 
         Employee employee = await _employeeHandler.GetById(organizationId, request.EmployeeId);
@@ -142,6 +162,12 @@ public class RosterEntryService : IRosterEntryService
         (DateTimeOffset dateFrom, DateTimeOffset? dateTo, TimeSpan? startTime, TimeSpan? endTime, decimal? durationHours) =
             ValidateAndCompute(type, request.DateFrom, request.DateTo, request.StartTime, request.EndTime);
 
+        EnsureLeaveFundEntryHasEndDate(type, dateTo);
+
+        bool isOverride = !type.IsAbsence && request.IsOverride;
+        if (!type.IsAbsence)
+            await ValidateIsOverrideConsistency(organizationId, request.EmployeeId, dateFrom, isOverride, excludeId: id);
+
         List<string> warnings = await ComputeOverlapWarnings(
             organizationId, request.EmployeeId, type, dateFrom, dateTo, startTime, endTime, excludeId: id);
 
@@ -154,11 +180,16 @@ public class RosterEntryService : IRosterEntryService
         entry.EndTime = endTime;
         entry.DurationHours = durationHours;
         entry.Note = request.Note;
+        entry.IsOverride = isOverride;
         entry.UpdatedAt = DateTimeOffset.UtcNow;
         entry.UpdatedBy = userId;
 
         await using (IUnitOfWork uow = await _unitOfWorkFactory.Begin())
         {
+            // Puni reversal PRIJE realokacije (bez obzira je li stari tip trošio fond) — jednostavnije i sigurnije
+            // od diff-anja starog/novog raspona, vidi LeaveFundAllocator.
+            await ReturnLeaveFundUsages(uow, organizationId, id);
+
             await _rosterEntryHandler.Update(uow, entry);
 
             await _auditLogHandler.Add(uow, new RosterAuditLog
@@ -172,6 +203,9 @@ public class RosterEntryService : IRosterEntryService
                 ChangedBy = userId
             });
 
+            if (type.DeductsFromLeaveFund)
+                await AllocateLeaveFund(uow, organizationId, request.EmployeeId, id, dateFrom, dateTo!.Value, userId);
+
             await uow.CommitAsync();
         }
 
@@ -181,17 +215,20 @@ public class RosterEntryService : IRosterEntryService
         return dto;
     }
 
-    public async Task Delete(Guid organizationId, Guid userId, bool isAdmin, Guid id)
+    public async Task Delete(Guid organizationId, Guid userId, bool hasFullScope, Guid id)
     {
         RosterEntry existing = await _rosterEntryHandler.GetById(organizationId, id);
         if (existing == null)
             throw new NotFoundAppException("RosterEntry", id);
 
-        await ValidateOwnership(organizationId, userId, isAdmin, existing.EmployeeId);
+        await ValidateOwnership(organizationId, userId, hasFullScope, existing.EmployeeId);
 
         RosterEntry entry = await _rosterEntryHandler.GetByIdLight(organizationId, id);
 
         await using IUnitOfWork uow = await _unitOfWorkFactory.Begin();
+
+        // Povrat dana fonda PRIJE brisanja retka — LeaveFundUsage FK je CASCADE (sigurnosna mreža), ne poslovna logika.
+        await ReturnLeaveFundUsages(uow, organizationId, id);
 
         // Audit se piše prije fizičkog brisanja — mora preživjeti brisanje retka (vidi RosterAuditLog).
         await _auditLogHandler.Add(uow, new RosterAuditLog
@@ -210,27 +247,34 @@ public class RosterEntryService : IRosterEntryService
         await uow.CommitAsync();
     }
 
-    public async Task<RosterTeamMonthlyDto> GetTeamMonthly(Guid organizationId, int year, int month, Guid? locationId)
+    public async Task<RosterTeamMonthlyDto> GetTeamMonthly(Guid organizationId, int year, int month, Guid? companyId)
     {
         DateTimeOffset monthStart = new DateTimeOffset(year, month, 1, 0, 0, 0, TimeSpan.Zero);
         DateTimeOffset monthEndInclusive = monthStart.AddMonths(1).AddTicks(-1);
         int daysInMonth = DateTime.DaysInMonth(year, month);
 
         (List<Employee> employees, int _) = await _employeeHandler.GetPaged(
-            organizationId, new PagedRequest { Page = 1, PageSize = 200, IsActive = true }, locationId, null, null);
+            organizationId, new PagedRequest { Page = 1, PageSize = 200, IsActive = true }, companyId, null, null);
 
         List<Guid> employeeIds = employees.Select(e => e.Id.GetValueOrDefault()).ToList();
         List<RosterEntry> entries = employeeIds.Count == 0
             ? new List<RosterEntry>()
             : await _rosterEntryHandler.GetForPeriod(organizationId, employeeIds, monthStart, monthEndInclusive);
 
-        ILookup<Guid, RosterEntry> byEmployee = entries.ToLookup(e => e.EmployeeId);
+        List<WorkingHoursTemplate> templates = employeeIds.Count == 0
+            ? new List<WorkingHoursTemplate>()
+            : await _workingHoursTemplateHandler.GetForEmployees(organizationId, employeeIds);
 
+        ILookup<Guid, RosterEntry> byEmployee = entries.ToLookup(e => e.EmployeeId);
+        Dictionary<Guid, WorkingHoursTemplate> templateByEmployee = templates.ToDictionary(t => t.EmployeeId!.Value);
+
+        DateTime today = DateTimeOffset.UtcNow.Date;
         RosterTeamMonthlyDto result = new RosterTeamMonthlyDto { Year = year, Month = month };
 
         foreach (Employee employee in employees.OrderBy(e => e.SortOrder).ThenBy(e => e.LastName))
         {
             List<RosterEntry> employeeEntries = byEmployee[employee.Id.GetValueOrDefault()].ToList();
+            templateByEmployee.TryGetValue(employee.Id.GetValueOrDefault(), out WorkingHoursTemplate employeeTemplate);
 
             RosterEmployeeMonthDto employeeDto = new RosterEmployeeMonthDto
             {
@@ -265,6 +309,8 @@ public class RosterEntryService : IRosterEntryService
                     });
                 }
 
+                ApplyPlannedSource(cell, employeeTemplate, dayDate, today);
+
                 employeeDto.Days.Add(cell);
             }
 
@@ -277,10 +323,34 @@ public class RosterEntryService : IRosterEntryService
         return result;
     }
 
-    public async Task<RosterPersonalReviewDto> GetPersonal(
-        Guid organizationId, Guid userId, bool isAdmin, Guid employeeId, DateTimeOffset from, DateTimeOffset to)
+    /// <summary>Stvarni zapisi uvijek imaju prednost (Source=Actual). Bez stvarnog zapisa: Planned samo za
+    /// danas/budućnost kad postoji WorkingHoursTemplate za taj dan; inače None (prošlost ili nema predloška).
+    /// TotalWorkHours namjerno NE uključuje planirano — vidi FAZA 2 odluka (platni/računovodstveni broj).</summary>
+    private static void ApplyPlannedSource(RosterDayCellDto cell, WorkingHoursTemplate template, DateTime dayDate, DateTime today)
     {
-        await ValidateOwnership(organizationId, userId, isAdmin, employeeId);
+        if (cell.Entries.Count > 0)
+        {
+            cell.Source = RosterCellSource.Actual;
+            return;
+        }
+
+        if (dayDate < today)
+            return;
+
+        (List<WorkingHoursCalculator.Interval> intervals, AvailabilitySource source) = WorkingHoursCalculator.GetEffectiveEmployeeIntervals(
+            template, new List<RosterEntry>(), new DateTimeOffset(dayDate, TimeSpan.Zero));
+
+        if (source != AvailabilitySource.Template)
+            return;
+
+        cell.Source = RosterCellSource.Planned;
+        cell.PlannedIntervals = intervals.Select(i => new RosterPlannedIntervalDto { Start = i.Start, End = i.End }).ToList();
+    }
+
+    public async Task<RosterPersonalReviewDto> GetPersonal(
+        Guid organizationId, Guid userId, bool hasFullScope, Guid employeeId, DateTimeOffset from, DateTimeOffset to)
+    {
+        await ValidateOwnership(organizationId, userId, hasFullScope, employeeId);
 
         Employee employee = await _employeeHandler.GetById(organizationId, employeeId);
         if (employee == null)
@@ -298,17 +368,125 @@ public class RosterEntryService : IRosterEntryService
         };
 
         (dto.WorkHoursByType, dto.TotalWorkHours, dto.AbsenceDaysByType) = BuildSums(entries, from, to);
+        dto.PlannedDays = await BuildPlannedDays(organizationId, employeeId, entries, from, to);
         return dto;
     }
 
-    private async Task ValidateOwnership(Guid organizationId, Guid userId, bool isAdmin, Guid employeeId)
+    /// <summary>Dani u [from,to] bez stvarnog zapisa (danas/budućnost) za koje postoji WorkingHoursTemplate — vidi ApplyPlannedSource (isto pravilo, team-monthly grana).</summary>
+    private async Task<List<RosterPlannedDayDto>> BuildPlannedDays(
+        Guid organizationId, Guid employeeId, List<RosterEntry> entries, DateTimeOffset from, DateTimeOffset to)
     {
-        if (isAdmin)
+        DateTime today = DateTimeOffset.UtcNow.Date;
+        DateTime rangeStart = from.Date > today ? from.Date : today;
+        if (rangeStart > to.Date)
+            return new List<RosterPlannedDayDto>();
+
+        WorkingHoursTemplate template = await _workingHoursTemplateHandler.GetForEmployee(organizationId, employeeId);
+
+        List<RosterPlannedDayDto> plannedDays = new List<RosterPlannedDayDto>();
+
+        for (DateTime date = rangeStart; date <= to.Date; date = date.AddDays(1))
+        {
+            bool hasActual = entries.Any(e =>
+            {
+                DateTime entryFrom = e.DateFrom.Date;
+                DateTime entryTo = e.RosterType.IsAbsence ? (e.DateTo?.Date ?? to.Date) : entryFrom;
+                return date >= entryFrom && date <= entryTo;
+            });
+
+            if (hasActual)
+                continue;
+
+            DateTimeOffset dateOffset = new DateTimeOffset(date, TimeSpan.Zero);
+            (List<WorkingHoursCalculator.Interval> intervals, AvailabilitySource source) = WorkingHoursCalculator.GetEffectiveEmployeeIntervals(
+                template, new List<RosterEntry>(), dateOffset);
+
+            if (source != AvailabilitySource.Template)
+                continue;
+
+            plannedDays.Add(new RosterPlannedDayDto
+            {
+                Date = dateOffset,
+                Intervals = intervals.Select(i => new RosterPlannedIntervalDto { Start = i.Start, End = i.End }).ToList()
+            });
+        }
+
+        return plannedDays;
+    }
+
+    private async Task ValidateOwnership(Guid organizationId, Guid userId, bool hasFullScope, Guid employeeId)
+    {
+        if (hasFullScope)
             return;
 
         Employee employee = await _employeeHandler.GetByUserId(organizationId, userId);
         if (employee == null || employee.Id != employeeId)
             throw new BusinessRuleException(ErrorCodes.NotOwner, "Smijete upravljati samo svojim vlastitim zapisima rostera.");
+    }
+
+    /// <summary>Tip koji troši fond godišnjeg odmora zahtijeva zatvoren raspon — beskonačna ("otvorena") odsutnost ne može oduzeti određen broj dana od fonda.</summary>
+    private static void EnsureLeaveFundEntryHasEndDate(RosterType type, DateTimeOffset? dateTo)
+    {
+        if (type.DeductsFromLeaveFund && !dateTo.HasValue)
+            throw new BusinessRuleException(
+                ErrorCodes.LeaveFundEntryRequiresEndDate,
+                "Vrsta rostera koja troši fond godišnjeg odmora zahtijeva datum do.");
+    }
+
+    /// <summary>Troši fond godišnjeg odmora za [dateFrom,dateTo] (kalendarski dani, uključivo) — lijeno otvara fond(ove)
+    /// relevantne godine ako ne postoje, pa troši stariji-prvo preko LeaveFundAllocator (baca LEAVE_FUND_EXCEEDED
+    /// ako zbroj svih neisteklih fondova ne pokriva traženo). Poziva se unutar iste transakcije kao upis RosterEntry-ja.</summary>
+    private async Task AllocateLeaveFund(
+        IUnitOfWork uow, Guid organizationId, Guid employeeId, Guid rosterEntryId,
+        DateTimeOffset dateFrom, DateTimeOffset dateTo, Guid userId)
+    {
+        EmployeeLeaveSettings settings = await _employeeLeaveSettingsHandler.GetForEmployee(organizationId, employeeId);
+        if (settings == null)
+            throw new BusinessRuleException(
+                ErrorCodes.LeaveSettingsNotConfigured,
+                "Zaposlenik nema podešen fond godišnjeg odmora — postavite broj dana i datume prije upisa godišnjeg.");
+
+        int requestedDays = (dateTo.Date - dateFrom.Date).Days + 1;
+
+        int fromYear = LeaveFundYearCalculator.ResolveFundYear(settings, dateFrom);
+        int toYear = LeaveFundYearCalculator.ResolveFundYear(settings, dateTo);
+
+        await _leaveFundHandler.GetOrCreateForYear(uow, organizationId, employeeId, settings, fromYear, userId);
+        if (toYear != fromYear)
+            await _leaveFundHandler.GetOrCreateForYear(uow, organizationId, employeeId, settings, toYear, userId);
+
+        List<LeaveFund> eligible = await _leaveFundHandler.GetEligible(uow, organizationId, employeeId, DateTimeOffset.UtcNow);
+        List<(LeaveFund Fund, int Days)> allocation = LeaveFundAllocator.Deduct(eligible, requestedDays);
+
+        foreach ((LeaveFund fund, int days) in allocation)
+        {
+            await _leaveFundHandler.Update(uow, fund);
+            await _leaveFundHandler.AddUsage(uow, new LeaveFundUsage
+            {
+                Id = Guid.NewGuid(),
+                OrganizationId = organizationId,
+                RosterEntryId = rosterEntryId,
+                LeaveFundId = fund.Id!.Value,
+                Days = days,
+                CreatedAt = DateTimeOffset.UtcNow
+            });
+        }
+    }
+
+    /// <summary>Vraća sve dane fonda potrošene za ovaj RosterEntry (no-op ako ih nema) — poziva se bezuvjetno na svaki Update/Delete, prije eventualne nove alokacije.</summary>
+    private async Task ReturnLeaveFundUsages(IUnitOfWork uow, Guid organizationId, Guid rosterEntryId)
+    {
+        List<LeaveFundUsage> usages = await _leaveFundHandler.GetUsagesForEntry(uow, organizationId, rosterEntryId);
+        if (usages.Count == 0)
+            return;
+
+        foreach (LeaveFundUsage usage in usages)
+        {
+            LeaveFundAllocator.Return(usage.LeaveFund, usage.Days);
+            await _leaveFundHandler.Update(uow, usage.LeaveFund);
+        }
+
+        await _leaveFundHandler.DeleteUsages(uow, usages);
     }
 
     /// <summary>
@@ -339,6 +517,21 @@ public class RosterEntryService : IRosterEntryService
 
         decimal durationHours = Math.Round((decimal)(endTime.Value - startTime.Value).TotalHours, 2);
         return (dateFrom.Date, null, startTime, endTime, durationHours);
+    }
+
+    /// <summary>Svi work-redovi istog EmployeeId+DateFrom (dvokratni rad) moraju dijeliti istu IsOverride vrijednost —
+    /// inače je stanje "pola override, pola predložak" za isti dan dvosmisleno kod izračuna dostupnosti (vidi
+    /// WorkingHoursCalculator, FAZA 2). Ne primjenjuje se na odsutnost (uvijek IsOverride=false, irelevantno).</summary>
+    private async Task ValidateIsOverrideConsistency(
+        Guid organizationId, Guid employeeId, DateTimeOffset dateFrom, bool isOverride, Guid? excludeId)
+    {
+        List<RosterEntry> candidates = await _rosterEntryHandler.GetOverlapCandidates(
+            organizationId, employeeId, dateFrom.Date, dateFrom.Date, excludeId);
+
+        bool mismatch = candidates.Any(c => !c.RosterType.IsAbsence && c.DateFrom.Date == dateFrom.Date && c.IsOverride != isOverride);
+        if (mismatch)
+            throw new ValidationAppException(
+                "Svi zapisi rada istog zaposlenika i datuma (dvokratni rad) moraju imati istu vrijednost \"override\" — uredite ih zajedno.");
     }
 
     private async Task<List<string>> ComputeOverlapWarnings(
@@ -451,6 +644,7 @@ public class RosterEntryService : IRosterEntryService
             EndTime = entry.EndTime,
             DurationHours = entry.DurationHours,
             Note = entry.Note,
+            IsOverride = entry.IsOverride,
             CreatedAt = entry.CreatedAt,
             CreatedBy = entry.CreatedBy,
             UpdatedAt = entry.UpdatedAt,

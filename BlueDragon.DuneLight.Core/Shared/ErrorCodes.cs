@@ -26,7 +26,7 @@ public static class ErrorCodes
     public const string EmailAlreadyInUse = "EMAIL_ALREADY_IN_USE";
     public const string UserAlreadyLinked = "USER_ALREADY_LINKED";
     public const string LastActiveAdmin = "LAST_ACTIVE_ADMIN";
-    public const string LastActiveLocation = "LAST_ACTIVE_LOCATION";
+    public const string LastActiveCompany = "LAST_ACTIVE_LOCATION";
     public const string LastActiveSlot = "LAST_ACTIVE_SLOT";
     public const string AlreadyMember = "ALREADY_MEMBER";
     public const string AlreadyCompleted = "ALREADY_COMPLETED";
@@ -43,8 +43,14 @@ public static class ErrorCodes
     public const string AppointmentOverlap = "APPOINTMENT_OVERLAP";
     public const string RecurringConflict = "RECURRING_CONFLICT";
     public const string ConcurrencyConflict = "CONCURRENCY_CONFLICT";
+    public const string OutsideWorkingHours = "OUTSIDE_WORKING_HOURS";
+    public const string LeaveSettingsNotConfigured = "LEAVE_SETTINGS_NOT_CONFIGURED";
+    public const string LeaveFundExceeded = "LEAVE_FUND_EXCEEDED";
+    public const string LeaveFundTypeMustBeAbsence = "LEAVE_FUND_TYPE_MUST_BE_ABSENCE";
+    public const string LeaveFundEntryRequiresEndDate = "LEAVE_FUND_ENTRY_REQUIRES_END_DATE";
 
     // RECURRING_CONFLICT details.conflicts[].reason vrijednosti
     public const string RecurringConflictReasonAppointment = "EXISTING_APPOINTMENT";
     public const string RecurringConflictReasonRosterAbsence = "ROSTER_ABSENCE";
+    public const string RecurringConflictReasonOutsideWorkingHours = "OUTSIDE_WORKING_HOURS";
 }

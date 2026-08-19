@@ -52,10 +52,10 @@ public class GroupAttendanceService : IGroupAttendanceService
     }
 
     public async Task<GroupAttendanceListDto> SetAttendance(
-        Guid organizationId, Guid userId, bool isAdmin, Guid appointmentId, SetGroupAttendanceRequest request)
+        Guid organizationId, Guid userId, bool hasFullScope, Guid appointmentId, SetGroupAttendanceRequest request)
     {
         Appointment appointment = await LoadGroupAppointmentOrThrow(organizationId, appointmentId);
-        await ValidateOwnership(organizationId, userId, isAdmin, appointment.EmployeeId);
+        await ValidateOwnership(organizationId, userId, hasFullScope, appointment.EmployeeId);
 
         AppointmentAttendance existing = await _attendanceHandler.GetAttendanceRow(organizationId, appointmentId, request.ClientId);
 
@@ -267,9 +267,9 @@ public class GroupAttendanceService : IGroupAttendanceService
         return entry == null || !entry.RemainingEntries.HasValue;
     }
 
-    private async Task ValidateOwnership(Guid organizationId, Guid userId, bool isAdmin, Guid? appointmentEmployeeId)
+    private async Task ValidateOwnership(Guid organizationId, Guid userId, bool hasFullScope, Guid? appointmentEmployeeId)
     {
-        if (isAdmin)
+        if (hasFullScope)
             return;
 
         Employee employee = await _employeeHandler.GetByUserId(organizationId, userId);

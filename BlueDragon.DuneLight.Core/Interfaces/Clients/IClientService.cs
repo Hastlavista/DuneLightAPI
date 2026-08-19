@@ -9,7 +9,7 @@ namespace BlueDragon.DuneLight.Core.Interfaces.Clients;
 public interface IClientService
 {
     Task<PagedResult<ClientDto>> GetPaged(
-        Guid organizationId, PagedRequest request, Guid? tagId, Guid? homeTrainerId, Guid? homeLocationId,
+        Guid organizationId, PagedRequest request, Guid? tagId, Guid? homeTrainerId, Guid? homeCompanyId,
         bool mineFirst, Guid currentUserId);
 
     Task<ClientDto> GetById(Guid organizationId, Guid id);

@@ -9,7 +9,7 @@ namespace BlueDragon.DuneLight.Core.Interfaces.Employees;
 public interface IEmployeeService
 {
     Task<PagedResult<EmployeeDto>> GetPaged(
-        Guid organizationId, PagedRequest request, Guid? locationId, Guid? engagementTypeId, UserRole? role);
+        Guid organizationId, PagedRequest request, Guid? companyId, Guid? engagementTypeId, UserRole? role);
 
     Task<EmployeeDto> GetById(Guid organizationId, Guid id);
     Task<EmployeeDto> Create(Guid organizationId, Guid userId, EmployeeCreateRequest request);

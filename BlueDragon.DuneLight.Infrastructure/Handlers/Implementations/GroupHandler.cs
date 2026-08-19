@@ -25,7 +25,7 @@ public class GroupHandler : IGroupHandler
     {
         return query
             .Include(g => g.Service)
-            .Include(g => g.Location)
+            .Include(g => g.Company)
             .Include(g => g.DefaultTrainer)
             .Include(g => g.Slots)
             .Include(g => g.Members.Where(m => m.IsActive)).ThenInclude(m => m.Client);
@@ -188,7 +188,7 @@ public class GroupHandler : IGroupHandler
         return await context.Appointments
             .Include(a => a.Service).ThenInclude(s => s.ServiceCategory)
             .Include(a => a.Employee)
-            .Include(a => a.Location)
+            .Include(a => a.Company)
             .Include(a => a.Attendances)
             .Where(a => a.OrganizationId == organizationId && a.GroupId == groupId &&
                 a.StartsAt >= from && a.StartsAt <= to)

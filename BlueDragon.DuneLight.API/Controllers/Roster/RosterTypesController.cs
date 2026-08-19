@@ -1,10 +1,10 @@
 using System;
 using System.Threading.Tasks;
+using BlueDragon.DuneLight.API.Authorization;
 using BlueDragon.DuneLight.API.Extensions;
 using BlueDragon.DuneLight.Core.DTOs.Roster;
 using BlueDragon.DuneLight.Core.Interfaces.Roster;
 using BlueDragon.DuneLight.Core.Shared;
-using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 
 namespace BlueDragon.DuneLight.API.Controllers.Roster;
@@ -23,21 +23,21 @@ public class RosterTypesController : ControllerBase
     }
 
     [HttpGet]
-    [Authorize(Roles = "Admin,Member")]
+    [RequireGrant(Grants.RosterTypesView)]
     public async Task<ActionResult<PagedResult<RosterTypeDto>>> GetPaged([FromQuery] PagedRequest request)
     {
         return Ok(await _rosterTypeService.GetPaged(this.CurrentOrganizationId(), request));
     }
 
     [HttpGet("{id:guid}")]
-    [Authorize(Roles = "Admin,Member")]
+    [RequireGrant(Grants.RosterTypesView)]
     public async Task<ActionResult<RosterTypeDto>> GetById(Guid id)
     {
         return Ok(await _rosterTypeService.GetById(this.CurrentOrganizationId(), id));
     }
 
     [HttpPost]
-    [Authorize(Roles = "Admin")]
+    [RequireGrant(Grants.RosterTypesManage)]
     public async Task<ActionResult<RosterTypeDto>> Create([FromBody] RosterTypeCreateRequest request)
     {
         RosterTypeDto created = await _rosterTypeService.Create(this.CurrentOrganizationId(), this.CurrentUserId(), request);
@@ -45,28 +45,28 @@ public class RosterTypesController : ControllerBase
     }
 
     [HttpPut("{id:guid}")]
-    [Authorize(Roles = "Admin")]
+    [RequireGrant(Grants.RosterTypesManage)]
     public async Task<ActionResult<RosterTypeDto>> Update(Guid id, [FromBody] RosterTypeUpdateRequest request)
     {
         return Ok(await _rosterTypeService.Update(this.CurrentOrganizationId(), this.CurrentUserId(), id, request));
     }
 
     [HttpPatch("{id:guid}/activate")]
-    [Authorize(Roles = "Admin")]
+    [RequireGrant(Grants.RosterTypesManage)]
     public async Task<ActionResult<RosterTypeDto>> Activate(Guid id)
     {
         return Ok(await _rosterTypeService.SetActive(this.CurrentOrganizationId(), this.CurrentUserId(), id, true));
     }
 
     [HttpPatch("{id:guid}/deactivate")]
-    [Authorize(Roles = "Admin")]
+    [RequireGrant(Grants.RosterTypesManage)]
     public async Task<ActionResult<RosterTypeDto>> Deactivate(Guid id)
     {
         return Ok(await _rosterTypeService.SetActive(this.CurrentOrganizationId(), this.CurrentUserId(), id, false));
     }
 
     [HttpDelete("{id:guid}")]
-    [Authorize(Roles = "Admin")]
+    [RequireGrant(Grants.RosterTypesManage)]
     public async Task<IActionResult> Delete(Guid id)
     {
         await _rosterTypeService.Delete(this.CurrentOrganizationId(), id);

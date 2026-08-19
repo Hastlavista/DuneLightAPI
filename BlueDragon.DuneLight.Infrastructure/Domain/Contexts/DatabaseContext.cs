@@ -6,6 +6,7 @@ using BlueDragon.DuneLight.Infrastructure.Domain.Models.Catalog;
 using BlueDragon.DuneLight.Infrastructure.Domain.Models.Clients;
 using BlueDragon.DuneLight.Infrastructure.Domain.Models.Employees;
 using BlueDragon.DuneLight.Infrastructure.Domain.Models.Groups;
+using BlueDragon.DuneLight.Infrastructure.Domain.Models.Permissions;
 using BlueDragon.DuneLight.Infrastructure.Domain.Models.Roster;
 using Microsoft.EntityFrameworkCore;
 
@@ -16,7 +17,7 @@ public class DatabaseContext : DbContext
     public DbSet<Organization> Organizations { get; set; }
     public DbSet<User> Users { get; set; }
 
-    public DbSet<Location> Locations { get; set; }
+    public DbSet<Company> Companies { get; set; }
     public DbSet<ServiceCategory> ServiceCategories { get; set; }
     public DbSet<Service> Services { get; set; }
     public DbSet<PriceListItem> PriceListItems { get; set; }
@@ -26,7 +27,7 @@ public class DatabaseContext : DbContext
 
     public DbSet<EngagementType> EngagementTypes { get; set; }
     public DbSet<Employee> Employees { get; set; }
-    public DbSet<EmployeeLocation> EmployeeLocations { get; set; }
+    public DbSet<EmployeeCompany> EmployeeCompanies { get; set; }
     public DbSet<EmployeeServiceAssignment> EmployeeServiceAssignments { get; set; }
     public DbSet<EmployeeAuditLog> EmployeeAuditLog { get; set; }
 
@@ -49,6 +50,17 @@ public class DatabaseContext : DbContext
     public DbSet<RosterType> RosterTypes { get; set; }
     public DbSet<RosterEntry> RosterEntries { get; set; }
     public DbSet<RosterAuditLog> RosterAuditLog { get; set; }
+    public DbSet<WorkingHoursTemplate> WorkingHoursTemplates { get; set; }
+    public DbSet<WorkingHoursInterval> WorkingHoursIntervals { get; set; }
+    public DbSet<EmployeeLeaveSettings> EmployeeLeaveSettings { get; set; }
+    public DbSet<LeaveFund> LeaveFunds { get; set; }
+    public DbSet<LeaveFundUsage> LeaveFundUsages { get; set; }
+
+    public DbSet<GrantGroup> GrantGroups { get; set; }
+    public DbSet<GrantGroupGrant> GrantGroupGrants { get; set; }
+    public DbSet<UserGrantGroup> UserGrantGroups { get; set; }
+    public DbSet<Role> Roles { get; set; }
+    public DbSet<UserRoleAssignment> UserRoleAssignments { get; set; }
 
     public DatabaseContext(DbContextOptions options) : base(options)
     {
@@ -76,14 +88,15 @@ public class DatabaseContext : DbContext
         ConfigureAppointments(modelBuilder);
         ConfigureGroups(modelBuilder);
         ConfigureRoster(modelBuilder);
+        ConfigurePermissions(modelBuilder);
 
         base.OnModelCreating(modelBuilder);
     }
 
     private static void ConfigureCatalog(ModelBuilder modelBuilder)
     {
-        modelBuilder.Entity<Location>().HasKey(l => l.Id);
-        modelBuilder.Entity<Location>().HasIndex(l => l.OrganizationId);
+        modelBuilder.Entity<Company>().HasKey(l => l.Id);
+        modelBuilder.Entity<Company>().HasIndex(l => l.OrganizationId);
 
         modelBuilder.Entity<ServiceCategory>().HasKey(c => c.Id);
         modelBuilder.Entity<ServiceCategory>()
@@ -107,7 +120,7 @@ public class DatabaseContext : DbContext
 
         modelBuilder.Entity<PriceListItem>().HasKey(p => p.Id);
         modelBuilder.Entity<PriceListItem>()
-            .HasIndex(p => new { p.OrganizationId, p.ServiceId, p.PackageId, p.LocationId });
+            .HasIndex(p => new { p.OrganizationId, p.ServiceId, p.PackageId, p.CompanyId });
         modelBuilder.Entity<PriceListItem>()
             .HasOne(p => p.Service)
             .WithMany()
@@ -119,9 +132,9 @@ public class DatabaseContext : DbContext
             .HasForeignKey(p => p.PackageId)
             .OnDelete(DeleteBehavior.Restrict);
         modelBuilder.Entity<PriceListItem>()
-            .HasOne(p => p.Location)
+            .HasOne(p => p.Company)
             .WithMany()
-            .HasForeignKey(p => p.LocationId)
+            .HasForeignKey(p => p.CompanyId)
             .OnDelete(DeleteBehavior.Restrict);
 
         modelBuilder.Entity<PriceListItemHistory>().HasKey(h => h.Id);
@@ -170,24 +183,24 @@ public class DatabaseContext : DbContext
             .HasForeignKey(e => e.UserId)
             .OnDelete(DeleteBehavior.Restrict);
 
-        modelBuilder.Entity<EmployeeLocation>().HasKey(el => el.Id);
-        modelBuilder.Entity<EmployeeLocation>()
-            .HasIndex(el => new { el.EmployeeId, el.LocationId })
+        modelBuilder.Entity<EmployeeCompany>().HasKey(el => el.Id);
+        modelBuilder.Entity<EmployeeCompany>()
+            .HasIndex(el => new { el.EmployeeId, el.CompanyId })
             .IsUnique();
-        // Točno jedna matična lokacija po zaposleniku.
-        modelBuilder.Entity<EmployeeLocation>()
+        // Točno jedna matična tvrtka po zaposleniku.
+        modelBuilder.Entity<EmployeeCompany>()
             .HasIndex(el => el.EmployeeId)
             .IsUnique()
             .HasFilter("is_primary = true");
-        modelBuilder.Entity<EmployeeLocation>()
+        modelBuilder.Entity<EmployeeCompany>()
             .HasOne(el => el.Employee)
-            .WithMany(e => e.Locations)
+            .WithMany(e => e.Companies)
             .HasForeignKey(el => el.EmployeeId)
             .OnDelete(DeleteBehavior.Cascade);
-        modelBuilder.Entity<EmployeeLocation>()
-            .HasOne(el => el.Location)
+        modelBuilder.Entity<EmployeeCompany>()
+            .HasOne(el => el.Company)
             .WithMany()
-            .HasForeignKey(el => el.LocationId)
+            .HasForeignKey(el => el.CompanyId)
             .OnDelete(DeleteBehavior.Restrict);
 
         modelBuilder.Entity<EmployeeServiceAssignment>().HasKey(es => es.Id);
@@ -224,9 +237,9 @@ public class DatabaseContext : DbContext
         modelBuilder.Entity<Client>()
             .HasIndex(c => new { c.OrganizationId, c.LastName, c.FirstName });
         modelBuilder.Entity<Client>()
-            .HasOne(c => c.HomeLocation)
+            .HasOne(c => c.HomeCompany)
             .WithMany()
-            .HasForeignKey(c => c.HomeLocationId)
+            .HasForeignKey(c => c.HomeCompanyId)
             .OnDelete(DeleteBehavior.Restrict);
         modelBuilder.Entity<Client>()
             .HasOne(c => c.HomeTrainer)
@@ -306,7 +319,7 @@ public class DatabaseContext : DbContext
     private static void ConfigureAppointments(ModelBuilder modelBuilder)
     {
         modelBuilder.Entity<Appointment>().HasKey(a => a.Id);
-        modelBuilder.Entity<Appointment>().HasIndex(a => new { a.OrganizationId, a.LocationId, a.StartsAt });
+        modelBuilder.Entity<Appointment>().HasIndex(a => new { a.OrganizationId, a.CompanyId, a.StartsAt });
         modelBuilder.Entity<Appointment>().HasIndex(a => new { a.OrganizationId, a.EmployeeId, a.StartsAt });
         modelBuilder.Entity<Appointment>()
             .Property(a => a.Form)
@@ -330,9 +343,9 @@ public class DatabaseContext : DbContext
             .HasForeignKey(a => a.EmployeeId)
             .OnDelete(DeleteBehavior.Restrict);
         modelBuilder.Entity<Appointment>()
-            .HasOne(a => a.Location)
+            .HasOne(a => a.Company)
             .WithMany()
-            .HasForeignKey(a => a.LocationId)
+            .HasForeignKey(a => a.CompanyId)
             .OnDelete(DeleteBehavior.Restrict);
         modelBuilder.Entity<Appointment>()
             .HasOne(a => a.Group)
@@ -404,9 +417,9 @@ public class DatabaseContext : DbContext
             .HasForeignKey(g => g.ServiceId)
             .OnDelete(DeleteBehavior.Restrict);
         modelBuilder.Entity<Group>()
-            .HasOne(g => g.Location)
+            .HasOne(g => g.Company)
             .WithMany()
-            .HasForeignKey(g => g.LocationId)
+            .HasForeignKey(g => g.CompanyId)
             .OnDelete(DeleteBehavior.Restrict);
         modelBuilder.Entity<Group>()
             .HasOne(g => g.DefaultTrainer)
@@ -469,6 +482,130 @@ public class DatabaseContext : DbContext
         // Namjerno bez FK/navigacije na RosterEntry — audit mora preživjeti brisanje retka (vidi RosterAuditLog).
         modelBuilder.Entity<RosterAuditLog>().HasKey(a => a.Id);
         modelBuilder.Entity<RosterAuditLog>().HasIndex(a => a.RosterEntryId);
+
+        // Vlasnik je točno jedno od EmployeeId/CompanyId (isto kao PriceListItem.ServiceId/PackageId) — CHECK
+        // constraint ide raw SQL-om u migraciji, ovdje samo djelomični unique indeksi (singleton po vlasniku).
+        modelBuilder.Entity<WorkingHoursTemplate>().HasKey(t => t.Id);
+        modelBuilder.Entity<WorkingHoursTemplate>()
+            .HasIndex(t => t.EmployeeId).IsUnique().HasFilter("employee_id IS NOT NULL");
+        modelBuilder.Entity<WorkingHoursTemplate>()
+            .HasIndex(t => t.CompanyId).IsUnique().HasFilter("company_id IS NOT NULL");
+        modelBuilder.Entity<WorkingHoursTemplate>()
+            .Property(t => t.CycleType)
+            .HasConversion(v => v.ToString(), v => Enum.Parse<WorkingHoursCycleType>(v));
+        modelBuilder.Entity<WorkingHoursTemplate>()
+            .HasOne(t => t.Employee)
+            .WithMany()
+            .HasForeignKey(t => t.EmployeeId)
+            .OnDelete(DeleteBehavior.Restrict);
+        modelBuilder.Entity<WorkingHoursTemplate>()
+            .HasOne(t => t.Company)
+            .WithMany()
+            .HasForeignKey(t => t.CompanyId)
+            .OnDelete(DeleteBehavior.Restrict);
+
+        modelBuilder.Entity<WorkingHoursInterval>().HasKey(i => i.Id);
+        modelBuilder.Entity<WorkingHoursInterval>().HasIndex(i => i.WorkingHoursTemplateId);
+        modelBuilder.Entity<WorkingHoursInterval>()
+            .Property(i => i.DayOfWeek)
+            .HasConversion(v => v.ToString(), v => Enum.Parse<DayOfWeek>(v));
+        modelBuilder.Entity<WorkingHoursInterval>()
+            .HasOne(i => i.WorkingHoursTemplate)
+            .WithMany(t => t.Intervals)
+            .HasForeignKey(i => i.WorkingHoursTemplateId)
+            .OnDelete(DeleteBehavior.Cascade);
+
+        modelBuilder.Entity<EmployeeLeaveSettings>().HasKey(s => s.Id);
+        modelBuilder.Entity<EmployeeLeaveSettings>().HasIndex(s => s.EmployeeId).IsUnique();
+        modelBuilder.Entity<EmployeeLeaveSettings>()
+            .HasOne(s => s.Employee)
+            .WithMany()
+            .HasForeignKey(s => s.EmployeeId)
+            .OnDelete(DeleteBehavior.Restrict);
+
+        modelBuilder.Entity<LeaveFund>().HasKey(f => f.Id);
+        modelBuilder.Entity<LeaveFund>()
+            .HasIndex(f => new { f.OrganizationId, f.EmployeeId, f.FundYear })
+            .IsUnique();
+        modelBuilder.Entity<LeaveFund>()
+            .HasOne(f => f.Employee)
+            .WithMany()
+            .HasForeignKey(f => f.EmployeeId)
+            .OnDelete(DeleteBehavior.Restrict);
+        // Postgres sistemska kolona xmin kao optimistic-concurrency token (bez migracije) — isti obrazac kao ClientPackage.Version.
+        modelBuilder.Entity<LeaveFund>()
+            .Property(f => f.Version)
+            .HasColumnName("xmin")
+            .HasColumnType("xid")
+            .ValueGeneratedOnAddOrUpdate()
+            .IsConcurrencyToken();
+
+        modelBuilder.Entity<LeaveFundUsage>().HasKey(u => u.Id);
+        modelBuilder.Entity<LeaveFundUsage>().HasIndex(u => u.RosterEntryId);
+        modelBuilder.Entity<LeaveFundUsage>().HasIndex(u => u.LeaveFundId);
+        modelBuilder.Entity<LeaveFundUsage>()
+            .HasOne<RosterEntry>()
+            .WithMany()
+            .HasForeignKey(u => u.RosterEntryId)
+            .OnDelete(DeleteBehavior.Cascade);
+        modelBuilder.Entity<LeaveFundUsage>()
+            .HasOne(u => u.LeaveFund)
+            .WithMany()
+            .HasForeignKey(u => u.LeaveFundId)
+            .OnDelete(DeleteBehavior.Restrict);
+    }
+
+    private static void ConfigurePermissions(ModelBuilder modelBuilder)
+    {
+        modelBuilder.Entity<GrantGroup>().HasKey(g => g.Id);
+        modelBuilder.Entity<GrantGroup>()
+            .HasIndex(g => new { g.OrganizationId, g.Name })
+            .IsUnique();
+
+        modelBuilder.Entity<GrantGroupGrant>().HasKey(g => g.Id);
+        modelBuilder.Entity<GrantGroupGrant>()
+            .HasIndex(g => new { g.GrantGroupId, g.GrantKey })
+            .IsUnique();
+        modelBuilder.Entity<GrantGroupGrant>()
+            .HasOne(g => g.GrantGroup)
+            .WithMany(gg => gg.Grants)
+            .HasForeignKey(g => g.GrantGroupId)
+            .OnDelete(DeleteBehavior.Cascade);
+
+        modelBuilder.Entity<UserGrantGroup>().HasKey(u => u.Id);
+        modelBuilder.Entity<UserGrantGroup>()
+            .HasIndex(u => new { u.UserId, u.GrantGroupId })
+            .IsUnique();
+        modelBuilder.Entity<UserGrantGroup>()
+            .HasOne(u => u.User)
+            .WithMany()
+            .HasForeignKey(u => u.UserId)
+            .OnDelete(DeleteBehavior.Cascade);
+        modelBuilder.Entity<UserGrantGroup>()
+            .HasOne(u => u.GrantGroup)
+            .WithMany(gg => gg.UserGrantGroups)
+            .HasForeignKey(u => u.GrantGroupId)
+            .OnDelete(DeleteBehavior.Cascade);
+
+        modelBuilder.Entity<Role>().HasKey(r => r.Id);
+        modelBuilder.Entity<Role>()
+            .HasIndex(r => new { r.OrganizationId, r.Name })
+            .IsUnique();
+
+        modelBuilder.Entity<UserRoleAssignment>().HasKey(u => u.Id);
+        modelBuilder.Entity<UserRoleAssignment>()
+            .HasIndex(u => new { u.UserId, u.RoleId })
+            .IsUnique();
+        modelBuilder.Entity<UserRoleAssignment>()
+            .HasOne(u => u.User)
+            .WithMany()
+            .HasForeignKey(u => u.UserId)
+            .OnDelete(DeleteBehavior.Cascade);
+        modelBuilder.Entity<UserRoleAssignment>()
+            .HasOne(u => u.Role)
+            .WithMany()
+            .HasForeignKey(u => u.RoleId)
+            .OnDelete(DeleteBehavior.Cascade);
     }
 
     public static DatabaseContext GenerateContext(string connectionString)

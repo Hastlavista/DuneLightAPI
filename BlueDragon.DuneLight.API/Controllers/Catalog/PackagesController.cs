@@ -1,10 +1,10 @@
 using System;
 using System.Threading.Tasks;
+using BlueDragon.DuneLight.API.Authorization;
 using BlueDragon.DuneLight.API.Extensions;
 using BlueDragon.DuneLight.Core.DTOs.Catalog;
 using BlueDragon.DuneLight.Core.Interfaces.Catalog;
 using BlueDragon.DuneLight.Core.Shared;
-using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 
 namespace BlueDragon.DuneLight.API.Controllers.Catalog;
@@ -22,21 +22,21 @@ public class PackagesController : ControllerBase
     }
 
     [HttpGet]
-    [Authorize(Roles = "Admin,Member")]
+    [RequireGrant(Grants.CatalogPackagesView)]
     public async Task<ActionResult<PagedResult<PackageDto>>> GetPaged([FromQuery] PagedRequest request)
     {
         return Ok(await _packageService.GetPaged(this.CurrentOrganizationId(), request));
     }
 
     [HttpGet("{id:guid}")]
-    [Authorize(Roles = "Admin,Member")]
+    [RequireGrant(Grants.CatalogPackagesView)]
     public async Task<ActionResult<PackageDto>> GetById(Guid id)
     {
         return Ok(await _packageService.GetById(this.CurrentOrganizationId(), id));
     }
 
     [HttpPost]
-    [Authorize(Roles = "Admin")]
+    [RequireGrant(Grants.CatalogPackagesManage)]
     public async Task<ActionResult<PackageDto>> Create([FromBody] PackageCreateRequest request)
     {
         PackageDto created = await _packageService.Create(this.CurrentOrganizationId(), this.CurrentUserId(), request);
@@ -44,28 +44,28 @@ public class PackagesController : ControllerBase
     }
 
     [HttpPut("{id:guid}")]
-    [Authorize(Roles = "Admin")]
+    [RequireGrant(Grants.CatalogPackagesManage)]
     public async Task<ActionResult<PackageDto>> Update(Guid id, [FromBody] PackageUpdateRequest request)
     {
         return Ok(await _packageService.Update(this.CurrentOrganizationId(), this.CurrentUserId(), id, request));
     }
 
     [HttpPatch("{id:guid}/activate")]
-    [Authorize(Roles = "Admin")]
+    [RequireGrant(Grants.CatalogPackagesManage)]
     public async Task<ActionResult<PackageDto>> Activate(Guid id)
     {
         return Ok(await _packageService.SetActive(this.CurrentOrganizationId(), this.CurrentUserId(), id, true));
     }
 
     [HttpPatch("{id:guid}/deactivate")]
-    [Authorize(Roles = "Admin")]
+    [RequireGrant(Grants.CatalogPackagesManage)]
     public async Task<ActionResult<PackageDto>> Deactivate(Guid id)
     {
         return Ok(await _packageService.SetActive(this.CurrentOrganizationId(), this.CurrentUserId(), id, false));
     }
 
     [HttpDelete("{id:guid}")]
-    [Authorize(Roles = "Admin")]
+    [RequireGrant(Grants.CatalogPackagesManage)]
     public async Task<IActionResult> Delete(Guid id)
     {
         await _packageService.Delete(this.CurrentOrganizationId(), id);

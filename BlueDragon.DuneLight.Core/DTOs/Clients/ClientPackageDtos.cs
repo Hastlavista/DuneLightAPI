@@ -41,10 +41,10 @@ public class ClientPackageCreateRequest
 
     public DateTimeOffset? PurchaseDate { get; set; }
 
-    /// <summary>Ako nije zadano, predlaže se preko IPricingService.ResolvePrice za odabranu lokaciju/datum.</summary>
+    /// <summary>Ako nije zadano, predlaže se preko IPricingService.ResolvePrice za odabranu tvrtku/datum.</summary>
     [Range(0, double.MaxValue, ErrorMessage = "Cijena ne smije biti negativna.")]
     public decimal? PaidPrice { get; set; }
 
-    /// <summary>Koristi se samo za predlaganje cijene (lokacijski cjenik). Ne pohranjuje se na paket.</summary>
-    public Guid? LocationId { get; set; }
+    /// <summary>Koristi se samo za predlaganje cijene (cjenik po tvrtki). Ne pohranjuje se na paket.</summary>
+    public Guid? CompanyId { get; set; }
 }

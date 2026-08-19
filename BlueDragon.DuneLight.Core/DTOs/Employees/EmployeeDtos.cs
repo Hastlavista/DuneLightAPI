@@ -4,10 +4,10 @@ using System.ComponentModel.DataAnnotations;
 
 namespace BlueDragon.DuneLight.Core.DTOs.Employees;
 
-public class EmployeeLocationDto
+public class EmployeeCompanyDto
 {
-    public Guid LocationId { get; set; }
-    public string LocationName { get; set; }
+    public Guid CompanyId { get; set; }
+    public string CompanyName { get; set; }
     public bool IsPrimary { get; set; }
 }
 
@@ -42,7 +42,13 @@ public class EmployeeDto
     public bool IsActive { get; set; }
     public Guid UserId { get; set; }
     public string Role { get; set; }
-    public List<EmployeeLocationDto> Locations { get; set; } = new();
+
+    /// <summary>Imena (ne ID-evi) GrantGroup/Role dodjela ovog korisnika — bulk-friendly
+    /// za listu (vidi EmployeeService.GetPaged), da frontend ne mora dodatni lookup po retku.</summary>
+    public List<string> GrantGroupNames { get; set; } = new();
+    public List<string> RoleNames { get; set; } = new();
+
+    public List<EmployeeCompanyDto> Companies { get; set; } = new();
     public List<EmployeeServiceDto> Services { get; set; } = new();
     public DateTimeOffset CreatedAt { get; set; }
     public Guid? CreatedBy { get; set; }
@@ -98,11 +104,11 @@ public class EmployeeCreateRequest
     public Guid UserId { get; set; }
 
     [Required]
-    [MinLength(1, ErrorMessage = "Zaposlenik mora imati barem jednu lokaciju.")]
-    public List<Guid> LocationIds { get; set; } = new();
+    [MinLength(1, ErrorMessage = "Zaposlenik mora imati barem jednu tvrtku.")]
+    public List<Guid> CompanyIds { get; set; } = new();
 
     [Required]
-    public Guid PrimaryLocationId { get; set; }
+    public Guid PrimaryCompanyId { get; set; }
 
     /// <summary>Prazno = smije izvoditi sve usluge.</summary>
     public List<Guid> ServiceIds { get; set; } = new();
@@ -150,11 +156,11 @@ public class EmployeeUpdateRequest
     public Guid EngagementTypeId { get; set; }
 
     [Required]
-    [MinLength(1, ErrorMessage = "Zaposlenik mora imati barem jednu lokaciju.")]
-    public List<Guid> LocationIds { get; set; } = new();
+    [MinLength(1, ErrorMessage = "Zaposlenik mora imati barem jednu tvrtku.")]
+    public List<Guid> CompanyIds { get; set; } = new();
 
     [Required]
-    public Guid PrimaryLocationId { get; set; }
+    public Guid PrimaryCompanyId { get; set; }
 
     public List<Guid> ServiceIds { get; set; } = new();
 }
@@ -213,21 +219,32 @@ public class EmployeeWithLoginCreateRequest
     public Guid EngagementTypeId { get; set; }
 
     [Required]
-    [MinLength(1, ErrorMessage = "Zaposlenik mora imati barem jednu lokaciju.")]
-    public List<Guid> LocationIds { get; set; } = new();
+    [MinLength(1, ErrorMessage = "Zaposlenik mora imati barem jednu tvrtku.")]
+    public List<Guid> CompanyIds { get; set; } = new();
 
     [Required]
-    public Guid PrimaryLocationId { get; set; }
+    public Guid PrimaryCompanyId { get; set; }
 
     /// <summary>Prazno = smije izvoditi sve usluge.</summary>
     public List<Guid> ServiceIds { get; set; } = new();
 
-    /// <summary>Inicijalna lozinka koju upisuje admin — ne generira se privremena, ne prisiljava se promjena pri prvoj prijavi.</summary>
+    /// <summary>Inicijalna lozinka koju upisuje admin.</summary>
     [Required]
     public string Password { get; set; }
 
+    /// <summary>Ako je true, korisnik mora promijeniti lozinku (i PIN, ako je postavljen) pri prvoj prijavi.</summary>
+    public bool MustChangeCredentialsOnFirstLogin { get; set; }
+
+    /// <summary>Opcionalan inicijalni PIN — samo polje, PIN-login/quick-switch tok nije dio ove faze.</summary>
+    public string Pin { get; set; }
+
+    /// <summary>Barem jedna GrantGroup je obavezna (osim za Ownera, koji se ne kreira ovim endpointom — vidi Register).</summary>
     [Required]
-    public Enums.UserRole Role { get; set; }
+    [MinLength(1, ErrorMessage = "Korisnik mora imati barem jednu grant-grupu.")]
+    public List<Guid> GrantGroupIds { get; set; } = new();
+
+    /// <summary>Poslovne oznake (Role) — opcionalno, ne utječu na ovlasti.</summary>
+    public List<Guid> RoleIds { get; set; } = new();
 }
 
 public class EmployeeWithLoginCreateResponse
@@ -235,7 +252,7 @@ public class EmployeeWithLoginCreateResponse
     public Guid EmployeeId { get; set; }
     public Guid UserId { get; set; }
     public string Email { get; set; }
-    public string Role { get; set; }
+    public List<Guid> GrantGroupIds { get; set; } = new();
 }
 
 /// <summary>Odgovor za "tko sam ja" (`GET /api/employees/me`) — dovoljno da frontend zna svoj identitet zaposlenika.</summary>
@@ -245,8 +262,16 @@ public class EmployeeMeDto
     public string FirstName { get; set; }
     public string LastName { get; set; }
     public string Role { get; set; }
+    public bool IsOwner { get; set; }
+
+    /// <summary>Efektivna, agregirana unija grant-key-eva iz svih GrantGroup dodjela ovog
+    /// korisnika — isti izvor kao GrantResolver koristi za autorizaciju (GrantGroupHandler.ResolveEffective),
+    /// samo izložen frontendu za UI-level provjere (npr. adminGuard, prikaz/sakrivanje akcija).
+    /// Prazna za Ownera (on zaobilazi grant sustav u potpunosti — IsOwner ionako uvijek propušta provjere).</summary>
+    public List<string> Grants { get; set; } = new();
+
     public string ColorHex { get; set; }
-    public List<EmployeeLocationDto> Locations { get; set; } = new();
+    public List<EmployeeCompanyDto> Companies { get; set; } = new();
 }
 
 /// <summary>Ograničeni pogled za trenere/recepciju — kolege. Fizički ne sadrži osjetljiva polja.</summary>
@@ -257,5 +282,5 @@ public class EmployeeDirectoryDto
     public string LastName { get; set; }
     public string ColorHex { get; set; }
     public bool IsActive { get; set; }
-    public List<string> Locations { get; set; } = new();
+    public List<string> Companies { get; set; } = new();
 }

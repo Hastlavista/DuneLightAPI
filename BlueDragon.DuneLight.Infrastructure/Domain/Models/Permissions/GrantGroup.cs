@@ -1,11 +1,12 @@
 using System;
+using System.Collections.Generic;
 using System.ComponentModel.DataAnnotations;
 using System.ComponentModel.DataAnnotations.Schema;
 
-namespace BlueDragon.DuneLight.Infrastructure.Domain.Models.Catalog;
+namespace BlueDragon.DuneLight.Infrastructure.Domain.Models.Permissions;
 
-[Table("locations")]
-public class Location
+[Table("grant_groups")]
+public class GrantGroup
 {
     [Key]
     [DatabaseGenerated(DatabaseGeneratedOption.Identity)]
@@ -18,26 +19,8 @@ public class Location
     [Column("name")]
     public string Name { get; set; }
 
-    [Column("address")]
-    public string Address { get; set; }
-
-    [Column("phone")]
-    public string Phone { get; set; }
-
-    [Column("color_hex")]
-    public string ColorHex { get; set; }
-
-    [Column("is_active")]
-    public bool IsActive { get; set; }
-
-    [Column("note")]
-    public string Note { get; set; }
-
-    [Column("sort_order")]
-    public int SortOrder { get; set; }
-
     [Column("created_at")]
-    public DateTimeOffset CreatedAt { get; set; }
+    public DateTimeOffset? CreatedAt { get; set; }
 
     [Column("created_by")]
     public Guid? CreatedBy { get; set; }
@@ -47,4 +30,7 @@ public class Location
 
     [Column("updated_by")]
     public Guid? UpdatedBy { get; set; }
+
+    public List<GrantGroupGrant> Grants { get; set; } = new();
+    public List<UserGrantGroup> UserGrantGroups { get; set; } = new();
 }

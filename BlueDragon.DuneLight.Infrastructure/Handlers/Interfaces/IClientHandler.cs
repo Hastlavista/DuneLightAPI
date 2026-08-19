@@ -9,10 +9,10 @@ namespace BlueDragon.DuneLight.Infrastructure.Handlers.Interfaces;
 public interface IClientHandler
 {
     Task<(List<Client> Items, int TotalCount)> GetPaged(
-        Guid organizationId, PagedRequest request, Guid? tagId, Guid? homeTrainerId, Guid? homeLocationId,
+        Guid organizationId, PagedRequest request, Guid? tagId, Guid? homeTrainerId, Guid? homeCompanyId,
         Guid? mineFirstEmployeeId);
 
-    /// <summary>Puni graf (HomeLocation, HomeTrainer, Tags) — za prikaz/čitanje.</summary>
+    /// <summary>Puni graf (HomeCompany, HomeTrainer, Tags) — za prikaz/čitanje.</summary>
     Task<Client> GetById(Guid organizationId, Guid id);
 
     /// <summary>Samo osnovni redak, bez navigacijskih kolekcija — za pripremu mutacije.</summary>

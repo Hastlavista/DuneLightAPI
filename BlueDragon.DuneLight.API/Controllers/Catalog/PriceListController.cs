@@ -1,12 +1,12 @@
 using System;
 using System.Collections.Generic;
 using System.Threading.Tasks;
+using BlueDragon.DuneLight.API.Authorization;
 using BlueDragon.DuneLight.API.Extensions;
 using BlueDragon.DuneLight.Core.DTOs.Catalog;
 using BlueDragon.DuneLight.Core.Enums;
 using BlueDragon.DuneLight.Core.Interfaces.Catalog;
 using BlueDragon.DuneLight.Core.Shared;
-using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 
 namespace BlueDragon.DuneLight.API.Controllers.Catalog;
@@ -24,39 +24,39 @@ public class PriceListController : ControllerBase
     }
 
     [HttpGet]
-    [Authorize(Roles = "Admin,Member")]
+    [RequireGrant(Grants.CatalogPriceListView)]
     public async Task<ActionResult<PagedResult<PriceListItemDto>>> GetPaged(
-        [FromQuery] PagedRequest request, [FromQuery] Guid? locationId, [FromQuery] PricingSubjectType? subjectType)
+        [FromQuery] PagedRequest request, [FromQuery] Guid? companyId, [FromQuery] PricingSubjectType? subjectType)
     {
-        return Ok(await _pricingService.GetPaged(this.CurrentOrganizationId(), request, locationId, subjectType));
+        return Ok(await _pricingService.GetPaged(this.CurrentOrganizationId(), request, companyId, subjectType));
     }
 
     [HttpGet("{id:guid}")]
-    [Authorize(Roles = "Admin,Member")]
+    [RequireGrant(Grants.CatalogPriceListView)]
     public async Task<ActionResult<PriceListItemDto>> GetById(Guid id)
     {
         return Ok(await _pricingService.GetById(this.CurrentOrganizationId(), id));
     }
 
-    /// <summary>Trenutno važeći cjenik za lokaciju (pregledni prikaz).</summary>
+    /// <summary>Trenutno važeći cjenik za tvrtku (pregledni prikaz).</summary>
     [HttpGet("effective")]
-    [Authorize(Roles = "Admin,Member")]
-    public async Task<ActionResult<List<EffectivePriceDto>>> GetEffective([FromQuery] Guid? locationId, [FromQuery] DateTimeOffset? date)
+    [RequireGrant(Grants.CatalogPriceListView)]
+    public async Task<ActionResult<List<EffectivePriceDto>>> GetEffective([FromQuery] Guid? companyId, [FromQuery] DateTimeOffset? date)
     {
         DateTimeOffset effectiveDate = date ?? DateTimeOffset.UtcNow;
-        return Ok(await _pricingService.GetEffectivePriceList(this.CurrentOrganizationId(), locationId, effectiveDate));
+        return Ok(await _pricingService.GetEffectivePriceList(this.CurrentOrganizationId(), companyId, effectiveDate));
     }
 
-    /// <summary>Razriješena cijena za (usluga/paket, lokacija, datum).</summary>
+    /// <summary>Razriješena cijena za (usluga/paket, tvrtka, datum).</summary>
     [HttpGet("resolve")]
-    [Authorize(Roles = "Admin,Member")]
+    [RequireGrant(Grants.CatalogPriceListView)]
     public async Task<ActionResult<ResolvePriceResponse>> Resolve([FromQuery] ResolvePriceRequest request)
     {
         return Ok(await _pricingService.ResolvePrice(this.CurrentOrganizationId(), request));
     }
 
     [HttpPost]
-    [Authorize(Roles = "Admin")]
+    [RequireGrant(Grants.CatalogPriceListManage)]
     public async Task<ActionResult<PriceListItemDto>> Create([FromBody] PriceListItemCreateRequest request)
     {
         PriceListItemDto created = await _pricingService.Create(this.CurrentOrganizationId(), this.CurrentUserId(), request);
@@ -64,28 +64,28 @@ public class PriceListController : ControllerBase
     }
 
     [HttpPut("{id:guid}")]
-    [Authorize(Roles = "Admin")]
+    [RequireGrant(Grants.CatalogPriceListManage)]
     public async Task<ActionResult<PriceListItemDto>> Update(Guid id, [FromBody] PriceListItemUpdateRequest request)
     {
         return Ok(await _pricingService.Update(this.CurrentOrganizationId(), this.CurrentUserId(), id, request));
     }
 
     [HttpPatch("{id:guid}/activate")]
-    [Authorize(Roles = "Admin")]
+    [RequireGrant(Grants.CatalogPriceListManage)]
     public async Task<ActionResult<PriceListItemDto>> Activate(Guid id)
     {
         return Ok(await _pricingService.SetActive(this.CurrentOrganizationId(), this.CurrentUserId(), id, true));
     }
 
     [HttpPatch("{id:guid}/deactivate")]
-    [Authorize(Roles = "Admin")]
+    [RequireGrant(Grants.CatalogPriceListManage)]
     public async Task<ActionResult<PriceListItemDto>> Deactivate(Guid id)
     {
         return Ok(await _pricingService.SetActive(this.CurrentOrganizationId(), this.CurrentUserId(), id, false));
     }
 
     [HttpDelete("{id:guid}")]
-    [Authorize(Roles = "Admin")]
+    [RequireGrant(Grants.CatalogPriceListManage)]
     public async Task<IActionResult> Delete(Guid id)
     {
         await _pricingService.Delete(this.CurrentOrganizationId(), id);

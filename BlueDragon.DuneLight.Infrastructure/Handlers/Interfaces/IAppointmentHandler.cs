@@ -19,7 +19,7 @@ public interface IAppointmentHandler
 
     Task<Appointment> GetById(Guid organizationId, Guid id);
 
-    /// <summary>Bare redak, BEZ Clients/Service/Employee/Location navigacija — za pripremu mutacije (izbjegava EF tracking sudar).</summary>
+    /// <summary>Bare redak, BEZ Clients/Service/Employee/Company navigacija — za pripremu mutacije (izbjegava EF tracking sudar).</summary>
     Task<Appointment> GetByIdLight(Guid organizationId, Guid id);
 
     /// <summary>Batch verzija za listu klijenata u jednom upitu (izbjegava N+1) — unutar zajedničke transakcije.</summary>

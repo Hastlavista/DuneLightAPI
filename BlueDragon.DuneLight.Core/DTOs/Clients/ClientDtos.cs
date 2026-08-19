@@ -26,8 +26,8 @@ public class ClientDto
     public string HealthNote { get; set; }
     public bool GdprConsentGiven { get; set; }
     public DateTimeOffset? GdprConsentDate { get; set; }
-    public Guid? HomeLocationId { get; set; }
-    public string HomeLocationName { get; set; }
+    public Guid? HomeCompanyId { get; set; }
+    public string HomeCompanyName { get; set; }
     public Guid? HomeTrainerId { get; set; }
     public string HomeTrainerName { get; set; }
     public bool IsActive { get; set; }
@@ -73,7 +73,7 @@ public class ClientCreateRequest
 
     public DateTimeOffset? GdprConsentDate { get; set; }
 
-    public Guid? HomeLocationId { get; set; }
+    public Guid? HomeCompanyId { get; set; }
 
     public Guid? HomeTrainerId { get; set; }
 
@@ -113,7 +113,7 @@ public class ClientUpdateRequest
 
     public DateTimeOffset? GdprConsentDate { get; set; }
 
-    public Guid? HomeLocationId { get; set; }
+    public Guid? HomeCompanyId { get; set; }
 
     public Guid? HomeTrainerId { get; set; }
 

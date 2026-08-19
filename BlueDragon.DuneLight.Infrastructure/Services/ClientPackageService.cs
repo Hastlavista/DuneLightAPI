@@ -50,7 +50,7 @@ public class ClientPackageService : IClientPackageService
 
         DateTimeOffset purchaseDate = request.PurchaseDate ?? DateTimeOffset.UtcNow;
 
-        decimal paidPrice = request.PaidPrice ?? await ResolveSuggestedPrice(organizationId, request.PackageId, request.LocationId, purchaseDate);
+        decimal paidPrice = request.PaidPrice ?? await ResolveSuggestedPrice(organizationId, request.PackageId, request.CompanyId, purchaseDate);
 
         DateTimeOffset expiryDate = PackageExpiryCalculator.CalculateExpiryDate(
             package.ValidityType, purchaseDate, package.ValidityDays, package.ValidityFixedDate);
@@ -158,13 +158,13 @@ public class ClientPackageService : IClientPackageService
         }
     }
 
-    private async Task<decimal> ResolveSuggestedPrice(Guid organizationId, Guid packageId, Guid? locationId, DateTimeOffset date)
+    private async Task<decimal> ResolveSuggestedPrice(Guid organizationId, Guid packageId, Guid? companyId, DateTimeOffset date)
     {
         ResolvePriceResponse resolved = await _pricingService.ResolvePrice(organizationId, new ResolvePriceRequest
         {
             SubjectType = PricingSubjectType.Package,
             SubjectId = packageId,
-            LocationId = locationId,
+            CompanyId = companyId,
             Date = date
         });
         return resolved.Price;

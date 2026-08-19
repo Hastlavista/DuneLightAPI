@@ -8,7 +8,7 @@ using BlueDragon.DuneLight.Infrastructure.Domain.Models.Employees;
 namespace BlueDragon.DuneLight.Infrastructure.Domain.Models.Clients;
 
 /// <summary>
-/// Klijent studija. HomeLocationId/HomeTrainerId su čisto informativni — ne ograničavaju
+/// Klijent studija. HomeCompanyId/HomeTrainerId su čisto informativni — ne ograničavaju
 /// pristup (svi treneri vide sve klijente), služe samo za redoslijed prikaza.
 ///
 /// Prodani paketi (ClientPackage) i termini/dolasci (AppointmentClient, AppointmentAttendance)
@@ -60,8 +60,8 @@ public class Client
     [Column("gdpr_consent_date")]
     public DateTimeOffset? GdprConsentDate { get; set; }
 
-    [Column("home_location_id")]
-    public Guid? HomeLocationId { get; set; }
+    [Column("home_company_id")]
+    public Guid? HomeCompanyId { get; set; }
 
     [Column("home_trainer_id")]
     public Guid? HomeTrainerId { get; set; }
@@ -88,7 +88,7 @@ public class Client
     [Column("updated_by")]
     public Guid? UpdatedBy { get; set; }
 
-    public Location HomeLocation { get; set; }
+    public Company HomeCompany { get; set; }
     public Employee HomeTrainer { get; set; }
     public List<ClientTagAssignment> Tags { get; set; } = new();
 }

@@ -34,9 +34,10 @@ public class AppointmentService : IAppointmentService
     private readonly IPricingService _pricingService;
     private readonly IServiceHandler _serviceHandler;
     private readonly IEmployeeHandler _employeeHandler;
-    private readonly ILocationHandler _locationHandler;
+    private readonly ICompanyHandler _companyHandler;
     private readonly IClientHandler _clientHandler;
     private readonly IRosterEntryHandler _rosterEntryHandler;
+    private readonly IWorkingHoursTemplateHandler _workingHoursTemplateHandler;
     private readonly IUnitOfWorkFactory _unitOfWorkFactory;
 
     public AppointmentService(
@@ -47,9 +48,10 @@ public class AppointmentService : IAppointmentService
         IPricingService pricingService,
         IServiceHandler serviceHandler,
         IEmployeeHandler employeeHandler,
-        ILocationHandler locationHandler,
+        ICompanyHandler companyHandler,
         IClientHandler clientHandler,
         IRosterEntryHandler rosterEntryHandler,
+        IWorkingHoursTemplateHandler workingHoursTemplateHandler,
         IUnitOfWorkFactory unitOfWorkFactory)
     {
         _appointmentHandler = appointmentHandler;
@@ -59,26 +61,27 @@ public class AppointmentService : IAppointmentService
         _pricingService = pricingService;
         _serviceHandler = serviceHandler;
         _employeeHandler = employeeHandler;
-        _locationHandler = locationHandler;
+        _companyHandler = companyHandler;
         _clientHandler = clientHandler;
         _rosterEntryHandler = rosterEntryHandler;
+        _workingHoursTemplateHandler = workingHoursTemplateHandler;
         _unitOfWorkFactory = unitOfWorkFactory;
     }
 
-    public Task<AppointmentDto> Create(Guid organizationId, Guid userId, bool isAdmin, AppointmentCreateRequest request)
+    public Task<AppointmentDto> Create(Guid organizationId, Guid userId, bool hasFullScope, AppointmentCreateRequest request)
     {
-        return CreateInternal(organizationId, userId, isAdmin, request, recurrenceGroupId: null);
+        return CreateInternal(organizationId, userId, hasFullScope, request, recurrenceGroupId: null);
     }
 
-    public async Task<AppointmentDto> CompleteNew(Guid organizationId, Guid userId, bool isAdmin, AppointmentCompleteRequest request)
+    public async Task<AppointmentDto> CompleteNew(Guid organizationId, Guid userId, bool hasFullScope, AppointmentCompleteRequest request)
     {
-        await ValidateOwnership(organizationId, userId, isAdmin, request.EmployeeId);
+        await ValidateOwnership(organizationId, userId, hasFullScope, request.EmployeeId);
         ServiceEntity service = await LoadServiceOrThrow(organizationId, request.ServiceId);
         await EnsureEmployeeExists(organizationId, request.EmployeeId);
-        await EnsureLocationExists(organizationId, request.LocationId);
+        await EnsureCompanyExists(organizationId, request.CompanyId);
         List<Client> clients = await EnsureClientsExist(organizationId, request.ClientIds);
 
-        decimal suggestedAmount = await ResolveSuggestedAmount(organizationId, request.ServiceId, request.LocationId, request.StartsAt);
+        decimal suggestedAmount = await ResolveSuggestedAmount(organizationId, request.ServiceId, request.CompanyId, request.StartsAt);
         decimal amount = request.Amount ?? suggestedAmount;
         bool overridden = request.Amount.HasValue && request.Amount.Value != suggestedAmount;
 
@@ -96,7 +99,7 @@ public class AppointmentService : IAppointmentService
             DurationMinutes = service.DefaultDurationMinutes,
             ServiceId = request.ServiceId,
             EmployeeId = request.EmployeeId,
-            LocationId = request.LocationId,
+            CompanyId = request.CompanyId,
             Amount = amount,
             SuggestedAmount = suggestedAmount,
             IsAmountManuallyOverridden = overridden,
@@ -123,6 +126,11 @@ public class AppointmentService : IAppointmentService
             });
         }
 
+        // CompleteNew loguje odrađeno — provjera radnog vremena vrijedi samo ako je StartsAt u budućnosti
+        // (zakazuje se i odmah naplaćuje); za prošlost je ovo evidentiranje stvarnosti, ne planiranje (vidi FAZA 2).
+        if (request.StartsAt > DateTimeOffset.UtcNow)
+            await EnsureWithinWorkingHours(organizationId, request.EmployeeId, request.CompanyId, request.StartsAt, service.DefaultDurationMinutes);
+
         await EnsureNoOverlap(
             organizationId, request.EmployeeId, clients, request.StartsAt, appointment.DurationMinutes, excludeId: null);
 
@@ -147,7 +155,7 @@ public class AppointmentService : IAppointmentService
         return dto;
     }
 
-    public async Task<AppointmentDto> CompleteExisting(Guid organizationId, Guid userId, bool isAdmin, Guid id, AppointmentCompleteRequest request)
+    public async Task<AppointmentDto> CompleteExisting(Guid organizationId, Guid userId, bool hasFullScope, Guid id, AppointmentCompleteRequest request)
     {
         Appointment appointment = await _appointmentHandler.GetByIdLight(organizationId, id);
         if (appointment == null)
@@ -156,14 +164,14 @@ public class AppointmentService : IAppointmentService
         if (appointment.Status == AppointmentStatus.Completed)
             throw new BusinessRuleException(ErrorCodes.AlreadyCompleted, "Termin je već označen kao odrađen.");
 
-        await ValidateOwnership(organizationId, userId, isAdmin, appointment.EmployeeId.GetValueOrDefault());
+        await ValidateOwnership(organizationId, userId, hasFullScope, appointment.EmployeeId.GetValueOrDefault());
 
         ServiceEntity service = await LoadServiceOrThrow(organizationId, request.ServiceId);
         await EnsureEmployeeExists(organizationId, request.EmployeeId);
-        await EnsureLocationExists(organizationId, request.LocationId);
+        await EnsureCompanyExists(organizationId, request.CompanyId);
         List<Client> clients = await EnsureClientsExist(organizationId, request.ClientIds);
 
-        decimal suggestedAmount = await ResolveSuggestedAmount(organizationId, request.ServiceId, request.LocationId, request.StartsAt);
+        decimal suggestedAmount = await ResolveSuggestedAmount(organizationId, request.ServiceId, request.CompanyId, request.StartsAt);
         decimal amount = request.Amount ?? suggestedAmount;
         bool overridden = request.Amount.HasValue && request.Amount.Value != suggestedAmount;
 
@@ -178,7 +186,7 @@ public class AppointmentService : IAppointmentService
         appointment.DurationMinutes = service.DefaultDurationMinutes;
         appointment.ServiceId = request.ServiceId;
         appointment.EmployeeId = request.EmployeeId;
-        appointment.LocationId = request.LocationId;
+        appointment.CompanyId = request.CompanyId;
         appointment.Amount = amount;
         appointment.SuggestedAmount = suggestedAmount;
         appointment.IsAmountManuallyOverridden = overridden;
@@ -229,20 +237,20 @@ public class AppointmentService : IAppointmentService
         return dto;
     }
 
-    public async Task<AppointmentDto> Update(Guid organizationId, Guid userId, bool isAdmin, Guid id, AppointmentUpdateRequest request)
+    public async Task<AppointmentDto> Update(Guid organizationId, Guid userId, bool hasFullScope, Guid id, AppointmentUpdateRequest request)
     {
         Appointment appointment = await _appointmentHandler.GetByIdLight(organizationId, id);
         if (appointment == null)
             throw new NotFoundAppException("Appointment", id);
 
-        await ValidateOwnership(organizationId, userId, isAdmin, appointment.EmployeeId.GetValueOrDefault());
+        await ValidateOwnership(organizationId, userId, hasFullScope, appointment.EmployeeId.GetValueOrDefault());
 
         ServiceEntity service = await LoadServiceOrThrow(organizationId, request.ServiceId);
         await EnsureEmployeeExists(organizationId, request.EmployeeId);
-        await EnsureLocationExists(organizationId, request.LocationId);
+        await EnsureCompanyExists(organizationId, request.CompanyId);
         List<Client> clients = await EnsureClientsExist(organizationId, request.ClientIds);
 
-        decimal suggestedAmount = await ResolveSuggestedAmount(organizationId, request.ServiceId, request.LocationId, request.StartsAt);
+        decimal suggestedAmount = await ResolveSuggestedAmount(organizationId, request.ServiceId, request.CompanyId, request.StartsAt);
         decimal amount = request.Amount ?? suggestedAmount;
         bool overridden = request.Amount.HasValue && request.Amount.Value != suggestedAmount;
 
@@ -253,13 +261,15 @@ public class AppointmentService : IAppointmentService
         appointment.DurationMinutes = service.DefaultDurationMinutes;
         appointment.ServiceId = request.ServiceId;
         appointment.EmployeeId = request.EmployeeId;
-        appointment.LocationId = request.LocationId;
+        appointment.CompanyId = request.CompanyId;
         appointment.Amount = amount;
         appointment.SuggestedAmount = suggestedAmount;
         appointment.IsAmountManuallyOverridden = overridden;
         appointment.Note = request.Note;
         appointment.UpdatedAt = DateTimeOffset.UtcNow;
         appointment.UpdatedBy = userId;
+
+        await EnsureWithinWorkingHours(organizationId, request.EmployeeId, request.CompanyId, request.StartsAt, appointment.DurationMinutes);
 
         await EnsureNoOverlap(
             organizationId, request.EmployeeId, clients, request.StartsAt, appointment.DurationMinutes, excludeId: id);
@@ -270,7 +280,7 @@ public class AppointmentService : IAppointmentService
         return dto;
     }
 
-    public async Task<AppointmentDto> Move(Guid organizationId, Guid userId, bool isAdmin, Guid id, AppointmentMoveRequest request)
+    public async Task<AppointmentDto> Move(Guid organizationId, Guid userId, bool hasFullScope, Guid id, AppointmentMoveRequest request)
     {
         Appointment appointment = await _appointmentHandler.GetByIdLight(organizationId, id);
         if (appointment == null)
@@ -279,13 +289,13 @@ public class AppointmentService : IAppointmentService
         if (appointment.Status == AppointmentStatus.Cancelled || appointment.Status == AppointmentStatus.NoShow)
             throw new BusinessRuleException(ErrorCodes.AppointmentNotMovable, "Otkazan ili izostao termin se ne može pomicati.");
 
-        await ValidateOwnership(organizationId, userId, isAdmin, appointment.EmployeeId.GetValueOrDefault());
+        await ValidateOwnership(organizationId, userId, hasFullScope, appointment.EmployeeId.GetValueOrDefault());
 
         if (request.EmployeeId.HasValue)
             await EnsureEmployeeExists(organizationId, request.EmployeeId.Value);
 
-        if (request.LocationId.HasValue)
-            await EnsureLocationExists(organizationId, request.LocationId.Value);
+        if (request.CompanyId.HasValue)
+            await EnsureCompanyExists(organizationId, request.CompanyId.Value);
 
         Guid effectiveEmployeeId = request.EmployeeId ?? appointment.EmployeeId.GetValueOrDefault();
 
@@ -295,10 +305,12 @@ public class AppointmentService : IAppointmentService
         appointment.StartsAt = request.StartsAt;
         if (request.EmployeeId.HasValue)
             appointment.EmployeeId = request.EmployeeId.Value;
-        if (request.LocationId.HasValue)
-            appointment.LocationId = request.LocationId.Value;
+        if (request.CompanyId.HasValue)
+            appointment.CompanyId = request.CompanyId.Value;
         appointment.UpdatedAt = DateTimeOffset.UtcNow;
         appointment.UpdatedBy = userId;
+
+        await EnsureWithinWorkingHours(organizationId, effectiveEmployeeId, appointment.CompanyId, request.StartsAt, appointment.DurationMinutes);
 
         await EnsureNoOverlap(
             organizationId, effectiveEmployeeId, clients, request.StartsAt, appointment.DurationMinutes, excludeId: id);
@@ -309,14 +321,14 @@ public class AppointmentService : IAppointmentService
         return dto;
     }
 
-    public Task<AppointmentDto> Cancel(Guid organizationId, Guid userId, bool isAdmin, Guid id, AppointmentCancelRequest request)
+    public Task<AppointmentDto> Cancel(Guid organizationId, Guid userId, bool hasFullScope, Guid id, AppointmentCancelRequest request)
     {
-        return ChangeToTerminalStatus(organizationId, userId, isAdmin, id, request, AppointmentStatus.Cancelled);
+        return ChangeToTerminalStatus(organizationId, userId, hasFullScope, id, request, AppointmentStatus.Cancelled);
     }
 
-    public Task<AppointmentDto> MarkNoShow(Guid organizationId, Guid userId, bool isAdmin, Guid id, AppointmentCancelRequest request)
+    public Task<AppointmentDto> MarkNoShow(Guid organizationId, Guid userId, bool hasFullScope, Guid id, AppointmentCancelRequest request)
     {
-        return ChangeToTerminalStatus(organizationId, userId, isAdmin, id, request, AppointmentStatus.NoShow);
+        return ChangeToTerminalStatus(organizationId, userId, hasFullScope, id, request, AppointmentStatus.NoShow);
     }
 
     public async Task Delete(Guid organizationId, Guid userId, Guid id)
@@ -331,7 +343,7 @@ public class AppointmentService : IAppointmentService
         await _appointmentHandler.Delete(appointment);
     }
 
-    public async Task<List<AppointmentDto>> CreateRecurring(Guid organizationId, Guid userId, bool isAdmin, RecurringAppointmentCreateRequest request)
+    public async Task<List<AppointmentDto>> CreateRecurring(Guid organizationId, Guid userId, bool hasFullScope, RecurringAppointmentCreateRequest request)
     {
         if (request.EndDate < request.FirstOccurrenceStartsAt)
             throw new ValidationAppException("Datum kraja ne smije biti prije prvog termina.");
@@ -339,11 +351,11 @@ public class AppointmentService : IAppointmentService
         ServiceEntity service = await LoadServiceOrThrow(organizationId, request.ServiceId);
         List<DateTimeOffset> occurrences = BuildOccurrenceDates(request.RecurrenceType, request.FirstOccurrenceStartsAt, request.EndDate);
 
-        await EnsureNoRecurringConflicts(organizationId, request.EmployeeId, occurrences, service.DefaultDurationMinutes);
+        await EnsureNoRecurringConflicts(organizationId, request.EmployeeId, request.CompanyId, occurrences, service.DefaultDurationMinutes);
 
-        await ValidateOwnership(organizationId, userId, isAdmin, request.EmployeeId);
+        await ValidateOwnership(organizationId, userId, hasFullScope, request.EmployeeId);
         await EnsureEmployeeExists(organizationId, request.EmployeeId);
-        await EnsureLocationExists(organizationId, request.LocationId);
+        await EnsureCompanyExists(organizationId, request.CompanyId);
         List<Client> clients = await EnsureClientsExist(organizationId, request.ClientIds);
 
         await EnsureNoRecurringClientOverlap(organizationId, clients, occurrences, service.DefaultDurationMinutes);
@@ -353,7 +365,7 @@ public class AppointmentService : IAppointmentService
 
         foreach (DateTimeOffset occurrence in occurrences)
         {
-            decimal suggestedAmount = await ResolveSuggestedAmount(organizationId, request.ServiceId, request.LocationId, occurrence);
+            decimal suggestedAmount = await ResolveSuggestedAmount(organizationId, request.ServiceId, request.CompanyId, occurrence);
 
             Guid appointmentId = Guid.NewGuid();
             Appointment appointment = new Appointment
@@ -365,7 +377,7 @@ public class AppointmentService : IAppointmentService
                 DurationMinutes = service.DefaultDurationMinutes,
                 ServiceId = request.ServiceId,
                 EmployeeId = request.EmployeeId,
-                LocationId = request.LocationId,
+                CompanyId = request.CompanyId,
                 Amount = suggestedAmount,
                 SuggestedAmount = suggestedAmount,
                 IsAmountManuallyOverridden = false,
@@ -420,7 +432,7 @@ public class AppointmentService : IAppointmentService
     /// Kandidati (termini trenera + roster odsutnosti) dohvaćaju se JEDNOM za cijeli raspon niza, precizna
     /// provjera po occurrenceu radi se u memoriji — izbjegava upit po occurrenceu za duge nizove.</summary>
     private async Task EnsureNoRecurringConflicts(
-        Guid organizationId, Guid employeeId, List<DateTimeOffset> occurrences, int durationMinutes)
+        Guid organizationId, Guid employeeId, Guid companyId, List<DateTimeOffset> occurrences, int durationMinutes)
     {
         DateTimeOffset rangeFrom = occurrences[0].AddDays(-1);
         DateTimeOffset rangeTo = occurrences[^1].AddDays(1);
@@ -428,10 +440,15 @@ public class AppointmentService : IAppointmentService
         List<Appointment> candidateAppointments = await _appointmentHandler.GetForEmployeeInRange(
             organizationId, employeeId, rangeFrom, rangeTo);
 
-        List<RosterEntry> absences = (await _rosterEntryHandler.GetForPeriod(
-                organizationId, new List<Guid> { employeeId }, occurrences[0], occurrences[^1]))
-            .Where(e => e.RosterType.IsAbsence)
-            .ToList();
+        // Učitano JEDNOM za cijeli raspon niza (apsencije + eventualni work-override redovi) — dijeli se između
+        // absenceHit provjere i working-hours provjere ispod, isti obrazac kao candidateAppointments.
+        List<RosterEntry> rosterEntriesInRange = await _rosterEntryHandler.GetForPeriod(
+            organizationId, new List<Guid> { employeeId }, occurrences[0], occurrences[^1]);
+
+        List<RosterEntry> absences = rosterEntriesInRange.Where(e => e.RosterType.IsAbsence).ToList();
+
+        WorkingHoursTemplate employeeTemplate = await _workingHoursTemplateHandler.GetForEmployee(organizationId, employeeId);
+        WorkingHoursTemplate companyTemplate = await _workingHoursTemplateHandler.GetForCompany(organizationId, companyId);
 
         List<RecurringConflictDetail> conflicts = new List<RecurringConflictDetail>();
 
@@ -452,7 +469,17 @@ public class AppointmentService : IAppointmentService
                 a.DateFrom.Date <= occurrence.Date && (a.DateTo == null || occurrence.Date <= a.DateTo.Value.Date));
 
             if (absenceHit)
+            {
                 conflicts.Add(new RecurringConflictDetail { Date = occurrence, Reason = ErrorCodes.RecurringConflictReasonRosterAbsence });
+                continue;
+            }
+
+            List<RosterEntry> rosterEntriesForOccurrence = rosterEntriesInRange
+                .Where(e => !e.RosterType.IsAbsence && e.DateFrom.Date == occurrence.Date)
+                .ToList();
+
+            if (!IsWithinWorkingHours(employeeTemplate, companyTemplate, rosterEntriesForOccurrence, occurrence, durationMinutes))
+                conflicts.Add(new RecurringConflictDetail { Date = occurrence, Reason = ErrorCodes.RecurringConflictReasonOutsideWorkingHours });
         }
 
         if (conflicts.Count > 0)
@@ -511,15 +538,15 @@ public class AppointmentService : IAppointmentService
     }
 
     private async Task<AppointmentDto> CreateInternal(
-        Guid organizationId, Guid userId, bool isAdmin, AppointmentCreateRequest request, Guid? recurrenceGroupId)
+        Guid organizationId, Guid userId, bool hasFullScope, AppointmentCreateRequest request, Guid? recurrenceGroupId)
     {
-        await ValidateOwnership(organizationId, userId, isAdmin, request.EmployeeId);
+        await ValidateOwnership(organizationId, userId, hasFullScope, request.EmployeeId);
         ServiceEntity service = await LoadServiceOrThrow(organizationId, request.ServiceId);
         await EnsureEmployeeExists(organizationId, request.EmployeeId);
-        await EnsureLocationExists(organizationId, request.LocationId);
+        await EnsureCompanyExists(organizationId, request.CompanyId);
         List<Client> clients = await EnsureClientsExist(organizationId, request.ClientIds);
 
-        decimal suggestedAmount = await ResolveSuggestedAmount(organizationId, request.ServiceId, request.LocationId, request.StartsAt);
+        decimal suggestedAmount = await ResolveSuggestedAmount(organizationId, request.ServiceId, request.CompanyId, request.StartsAt);
         decimal amount = request.Amount ?? suggestedAmount;
         bool overridden = request.Amount.HasValue && request.Amount.Value != suggestedAmount;
 
@@ -533,7 +560,7 @@ public class AppointmentService : IAppointmentService
             DurationMinutes = service.DefaultDurationMinutes,
             ServiceId = request.ServiceId,
             EmployeeId = request.EmployeeId,
-            LocationId = request.LocationId,
+            CompanyId = request.CompanyId,
             Amount = amount,
             SuggestedAmount = suggestedAmount,
             IsAmountManuallyOverridden = overridden,
@@ -557,6 +584,8 @@ public class AppointmentService : IAppointmentService
             });
         }
 
+        await EnsureWithinWorkingHours(organizationId, request.EmployeeId, request.CompanyId, request.StartsAt, appointment.DurationMinutes);
+
         await EnsureNoOverlap(
             organizationId, request.EmployeeId, clients, request.StartsAt, appointment.DurationMinutes, excludeId: null);
 
@@ -567,13 +596,13 @@ public class AppointmentService : IAppointmentService
     }
 
     private async Task<AppointmentDto> ChangeToTerminalStatus(
-        Guid organizationId, Guid userId, bool isAdmin, Guid id, AppointmentCancelRequest request, AppointmentStatus newStatus)
+        Guid organizationId, Guid userId, bool hasFullScope, Guid id, AppointmentCancelRequest request, AppointmentStatus newStatus)
     {
         Appointment appointment = await _appointmentHandler.GetByIdLight(organizationId, id);
         if (appointment == null)
             throw new NotFoundAppException("Appointment", id);
 
-        await ValidateOwnership(organizationId, userId, isAdmin, appointment.EmployeeId.GetValueOrDefault());
+        await ValidateOwnership(organizationId, userId, hasFullScope, appointment.EmployeeId.GetValueOrDefault());
 
         AppointmentStatus oldStatus = appointment.Status;
         appointment.Status = newStatus;
@@ -638,9 +667,9 @@ public class AppointmentService : IAppointmentService
         return await GetByIdInternal(organizationId, id);
     }
 
-    private async Task ValidateOwnership(Guid organizationId, Guid userId, bool isAdmin, Guid employeeId)
+    private async Task ValidateOwnership(Guid organizationId, Guid userId, bool hasFullScope, Guid employeeId)
     {
-        if (isAdmin)
+        if (hasFullScope)
             return;
 
         Employee employee = await _employeeHandler.GetByUserId(organizationId, userId);
@@ -664,11 +693,11 @@ public class AppointmentService : IAppointmentService
             throw new NotFoundAppException("Employee", employeeId);
     }
 
-    private async Task EnsureLocationExists(Guid organizationId, Guid locationId)
+    private async Task EnsureCompanyExists(Guid organizationId, Guid companyId)
     {
-        Location location = await _locationHandler.GetById(organizationId, locationId);
-        if (location == null)
-            throw new NotFoundAppException("Location", locationId);
+        Company company = await _companyHandler.GetById(organizationId, companyId);
+        if (company == null)
+            throw new NotFoundAppException("Company", companyId);
     }
 
     private async Task<List<Client>> EnsureClientsExist(Guid organizationId, List<Guid> clientIds)
@@ -686,13 +715,13 @@ public class AppointmentService : IAppointmentService
         return clients;
     }
 
-    private async Task<decimal> ResolveSuggestedAmount(Guid organizationId, Guid serviceId, Guid locationId, DateTimeOffset date)
+    private async Task<decimal> ResolveSuggestedAmount(Guid organizationId, Guid serviceId, Guid companyId, DateTimeOffset date)
     {
         ResolvePriceResponse resolved = await _pricingService.ResolvePrice(organizationId, new ResolvePriceRequest
         {
             SubjectType = PricingSubjectType.Service,
             SubjectId = serviceId,
-            LocationId = locationId,
+            CompanyId = companyId,
             Date = date
         });
         return resolved.Price;
@@ -753,6 +782,40 @@ public class AppointmentService : IAppointmentService
             if (hasOverlap)
                 throw new BusinessRuleException(ErrorCodes.AppointmentOverlap, $"Klijent {client.FirstName} {client.LastName} je već zakazan u ovom vremenskom razdoblju.");
         }
+    }
+
+    /// <summary>Baca OUTSIDE_WORKING_HOURS (409) prije spremanja ako termin pada izvan radnog vremena zaposlenika ILI
+    /// lokacije — tvrda blokada bez iznimke (vidi WorkingHoursCalculator, FAZA 1 dizajn). Ne primjenjuje se retroaktivno
+    /// (CompleteExisting, ili CompleteNew za StartsAt u prošlosti) — vidi pozivna mjesta.</summary>
+    private async Task EnsureWithinWorkingHours(
+        Guid organizationId, Guid employeeId, Guid companyId, DateTimeOffset startsAt, int durationMinutes)
+    {
+        WorkingHoursTemplate employeeTemplate = await _workingHoursTemplateHandler.GetForEmployee(organizationId, employeeId);
+        WorkingHoursTemplate companyTemplate = await _workingHoursTemplateHandler.GetForCompany(organizationId, companyId);
+        List<RosterEntry> rosterEntriesForDate = await _rosterEntryHandler.GetForPeriod(
+            organizationId, new List<Guid> { employeeId }, startsAt.Date, startsAt.Date);
+
+        if (!IsWithinWorkingHours(employeeTemplate, companyTemplate, rosterEntriesForDate, startsAt, durationMinutes))
+            throw new BusinessRuleException(ErrorCodes.OutsideWorkingHours, "Termin je izvan radnog vremena zaposlenika ili lokacije.");
+    }
+
+    /// <summary>Čista provjera dijeljena s EnsureNoRecurringConflicts (batch grana) — rosterEntriesForDate mora
+    /// sadržavati SAMO redove relevantne za TOČNO taj datum (apsencija čiji raspon ga pokriva, ili work-redovi
+    /// s DateFrom==taj datum), ne cijeli raspon niza.</summary>
+    private static bool IsWithinWorkingHours(
+        WorkingHoursTemplate employeeTemplate, WorkingHoursTemplate companyTemplate, List<RosterEntry> rosterEntriesForDate,
+        DateTimeOffset startsAt, int durationMinutes)
+    {
+        TimeSpan start = startsAt.TimeOfDay;
+        TimeSpan end = start + TimeSpan.FromMinutes(durationMinutes);
+
+        (List<WorkingHoursCalculator.Interval> employeeIntervals, _) =
+            WorkingHoursCalculator.GetEffectiveEmployeeIntervals(employeeTemplate, rosterEntriesForDate, startsAt);
+        (List<WorkingHoursCalculator.Interval> companyIntervals, _) =
+            WorkingHoursCalculator.GetEffectiveCompanyIntervals(companyTemplate, startsAt);
+
+        return WorkingHoursCalculator.IsWithinIntervals(employeeIntervals, start, end)
+            && WorkingHoursCalculator.IsWithinIntervals(companyIntervals, start, end);
     }
 
     private async Task LogAmountChange(Guid appointmentId, decimal oldAmount, decimal newAmount, Guid userId)
@@ -836,8 +899,8 @@ public class AppointmentService : IAppointmentService
             ServiceCategoryColorHex = a.Service?.ServiceCategory?.ColorHex,
             EmployeeId = a.EmployeeId,
             EmployeeName = a.Employee != null ? $"{a.Employee.FirstName} {a.Employee.LastName}" : null,
-            LocationId = a.LocationId,
-            LocationName = a.Location?.Name,
+            CompanyId = a.CompanyId,
+            CompanyName = a.Company?.Name,
             ClientNames = a.Clients
                 .Where(c => c.Client != null)
                 .Select(c => $"{c.Client.FirstName} {c.Client.LastName}")
@@ -865,8 +928,8 @@ public class AppointmentService : IAppointmentService
             ServiceCategoryColorHex = a.Service?.ServiceCategory?.ColorHex,
             EmployeeId = a.EmployeeId,
             EmployeeName = a.Employee != null ? $"{a.Employee.FirstName} {a.Employee.LastName}" : null,
-            LocationId = a.LocationId,
-            LocationName = a.Location?.Name,
+            CompanyId = a.CompanyId,
+            CompanyName = a.Company?.Name,
             Amount = a.Amount,
             SuggestedAmount = a.SuggestedAmount,
             IsAmountManuallyOverridden = a.IsAmountManuallyOverridden,

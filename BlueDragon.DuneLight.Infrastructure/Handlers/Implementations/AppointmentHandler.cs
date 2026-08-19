@@ -28,7 +28,7 @@ public class AppointmentHandler : IAppointmentHandler
         return query
             .Include(a => a.Service).ThenInclude(s => s.ServiceCategory)
             .Include(a => a.Employee)
-            .Include(a => a.Location)
+            .Include(a => a.Company)
             .Include(a => a.Clients).ThenInclude(ac => ac.Client);
     }
 
@@ -215,8 +215,8 @@ public class AppointmentHandler : IAppointmentHandler
             .AsSplitQuery()
             .Where(a => a.OrganizationId == organizationId && a.StartsAt >= query.From && a.StartsAt <= query.To);
 
-        if (query.LocationId.HasValue)
-            q = q.Where(a => a.LocationId == query.LocationId.Value);
+        if (query.CompanyId.HasValue)
+            q = q.Where(a => a.CompanyId == query.CompanyId.Value);
 
         if (query.EmployeeId.HasValue)
             q = q.Where(a => a.EmployeeId == query.EmployeeId.Value);
