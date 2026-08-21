@@ -18,8 +18,6 @@ public static class Grants
 
     public const string CatalogCompaniesView = "catalog.companies.view";
     public const string CatalogCompaniesManage = "catalog.companies.manage";
-    public const string CatalogServiceCategoriesView = "catalog.service-categories.view";
-    public const string CatalogServiceCategoriesManage = "catalog.service-categories.manage";
     public const string CatalogServicesView = "catalog.services.view";
     public const string CatalogServicesManage = "catalog.services.manage";
     public const string CatalogPackagesView = "catalog.packages.view";
@@ -40,6 +38,10 @@ public static class Grants
     public const string AppointmentsWriteOwn = "appointments.write.own";
     public const string AppointmentsWriteAll = "appointments.write.all";
     public const string AppointmentsDelete = "appointments.delete";
+
+    public const string ScheduleBreaksView = "schedule.breaks.view";
+    public const string ScheduleBreaksWriteOwn = "schedule.breaks.write.own";
+    public const string ScheduleBreaksWriteAll = "schedule.breaks.write.all";
 
     public const string GroupsView = "groups.view";
     public const string GroupsManage = "groups.manage";
@@ -79,8 +81,6 @@ public static class Grants
 
         new(CatalogCompaniesView, "catalog", "Pregled tvrtki/lokacija."),
         new(CatalogCompaniesManage, "catalog", "Uređivanje tvrtki/lokacija."),
-        new(CatalogServiceCategoriesView, "catalog", "Pregled kategorija usluga."),
-        new(CatalogServiceCategoriesManage, "catalog", "Uređivanje kategorija usluga."),
         new(CatalogServicesView, "catalog", "Pregled usluga."),
         new(CatalogServicesManage, "catalog", "Uređivanje usluga."),
         new(CatalogPackagesView, "catalog", "Pregled paketa."),
@@ -101,6 +101,10 @@ public static class Grants
         new(AppointmentsWriteOwn, "appointments", "Zakazivanje/uređivanje/otkazivanje vlastitih termina."),
         new(AppointmentsWriteAll, "appointments", "Zakazivanje/uređivanje/otkazivanje bilo čijih termina."),
         new(AppointmentsDelete, "appointments", "Trajno brisanje termina (isti dan)."),
+
+        new(ScheduleBreaksView, "schedule-breaks", "Pregled pauza na rasporedu (transparentno, kao raspored termina)."),
+        new(ScheduleBreaksWriteOwn, "schedule-breaks", "Kreiranje/uređivanje/brisanje vlastitih pauza."),
+        new(ScheduleBreaksWriteAll, "schedule-breaks", "Kreiranje/uređivanje/brisanje bilo čijih pauza."),
 
         new(GroupsView, "groups", "Pregled grupa i članstava (transparentno)."),
         new(GroupsManage, "groups", "Kreiranje/uređivanje grupa, slotova, članova, generiranje termina."),

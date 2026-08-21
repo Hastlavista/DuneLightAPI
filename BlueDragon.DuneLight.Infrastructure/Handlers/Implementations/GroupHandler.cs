@@ -186,7 +186,7 @@ public class GroupHandler : IGroupHandler
     {
         await using DatabaseContext context = DatabaseContext.GenerateContext(_databaseSettings.ConnectionString);
         return await context.Appointments
-            .Include(a => a.Service).ThenInclude(s => s.ServiceCategory)
+            .Include(a => a.Service)
             .Include(a => a.Employee)
             .Include(a => a.Company)
             .Include(a => a.Attendances)

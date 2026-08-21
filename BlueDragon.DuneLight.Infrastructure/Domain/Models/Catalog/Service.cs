@@ -1,6 +1,7 @@
 using System;
 using System.ComponentModel.DataAnnotations;
 using System.ComponentModel.DataAnnotations.Schema;
+using BlueDragon.DuneLight.Core.Enums;
 
 namespace BlueDragon.DuneLight.Infrastructure.Domain.Models.Catalog;
 
@@ -19,8 +20,11 @@ public class Service
     [Column("name")]
     public string Name { get; set; }
 
-    [Column("service_category_id")]
-    public Guid ServiceCategoryId { get; set; }
+    [Column("execution_mode")]
+    public ServiceExecutionMode ExecutionMode { get; set; }
+
+    [Column("color_hex")]
+    public string ColorHex { get; set; }
 
     [Column("default_duration_minutes")]
     public int DefaultDurationMinutes { get; set; }
@@ -48,6 +52,4 @@ public class Service
 
     [Column("updated_by")]
     public Guid? UpdatedBy { get; set; }
-
-    public ServiceCategory ServiceCategory { get; set; }
 }

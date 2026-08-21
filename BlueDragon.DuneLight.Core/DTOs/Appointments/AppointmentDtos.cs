@@ -61,6 +61,9 @@ public class AppointmentScheduleCellDto
     public Guid CompanyId { get; set; }
     public string CompanyName { get; set; }
     public List<string> ClientNames { get; set; } = new();
+
+    /// <summary>ID-jevi klijenata, indeksno poravnati s ClientNames (isti redoslijed, isti broj elemenata). Prazan za grupne termine.</summary>
+    public List<Guid> ClientIds { get; set; } = new();
     public AppointmentStatus Status { get; set; }
     public bool IsCancelled { get; set; }
 
@@ -90,7 +93,7 @@ public class AppointmentScheduleQuery
     public Guid? CompanyId { get; set; }
     public Guid? EmployeeId { get; set; }
     public Guid? ServiceId { get; set; }
-    public Guid? ServiceCategoryId { get; set; }
+    public ServiceExecutionMode? ExecutionMode { get; set; }
     public AppointmentStatus? Status { get; set; }
 }
 
@@ -200,4 +203,35 @@ public class RecurringConflictDetail
 
     /// <summary>ErrorCodes.RecurringConflictReasonAppointment ili ErrorCodes.RecurringConflictReasonRosterAbsence.</summary>
     public string Reason { get; set; }
+}
+
+public class AvailableSlotsQuery
+{
+    [Required]
+    public Guid ServiceId { get; set; }
+
+    [Required]
+    public Guid CompanyId { get; set; }
+
+    [Required]
+    public DateTimeOffset Date { get; set; }
+
+    /// <summary>Ako je postavljeno, vraća se samo za tog zaposlenika (npr. Member zaključan na sebe u formi).</summary>
+    public Guid? EmployeeId { get; set; }
+}
+
+public class AvailableSlotDto
+{
+    public TimeSpan Start { get; set; }
+    public TimeSpan End { get; set; }
+}
+
+/// <summary>Slobodni slotovi jednog zaposlenika za traženi dan — dio odgovora GET .../available-slots.
+/// Uključen i s praznim Slots ako zaposlenik radi/smije uslugu ali nema ništa slobodno tog dana.</summary>
+public class EmployeeAvailableSlotsDto
+{
+    public Guid EmployeeId { get; set; }
+    public string EmployeeName { get; set; }
+    public string ColorHex { get; set; }
+    public List<AvailableSlotDto> Slots { get; set; } = new();
 }

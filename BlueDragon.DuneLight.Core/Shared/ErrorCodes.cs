@@ -18,6 +18,7 @@ public static class ErrorCodes
     public const string AuthInvalidCredentials = "AUTH_INVALID_CREDENTIALS";
     public const string AuthOrganizationSlugTaken = "AUTH_ORGANIZATION_SLUG_TAKEN";
     public const string AuthCurrentPasswordInvalid = "AUTH_CURRENT_PASSWORD_INVALID";
+    public const string AuthInvalidPin = "AUTH_INVALID_PIN";
 
     // Poslovna pravila (409) — domenski specifično, umjesto generičkog CONFLICT
     public const string ReferencedCannotDelete = "REFERENCED_CANNOT_DELETE";
@@ -34,7 +35,6 @@ public static class ErrorCodes
     public const string NotOwner = "NOT_OWNER";
     public const string PackageNotEligible = "PACKAGE_NOT_ELIGIBLE";
     public const string PackageServiceNotCovered = "PACKAGE_SERVICE_NOT_COVERED";
-    public const string CategoryInUse = "CATEGORY_IN_USE";
     public const string InactiveEmployee = "INACTIVE_EMPLOYEE";
     public const string InactiveType = "INACTIVE_TYPE";
     public const string PriceOverlap = "PRICE_OVERLAP";
@@ -53,4 +53,5 @@ public static class ErrorCodes
     public const string RecurringConflictReasonAppointment = "EXISTING_APPOINTMENT";
     public const string RecurringConflictReasonRosterAbsence = "ROSTER_ABSENCE";
     public const string RecurringConflictReasonOutsideWorkingHours = "OUTSIDE_WORKING_HOURS";
+    public const string RecurringConflictReasonScheduleBreak = "EXISTING_SCHEDULE_BREAK";
 }

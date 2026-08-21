@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
+using BlueDragon.DuneLight.Core.Enums;
 using BlueDragon.DuneLight.Core.Shared;
 using BlueDragon.DuneLight.Infrastructure.Domain.Contexts;
 using BlueDragon.DuneLight.Infrastructure.Domain.Models.Catalog;
@@ -21,12 +22,11 @@ public class ServiceHandler : IServiceHandler
     }
 
     public async Task<(List<Service> Items, int TotalCount)> GetPaged(
-        Guid organizationId, PagedRequest request, Guid? serviceCategoryId)
+        Guid organizationId, PagedRequest request, ServiceExecutionMode? executionMode)
     {
         await using DatabaseContext context = DatabaseContext.GenerateContext(_databaseSettings.ConnectionString);
 
         IQueryable<Service> query = context.Services
-            .Include(s => s.ServiceCategory)
             .Where(s => s.OrganizationId == organizationId);
 
         if (!string.IsNullOrWhiteSpace(request.Search))
@@ -35,8 +35,8 @@ public class ServiceHandler : IServiceHandler
         if (request.IsActive.HasValue)
             query = query.Where(s => s.IsActive == request.IsActive.Value);
 
-        if (serviceCategoryId.HasValue)
-            query = query.Where(s => s.ServiceCategoryId == serviceCategoryId.Value);
+        if (executionMode.HasValue)
+            query = query.Where(s => s.ExecutionMode == executionMode.Value);
 
         int totalCount = await query.CountAsync();
 
@@ -54,7 +54,6 @@ public class ServiceHandler : IServiceHandler
     {
         await using DatabaseContext context = DatabaseContext.GenerateContext(_databaseSettings.ConnectionString);
         return await context.Services
-            .Include(s => s.ServiceCategory)
             .SingleOrDefaultAsync(s => s.OrganizationId == organizationId && s.Id == id);
     }
 
@@ -113,19 +112,5 @@ public class ServiceHandler : IServiceHandler
             return true;
 
         return await context.PackageServiceItems.AnyAsync(ps => ps.ServiceId == id && ps.Package.OrganizationId == organizationId);
-    }
-
-    public async Task<bool> HasActiveServicesInCategory(Guid organizationId, Guid serviceCategoryId)
-    {
-        await using DatabaseContext context = DatabaseContext.GenerateContext(_databaseSettings.ConnectionString);
-        return await context.Services.AnyAsync(s =>
-            s.OrganizationId == organizationId && s.ServiceCategoryId == serviceCategoryId && s.IsActive);
-    }
-
-    public async Task<bool> IsCategoryReferenced(Guid organizationId, Guid serviceCategoryId)
-    {
-        await using DatabaseContext context = DatabaseContext.GenerateContext(_databaseSettings.ConnectionString);
-        return await context.Services.AnyAsync(s =>
-            s.OrganizationId == organizationId && s.ServiceCategoryId == serviceCategoryId);
     }
 }

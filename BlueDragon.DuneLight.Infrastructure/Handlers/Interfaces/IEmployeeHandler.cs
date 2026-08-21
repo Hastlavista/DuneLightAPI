@@ -42,4 +42,7 @@ public interface IEmployeeHandler
 
     /// <summary>Projekcija izravno na EmployeeDirectoryDto — nikad ne materijalizira osjetljiva polja.</summary>
     Task<(List<EmployeeDirectoryDto> Items, int TotalCount)> GetDirectoryPaged(Guid organizationId, PagedRequest request);
+
+    /// <summary>Svi aktivni zaposlenici poslovnice u jednom upitu (Services uključen radi filtera po usluzi) — za available-slots, izbjegava upit po zaposleniku u petlji.</summary>
+    Task<List<Employee>> GetForCompany(Guid organizationId, Guid companyId);
 }

@@ -23,9 +23,13 @@ public interface IAuthHandler
     Task AddUser(IUnitOfWork uow, User user);
     Task<bool> EmailExists(Guid organizationId, string email);
     Task<User> GetUserByCredentials(Guid organizationId, string email, string passwordHash);
+
+    /// <summary>Kao <see cref="GetUserByCredentials"/>, ali usporeduje <c>PinHash</c> — vidi AuthService.PinLogin.</summary>
+    Task<User> GetUserByPinCredentials(Guid organizationId, string email, string pinHash);
     Task<User> GetUserByApiKey(string apiKey);
     Task<User> GetUserById(Guid userId);
     Task UpdatePasswordHash(Guid userId, string passwordHash);
+    Task UpdatePinHash(Guid userId, string pinHash);
 
     /// <summary>Koristi modul Zaposlenici pri promjeni uloge zaposlenika — organizationId je defense-in-depth
     /// (employee je već org-scoped na pozivnom mjestu, ali upit ovdje ponovno filtrira samostalno).</summary>

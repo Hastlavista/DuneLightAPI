@@ -18,7 +18,6 @@ public class DatabaseContext : DbContext
     public DbSet<User> Users { get; set; }
 
     public DbSet<Company> Companies { get; set; }
-    public DbSet<ServiceCategory> ServiceCategories { get; set; }
     public DbSet<Service> Services { get; set; }
     public DbSet<PriceListItem> PriceListItems { get; set; }
     public DbSet<PriceListItemHistory> PriceListItemHistory { get; set; }
@@ -41,6 +40,7 @@ public class DatabaseContext : DbContext
     public DbSet<AppointmentClient> AppointmentClients { get; set; }
     public DbSet<AppointmentAttendance> AppointmentAttendances { get; set; }
     public DbSet<AppointmentAuditLog> AppointmentAuditLog { get; set; }
+    public DbSet<ScheduleBreak> ScheduleBreaks { get; set; }
 
     public DbSet<Group> Groups { get; set; }
     public DbSet<GroupSlot> GroupSlots { get; set; }
@@ -86,6 +86,7 @@ public class DatabaseContext : DbContext
         ConfigureEmployees(modelBuilder);
         ConfigureClients(modelBuilder);
         ConfigureAppointments(modelBuilder);
+        ConfigureScheduleBreaks(modelBuilder);
         ConfigureGroups(modelBuilder);
         ConfigureRoster(modelBuilder);
         ConfigurePermissions(modelBuilder);
@@ -98,21 +99,10 @@ public class DatabaseContext : DbContext
         modelBuilder.Entity<Company>().HasKey(l => l.Id);
         modelBuilder.Entity<Company>().HasIndex(l => l.OrganizationId);
 
-        modelBuilder.Entity<ServiceCategory>().HasKey(c => c.Id);
-        modelBuilder.Entity<ServiceCategory>()
-            .Property(c => c.ExecutionMode)
-            .HasConversion(v => v.ToString(), v => Enum.Parse<ServiceExecutionMode>(v));
-        modelBuilder.Entity<ServiceCategory>()
-            .HasIndex(c => new { c.OrganizationId, c.Name })
-            .IsUnique()
-            .HasFilter("is_active = true");
-
         modelBuilder.Entity<Service>().HasKey(s => s.Id);
         modelBuilder.Entity<Service>()
-            .HasOne(s => s.ServiceCategory)
-            .WithMany()
-            .HasForeignKey(s => s.ServiceCategoryId)
-            .OnDelete(DeleteBehavior.Restrict);
+            .Property(s => s.ExecutionMode)
+            .HasConversion(v => v.ToString(), v => Enum.Parse<ServiceExecutionMode>(v));
         modelBuilder.Entity<Service>()
             .HasIndex(s => new { s.OrganizationId, s.Name })
             .IsUnique()
@@ -405,6 +395,23 @@ public class DatabaseContext : DbContext
 
         modelBuilder.Entity<AppointmentAuditLog>().HasKey(a => a.Id);
         modelBuilder.Entity<AppointmentAuditLog>().HasIndex(a => a.AppointmentId);
+    }
+
+    private static void ConfigureScheduleBreaks(ModelBuilder modelBuilder)
+    {
+        modelBuilder.Entity<ScheduleBreak>().HasKey(b => b.Id);
+        modelBuilder.Entity<ScheduleBreak>().HasIndex(b => new { b.OrganizationId, b.EmployeeId, b.StartsAt });
+        modelBuilder.Entity<ScheduleBreak>().HasIndex(b => new { b.OrganizationId, b.CompanyId, b.StartsAt });
+        modelBuilder.Entity<ScheduleBreak>()
+            .HasOne(b => b.Employee)
+            .WithMany()
+            .HasForeignKey(b => b.EmployeeId)
+            .OnDelete(DeleteBehavior.Restrict);
+        modelBuilder.Entity<ScheduleBreak>()
+            .HasOne(b => b.Company)
+            .WithMany()
+            .HasForeignKey(b => b.CompanyId)
+            .OnDelete(DeleteBehavior.Restrict);
     }
 
     private static void ConfigureGroups(ModelBuilder modelBuilder)

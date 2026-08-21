@@ -66,6 +66,41 @@ Prijava: `POST /api/public/Auth/Register` (kreira Organizaciju + prvog Admin kor
 { "error": { "code": "AUTH_CURRENT_PASSWORD_INVALID", "message": "Trenutna lozinka nije ispravna." } }
 ```
 
+### PIN prijava (brzo prebacivanje na dijeljenom uređaju)
+
+Scenarij: dijeljeni uređaj (npr. tablet na recepciji) na kojem se kroz dan izmjenjuju zaposlenici. Netko se prijavi punom prijavom, a kolege koje dođu do istog uređaja "preuzimaju" sesiju kao oni sami kratkim PIN-om umjesto pune lozinke.
+
+`POST /api/public/Auth/PinLogin` — javni endpoint, isti stil kao `Login`: provjerava `PinHash` (isti hashing mehanizam kao `PasswordHash`) i izdaje **nov JWT**, isti oblik odgovora (`AuthResponse`) kao `Login`. Nema lokalnog čuvanja starih tokena — svaki PIN-login je svjež poziv. Vraća `401 AUTH_INVALID_PIN` ako organizacija/email/PIN ne odgovaraju aktivnom korisniku s postavljenim PIN-om (isti kôd i kad korisnik uopće nema postavljen PIN — namjerno, ne otkriva status naloga).
+
+**Svjesna odluka:** bez ograničenja broja pokušaja (rate limit / lockout) — PIN je kraći i slabiji od lozinke, ovo je pogodnost za pouzdan, fizički kontroliran uređaj, ne zamjena za sigurnost lozinke. Mjesto za buduće ograničenje je komentirano u `AuthService.PinLogin`.
+
+`POST /api/public/Auth/ChangePin` (`[Authorize]`, bilo koja rola) — prijavljeni korisnik postavlja/mijenja vlastiti PIN, uvijek potvrđeno **lozinkom** (ne starim PIN-om) — sigurnije, i pokriva prvo postavljanje PIN-a jednako kao promjenu. Isti obrazac grešaka kao `ChangePassword` (`401 AUTH_CURRENT_PASSWORD_INVALID`). `EmployeeMeDto.hasPinSet` govori frontendu treba li prikazati "Postavi PIN" ili "Promijeni PIN".
+
+```json
+// POST PinLogin — Request
+{ "organizationSlug": "moj-studio", "email": "ana@dunelight.local", "pin": "1234" }
+
+// 200 OK — isti oblik kao Login
+{ "userId": "…", "email": "ana@dunelight.local", "apiKey": "…", "role": "Member",
+  "organizationId": "…", "organizationName": "Moj Studio", "organizationSlug": "moj-studio",
+  "token": "…", "tokenExpiration": "…" }
+
+// 401 Unauthorized
+{ "error": { "code": "AUTH_INVALID_PIN", "message": "Neispravan PIN." } }
+```
+
+```json
+// POST ChangePin — Request
+{ "currentPassword": "lozinka123", "newPin": "1234" }
+
+// 200 OK (bez tijela)
+
+// 401 Unauthorized
+{ "error": { "code": "AUTH_CURRENT_PASSWORD_INVALID", "message": "Trenutna lozinka nije ispravna." } }
+```
+
+Napomena: "popis poznatih korisnika na uređaju" (za prikaz kratke liste imena za odabir) NIJE backend koncept — to uređaj (frontend, `localStorage`) sam pamti, backend o tome ništa ne zna.
+
 ## Jedinstveni format greške
 
 Sve greške (validacijske, poslovne, auth, framework-level 401/403) vraćaju se u istom obliku (`ExceptionHandlingMiddleware` za sve module + `Auth` rute; `ConfigureApiBehavior` za automatsku `[ApiController]` model-validaciju):
@@ -85,7 +120,8 @@ Sve greške (validacijske, poslovne, auth, framework-level 401/403) vraćaju se 
 | `INTERNAL_ERROR` | 500 | Neuhvaćena/neočekivana iznimka. |
 | `AUTH_INVALID_CREDENTIALS` | 401 | Login — organizacija/e-mail/lozinka ne odgovaraju aktivnom korisniku. |
 | `AUTH_ORGANIZATION_SLUG_TAKEN` | 409 | Register — organizacija s izvedenim nazivom (slug) već postoji. |
-| `AUTH_CURRENT_PASSWORD_INVALID` | 401 | ChangePassword — trenutna lozinka nije ispravna (ili korisnik ne postoji/nije aktivan). |
+| `AUTH_CURRENT_PASSWORD_INVALID` | 401 | ChangePassword, ChangePin — trenutna lozinka nije ispravna (ili korisnik ne postoji/nije aktivan). |
+| `AUTH_INVALID_PIN` | 401 | PinLogin — organizacija/e-mail/PIN ne odgovaraju aktivnom korisniku s postavljenim PIN-om. |
 | `REFERENCED_CANNOT_DELETE` | 409 | Trajno brisanje odbijeno jer je zapis referenciran drugdje — deaktivirati umjesto brisati. Koristi se kroz sve module (Katalog, Zaposlenici, Klijenti, Roster...). |
 | `DUPLICATE_NAME` | 409 | Aktivan zapis s istim nazivom već postoji (šifrarnici: vrste angažmana, oznake klijenta, kategorije/usluge, vrste rostera). |
 | `DUPLICATE_MEMBER_NUMBER` | 409 | Broj člana klijenta je već zauzet. |
@@ -100,7 +136,6 @@ Sve greške (validacijske, poslovne, auth, framework-level 401/403) vraćaju se 
 | `NOT_OWNER` | 409 | Trener pokušava upravljati terminom/grupnim terminom/roster-zapisom koji nije njegov. |
 | `PACKAGE_NOT_ELIGIBLE` | 409 | Odabrani paket nije valjan za klijenta ili ne pokriva uslugu (termini, grupna prisutnost). |
 | `PACKAGE_SERVICE_NOT_COVERED` | 409 | Odabrani paket ne pokriva traženu uslugu (trošenje ulaska). |
-| `CATEGORY_IN_USE` | 409 | Kategorija usluge se koristi na aktivnim uslugama — ne može se deaktivirati. |
 | `INACTIVE_EMPLOYEE` | 409 | Roster zapis referencira neaktivnog zaposlenika. |
 | `INACTIVE_TYPE` | 409 | Roster zapis referencira neaktivnu vrstu rostera. |
 | `PRICE_OVERLAP` | 409 | Preklapanje razdoblja aktivnih stavki cjenika za istu kombinaciju usluge/paketa i tvrtke. |
@@ -114,8 +149,7 @@ Tvrtke, kategorije usluga, usluge, cjenik, paketi. Sve pisanje `Admin`, čitanje
 | Endpoint | Opis |
 |---|---|
 | `GET/POST/PUT/DELETE /api/catalog/companies`, `PATCH .../{id}/activate`\|`deactivate` | Tvrtke. Zadnja aktivna tvrtka se ne može deaktivirati. |
-| `GET/POST/PUT/DELETE /api/catalog/service-categories`, `PATCH .../{id}/activate`\|`deactivate` | Konfigurabilne kategorije usluga (naziv, način izvođenja Individual/Group, boja...). |
-| `GET/POST/PUT/DELETE /api/catalog/services`, `PATCH .../{id}/activate`\|`deactivate` | Usluge (naziv, kategorija, trajanje, zadana cijena). |
+| `GET/POST/PUT/DELETE /api/catalog/services`, `PATCH .../{id}/activate`\|`deactivate` | Usluge (naziv, način izvođenja Individual/Group, boja, trajanje, zadana cijena). |
 | `GET/POST/PUT/DELETE /api/catalog/price-list`, `PATCH .../{id}/activate`\|`deactivate` | Stavke cjenika (usluga ili paket × tvrtka-ili-sve × razdoblje). Zabranjeno preklapanje razdoblja za istu kombinaciju. |
 | `GET /api/catalog/price-list/effective?companyId=&date=` | Trenutno važeći cjenik za tvrtku (pregledni prikaz). |
 | `GET /api/catalog/price-list/resolve?subjectType=&subjectId=&companyId=&date=` | Razriješena cijena — algoritam: tvrtka → sve tvrtke → zadana cijena. |
@@ -163,6 +197,7 @@ Spaja polja `EmployeeCreateRequest`-a (bez obaveznog `UserId` — korisnik se st
 // 200 OK
 {
   "employeeId": "…", "firstName": "Marko", "lastName": "Trener", "role": "Member", "colorHex": "#3498db",
+  "isOwner": false, "grants": ["…"], "hasPinSet": true,
   "companies": [{ "companyId": "…", "companyName": "Centar", "isPrimary": true }]
 }
 
@@ -243,9 +278,10 @@ Svi (Admin i Member) vide sve termine. Member smije kreirati/mijenjati/otkazivat
 
 | Endpoint | Opis |
 |---|---|
-| `GET /api/appointments/schedule?from=&to=&companyId=&employeeId=&serviceId=&serviceCategoryId=&status=` | Raspored za razdoblje. `companyId` zadano = sve tvrtke. Uključuje otkazane/no-show termine (za precrtani prikaz). Ćelija nosi `form`/`groupId`/`groupName`/`attendanceCount`/`expectedCount` za grupne termine (vidi Model ispod) — `clientNames` je prazan za grupne, frontend prikazuje `groupName` umjesto imena klijenata. |
+| `GET /api/appointments/schedule?from=&to=&companyId=&employeeId=&serviceId=&executionMode=&status=` | Raspored za razdoblje. `companyId` zadano = sve tvrtke. Uključuje otkazane/no-show termine (za precrtani prikaz). Ćelija nosi `form`/`groupId`/`groupName`/`attendanceCount`/`expectedCount` za grupne termine (vidi Model ispod) — `clientNames` je prazan za grupne, frontend prikazuje `groupName` umjesto imena klijenata. |
 | `GET /api/appointments/{id}` | Puni detalj termina (za klik na ćeliju rasporeda). |
 | `GET /api/appointments/by-client/{clientId}` | Povijest termina klijenta, paginirano, najnoviji prvi. |
+| `GET /api/appointments/available-slots?serviceId=&companyId=&date=&employeeId=` | **"Pronađi dostupan termin"** — gotovi, izrezani slobodni termini točne duljine usluge (`Service.DefaultDurationMinutes`), za svakog zaposlenika poslovnice koji radi tog dana i smije tu uslugu (prazan `Employee.Services` = smije sve, isto pravilo kao kod zakazivanja, ovdje kao filter ne upozorenje). Kombinira `WorkingHoursCalculator` (radno vrijeme zaposlenika ∩ tvrtke, apsencija već uračunata) minus postojeći termini/pauze tog dana. Slotovi kreću na apsolutnom gridu :00/:15/:30/:45. `employeeId` opcionalan filter (npr. Member zaključan na sebe). Zaposlenik bez ijednog slobodnog slota tog dana i dalje je uključen, s praznim `slots`. |
 | `POST /api/appointments/schedule` | **"Zakaži"** — status `Scheduled`, bez naplate. Cijena/trajanje se predlažu iz kataloga i snapshotiraju na termin. `409 APPOINTMENT_OVERLAP` za preklapanje. |
 | `POST /api/appointments/complete` | **"Upiši odrađeno"** — novi termin odmah u statusu `Completed`, naplata odmah (`PaymentMethod` obavezan). `409 APPOINTMENT_OVERLAP` za preklapanje. |
 | `PATCH /api/appointments/{id}/complete` | Prijelaz postojećeg (obično `Scheduled`) termina u `Completed` — trenutak naplate za termine zakazane unaprijed. `409 APPOINTMENT_OVERLAP` za preklapanje. |

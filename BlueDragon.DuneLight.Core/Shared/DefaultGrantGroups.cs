@@ -22,7 +22,7 @@ public static class DefaultGrantGroups
     public static readonly IReadOnlyList<string> TrainerGrants = new List<string>
     {
         Grants.EmployeesDirectoryView,
-        Grants.CatalogCompaniesView, Grants.CatalogServiceCategoriesView, Grants.CatalogServicesView,
+        Grants.CatalogCompaniesView, Grants.CatalogServicesView,
         Grants.CatalogPackagesView, Grants.CatalogPriceListView,
         Grants.ClientsView, Grants.ClientsManage, Grants.ClientsTagsView, Grants.ClientsPackagesView, Grants.ClientsPackagesManage,
         Grants.AppointmentsView, Grants.AppointmentsWriteOwn,

@@ -99,6 +99,24 @@ public class AuthService : IAuthService
         return ToAuthResponse(user, organization);
     }
 
+    public async Task<AuthResponse> PinLogin(PinLoginRequest request)
+    {
+        Organization organization = await _authHandler.GetOrganizationBySlug(request.OrganizationSlug);
+        if (organization == null)
+            throw new UnauthorizedAppException(ErrorCodes.AuthInvalidPin, "Neispravan PIN.");
+
+        // NAMJERNO bez ograničenja broja pokušaja (rate limit / lockout) — svjesna odluka za dijeljeni,
+        // fizički kontroliran uređaj (vidi zahtjev). Ako ovo ikad zatreba, mjesto za brojač neuspjelih
+        // pokušaja je ovdje (npr. na User ili zaseban zapis), prije GetUserByPinCredentials poziva.
+        string pinHash = PasswordHasher.Hash(request.Pin);
+        User user = await _authHandler.GetUserByPinCredentials(organization.Id.GetValueOrDefault(), request.Email, pinHash);
+
+        if (user == null || !user.IsActive)
+            throw new UnauthorizedAppException(ErrorCodes.AuthInvalidPin, "Neispravan PIN.");
+
+        return ToAuthResponse(user, organization);
+    }
+
     public async Task ChangePassword(Guid userId, ChangePasswordRequest request)
     {
         User user = await _authHandler.GetUserById(userId);
@@ -109,6 +127,18 @@ public class AuthService : IAuthService
             throw new UnauthorizedAppException(ErrorCodes.AuthCurrentPasswordInvalid, "Trenutna lozinka nije ispravna.");
 
         await _authHandler.UpdatePasswordHash(user.Id.GetValueOrDefault(), PasswordHasher.Hash(request.NewPassword));
+    }
+
+    public async Task ChangePin(Guid userId, ChangePinRequest request)
+    {
+        User user = await _authHandler.GetUserById(userId);
+        if (user == null || !user.IsActive)
+            throw new UnauthorizedAppException(ErrorCodes.AuthCurrentPasswordInvalid, "Trenutna lozinka nije ispravna.");
+
+        if (user.PasswordHash != PasswordHasher.Hash(request.CurrentPassword))
+            throw new UnauthorizedAppException(ErrorCodes.AuthCurrentPasswordInvalid, "Trenutna lozinka nije ispravna.");
+
+        await _authHandler.UpdatePinHash(user.Id.GetValueOrDefault(), PasswordHasher.Hash(request.NewPin));
     }
 
     private AuthResponse ToAuthResponse(User user, Organization organization)

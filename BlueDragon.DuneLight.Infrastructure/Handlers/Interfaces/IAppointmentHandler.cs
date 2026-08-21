@@ -52,6 +52,10 @@ public interface IAppointmentHandler
     /// recurring niza odjednom, precizna provjera po occurrenceu radi se u servisu u memoriji.</summary>
     Task<List<Appointment>> GetForEmployeeInRange(Guid organizationId, Guid employeeId, DateTimeOffset rangeFrom, DateTimeOffset rangeTo);
 
+    /// <summary>Kao <see cref="GetForEmployeeInRange"/>, ali za više zaposlenika u jednom upitu (bez otkazanih/izostalih)
+    /// — za available-slots, izbjegava upit po zaposleniku u petlji.</summary>
+    Task<List<Appointment>> GetForEmployeesInRange(Guid organizationId, List<Guid> employeeIds, DateTimeOffset rangeFrom, DateTimeOffset rangeTo);
+
     /// <summary>Svi termini bilo kojeg od klijenata unutar raspona (bez otkazanih/izostalih) — kandidati za
     /// preklapanje cijelog recurring niza odjednom, precizna provjera po occurrenceu radi se u servisu u memoriji.</summary>
     Task<List<Appointment>> GetForClientsInRange(Guid organizationId, List<Guid> clientIds, DateTimeOffset rangeFrom, DateTimeOffset rangeTo);

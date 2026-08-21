@@ -370,6 +370,7 @@ public class EmployeeService : IEmployeeService
             Role = full.User != null ? UserRoleClaims.ToClaimValue(full.User.Role) : null,
             IsOwner = isOwner,
             Grants = grants.ToList(),
+            HasPinSet = full.User != null && !string.IsNullOrEmpty(full.User.PinHash),
             ColorHex = full.ColorHex,
             Companies = full.Companies.Select(el => new EmployeeCompanyDto
             {

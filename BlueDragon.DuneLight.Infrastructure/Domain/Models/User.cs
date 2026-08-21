@@ -38,7 +38,8 @@ public class User
     [Column("must_change_credentials_on_first_login")]
     public bool MustChangeCredentialsOnFirstLogin { get; set; }
 
-    /// <summary>Hashirani inicijalni PIN (isti PasswordHasher kao za lozinku). Samo polje — PIN-login/quick-switch tok nije implementiran.</summary>
+    /// <summary>Hashirani PIN (isti PasswordHasher kao za lozinku) — za brzo prebacivanje korisnika na dijeljenom
+    /// uređaju (vidi AuthService.PinLogin/ChangePin). Null dok korisnik ne postavi PIN.</summary>
     [Column("pin_hash")]
     public string PinHash { get; set; }
 

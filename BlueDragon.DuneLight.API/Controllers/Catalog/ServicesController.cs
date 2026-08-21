@@ -3,6 +3,7 @@ using System.Threading.Tasks;
 using BlueDragon.DuneLight.API.Authorization;
 using BlueDragon.DuneLight.API.Extensions;
 using BlueDragon.DuneLight.Core.DTOs.Catalog;
+using BlueDragon.DuneLight.Core.Enums;
 using BlueDragon.DuneLight.Core.Interfaces.Catalog;
 using BlueDragon.DuneLight.Core.Shared;
 using Microsoft.AspNetCore.Mvc;
@@ -23,9 +24,9 @@ public class ServicesController : ControllerBase
 
     [HttpGet]
     [RequireGrant(Grants.CatalogServicesView)]
-    public async Task<ActionResult<PagedResult<ServiceDto>>> GetPaged([FromQuery] PagedRequest request, [FromQuery] Guid? serviceCategoryId)
+    public async Task<ActionResult<PagedResult<ServiceDto>>> GetPaged([FromQuery] PagedRequest request, [FromQuery] ServiceExecutionMode? executionMode)
     {
-        return Ok(await _serviceCatalogService.GetPaged(this.CurrentOrganizationId(), request, serviceCategoryId));
+        return Ok(await _serviceCatalogService.GetPaged(this.CurrentOrganizationId(), request, executionMode));
     }
 
     [HttpGet("{id:guid}")]

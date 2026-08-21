@@ -4,7 +4,10 @@ using System.Threading.Tasks;
 using BlueDragon.DuneLight.API.Authorization;
 using BlueDragon.DuneLight.API.Extensions;
 using BlueDragon.DuneLight.Core.DTOs.Appointments;
+using BlueDragon.DuneLight.Core.DTOs.Schedule;
+using BlueDragon.DuneLight.Core.DTOs.ScheduleBreaks;
 using BlueDragon.DuneLight.Core.Interfaces.Appointments;
+using BlueDragon.DuneLight.Core.Interfaces.ScheduleBreaks;
 using BlueDragon.DuneLight.Core.Shared;
 using Microsoft.AspNetCore.Mvc;
 
@@ -16,18 +19,43 @@ namespace BlueDragon.DuneLight.API.Controllers.Appointments;
 public class AppointmentsController : ControllerBase
 {
     private readonly IAppointmentService _appointmentService;
+    private readonly IScheduleBreakService _scheduleBreakService;
 
-    public AppointmentsController(IAppointmentService appointmentService)
+    public AppointmentsController(IAppointmentService appointmentService, IScheduleBreakService scheduleBreakService)
     {
         _appointmentService = appointmentService;
+        _scheduleBreakService = scheduleBreakService;
     }
 
-    /// <summary>Raspored za razdoblje — filtri: tvrtka (zadano sve), trener, usluga/kategorija, status. Uključuje otkazane/no-show.</summary>
+    /// <summary>Raspored za razdoblje — filtri: tvrtka (zadano sve), trener, usluga/kategorija, status. Uključuje
+    /// otkazane/no-show termine, te pauze istog trenera (Breaks) kao zaseban niz iste mreže.</summary>
     [HttpGet("schedule")]
     [RequireGrant(Grants.AppointmentsView)]
-    public async Task<ActionResult<List<AppointmentScheduleCellDto>>> GetSchedule([FromQuery] AppointmentScheduleQuery query)
+    public async Task<ActionResult<ScheduleFeedDto>> GetSchedule([FromQuery] AppointmentScheduleQuery query)
     {
-        return Ok(await _appointmentService.GetSchedule(this.CurrentOrganizationId(), query));
+        Guid organizationId = this.CurrentOrganizationId();
+
+        List<AppointmentScheduleCellDto> appointments = await _appointmentService.GetSchedule(organizationId, query);
+
+        ScheduleBreakQuery breakQuery = new ScheduleBreakQuery
+        {
+            From = query.From,
+            To = query.To,
+            EmployeeId = query.EmployeeId,
+            CompanyId = query.CompanyId
+        };
+        List<ScheduleBreakCellDto> breaks = await _scheduleBreakService.GetScheduleCells(organizationId, breakQuery);
+
+        return Ok(new ScheduleFeedDto { Appointments = appointments, Breaks = breaks });
+    }
+
+    /// <summary>Slobodni slotovi točne duljine usluge, za sve zaposlenike poslovnice koji smiju tu uslugu (ili
+    /// samo employeeId ako je zadan) — za "Pronađi dostupan termin" u formi novog termina.</summary>
+    [HttpGet("available-slots")]
+    [RequireGrant(Grants.AppointmentsWriteOwn, Grants.AppointmentsWriteAll)]
+    public async Task<ActionResult<List<EmployeeAvailableSlotsDto>>> GetAvailableSlots([FromQuery] AvailableSlotsQuery query)
+    {
+        return Ok(await _appointmentService.GetAvailableSlots(this.CurrentOrganizationId(), query));
     }
 
     [HttpGet("{id:guid}")]

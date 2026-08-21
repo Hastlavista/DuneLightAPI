@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Threading.Tasks;
+using BlueDragon.DuneLight.Core.Enums;
 using BlueDragon.DuneLight.Core.Shared;
 using BlueDragon.DuneLight.Infrastructure.Domain.Models.Catalog;
 
@@ -8,7 +9,7 @@ namespace BlueDragon.DuneLight.Infrastructure.Handlers.Interfaces;
 
 public interface IServiceHandler
 {
-    Task<(List<Service> Items, int TotalCount)> GetPaged(Guid organizationId, PagedRequest request, Guid? serviceCategoryId);
+    Task<(List<Service> Items, int TotalCount)> GetPaged(Guid organizationId, PagedRequest request, ServiceExecutionMode? executionMode);
     Task<Service> GetById(Guid organizationId, Guid id);
 
     /// <summary>Batch dohvat po ID-evima u jednom upitu — izbjegava N+1 kod validacije liste usluga.</summary>
@@ -19,6 +20,4 @@ public interface IServiceHandler
     Task Update(Service service);
     Task Delete(Service service);
     Task<bool> IsReferenced(Guid organizationId, Guid id);
-    Task<bool> HasActiveServicesInCategory(Guid organizationId, Guid serviceCategoryId);
-    Task<bool> IsCategoryReferenced(Guid organizationId, Guid serviceCategoryId);
 }

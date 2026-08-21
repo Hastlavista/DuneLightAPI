@@ -260,4 +260,19 @@ public class EmployeeHandler : IEmployeeHandler
 
         return (items, totalCount);
     }
+
+    public async Task<List<Employee>> GetForCompany(Guid organizationId, Guid companyId)
+    {
+        await using DatabaseContext context = DatabaseContext.GenerateContext(_databaseSettings.ConnectionString);
+        return await context.Employees
+            .Include(e => e.Services)
+            .Where(e =>
+                e.OrganizationId == organizationId &&
+                e.IsActive &&
+                e.Companies.Any(el => el.CompanyId == companyId))
+            .OrderBy(e => e.SortOrder)
+            .ThenBy(e => e.LastName)
+            .ThenBy(e => e.FirstName)
+            .ToListAsync();
+    }
 }

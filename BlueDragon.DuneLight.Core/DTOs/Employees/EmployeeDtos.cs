@@ -235,7 +235,7 @@ public class EmployeeWithLoginCreateRequest
     /// <summary>Ako je true, korisnik mora promijeniti lozinku (i PIN, ako je postavljen) pri prvoj prijavi.</summary>
     public bool MustChangeCredentialsOnFirstLogin { get; set; }
 
-    /// <summary>Opcionalan inicijalni PIN — samo polje, PIN-login/quick-switch tok nije dio ove faze.</summary>
+    /// <summary>Opcionalan inicijalni PIN — korisnik ga kasnije može promijeniti kroz `POST /api/public/Auth/ChangePin`.</summary>
     public string Pin { get; set; }
 
     /// <summary>Barem jedna GrantGroup je obavezna (osim za Ownera, koji se ne kreira ovim endpointom — vidi Register).</summary>
@@ -269,6 +269,10 @@ public class EmployeeMeDto
     /// samo izložen frontendu za UI-level provjere (npr. adminGuard, prikaz/sakrivanje akcija).
     /// Prazna za Ownera (on zaobilazi grant sustav u potpunosti — IsOwner ionako uvijek propušta provjere).</summary>
     public List<string> Grants { get; set; } = new();
+
+    /// <summary>Ima li korisnik trenutno postavljen PIN (za brzo prebacivanje na dijeljenom uređaju) — frontend
+    /// ovime bira prikaz "Postavi PIN" ili "Promijeni PIN".</summary>
+    public bool HasPinSet { get; set; }
 
     public string ColorHex { get; set; }
     public List<EmployeeCompanyDto> Companies { get; set; } = new();

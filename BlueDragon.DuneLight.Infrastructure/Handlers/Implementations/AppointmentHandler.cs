@@ -26,7 +26,7 @@ public class AppointmentHandler : IAppointmentHandler
     private static IQueryable<Appointment> IncludeGraph(IQueryable<Appointment> query)
     {
         return query
-            .Include(a => a.Service).ThenInclude(s => s.ServiceCategory)
+            .Include(a => a.Service)
             .Include(a => a.Employee)
             .Include(a => a.Company)
             .Include(a => a.Clients).ThenInclude(ac => ac.Client);
@@ -192,6 +192,19 @@ public class AppointmentHandler : IAppointmentHandler
             .ToListAsync();
     }
 
+    public async Task<List<Appointment>> GetForEmployeesInRange(
+        Guid organizationId, List<Guid> employeeIds, DateTimeOffset rangeFrom, DateTimeOffset rangeTo)
+    {
+        await using DatabaseContext context = DatabaseContext.GenerateContext(_databaseSettings.ConnectionString);
+        return await context.Appointments
+            .Where(a =>
+                a.OrganizationId == organizationId &&
+                a.EmployeeId != null && employeeIds.Contains(a.EmployeeId.Value) &&
+                a.Status != AppointmentStatus.Cancelled && a.Status != AppointmentStatus.NoShow &&
+                a.StartsAt >= rangeFrom && a.StartsAt <= rangeTo)
+            .ToListAsync();
+    }
+
     public async Task<List<Appointment>> GetForClientsInRange(
         Guid organizationId, List<Guid> clientIds, DateTimeOffset rangeFrom, DateTimeOffset rangeTo)
     {
@@ -224,8 +237,8 @@ public class AppointmentHandler : IAppointmentHandler
         if (query.ServiceId.HasValue)
             q = q.Where(a => a.ServiceId == query.ServiceId.Value);
 
-        if (query.ServiceCategoryId.HasValue)
-            q = q.Where(a => a.Service.ServiceCategoryId == query.ServiceCategoryId.Value);
+        if (query.ExecutionMode.HasValue)
+            q = q.Where(a => a.Service.ExecutionMode == query.ExecutionMode.Value);
 
         if (query.Status.HasValue)
             q = q.Where(a => a.Status == query.Status.Value);

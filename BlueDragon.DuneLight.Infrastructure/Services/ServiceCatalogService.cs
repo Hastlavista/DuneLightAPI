@@ -3,10 +3,10 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
 using BlueDragon.DuneLight.Core.DTOs.Catalog;
+using BlueDragon.DuneLight.Core.Enums;
 using BlueDragon.DuneLight.Core.Interfaces.Catalog;
 using BlueDragon.DuneLight.Core.Shared;
 using BlueDragon.DuneLight.Core.Shared.Exceptions;
-using BlueDragon.DuneLight.Infrastructure.Domain.Models.Catalog;
 using BlueDragon.DuneLight.Infrastructure.Handlers.Interfaces;
 using ServiceEntity = BlueDragon.DuneLight.Infrastructure.Domain.Models.Catalog.Service;
 
@@ -15,17 +15,15 @@ namespace BlueDragon.DuneLight.Infrastructure.Services;
 public class ServiceCatalogService : IServiceCatalogService
 {
     private readonly IServiceHandler _serviceHandler;
-    private readonly IServiceCategoryHandler _categoryHandler;
 
-    public ServiceCatalogService(IServiceHandler serviceHandler, IServiceCategoryHandler categoryHandler)
+    public ServiceCatalogService(IServiceHandler serviceHandler)
     {
         _serviceHandler = serviceHandler;
-        _categoryHandler = categoryHandler;
     }
 
-    public async Task<PagedResult<ServiceDto>> GetPaged(Guid organizationId, PagedRequest request, Guid? serviceCategoryId)
+    public async Task<PagedResult<ServiceDto>> GetPaged(Guid organizationId, PagedRequest request, ServiceExecutionMode? executionMode)
     {
-        (List<ServiceEntity> items, int totalCount) = await _serviceHandler.GetPaged(organizationId, request, serviceCategoryId);
+        (List<ServiceEntity> items, int totalCount) = await _serviceHandler.GetPaged(organizationId, request, executionMode);
         return PagedResult<ServiceDto>.Create(items.Select(ToDto).ToList(), totalCount, request.Page, request.PageSize);
     }
 
@@ -41,14 +39,14 @@ public class ServiceCatalogService : IServiceCatalogService
     public async Task<ServiceDto> Create(Guid organizationId, Guid userId, ServiceCreateRequest request)
     {
         await EnsureNameIsUnique(organizationId, request.Name, excludeId: null);
-        await EnsureCategoryIsUsable(organizationId, request.ServiceCategoryId);
 
         ServiceEntity service = new ServiceEntity
         {
             Id = Guid.NewGuid(),
             OrganizationId = organizationId,
             Name = request.Name,
-            ServiceCategoryId = request.ServiceCategoryId,
+            ExecutionMode = request.ExecutionMode,
+            ColorHex = request.ColorHex,
             DefaultDurationMinutes = request.DefaultDurationMinutes,
             DefaultPrice = request.DefaultPrice,
             Description = request.Description,
@@ -69,10 +67,10 @@ public class ServiceCatalogService : IServiceCatalogService
             throw new NotFoundAppException("Service", id);
 
         await EnsureNameIsUnique(organizationId, request.Name, excludeId: id);
-        await EnsureCategoryIsUsable(organizationId, request.ServiceCategoryId);
 
         service.Name = request.Name;
-        service.ServiceCategoryId = request.ServiceCategoryId;
+        service.ExecutionMode = request.ExecutionMode;
+        service.ColorHex = request.ColorHex;
         service.DefaultDurationMinutes = request.DefaultDurationMinutes;
         service.DefaultPrice = request.DefaultPrice;
         service.Description = request.Description;
@@ -121,24 +119,14 @@ public class ServiceCatalogService : IServiceCatalogService
             throw new BusinessRuleException(ErrorCodes.DuplicateName, $"Aktivna usluga s nazivom '{name}' već postoji.");
     }
 
-    private async Task EnsureCategoryIsUsable(Guid organizationId, Guid serviceCategoryId)
-    {
-        ServiceCategory category = await _categoryHandler.GetById(organizationId, serviceCategoryId);
-        if (category == null)
-            throw new NotFoundAppException("ServiceCategory", serviceCategoryId);
-
-        if (!category.IsActive)
-            throw new ValidationAppException("Odabrana kategorija usluge nije aktivna.");
-    }
-
     private static ServiceDto ToDto(ServiceEntity service)
     {
         return new ServiceDto
         {
             Id = service.Id.GetValueOrDefault(),
             Name = service.Name,
-            ServiceCategoryId = service.ServiceCategoryId,
-            ServiceCategoryName = service.ServiceCategory?.Name,
+            ExecutionMode = service.ExecutionMode,
+            ColorHex = service.ColorHex,
             DefaultDurationMinutes = service.DefaultDurationMinutes,
             DefaultPrice = service.DefaultPrice,
             Description = service.Description,

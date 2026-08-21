@@ -38,6 +38,7 @@ public class AppointmentService : IAppointmentService
     private readonly IClientHandler _clientHandler;
     private readonly IRosterEntryHandler _rosterEntryHandler;
     private readonly IWorkingHoursTemplateHandler _workingHoursTemplateHandler;
+    private readonly IScheduleBreakHandler _scheduleBreakHandler;
     private readonly IUnitOfWorkFactory _unitOfWorkFactory;
 
     public AppointmentService(
@@ -52,6 +53,7 @@ public class AppointmentService : IAppointmentService
         IClientHandler clientHandler,
         IRosterEntryHandler rosterEntryHandler,
         IWorkingHoursTemplateHandler workingHoursTemplateHandler,
+        IScheduleBreakHandler scheduleBreakHandler,
         IUnitOfWorkFactory unitOfWorkFactory)
     {
         _appointmentHandler = appointmentHandler;
@@ -65,6 +67,7 @@ public class AppointmentService : IAppointmentService
         _clientHandler = clientHandler;
         _rosterEntryHandler = rosterEntryHandler;
         _workingHoursTemplateHandler = workingHoursTemplateHandler;
+        _scheduleBreakHandler = scheduleBreakHandler;
         _unitOfWorkFactory = unitOfWorkFactory;
     }
 
@@ -426,9 +429,9 @@ public class AppointmentService : IAppointmentService
     }
 
     /// <summary>Tvrda, unaprijedna provjera SAMO za /recurring — ako bilo koji datum u nizu sudara s postojećim
-    /// terminom trenera (jednokratnim ili ponavljajućim) ili s roster odsutnošću, baca RECURRING_CONFLICT (409)
-    /// prije nego se bilo što spremi. Pojedinačni endpointi umjesto ovoga koriste EnsureNoOverlap (isto tvrda
-    /// blokada, ali baca AppointmentOverlap za prvi sudar bez liste svih konflikata).
+    /// terminom trenera (jednokratnim ili ponavljajućim), pauzom trenera, ili s roster odsutnošću, baca
+    /// RECURRING_CONFLICT (409) prije nego se bilo što spremi. Pojedinačni endpointi umjesto ovoga koriste
+    /// EnsureNoOverlap (isto tvrda blokada, ali baca AppointmentOverlap za prvi sudar bez liste svih konflikata).
     /// Kandidati (termini trenera + roster odsutnosti) dohvaćaju se JEDNOM za cijeli raspon niza, precizna
     /// provjera po occurrenceu radi se u memoriji — izbjegava upit po occurrenceu za duge nizove.</summary>
     private async Task EnsureNoRecurringConflicts(
@@ -438,6 +441,9 @@ public class AppointmentService : IAppointmentService
         DateTimeOffset rangeTo = occurrences[^1].AddDays(1);
 
         List<Appointment> candidateAppointments = await _appointmentHandler.GetForEmployeeInRange(
+            organizationId, employeeId, rangeFrom, rangeTo);
+
+        List<ScheduleBreak> candidateBreaks = await _scheduleBreakHandler.GetForEmployeeInRange(
             organizationId, employeeId, rangeFrom, rangeTo);
 
         // Učitano JEDNOM za cijeli raspon niza (apsencije + eventualni work-override redovi) — dijeli se između
@@ -462,6 +468,15 @@ public class AppointmentService : IAppointmentService
             if (appointmentHit)
             {
                 conflicts.Add(new RecurringConflictDetail { Date = occurrence, Reason = ErrorCodes.RecurringConflictReasonAppointment });
+                continue;
+            }
+
+            bool breakHit = candidateBreaks.Any(b =>
+                b.StartsAt < occurrenceEnd && occurrence < b.StartsAt.AddMinutes(b.DurationMinutes));
+
+            if (breakHit)
+            {
+                conflicts.Add(new RecurringConflictDetail { Date = occurrence, Reason = ErrorCodes.RecurringConflictReasonScheduleBreak });
                 continue;
             }
 
@@ -535,6 +550,72 @@ public class AppointmentService : IAppointmentService
     {
         (List<Appointment> items, int totalCount) = await _appointmentHandler.GetByClient(organizationId, clientId, request);
         return PagedResult<AppointmentDto>.Create(items.Select(ToDto).ToList(), totalCount, request.Page, request.PageSize);
+    }
+
+    public async Task<List<EmployeeAvailableSlotsDto>> GetAvailableSlots(Guid organizationId, AvailableSlotsQuery query)
+    {
+        ServiceEntity service = await LoadServiceOrThrow(organizationId, query.ServiceId);
+        await EnsureCompanyExists(organizationId, query.CompanyId);
+
+        List<Employee> employees = await _employeeHandler.GetForCompany(organizationId, query.CompanyId);
+
+        if (query.EmployeeId.HasValue)
+            employees = employees.Where(e => e.Id == query.EmployeeId.Value).ToList();
+
+        employees = employees
+            .Where(e => e.Services.Count == 0 || e.Services.Any(s => s.ServiceId == query.ServiceId))
+            .ToList();
+
+        if (employees.Count == 0)
+            return new List<EmployeeAvailableSlotsDto>();
+
+        List<Guid> employeeIds = employees.Select(e => e.Id.GetValueOrDefault()).ToList();
+
+        DateTimeOffset dayStart = query.Date.Date;
+        DateTimeOffset dayEnd = dayStart.AddDays(1).AddTicks(-1);
+
+        List<WorkingHoursTemplate> employeeTemplates = await _workingHoursTemplateHandler.GetForEmployees(organizationId, employeeIds);
+        WorkingHoursTemplate companyTemplate = await _workingHoursTemplateHandler.GetForCompany(organizationId, query.CompanyId);
+        List<RosterEntry> rosterEntries = await _rosterEntryHandler.GetForPeriod(organizationId, employeeIds, dayStart, dayStart);
+        List<Appointment> appointments = await _appointmentHandler.GetForEmployeesInRange(organizationId, employeeIds, dayStart, dayEnd);
+        List<ScheduleBreak> breaks = await _scheduleBreakHandler.GetForEmployeesInRange(organizationId, employeeIds, dayStart, dayEnd);
+
+        (List<WorkingHoursCalculator.Interval> companyIntervals, _) =
+            WorkingHoursCalculator.GetEffectiveCompanyIntervals(companyTemplate, dayStart);
+
+        List<EmployeeAvailableSlotsDto> result = new List<EmployeeAvailableSlotsDto>();
+
+        foreach (Employee employee in employees)
+        {
+            Guid employeeId = employee.Id.GetValueOrDefault();
+
+            WorkingHoursTemplate employeeTemplate = employeeTemplates.FirstOrDefault(t => t.EmployeeId == employeeId);
+            List<RosterEntry> rosterForEmployee = rosterEntries.Where(r => r.EmployeeId == employeeId).ToList();
+
+            (List<WorkingHoursCalculator.Interval> employeeIntervals, _) =
+                WorkingHoursCalculator.GetEffectiveEmployeeIntervals(employeeTemplate, rosterForEmployee, dayStart);
+
+            List<WorkingHoursCalculator.Interval> effectiveIntervals =
+                WorkingHoursCalculator.IntersectIntervals(employeeIntervals, companyIntervals);
+
+            List<(TimeSpan Start, TimeSpan End)> busy = new List<(TimeSpan Start, TimeSpan End)>();
+            busy.AddRange(appointments
+                .Where(a => a.EmployeeId == employeeId)
+                .Select(a => (a.StartsAt.TimeOfDay, a.StartsAt.TimeOfDay + TimeSpan.FromMinutes(a.DurationMinutes))));
+            busy.AddRange(breaks
+                .Where(b => b.EmployeeId == employeeId)
+                .Select(b => (b.StartsAt.TimeOfDay, b.StartsAt.TimeOfDay + TimeSpan.FromMinutes(b.DurationMinutes))));
+
+            result.Add(new EmployeeAvailableSlotsDto
+            {
+                EmployeeId = employeeId,
+                EmployeeName = $"{employee.FirstName} {employee.LastName}",
+                ColorHex = employee.ColorHex,
+                Slots = GenerateSlots(effectiveIntervals, busy, service.DefaultDurationMinutes)
+            });
+        }
+
+        return result;
     }
 
     private async Task<AppointmentDto> CreateInternal(
@@ -763,7 +844,7 @@ public class AppointmentService : IAppointmentService
     }
 
     /// <summary>Baca APPOINTMENT_OVERLAP (409) prije spremanja ako se termin preklapa s postojećim
-    /// (trener ili bilo koji od klijenata) — trener se provjerava prvi, zatim klijenti redom.</summary>
+    /// (trener, pauza trenera, ili bilo koji od klijenata) — trener se provjerava prvi, zatim pauza, zatim klijenti redom.</summary>
     private async Task EnsureNoOverlap(
         Guid organizationId, Guid employeeId, List<Client> clients, DateTimeOffset startsAt, int durationMinutes, Guid? excludeId)
     {
@@ -771,6 +852,11 @@ public class AppointmentService : IAppointmentService
             organizationId, employeeId, startsAt, durationMinutes, excludeId);
         if (employeeOverlaps.Count > 0)
             throw new BusinessRuleException(ErrorCodes.AppointmentOverlap, "Trener već ima termin u ovom vremenskom razdoblju.");
+
+        List<ScheduleBreak> breakOverlaps = await _scheduleBreakHandler.GetOverlappingForEmployee(
+            organizationId, employeeId, startsAt, durationMinutes, excludeId: null);
+        if (breakOverlaps.Count > 0)
+            throw new BusinessRuleException(ErrorCodes.AppointmentOverlap, "Trener ima pauzu u ovom vremenu.");
 
         List<Guid> clientIds = clients.Select(c => c.Id.GetValueOrDefault()).ToList();
         List<Appointment> clientOverlaps = await _appointmentHandler.GetOverlappingForClients(
@@ -816,6 +902,41 @@ public class AppointmentService : IAppointmentService
 
         return WorkingHoursCalculator.IsWithinIntervals(employeeIntervals, start, end)
             && WorkingHoursCalculator.IsWithinIntervals(companyIntervals, start, end);
+    }
+
+    private static readonly TimeSpan AvailableSlotStep = TimeSpan.FromMinutes(15);
+
+    /// <summary>Kandidati kreću na apsolutnom gridu :00/:15/:30/:45 (dosljedno vizualnom snapu na rasporedu), unutar
+    /// svakog slobodnog prozora, izbacujući svaki koji preklapa nešto zauzeto (termin ili pauza istog trenera).</summary>
+    private static List<AvailableSlotDto> GenerateSlots(
+        List<WorkingHoursCalculator.Interval> freeIntervals, List<(TimeSpan Start, TimeSpan End)> busy, int durationMinutes)
+    {
+        List<AvailableSlotDto> slots = new List<AvailableSlotDto>();
+        TimeSpan duration = TimeSpan.FromMinutes(durationMinutes);
+
+        foreach (WorkingHoursCalculator.Interval interval in freeIntervals)
+        {
+            TimeSpan candidateStart = RoundUpToStep(interval.Start, AvailableSlotStep);
+
+            while (candidateStart + duration <= interval.End)
+            {
+                TimeSpan candidateEnd = candidateStart + duration;
+                bool overlapsBusy = busy.Any(b => candidateStart < b.End && b.Start < candidateEnd);
+
+                if (!overlapsBusy)
+                    slots.Add(new AvailableSlotDto { Start = candidateStart, End = candidateEnd });
+
+                candidateStart += AvailableSlotStep;
+            }
+        }
+
+        return slots;
+    }
+
+    private static TimeSpan RoundUpToStep(TimeSpan value, TimeSpan step)
+    {
+        long remainder = value.Ticks % step.Ticks;
+        return remainder == 0 ? value : TimeSpan.FromTicks(value.Ticks + (step.Ticks - remainder));
     }
 
     private async Task LogAmountChange(Guid appointmentId, decimal oldAmount, decimal newAmount, Guid userId)
@@ -888,6 +1009,7 @@ public class AppointmentService : IAppointmentService
     private static AppointmentScheduleCellDto ToScheduleCellDto(Appointment a)
     {
         bool isGroup = a.Form == AppointmentForm.Group;
+        List<Client> clients = a.Clients.Where(c => c.Client != null).Select(c => c.Client).ToList();
 
         return new AppointmentScheduleCellDto
         {
@@ -896,15 +1018,13 @@ public class AppointmentService : IAppointmentService
             DurationMinutes = a.DurationMinutes,
             ServiceId = a.ServiceId,
             ServiceName = a.Service?.Name,
-            ServiceCategoryColorHex = a.Service?.ServiceCategory?.ColorHex,
+            ServiceCategoryColorHex = a.Service?.ColorHex,
             EmployeeId = a.EmployeeId,
             EmployeeName = a.Employee != null ? $"{a.Employee.FirstName} {a.Employee.LastName}" : null,
             CompanyId = a.CompanyId,
             CompanyName = a.Company?.Name,
-            ClientNames = a.Clients
-                .Where(c => c.Client != null)
-                .Select(c => $"{c.Client.FirstName} {c.Client.LastName}")
-                .ToList(),
+            ClientNames = clients.Select(c => $"{c.FirstName} {c.LastName}").ToList(),
+            ClientIds = clients.Select(c => c.Id.GetValueOrDefault()).ToList(),
             Status = a.Status,
             IsCancelled = a.Status == AppointmentStatus.Cancelled,
             Form = a.Form,
@@ -925,7 +1045,7 @@ public class AppointmentService : IAppointmentService
             DurationMinutes = a.DurationMinutes,
             ServiceId = a.ServiceId,
             ServiceName = a.Service?.Name,
-            ServiceCategoryColorHex = a.Service?.ServiceCategory?.ColorHex,
+            ServiceCategoryColorHex = a.Service?.ColorHex,
             EmployeeId = a.EmployeeId,
             EmployeeName = a.Employee != null ? $"{a.Employee.FirstName} {a.Employee.LastName}" : null,
             CompanyId = a.CompanyId,

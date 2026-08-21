@@ -14,8 +14,10 @@ using BlueDragon.DuneLight.Core.Interfaces.Catalog;
 using BlueDragon.DuneLight.Core.Interfaces.Clients;
 using BlueDragon.DuneLight.Core.Interfaces.Employees;
 using BlueDragon.DuneLight.Core.Interfaces.Groups;
+using BlueDragon.DuneLight.Core.Interfaces.Onboarding;
 using BlueDragon.DuneLight.Core.Interfaces.Permissions;
 using BlueDragon.DuneLight.Core.Interfaces.Roster;
+using BlueDragon.DuneLight.Core.Interfaces.ScheduleBreaks;
 using BlueDragon.DuneLight.Core.Shared;
 using BlueDragon.DuneLight.Infrastructure.Domain.Settings;
 using BlueDragon.DuneLight.Infrastructure.Handlers.Implementations;
@@ -116,7 +118,6 @@ public class Startup
         services.AddScoped<IAuthService, AuthService>();
 
         services.AddScoped<ICompanyService, CompanyService>();
-        services.AddScoped<IServiceCategoryService, ServiceCategoryService>();
         services.AddScoped<IServiceCatalogService, ServiceCatalogService>();
         services.AddScoped<IPricingService, PricingService>();
         services.AddScoped<IPackageService, PackageService>();
@@ -132,6 +133,7 @@ public class Startup
         services.AddSingleton<IClientFutureActivityProvider, ClientFutureActivityProvider>();
 
         services.AddScoped<IAppointmentService, AppointmentService>();
+        services.AddScoped<IScheduleBreakService, ScheduleBreakService>();
 
         services.AddScoped<IGroupService, GroupService>();
         services.AddScoped<IGroupAttendanceService, GroupAttendanceService>();
@@ -146,6 +148,8 @@ public class Startup
         services.AddScoped<IGrantGroupService, GrantGroupService>();
         services.AddScoped<IRoleService, RoleService>();
 
+        services.AddScoped<IOnboardingService, OnboardingService>();
+
         #endregion
 
         #region Handlers
@@ -153,7 +157,6 @@ public class Startup
         services.AddSingleton<IAuthHandler, AuthHandler>();
 
         services.AddSingleton<ICompanyHandler, CompanyHandler>();
-        services.AddSingleton<IServiceCategoryHandler, ServiceCategoryHandler>();
         services.AddSingleton<IServiceHandler, ServiceHandler>();
         services.AddSingleton<IPriceListItemHandler, PriceListItemHandler>();
         services.AddSingleton<IPackageHandler, PackageHandler>();
@@ -168,6 +171,7 @@ public class Startup
 
         services.AddSingleton<IAppointmentHandler, AppointmentHandler>();
         services.AddSingleton<IAppointmentAuditLogHandler, AppointmentAuditLogHandler>();
+        services.AddSingleton<IScheduleBreakHandler, ScheduleBreakHandler>();
 
         services.AddSingleton<IGroupHandler, GroupHandler>();
         services.AddSingleton<IGroupAuditLogHandler, GroupAuditLogHandler>();
@@ -182,6 +186,8 @@ public class Startup
 
         services.AddSingleton<IGrantGroupHandler, GrantGroupHandler>();
         services.AddSingleton<IRoleHandler, RoleHandler>();
+
+        services.AddSingleton<IOnboardingHandler, OnboardingHandler>();
 
         #endregion
 

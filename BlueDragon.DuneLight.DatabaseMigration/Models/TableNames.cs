@@ -29,6 +29,7 @@ public static class Tables
     public const string AppointmentClients = "appointment_clients";
     public const string AppointmentAttendances = "appointment_attendances";
     public const string AppointmentAuditLog = "appointment_audit_log";
+    public const string ScheduleBreaks = "schedule_breaks";
 
     public const string Groups = "groups";
     public const string GroupSlots = "group_slots";

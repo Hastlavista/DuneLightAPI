@@ -70,6 +70,13 @@ public class AuthHandler : IAuthHandler
             u.OrganizationId == organizationId && u.Email == email && u.PasswordHash == passwordHash);
     }
 
+    public async Task<User> GetUserByPinCredentials(Guid organizationId, string email, string pinHash)
+    {
+        await using DatabaseContext context = DatabaseContext.GenerateContext(_databaseSettings.ConnectionString);
+        return await context.Users.SingleOrDefaultAsync(u =>
+            u.OrganizationId == organizationId && u.Email == email && u.PinHash == pinHash);
+    }
+
     public async Task<User> GetUserByApiKey(string apiKey)
     {
         await using DatabaseContext context = DatabaseContext.GenerateContext(_databaseSettings.ConnectionString);
@@ -90,6 +97,18 @@ public class AuthHandler : IAuthHandler
             throw new ArgumentException($"User with id {userId} does not exist");
 
         existing.PasswordHash = passwordHash;
+        context.Users.Update(existing);
+        await context.SaveChangesAsync();
+    }
+
+    public async Task UpdatePinHash(Guid userId, string pinHash)
+    {
+        await using DatabaseContext context = DatabaseContext.GenerateContext(_databaseSettings.ConnectionString);
+        User existing = await context.Users.SingleOrDefaultAsync(u => u.Id == userId);
+        if (existing == null)
+            throw new ArgumentException($"User with id {userId} does not exist");
+
+        existing.PinHash = pinHash;
         context.Users.Update(existing);
         await context.SaveChangesAsync();
     }
