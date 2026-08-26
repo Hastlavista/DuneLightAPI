@@ -16,6 +16,7 @@ using BlueDragon.DuneLight.Infrastructure.Domain.Models.Groups;
 using BlueDragon.DuneLight.Infrastructure.Domain.Models.Roster;
 using BlueDragon.DuneLight.Infrastructure.Handlers.Interfaces;
 using BlueDragon.DuneLight.Infrastructure.UnitOfWork;
+using BlueDragon.DuneLight.Infrastructure.Utils;
 using ServiceEntity = BlueDragon.DuneLight.Infrastructure.Domain.Models.Catalog.Service;
 
 namespace BlueDragon.DuneLight.Infrastructure.Services;
@@ -29,6 +30,9 @@ public class GroupService : IGroupService
     private readonly IEmployeeHandler _employeeHandler;
     private readonly IClientHandler _clientHandler;
     private readonly ICompanyHolidayHandler _companyHolidayHandler;
+    private readonly IAppointmentHandler _appointmentHandler;
+    private readonly IRosterEntryHandler _rosterEntryHandler;
+    private readonly IWorkingHoursTemplateHandler _workingHoursTemplateHandler;
     private readonly IUnitOfWorkFactory _unitOfWorkFactory;
 
     public GroupService(
@@ -39,6 +43,9 @@ public class GroupService : IGroupService
         IEmployeeHandler employeeHandler,
         IClientHandler clientHandler,
         ICompanyHolidayHandler companyHolidayHandler,
+        IAppointmentHandler appointmentHandler,
+        IRosterEntryHandler rosterEntryHandler,
+        IWorkingHoursTemplateHandler workingHoursTemplateHandler,
         IUnitOfWorkFactory unitOfWorkFactory)
     {
         _groupHandler = groupHandler;
@@ -48,6 +55,9 @@ public class GroupService : IGroupService
         _employeeHandler = employeeHandler;
         _clientHandler = clientHandler;
         _companyHolidayHandler = companyHolidayHandler;
+        _appointmentHandler = appointmentHandler;
+        _rosterEntryHandler = rosterEntryHandler;
+        _workingHoursTemplateHandler = workingHoursTemplateHandler;
         _unitOfWorkFactory = unitOfWorkFactory;
     }
 
@@ -409,8 +419,7 @@ public class GroupService : IGroupService
         List<CompanyHoliday> holidaysForCompanies = await _companyHolidayHandler.GetForCompaniesInRange(
             organizationId, candidateCompanyIds, fromDate, toDate);
 
-        List<Appointment> toCreate = new List<Appointment>();
-        List<AppointmentScheduleCellDto> createdDtos = new List<AppointmentScheduleCellDto>();
+        List<GroupOccurrenceCandidate> candidates = new List<GroupOccurrenceCandidate>();
         int skipped = 0;
 
         foreach (Group group in candidateGroups)
@@ -422,10 +431,6 @@ public class GroupService : IGroupService
                     if (date.DayOfWeek != slot.DayOfWeek)
                         continue;
 
-                    // Poznat, zaseban propust: GenerateAppointments ne provjerava preklapanje ni radno vrijeme
-                    // trenera (vidi AppointmentService.EnsureNoOverlap/EnsureWithinWorkingHours) — rješava se
-                    // odvojeno. Holiday-check je jedina zaštita dodana ovdje, isti "tiho preskoči" obrazac kao
-                    // duplikat-provjera ispod.
                     if (holidaysForCompanies.Any(h => h.CompanyId == group.CompanyId && h.Date.Date == date))
                     {
                         skipped++;
@@ -442,55 +447,68 @@ public class GroupService : IGroupService
                     }
 
                     existing.Add(key);
-                    Guid appointmentId = Guid.NewGuid();
-
-                    // Navigacijska svojstva se namjerno NE postavljaju ovdje — appointment ide u
-                    // AddAppointments preko svježeg DbContext-a, a Service/Company/DefaultTrainer su
-                    // materijalizirani u kontekstu GetAll/GetById poziva pa bi ih EF pokušao ponovno umetnuti.
-                    toCreate.Add(new Appointment
-                    {
-                        Id = appointmentId,
-                        OrganizationId = organizationId,
-                        Form = AppointmentForm.Group,
-                        StartsAt = startsAt,
-                        DurationMinutes = group.Service.DefaultDurationMinutes,
-                        ServiceId = group.ServiceId,
-                        EmployeeId = group.DefaultTrainerId,
-                        CompanyId = group.CompanyId,
-                        Amount = 0,
-                        SuggestedAmount = 0,
-                        IsAmountManuallyOverridden = false,
-                        PaymentMethod = null,
-                        IsPaid = false,
-                        Status = AppointmentStatus.Scheduled,
-                        GroupId = group.Id,
-                        GroupSlotId = slot.Id,
-                        CreatedAt = DateTimeOffset.UtcNow,
-                        CreatedBy = userId
-                    });
-
-                    createdDtos.Add(new AppointmentScheduleCellDto
-                    {
-                        Id = appointmentId,
-                        StartsAt = startsAt,
-                        DurationMinutes = group.Service.DefaultDurationMinutes,
-                        ServiceId = group.ServiceId,
-                        ServiceName = group.Service?.Name,
-                        ServiceCategoryColorHex = group.Service?.ColorHex,
-                        EmployeeId = group.DefaultTrainerId,
-                        EmployeeName = group.DefaultTrainer != null ? $"{group.DefaultTrainer.FirstName} {group.DefaultTrainer.LastName}" : null,
-                        CompanyId = group.CompanyId,
-                        CompanyName = group.Company?.Name,
-                        Status = AppointmentStatus.Scheduled,
-                        IsCancelled = false,
-                        Form = AppointmentForm.Group,
-                        GroupId = group.Id,
-                        GroupName = group.Name,
-                        AttendanceCount = 0,
-                        ExpectedCount = group.Members.Count(m => m.IsActive)
-                    });
+                    candidates.Add(new GroupOccurrenceCandidate { Group = group, Slot = slot, StartsAt = startsAt });
                 }
             }
+        }
+
+        await EnsureNoTrainerConflicts(organizationId, candidates);
+
+        List<Appointment> toCreate = new List<Appointment>();
+        List<AppointmentScheduleCellDto> createdDtos = new List<AppointmentScheduleCellDto>();
+
+        foreach (GroupOccurrenceCandidate candidate in candidates)
+        {
+            Group group = candidate.Group;
+            GroupSlot slot = candidate.Slot;
+            DateTimeOffset startsAt = candidate.StartsAt;
+            Guid appointmentId = Guid.NewGuid();
+
+            // Navigacijska svojstva se namjerno NE postavljaju ovdje — appointment ide u
+            // AddAppointments preko svježeg DbContext-a, a Service/Company/DefaultTrainer su
+            // materijalizirani u kontekstu GetAll/GetById poziva pa bi ih EF pokušao ponovno umetnuti.
+            toCreate.Add(new Appointment
+            {
+                Id = appointmentId,
+                OrganizationId = organizationId,
+                Form = AppointmentForm.Group,
+                StartsAt = startsAt,
+                DurationMinutes = group.Service.DefaultDurationMinutes,
+                ServiceId = group.ServiceId,
+                EmployeeId = group.DefaultTrainerId,
+                CompanyId = group.CompanyId,
+                Amount = 0,
+                SuggestedAmount = 0,
+                IsAmountManuallyOverridden = false,
+                PaymentMethod = null,
+                IsPaid = false,
+                Status = AppointmentStatus.Scheduled,
+                GroupId = group.Id,
+                GroupSlotId = slot.Id,
+                CreatedAt = DateTimeOffset.UtcNow,
+                CreatedBy = userId
+            });
+
+            createdDtos.Add(new AppointmentScheduleCellDto
+            {
+                Id = appointmentId,
+                StartsAt = startsAt,
+                DurationMinutes = group.Service.DefaultDurationMinutes,
+                ServiceId = group.ServiceId,
+                ServiceName = group.Service?.Name,
+                ServiceCategoryColorHex = group.Service?.ColorHex,
+                EmployeeId = group.DefaultTrainerId,
+                EmployeeName = group.DefaultTrainer != null ? $"{group.DefaultTrainer.FirstName} {group.DefaultTrainer.LastName}" : null,
+                CompanyId = group.CompanyId,
+                CompanyName = group.Company?.Name,
+                Status = AppointmentStatus.Scheduled,
+                IsCancelled = false,
+                Form = AppointmentForm.Group,
+                GroupId = group.Id,
+                GroupName = group.Name,
+                AttendanceCount = 0,
+                ExpectedCount = group.Members.Count(m => m.IsActive)
+            });
         }
 
         await _groupHandler.AddAppointments(toCreate);
@@ -510,9 +528,123 @@ public class GroupService : IGroupService
         {
             GroupId = m.GroupId,
             GroupName = m.Group?.Name,
+            ServiceName = m.Group?.Service?.Name,
+            CompanyName = m.Group?.Company?.Name,
+            Slots = m.Group?.Slots.Where(s => s.IsActive)
+                .OrderBy(s => s.DayOfWeek).ThenBy(s => s.StartTime)
+                .Select(s => new GroupSlotDto
+                {
+                    Id = s.Id.GetValueOrDefault(),
+                    DayOfWeek = s.DayOfWeek,
+                    StartTime = s.StartTime,
+                    IsActive = s.IsActive
+                }).ToList() ?? new List<GroupSlotDto>(),
             JoinedAt = m.JoinedAt,
             IsActive = m.IsActive
         }).ToList();
+    }
+
+    private readonly struct GroupOccurrenceCandidate
+    {
+        public Group Group { get; init; }
+        public GroupSlot Slot { get; init; }
+        public DateTimeOffset StartsAt { get; init; }
+    }
+
+    /// <summary>Tvrda, unaprijedna provjera za GenerateAppointments — ako bilo koji kandidat u nizu sudara s postojećim
+    /// terminom trenera ili pada izvan njegovog radnog vremena/rostera, baca RECURRING_CONFLICT (409) prije nego se
+    /// bilo što spremi (isti obrazac kao AppointmentService.EnsureNoRecurringConflicts). Grupe bez dodijeljenog
+    /// trenera (DefaultTrainerId == null) se preskaču — nema koga provjeriti. Kandidati se grupiraju po treneru kako
+    /// bi se termini/roster/predlošci dohvatili JEDNOM po treneru za cijeli raspon, umjesto po occurrenceu.</summary>
+    private async Task EnsureNoTrainerConflicts(Guid organizationId, List<GroupOccurrenceCandidate> candidates)
+    {
+        List<RecurringConflictDetail> conflicts = new List<RecurringConflictDetail>();
+
+        IEnumerable<IGrouping<Guid, GroupOccurrenceCandidate>> byEmployee = candidates
+            .Where(c => c.Group.DefaultTrainerId.HasValue)
+            .GroupBy(c => c.Group.DefaultTrainerId.GetValueOrDefault());
+
+        foreach (IGrouping<Guid, GroupOccurrenceCandidate> employeeCandidates in byEmployee)
+        {
+            Guid employeeId = employeeCandidates.Key;
+            List<GroupOccurrenceCandidate> ordered = employeeCandidates.OrderBy(c => c.StartsAt).ToList();
+
+            DateTimeOffset rangeFrom = ordered[0].StartsAt.AddDays(-1);
+            DateTimeOffset rangeTo = ordered[^1].StartsAt.AddDays(1);
+
+            List<Appointment> candidateAppointments = await _appointmentHandler.GetForEmployeeInRange(
+                organizationId, employeeId, rangeFrom, rangeTo);
+
+            List<RosterEntry> rosterEntriesInRange = await _rosterEntryHandler.GetForPeriod(
+                organizationId, new List<Guid> { employeeId }, rangeFrom, rangeTo);
+
+            List<RosterEntry> absences = rosterEntriesInRange.Where(e => e.RosterType.IsAbsence).ToList();
+
+            WorkingHoursTemplate employeeTemplate = await _workingHoursTemplateHandler.GetForEmployee(organizationId, employeeId);
+
+            Dictionary<Guid, WorkingHoursTemplate> companyTemplatesById = new Dictionary<Guid, WorkingHoursTemplate>();
+            foreach (Guid companyId in ordered.Select(c => c.Group.CompanyId).Distinct())
+                companyTemplatesById[companyId] = await _workingHoursTemplateHandler.GetForCompany(organizationId, companyId);
+
+            foreach (GroupOccurrenceCandidate candidate in ordered)
+            {
+                int durationMinutes = candidate.Group.Service.DefaultDurationMinutes;
+                DateTimeOffset startsAt = candidate.StartsAt;
+                DateTimeOffset occurrenceEnd = startsAt.AddMinutes(durationMinutes);
+
+                bool appointmentHit = candidateAppointments.Any(a =>
+                    a.StartsAt < occurrenceEnd && startsAt < a.StartsAt.AddMinutes(a.DurationMinutes));
+
+                if (appointmentHit)
+                {
+                    conflicts.Add(new RecurringConflictDetail { Date = startsAt, Reason = ErrorCodes.RecurringConflictReasonAppointment });
+                    continue;
+                }
+
+                bool absenceHit = absences.Any(a =>
+                    a.DateFrom.Date <= startsAt.Date && (a.DateTo == null || startsAt.Date <= a.DateTo.Value.Date));
+
+                if (absenceHit)
+                {
+                    conflicts.Add(new RecurringConflictDetail { Date = startsAt, Reason = ErrorCodes.RecurringConflictReasonRosterAbsence });
+                    continue;
+                }
+
+                List<RosterEntry> rosterEntriesForOccurrence = rosterEntriesInRange
+                    .Where(e => !e.RosterType.IsAbsence && e.DateFrom.Date == startsAt.Date)
+                    .ToList();
+
+                WorkingHoursTemplate companyTemplate = companyTemplatesById[candidate.Group.CompanyId];
+
+                if (!IsWithinWorkingHours(employeeTemplate, companyTemplate, rosterEntriesForOccurrence, startsAt, durationMinutes))
+                    conflicts.Add(new RecurringConflictDetail { Date = startsAt, Reason = ErrorCodes.RecurringConflictReasonOutsideWorkingHours });
+            }
+        }
+
+        if (conflicts.Count > 0)
+            throw new BusinessRuleException(
+                ErrorCodes.RecurringConflict,
+                "Neki termini u nizu se sudaraju s postojećim obavezama.",
+                new { conflicts });
+    }
+
+    /// <summary>Isto pravilo kao AppointmentService.IsWithinWorkingHours, bez holiday parametra — holiday je za ovaj
+    /// poziv već obrađen ranije u GenerateAppointments (tiho preskačanje), pa kandidati koji stignu ovamo po
+    /// definiciji nisu na praznik.</summary>
+    private static bool IsWithinWorkingHours(
+        WorkingHoursTemplate employeeTemplate, WorkingHoursTemplate companyTemplate, List<RosterEntry> rosterEntriesForDate,
+        DateTimeOffset startsAt, int durationMinutes)
+    {
+        TimeSpan start = startsAt.TimeOfDay;
+        TimeSpan end = start + TimeSpan.FromMinutes(durationMinutes);
+
+        (List<WorkingHoursCalculator.Interval> employeeIntervals, _) =
+            WorkingHoursCalculator.GetEffectiveEmployeeIntervals(employeeTemplate, rosterEntriesForDate, startsAt);
+        (List<WorkingHoursCalculator.Interval> companyIntervals, _) =
+            WorkingHoursCalculator.GetEffectiveCompanyIntervals(companyTemplate, new List<CompanyHoliday>(), startsAt);
+
+        return WorkingHoursCalculator.IsWithinIntervals(employeeIntervals, start, end)
+            && WorkingHoursCalculator.IsWithinIntervals(companyIntervals, start, end);
     }
 
     private static DateTimeOffset ComputeStartsAt(DateTime date, TimeSpan timeOfDay, DateTimeOffset offsetSource)

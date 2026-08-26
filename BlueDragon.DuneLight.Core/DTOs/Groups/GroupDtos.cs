@@ -143,6 +143,13 @@ public class ClientGroupMembershipDto
 {
     public Guid GroupId { get; set; }
     public string GroupName { get; set; }
+    public string ServiceName { get; set; }
+    public string CompanyName { get; set; }
+
+    /// <summary>Samo aktivni slotovi (raspored koji trenutno vrijedi) — za razliku od GroupDto.Slots, ovdje nema
+    /// potrebe za upravljanjem uklonjenim slotovima, prikazuje se samo trenutni raspored klijentu.</summary>
+    public List<GroupSlotDto> Slots { get; set; } = new();
+
     public DateTimeOffset JoinedAt { get; set; }
     public bool IsActive { get; set; }
 }

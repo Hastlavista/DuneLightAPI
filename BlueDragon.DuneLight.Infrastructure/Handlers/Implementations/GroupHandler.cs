@@ -153,7 +153,9 @@ public class GroupHandler : IGroupHandler
     {
         await using DatabaseContext context = DatabaseContext.GenerateContext(_databaseSettings.ConnectionString);
         return await context.GroupMembers
-            .Include(m => m.Group)
+            .Include(m => m.Group).ThenInclude(g => g.Service)
+            .Include(m => m.Group).ThenInclude(g => g.Company)
+            .Include(m => m.Group).ThenInclude(g => g.Slots)
             .Where(m => m.ClientId == clientId && m.Group.OrganizationId == organizationId)
             .OrderByDescending(m => m.JoinedAt)
             .ToListAsync();
