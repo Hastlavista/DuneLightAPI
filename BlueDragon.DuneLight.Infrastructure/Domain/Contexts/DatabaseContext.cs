@@ -55,6 +55,7 @@ public class DatabaseContext : DbContext
     public DbSet<EmployeeLeaveSettings> EmployeeLeaveSettings { get; set; }
     public DbSet<LeaveFund> LeaveFunds { get; set; }
     public DbSet<LeaveFundUsage> LeaveFundUsages { get; set; }
+    public DbSet<CompanyHoliday> CompanyHolidays { get; set; }
 
     public DbSet<GrantGroup> GrantGroups { get; set; }
     public DbSet<GrantGroupGrant> GrantGroupGrants { get; set; }
@@ -559,6 +560,16 @@ public class DatabaseContext : DbContext
             .HasOne(u => u.LeaveFund)
             .WithMany()
             .HasForeignKey(u => u.LeaveFundId)
+            .OnDelete(DeleteBehavior.Restrict);
+
+        modelBuilder.Entity<CompanyHoliday>().HasKey(h => h.Id);
+        modelBuilder.Entity<CompanyHoliday>()
+            .HasIndex(h => new { h.OrganizationId, h.CompanyId, h.Date })
+            .IsUnique();
+        modelBuilder.Entity<CompanyHoliday>()
+            .HasOne(h => h.Company)
+            .WithMany()
+            .HasForeignKey(h => h.CompanyId)
             .OnDelete(DeleteBehavior.Restrict);
     }
 

@@ -64,9 +64,15 @@ public static class WorkingHoursCalculator
         return (GetTemplateIntervals(template, date), AvailabilitySource.Template);
     }
 
-    /// <summary>Company-grana: FAZA 1 nema per-datum override za lokaciju (vidi otvoreno pitanje #2) — samo predložak ili "nema predloška".</summary>
-    public static (List<Interval> Intervals, AvailabilitySource Source) GetEffectiveCompanyIntervals(WorkingHoursTemplate template, DateTimeOffset date)
+    /// <summary>Company-grana: FAZA 1 nema per-datum override za lokaciju (vidi otvoreno pitanje #2) — samo predložak,
+    /// praznik, ili "nema predloška". Praznik pobjeđuje predložak (poslovnica ne radi taj dan bez obzira što predložak
+    /// možda ima radne intervale) — holidaysForDate mora sadržavati SAMO praznike TE poslovnice (filtrirano od pozivatelja).</summary>
+    public static (List<Interval> Intervals, AvailabilitySource Source) GetEffectiveCompanyIntervals(
+        WorkingHoursTemplate template, List<CompanyHoliday> holidaysForDate, DateTimeOffset date)
     {
+        if (holidaysForDate.Any(h => h.Date.Date == date.Date))
+            return (new List<Interval>(), AvailabilitySource.Holiday);
+
         if (template == null)
             return (new List<Interval>(), AvailabilitySource.None);
 

@@ -19,14 +19,16 @@ public class AuthService : IAuthService
 {
     private readonly IAuthHandler _authHandler;
     private readonly IGrantGroupHandler _grantGroupHandler;
+    private readonly IRosterTypeHandler _rosterTypeHandler;
     private readonly IJwtService _jwtService;
     private readonly JwtSettings _jwtSettings;
     private readonly IUnitOfWorkFactory _unitOfWorkFactory;
 
-    public AuthService(IAuthHandler authHandler, IGrantGroupHandler grantGroupHandler, IJwtService jwtService, JwtSettings jwtSettings, IUnitOfWorkFactory unitOfWorkFactory)
+    public AuthService(IAuthHandler authHandler, IGrantGroupHandler grantGroupHandler, IRosterTypeHandler rosterTypeHandler, IJwtService jwtService, JwtSettings jwtSettings, IUnitOfWorkFactory unitOfWorkFactory)
     {
         _authHandler = authHandler;
         _grantGroupHandler = grantGroupHandler;
+        _rosterTypeHandler = rosterTypeHandler;
         _jwtService = jwtService;
         _jwtSettings = jwtSettings;
         _unitOfWorkFactory = unitOfWorkFactory;
@@ -66,6 +68,7 @@ public class AuthService : IAuthService
             await _authHandler.AddOrganization(uow, organization);
             await _authHandler.AddUser(uow, user);
             await _grantGroupHandler.SeedDefaultGroups(uow, organization.Id.GetValueOrDefault());
+            await _rosterTypeHandler.SeedDefaultTypes(uow, organization.Id.GetValueOrDefault());
 
             await uow.CommitAsync();
         }

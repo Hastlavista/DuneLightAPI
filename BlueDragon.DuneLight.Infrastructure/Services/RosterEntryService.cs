@@ -22,6 +22,7 @@ public class RosterEntryService : IRosterEntryService
     private readonly IEmployeeHandler _employeeHandler;
     private readonly IRosterAuditLogHandler _auditLogHandler;
     private readonly IWorkingHoursTemplateHandler _workingHoursTemplateHandler;
+    private readonly ICompanyHolidayHandler _companyHolidayHandler;
     private readonly ILeaveFundHandler _leaveFundHandler;
     private readonly IEmployeeLeaveSettingsHandler _employeeLeaveSettingsHandler;
     private readonly IUnitOfWorkFactory _unitOfWorkFactory;
@@ -32,6 +33,7 @@ public class RosterEntryService : IRosterEntryService
         IEmployeeHandler employeeHandler,
         IRosterAuditLogHandler auditLogHandler,
         IWorkingHoursTemplateHandler workingHoursTemplateHandler,
+        ICompanyHolidayHandler companyHolidayHandler,
         ILeaveFundHandler leaveFundHandler,
         IEmployeeLeaveSettingsHandler employeeLeaveSettingsHandler,
         IUnitOfWorkFactory unitOfWorkFactory)
@@ -41,6 +43,7 @@ public class RosterEntryService : IRosterEntryService
         _employeeHandler = employeeHandler;
         _auditLogHandler = auditLogHandler;
         _workingHoursTemplateHandler = workingHoursTemplateHandler;
+        _companyHolidayHandler = companyHolidayHandler;
         _leaveFundHandler = leaveFundHandler;
         _employeeLeaveSettingsHandler = employeeLeaveSettingsHandler;
         _unitOfWorkFactory = unitOfWorkFactory;
@@ -268,6 +271,12 @@ public class RosterEntryService : IRosterEntryService
         ILookup<Guid, RosterEntry> byEmployee = entries.ToLookup(e => e.EmployeeId);
         Dictionary<Guid, WorkingHoursTemplate> templateByEmployee = templates.ToDictionary(t => t.EmployeeId!.Value);
 
+        Dictionary<Guid, Guid?> primaryCompanyByEmployee = employees.ToDictionary(
+            e => e.Id.GetValueOrDefault(), e => e.Companies.FirstOrDefault(c => c.IsPrimary)?.CompanyId);
+        List<Guid> primaryCompanyIds = primaryCompanyByEmployee.Values.Where(c => c.HasValue).Select(c => c!.Value).Distinct().ToList();
+        List<CompanyHoliday> holidays = await _companyHolidayHandler.GetForCompaniesInRange(
+            organizationId, primaryCompanyIds, monthStart, monthEndInclusive);
+
         DateTime today = DateTimeOffset.UtcNow.Date;
         RosterTeamMonthlyDto result = new RosterTeamMonthlyDto { Year = year, Month = month };
 
@@ -275,6 +284,7 @@ public class RosterEntryService : IRosterEntryService
         {
             List<RosterEntry> employeeEntries = byEmployee[employee.Id.GetValueOrDefault()].ToList();
             templateByEmployee.TryGetValue(employee.Id.GetValueOrDefault(), out WorkingHoursTemplate employeeTemplate);
+            Guid? employeeCompanyId = primaryCompanyByEmployee[employee.Id.GetValueOrDefault()];
 
             RosterEmployeeMonthDto employeeDto = new RosterEmployeeMonthDto
             {
@@ -315,7 +325,7 @@ public class RosterEntryService : IRosterEntryService
             }
 
             (employeeDto.WorkHoursByType, employeeDto.TotalWorkHours, employeeDto.AbsenceDaysByType) =
-                BuildSums(employeeEntries, monthStart, monthEndInclusive);
+                BuildSums(employeeEntries, employeeTemplate, monthStart, monthEndInclusive, holidays, employeeCompanyId);
 
             result.Employees.Add(employeeDto);
         }
@@ -323,9 +333,10 @@ public class RosterEntryService : IRosterEntryService
         return result;
     }
 
-    /// <summary>Stvarni zapisi uvijek imaju prednost (Source=Actual). Bez stvarnog zapisa: Planned samo za
-    /// danas/budućnost kad postoji WorkingHoursTemplate za taj dan; inače None (prošlost ili nema predloška).
-    /// TotalWorkHours namjerno NE uključuje planirano — vidi FAZA 2 odluka (platni/računovodstveni broj).</summary>
+    /// <summary>Stvarni zapisi uvijek imaju prednost (Source=Actual). Bez stvarnog zapisa, kad predložak razrješava
+    /// radne intervale za taj dan: Assumed za prošlost/danas (upravljanje po iznimci — tretira se kao odrađeno,
+    /// vidi BuildSums/ComputeAssumedHours), Planned za budućnost (ne broji se). Inače None (predložak kaže
+    /// neradni dan, ili nema predloška).</summary>
     private static void ApplyPlannedSource(RosterDayCellDto cell, WorkingHoursTemplate template, DateTime dayDate, DateTime today)
     {
         if (cell.Entries.Count > 0)
@@ -334,16 +345,13 @@ public class RosterEntryService : IRosterEntryService
             return;
         }
 
-        if (dayDate < today)
-            return;
-
         (List<WorkingHoursCalculator.Interval> intervals, AvailabilitySource source) = WorkingHoursCalculator.GetEffectiveEmployeeIntervals(
             template, new List<RosterEntry>(), new DateTimeOffset(dayDate, TimeSpan.Zero));
 
         if (source != AvailabilitySource.Template)
             return;
 
-        cell.Source = RosterCellSource.Planned;
+        cell.Source = dayDate <= today ? RosterCellSource.Assumed : RosterCellSource.Planned;
         cell.PlannedIntervals = intervals.Select(i => new RosterPlannedIntervalDto { Start = i.Start, End = i.End }).ToList();
     }
 
@@ -357,6 +365,12 @@ public class RosterEntryService : IRosterEntryService
             throw new NotFoundAppException("Employee", employeeId);
 
         List<RosterEntry> entries = await _rosterEntryHandler.GetForPeriod(organizationId, new List<Guid> { employeeId }, from, to);
+        WorkingHoursTemplate template = await _workingHoursTemplateHandler.GetForEmployee(organizationId, employeeId);
+
+        Guid? employeeCompanyId = employee.Companies.FirstOrDefault(c => c.IsPrimary)?.CompanyId;
+        List<CompanyHoliday> holidays = employeeCompanyId.HasValue
+            ? await _companyHolidayHandler.GetForCompaniesInRange(organizationId, new List<Guid> { employeeCompanyId.Value }, from, to)
+            : new List<CompanyHoliday>();
 
         RosterPersonalReviewDto dto = new RosterPersonalReviewDto
         {
@@ -367,34 +381,27 @@ public class RosterEntryService : IRosterEntryService
             Entries = entries.Select(ToDto).ToList()
         };
 
-        (dto.WorkHoursByType, dto.TotalWorkHours, dto.AbsenceDaysByType) = BuildSums(entries, from, to);
-        dto.PlannedDays = await BuildPlannedDays(organizationId, employeeId, entries, from, to);
+        (dto.WorkHoursByType, dto.TotalWorkHours, dto.AbsenceDaysByType) = BuildSums(entries, template, from, to, holidays, employeeCompanyId);
+        dto.PlannedDays = BuildPlannedDays(entries, template, from, to);
         return dto;
     }
 
-    /// <summary>Dani u [from,to] bez stvarnog zapisa (danas/budućnost) za koje postoji WorkingHoursTemplate — vidi ApplyPlannedSource (isto pravilo, team-monthly grana).</summary>
-    private async Task<List<RosterPlannedDayDto>> BuildPlannedDays(
-        Guid organizationId, Guid employeeId, List<RosterEntry> entries, DateTimeOffset from, DateTimeOffset to)
+    /// <summary>Budući dani (nakon danas) u [from,to] bez stvarnog zapisa za koje postoji WorkingHoursTemplate —
+    /// prošli/današnji dani bez zapisa su "Assumed" i ulaze u BuildSums umjesto ovdje, vidi ApplyPlannedSource
+    /// (isto pravilo, team-monthly grana).</summary>
+    private static List<RosterPlannedDayDto> BuildPlannedDays(
+        List<RosterEntry> entries, WorkingHoursTemplate template, DateTimeOffset from, DateTimeOffset to)
     {
-        DateTime today = DateTimeOffset.UtcNow.Date;
-        DateTime rangeStart = from.Date > today ? from.Date : today;
+        DateTime tomorrow = DateTimeOffset.UtcNow.Date.AddDays(1);
+        DateTime rangeStart = from.Date > tomorrow ? from.Date : tomorrow;
         if (rangeStart > to.Date)
             return new List<RosterPlannedDayDto>();
-
-        WorkingHoursTemplate template = await _workingHoursTemplateHandler.GetForEmployee(organizationId, employeeId);
 
         List<RosterPlannedDayDto> plannedDays = new List<RosterPlannedDayDto>();
 
         for (DateTime date = rangeStart; date <= to.Date; date = date.AddDays(1))
         {
-            bool hasActual = entries.Any(e =>
-            {
-                DateTime entryFrom = e.DateFrom.Date;
-                DateTime entryTo = e.RosterType.IsAbsence ? (e.DateTo?.Date ?? to.Date) : entryFrom;
-                return date >= entryFrom && date <= entryTo;
-            });
-
-            if (hasActual)
+            if (HasActualEntryForDay(entries, date, to.Date))
                 continue;
 
             DateTimeOffset dateOffset = new DateTimeOffset(date, TimeSpan.Zero);
@@ -584,8 +591,15 @@ public class RosterEntryService : IRosterEntryService
         return $"{entry.DateFrom:dd.MM.yyyy.} {entry.StartTime:hh\\:mm}-{entry.EndTime:hh\\:mm}";
     }
 
+    /// <summary>Sentinel RosterTypeId za sintetički "Pretpostavljeno" redak u WorkHoursByType — nema stvaran
+    /// RosterType jer WorkingHoursTemplate ne nosi tip, a organizacija može imati više tipova koji broje kao rad
+    /// (Smjena/Bowen/Rec-dvok...), pa nema jedan "točan" tip kojem bi se pretpostavljeni sati mogli pripisati.</summary>
+    private static readonly Guid AssumedRosterTypeId = Guid.Empty;
+    private const string AssumedRosterTypeName = "Pretpostavljeno (predložak)";
+
     private static (List<RosterWorkHoursSumDto> WorkSums, decimal TotalHours, List<RosterAbsenceDaysSumDto> AbsenceSums) BuildSums(
-        List<RosterEntry> entries, DateTimeOffset periodFrom, DateTimeOffset periodTo)
+        List<RosterEntry> entries, WorkingHoursTemplate template, DateTimeOffset periodFrom, DateTimeOffset periodTo,
+        List<CompanyHoliday> companyHolidays, Guid? employeeCompanyId)
     {
         List<RosterWorkHoursSumDto> workSums = entries
             .Where(e => e.RosterType.CountsAsWork && e.DurationHours.HasValue)
@@ -598,6 +612,17 @@ public class RosterEntryService : IRosterEntryService
             })
             .OrderBy(s => s.RosterTypeName)
             .ToList();
+
+        decimal assumedHours = ComputeAssumedHours(entries, template, periodFrom, periodTo, companyHolidays, employeeCompanyId);
+        if (assumedHours > 0)
+        {
+            workSums.Add(new RosterWorkHoursSumDto
+            {
+                RosterTypeId = AssumedRosterTypeId,
+                RosterTypeName = AssumedRosterTypeName,
+                Hours = assumedHours
+            });
+        }
 
         decimal totalHours = workSums.Sum(s => s.Hours);
 
@@ -614,6 +639,55 @@ public class RosterEntryService : IRosterEntryService
             .ToList();
 
         return (workSums, totalHours, absenceSums);
+    }
+
+    /// <summary>Upravljanje po iznimci: za svaki dan u [periodFrom, min(today,periodTo)] bez stvarnog zapisa,
+    /// kad predložak razrješava radne intervale za taj dan, zbraja te sate kao "odrađeno" (vidi ApplyPlannedSource,
+    /// isto pravilo). Budući dani se namjerno preskaču — posao se još nije dogodio.</summary>
+    private static decimal ComputeAssumedHours(
+        List<RosterEntry> entries, WorkingHoursTemplate template, DateTimeOffset periodFrom, DateTimeOffset periodTo,
+        List<CompanyHoliday> companyHolidays, Guid? employeeCompanyId)
+    {
+        if (template == null)
+            return 0m;
+
+        DateTime today = DateTimeOffset.UtcNow.Date;
+        DateTime rangeEnd = periodTo.Date < today ? periodTo.Date : today;
+        if (rangeEnd < periodFrom.Date)
+            return 0m;
+
+        decimal total = 0m;
+        for (DateTime date = periodFrom.Date; date <= rangeEnd; date = date.AddDays(1))
+        {
+            if (HasActualEntryForDay(entries, date, periodTo.Date))
+                continue;
+
+            (List<WorkingHoursCalculator.Interval> intervals, AvailabilitySource source) = WorkingHoursCalculator.GetEffectiveEmployeeIntervals(
+                template, new List<RosterEntry>(), new DateTimeOffset(date, TimeSpan.Zero));
+
+            if (source != AvailabilitySource.Template)
+                continue;
+
+            // Poslovnica ne radi taj dan (praznik) — ne broji se kao pretpostavljeno odrađeno.
+            if (employeeCompanyId.HasValue && companyHolidays.Any(h => h.CompanyId == employeeCompanyId.Value && h.Date.Date == date))
+                continue;
+
+            total += intervals.Sum(i => (decimal)(i.End - i.Start).TotalHours);
+        }
+
+        return total;
+    }
+
+    /// <summary>Ima li zaposlenik stvaran zapis (rad ili odsutnost) koji pokriva zadani dan — otvorena odsutnost
+    /// (DateTo=null) se za ovu provjeru klipa na openEndedFallback.</summary>
+    private static bool HasActualEntryForDay(List<RosterEntry> entries, DateTime date, DateTime openEndedFallback)
+    {
+        return entries.Any(e =>
+        {
+            DateTime entryFrom = e.DateFrom.Date;
+            DateTime entryTo = e.RosterType.IsAbsence ? (e.DateTo?.Date ?? openEndedFallback) : entryFrom;
+            return date >= entryFrom && date <= entryTo;
+        });
     }
 
     /// <summary>Broji kalendarske dane preklapanja odsutnosti s traženim razdobljem, klipano na granice razdoblja

@@ -1,0 +1,35 @@
+using System;
+using System.Collections.Generic;
+using System.ComponentModel.DataAnnotations;
+
+namespace BlueDragon.DuneLight.Core.DTOs.Roster;
+
+public class CompanyHolidayDto
+{
+    public Guid Id { get; set; }
+    public Guid CompanyId { get; set; }
+    public string CompanyName { get; set; }
+    public DateTimeOffset Date { get; set; }
+    public string Name { get; set; }
+    public bool IsRecurringFixed { get; set; }
+    public DateTimeOffset CreatedAt { get; set; }
+    public Guid? CreatedBy { get; set; }
+}
+
+/// <summary>Ručni unos — uvijek IsRecurringFixed=false (fiksni datumi dolaze isključivo iz Generate).</summary>
+public class CompanyHolidayCreateRequest
+{
+    [Required]
+    public DateTimeOffset Date { get; set; }
+
+    [Required]
+    [MaxLength(255)]
+    public string Name { get; set; }
+}
+
+public class GenerateCompanyHolidaysResult
+{
+    public int CreatedCount { get; set; }
+    public int SkippedCount { get; set; }
+    public List<CompanyHolidayDto> Created { get; set; } = new();
+}

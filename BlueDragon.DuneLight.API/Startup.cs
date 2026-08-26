@@ -141,6 +141,7 @@ public class Startup
         services.AddScoped<IRosterTypeService, RosterTypeService>();
         services.AddScoped<IRosterEntryService, RosterEntryService>();
         services.AddScoped<IWorkingHoursTemplateService, WorkingHoursTemplateService>();
+        services.AddScoped<ICompanyHolidayService, CompanyHolidayService>();
         services.AddScoped<IEmployeeLeaveSettingsService, EmployeeLeaveSettingsService>();
         services.AddScoped<ILeaveFundService, LeaveFundService>();
 
@@ -181,6 +182,7 @@ public class Startup
         services.AddSingleton<IRosterEntryHandler, RosterEntryHandler>();
         services.AddSingleton<IRosterAuditLogHandler, RosterAuditLogHandler>();
         services.AddSingleton<IWorkingHoursTemplateHandler, WorkingHoursTemplateHandler>();
+        services.AddSingleton<ICompanyHolidayHandler, CompanyHolidayHandler>();
         services.AddSingleton<IEmployeeLeaveSettingsHandler, EmployeeLeaveSettingsHandler>();
         services.AddSingleton<ILeaveFundHandler, LeaveFundHandler>();
 

@@ -20,17 +20,20 @@ public class WorkingHoursTemplateService : IWorkingHoursTemplateService
     private readonly IEmployeeHandler _employeeHandler;
     private readonly ICompanyHandler _companyHandler;
     private readonly IRosterEntryHandler _rosterEntryHandler;
+    private readonly ICompanyHolidayHandler _companyHolidayHandler;
 
     public WorkingHoursTemplateService(
         IWorkingHoursTemplateHandler templateHandler,
         IEmployeeHandler employeeHandler,
         ICompanyHandler companyHandler,
-        IRosterEntryHandler rosterEntryHandler)
+        IRosterEntryHandler rosterEntryHandler,
+        ICompanyHolidayHandler companyHolidayHandler)
     {
         _templateHandler = templateHandler;
         _employeeHandler = employeeHandler;
         _companyHandler = companyHandler;
         _rosterEntryHandler = rosterEntryHandler;
+        _companyHolidayHandler = companyHolidayHandler;
     }
 
     public async Task<WorkingHoursTemplateDto> GetForEmployee(Guid organizationId, Guid employeeId)
@@ -91,11 +94,14 @@ public class WorkingHoursTemplateService : IWorkingHoursTemplateService
         List<RosterEntry> rosterEntriesForDate = await _rosterEntryHandler.GetForPeriod(
             organizationId, new List<Guid> { employeeId }, date.Date, date.Date);
 
+        List<CompanyHoliday> companyHolidaysForDate = await _companyHolidayHandler.GetForCompaniesInRange(
+            organizationId, new List<Guid> { companyId }, date.Date, date.Date);
+
         (List<WorkingHoursCalculator.Interval> employeeIntervals, AvailabilitySource employeeSource) =
             WorkingHoursCalculator.GetEffectiveEmployeeIntervals(employeeTemplate, rosterEntriesForDate, date);
 
         (List<WorkingHoursCalculator.Interval> companyIntervals, AvailabilitySource companySource) =
-            WorkingHoursCalculator.GetEffectiveCompanyIntervals(companyTemplate, date);
+            WorkingHoursCalculator.GetEffectiveCompanyIntervals(companyTemplate, companyHolidaysForDate, date);
 
         List<WorkingHoursCalculator.Interval> effective = WorkingHoursCalculator.IntersectIntervals(employeeIntervals, companyIntervals);
 

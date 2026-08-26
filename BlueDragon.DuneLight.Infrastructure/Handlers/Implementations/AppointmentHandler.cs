@@ -246,11 +246,18 @@ public class AppointmentHandler : IAppointmentHandler
         return await q.OrderBy(a => a.StartsAt).ToListAsync();
     }
 
+    /// <summary>Kombinira individualne termine (preko AppointmentClient) i grupne termine na kojima klijent
+    /// ima AppointmentAttendance zapis (bilo attended=true bilo false — obje su relevantne za povijest,
+    /// analogno tome što individualna povijest već uključuje i Cancelled/NoShow termine bez filtriranja).</summary>
     public async Task<(List<Appointment> Items, int TotalCount)> GetByClient(Guid organizationId, Guid clientId, PagedRequest request)
     {
         await using DatabaseContext context = DatabaseContext.GenerateContext(_databaseSettings.ConnectionString);
         IQueryable<Appointment> query = IncludeGraph(context.Appointments)
-            .Where(a => a.OrganizationId == organizationId && a.Clients.Any(ac => ac.ClientId == clientId));
+            .Include(a => a.Group)
+            .Include(a => a.Attendances.Where(att => att.ClientId == clientId))
+            .AsSplitQuery()
+            .Where(a => a.OrganizationId == organizationId &&
+                (a.Clients.Any(ac => ac.ClientId == clientId) || a.Attendances.Any(att => att.ClientId == clientId)));
 
         int totalCount = await query.CountAsync();
 
@@ -280,6 +287,22 @@ public class AppointmentHandler : IAppointmentHandler
         return await context.AppointmentClients.AnyAsync(ac =>
             ac.ClientId == clientId &&
             context.Appointments.Any(a => a.Id == ac.AppointmentId && a.OrganizationId == organizationId));
+    }
+
+    public async Task<Dictionary<Guid, int>> GetNoShowCountsByClientIds(Guid organizationId, List<Guid> clientIds)
+    {
+        if (clientIds.Count == 0)
+            return new Dictionary<Guid, int>();
+
+        await using DatabaseContext context = DatabaseContext.GenerateContext(_databaseSettings.ConnectionString);
+        return await context.AppointmentClients
+            .Where(ac =>
+                clientIds.Contains(ac.ClientId) &&
+                ac.Appointment.OrganizationId == organizationId &&
+                ac.Appointment.Status == AppointmentStatus.NoShow)
+            .GroupBy(ac => ac.ClientId)
+            .Select(g => new { ClientId = g.Key, Count = g.Count() })
+            .ToDictionaryAsync(g => g.ClientId, g => g.Count);
     }
 
     public async Task AddRange(List<Appointment> appointments)

@@ -34,6 +34,9 @@ public class ClientDto
     public bool IsAnonymized { get; set; }
     public DateTimeOffset? AnonymizedAt { get; set; }
     public List<ClientTagRefDto> Tags { get; set; } = new();
+
+    /// <summary>Ukupan broj termina statusa NoShow za ovog klijenta (bez vremenskog ograničenja).</summary>
+    public int NoShowCount { get; set; }
     public DateTimeOffset CreatedAt { get; set; }
     public Guid? CreatedBy { get; set; }
     public DateTimeOffset? UpdatedAt { get; set; }

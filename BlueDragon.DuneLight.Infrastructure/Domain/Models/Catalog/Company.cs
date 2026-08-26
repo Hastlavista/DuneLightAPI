@@ -27,6 +27,10 @@ public class Company
     [Column("color_hex")]
     public string ColorHex { get; set; }
 
+    /// <summary>ISO 3166-1 alpha-2 kod (npr. "HR") — određuje koji katalog fiksnih praznika CompanyHolidayService.Generate koristi.</summary>
+    [Column("country")]
+    public string Country { get; set; }
+
     [Column("is_active")]
     public bool IsActive { get; set; }
 

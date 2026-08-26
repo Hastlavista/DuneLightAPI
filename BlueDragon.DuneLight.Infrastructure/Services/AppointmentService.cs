@@ -38,6 +38,7 @@ public class AppointmentService : IAppointmentService
     private readonly IClientHandler _clientHandler;
     private readonly IRosterEntryHandler _rosterEntryHandler;
     private readonly IWorkingHoursTemplateHandler _workingHoursTemplateHandler;
+    private readonly ICompanyHolidayHandler _companyHolidayHandler;
     private readonly IScheduleBreakHandler _scheduleBreakHandler;
     private readonly IUnitOfWorkFactory _unitOfWorkFactory;
 
@@ -53,6 +54,7 @@ public class AppointmentService : IAppointmentService
         IClientHandler clientHandler,
         IRosterEntryHandler rosterEntryHandler,
         IWorkingHoursTemplateHandler workingHoursTemplateHandler,
+        ICompanyHolidayHandler companyHolidayHandler,
         IScheduleBreakHandler scheduleBreakHandler,
         IUnitOfWorkFactory unitOfWorkFactory)
     {
@@ -67,6 +69,7 @@ public class AppointmentService : IAppointmentService
         _clientHandler = clientHandler;
         _rosterEntryHandler = rosterEntryHandler;
         _workingHoursTemplateHandler = workingHoursTemplateHandler;
+        _companyHolidayHandler = companyHolidayHandler;
         _scheduleBreakHandler = scheduleBreakHandler;
         _unitOfWorkFactory = unitOfWorkFactory;
     }
@@ -456,6 +459,10 @@ public class AppointmentService : IAppointmentService
         WorkingHoursTemplate employeeTemplate = await _workingHoursTemplateHandler.GetForEmployee(organizationId, employeeId);
         WorkingHoursTemplate companyTemplate = await _workingHoursTemplateHandler.GetForCompany(organizationId, companyId);
 
+        // Učitano JEDNOM za cijeli raspon niza — isti obrazac kao rosterEntriesInRange iznad.
+        List<CompanyHoliday> companyHolidaysInRange = await _companyHolidayHandler.GetForCompaniesInRange(
+            organizationId, new List<Guid> { companyId }, occurrences[0], occurrences[^1]);
+
         List<RecurringConflictDetail> conflicts = new List<RecurringConflictDetail>();
 
         foreach (DateTimeOffset occurrence in occurrences)
@@ -493,8 +500,17 @@ public class AppointmentService : IAppointmentService
                 .Where(e => !e.RosterType.IsAbsence && e.DateFrom.Date == occurrence.Date)
                 .ToList();
 
-            if (!IsWithinWorkingHours(employeeTemplate, companyTemplate, rosterEntriesForOccurrence, occurrence, durationMinutes))
-                conflicts.Add(new RecurringConflictDetail { Date = occurrence, Reason = ErrorCodes.RecurringConflictReasonOutsideWorkingHours });
+            List<CompanyHoliday> companyHolidaysForOccurrence = companyHolidaysInRange
+                .Where(h => h.Date.Date == occurrence.Date)
+                .ToList();
+
+            if (!IsWithinWorkingHours(employeeTemplate, companyTemplate, rosterEntriesForOccurrence, occurrence, durationMinutes, companyHolidaysForOccurrence))
+            {
+                string reason = companyHolidaysForOccurrence.Count > 0
+                    ? ErrorCodes.RecurringConflictReasonHoliday
+                    : ErrorCodes.RecurringConflictReasonOutsideWorkingHours;
+                conflicts.Add(new RecurringConflictDetail { Date = occurrence, Reason = reason });
+            }
         }
 
         if (conflicts.Count > 0)
@@ -549,11 +565,19 @@ public class AppointmentService : IAppointmentService
     public async Task<PagedResult<AppointmentDto>> GetByClient(Guid organizationId, Guid clientId, PagedRequest request)
     {
         (List<Appointment> items, int totalCount) = await _appointmentHandler.GetByClient(organizationId, clientId, request);
-        return PagedResult<AppointmentDto>.Create(items.Select(ToDto).ToList(), totalCount, request.Page, request.PageSize);
+        return PagedResult<AppointmentDto>.Create(items.Select(a => ToDto(a, clientId)).ToList(), totalCount, request.Page, request.PageSize);
     }
 
     public async Task<List<EmployeeAvailableSlotsDto>> GetAvailableSlots(Guid organizationId, AvailableSlotsQuery query)
     {
+        DateTimeOffset now = DateTimeOffset.UtcNow;
+        DateTimeOffset requestedDay = query.Date.Date;
+
+        if (requestedDay < now.Date)
+            return new List<EmployeeAvailableSlotsDto>();
+
+        TimeSpan? minimumStart = requestedDay == now.Date ? now.TimeOfDay + AvailableSlotLeadTime : null;
+
         ServiceEntity service = await LoadServiceOrThrow(organizationId, query.ServiceId);
         await EnsureCompanyExists(organizationId, query.CompanyId);
 
@@ -571,7 +595,7 @@ public class AppointmentService : IAppointmentService
 
         List<Guid> employeeIds = employees.Select(e => e.Id.GetValueOrDefault()).ToList();
 
-        DateTimeOffset dayStart = query.Date.Date;
+        DateTimeOffset dayStart = requestedDay;
         DateTimeOffset dayEnd = dayStart.AddDays(1).AddTicks(-1);
 
         List<WorkingHoursTemplate> employeeTemplates = await _workingHoursTemplateHandler.GetForEmployees(organizationId, employeeIds);
@@ -579,9 +603,11 @@ public class AppointmentService : IAppointmentService
         List<RosterEntry> rosterEntries = await _rosterEntryHandler.GetForPeriod(organizationId, employeeIds, dayStart, dayStart);
         List<Appointment> appointments = await _appointmentHandler.GetForEmployeesInRange(organizationId, employeeIds, dayStart, dayEnd);
         List<ScheduleBreak> breaks = await _scheduleBreakHandler.GetForEmployeesInRange(organizationId, employeeIds, dayStart, dayEnd);
+        List<CompanyHoliday> companyHolidays = await _companyHolidayHandler.GetForCompaniesInRange(
+            organizationId, new List<Guid> { query.CompanyId }, dayStart, dayStart);
 
         (List<WorkingHoursCalculator.Interval> companyIntervals, _) =
-            WorkingHoursCalculator.GetEffectiveCompanyIntervals(companyTemplate, dayStart);
+            WorkingHoursCalculator.GetEffectiveCompanyIntervals(companyTemplate, companyHolidays, dayStart);
 
         List<EmployeeAvailableSlotsDto> result = new List<EmployeeAvailableSlotsDto>();
 
@@ -611,7 +637,7 @@ public class AppointmentService : IAppointmentService
                 EmployeeId = employeeId,
                 EmployeeName = $"{employee.FirstName} {employee.LastName}",
                 ColorHex = employee.ColorHex,
-                Slots = GenerateSlots(effectiveIntervals, busy, service.DefaultDurationMinutes)
+                Slots = GenerateSlots(effectiveIntervals, busy, service.DefaultDurationMinutes, minimumStart)
             });
         }
 
@@ -880,17 +906,19 @@ public class AppointmentService : IAppointmentService
         WorkingHoursTemplate companyTemplate = await _workingHoursTemplateHandler.GetForCompany(organizationId, companyId);
         List<RosterEntry> rosterEntriesForDate = await _rosterEntryHandler.GetForPeriod(
             organizationId, new List<Guid> { employeeId }, startsAt.Date, startsAt.Date);
+        List<CompanyHoliday> companyHolidaysForDate = await _companyHolidayHandler.GetForCompaniesInRange(
+            organizationId, new List<Guid> { companyId }, startsAt.Date, startsAt.Date);
 
-        if (!IsWithinWorkingHours(employeeTemplate, companyTemplate, rosterEntriesForDate, startsAt, durationMinutes))
+        if (!IsWithinWorkingHours(employeeTemplate, companyTemplate, rosterEntriesForDate, startsAt, durationMinutes, companyHolidaysForDate))
             throw new BusinessRuleException(ErrorCodes.OutsideWorkingHours, "Termin je izvan radnog vremena zaposlenika ili lokacije.");
     }
 
-    /// <summary>Čista provjera dijeljena s EnsureNoRecurringConflicts (batch grana) — rosterEntriesForDate mora
-    /// sadržavati SAMO redove relevantne za TOČNO taj datum (apsencija čiji raspon ga pokriva, ili work-redovi
-    /// s DateFrom==taj datum), ne cijeli raspon niza.</summary>
+    /// <summary>Čista provjera dijeljena s EnsureNoRecurringConflicts (batch grana) — rosterEntriesForDate/
+    /// companyHolidaysForDate moraju sadržavati SAMO redove relevantne za TOČNO taj datum (apsencija čiji raspon
+    /// ga pokriva, work-redovi s DateFrom==taj datum, praznik čiji Date==taj datum), ne cijeli raspon niza.</summary>
     private static bool IsWithinWorkingHours(
         WorkingHoursTemplate employeeTemplate, WorkingHoursTemplate companyTemplate, List<RosterEntry> rosterEntriesForDate,
-        DateTimeOffset startsAt, int durationMinutes)
+        DateTimeOffset startsAt, int durationMinutes, List<CompanyHoliday> companyHolidaysForDate)
     {
         TimeSpan start = startsAt.TimeOfDay;
         TimeSpan end = start + TimeSpan.FromMinutes(durationMinutes);
@@ -898,18 +926,20 @@ public class AppointmentService : IAppointmentService
         (List<WorkingHoursCalculator.Interval> employeeIntervals, _) =
             WorkingHoursCalculator.GetEffectiveEmployeeIntervals(employeeTemplate, rosterEntriesForDate, startsAt);
         (List<WorkingHoursCalculator.Interval> companyIntervals, _) =
-            WorkingHoursCalculator.GetEffectiveCompanyIntervals(companyTemplate, startsAt);
+            WorkingHoursCalculator.GetEffectiveCompanyIntervals(companyTemplate, companyHolidaysForDate, startsAt);
 
         return WorkingHoursCalculator.IsWithinIntervals(employeeIntervals, start, end)
             && WorkingHoursCalculator.IsWithinIntervals(companyIntervals, start, end);
     }
 
     private static readonly TimeSpan AvailableSlotStep = TimeSpan.FromMinutes(15);
+    private static readonly TimeSpan AvailableSlotLeadTime = TimeSpan.FromMinutes(5);
 
     /// <summary>Kandidati kreću na apsolutnom gridu :00/:15/:30/:45 (dosljedno vizualnom snapu na rasporedu), unutar
     /// svakog slobodnog prozora, izbacujući svaki koji preklapa nešto zauzeto (termin ili pauza istog trenera).</summary>
     private static List<AvailableSlotDto> GenerateSlots(
-        List<WorkingHoursCalculator.Interval> freeIntervals, List<(TimeSpan Start, TimeSpan End)> busy, int durationMinutes)
+        List<WorkingHoursCalculator.Interval> freeIntervals, List<(TimeSpan Start, TimeSpan End)> busy, int durationMinutes,
+        TimeSpan? minimumStart)
     {
         List<AvailableSlotDto> slots = new List<AvailableSlotDto>();
         TimeSpan duration = TimeSpan.FromMinutes(durationMinutes);
@@ -917,6 +947,13 @@ public class AppointmentService : IAppointmentService
         foreach (WorkingHoursCalculator.Interval interval in freeIntervals)
         {
             TimeSpan candidateStart = RoundUpToStep(interval.Start, AvailableSlotStep);
+
+            if (minimumStart.HasValue)
+            {
+                TimeSpan roundedMinimumStart = RoundUpToStep(minimumStart.Value, AvailableSlotStep);
+                if (roundedMinimumStart > candidateStart)
+                    candidateStart = roundedMinimumStart;
+            }
 
             while (candidateStart + duration <= interval.End)
             {
@@ -1035,8 +1072,15 @@ public class AppointmentService : IAppointmentService
         };
     }
 
-    private static AppointmentDto ToDto(Appointment a)
+    /// <summary>forClientId: kad je zadan i a.Form je Group, popunjava ClientAttendance iz AppointmentAttendance
+    /// retka tog klijenta (poziva se iz GetByClient — a.Attendances mora biti unaprijed filtriran/učitan na tog
+    /// klijenta, vidi AppointmentHandler.GetByClient).</summary>
+    private static AppointmentDto ToDto(Appointment a, Guid? forClientId = null)
     {
+        AppointmentAttendance clientAttendance = forClientId.HasValue && a.Form == AppointmentForm.Group
+            ? a.Attendances.FirstOrDefault(att => att.ClientId == forClientId.Value)
+            : null;
+
         return new AppointmentDto
         {
             Id = a.Id.GetValueOrDefault(),
@@ -1058,6 +1102,7 @@ public class AppointmentService : IAppointmentService
             Status = a.Status,
             Note = a.Note,
             GroupId = a.GroupId,
+            GroupName = a.Group?.Name,
             RecurrenceGroupId = a.RecurrenceGroupId,
             Clients = a.Clients.Select(c => new AppointmentClientDto
             {
@@ -1067,6 +1112,12 @@ public class AppointmentService : IAppointmentService
                 PackageEntryDeducted = c.PackageEntryDeducted,
                 PackageEntryReturned = c.PackageEntryReturned
             }).ToList(),
+            ClientAttendance = clientAttendance == null ? null : new ClientAttendanceDto
+            {
+                Attended = clientAttendance.Attended,
+                CoverageType = clientAttendance.CoverageType,
+                ClientPackageId = clientAttendance.ClientPackageId
+            },
             CreatedAt = a.CreatedAt,
             CreatedBy = a.CreatedBy,
             UpdatedAt = a.UpdatedAt,

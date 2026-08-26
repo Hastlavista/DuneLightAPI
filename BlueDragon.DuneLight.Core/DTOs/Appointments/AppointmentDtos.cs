@@ -14,6 +14,14 @@ public class AppointmentClientDto
     public bool PackageEntryReturned { get; set; }
 }
 
+/// <summary>Prisutnost/pokriće jednog klijenta na jednom grupnom terminu — vidi AppointmentDto.ClientAttendance.</summary>
+public class ClientAttendanceDto
+{
+    public bool? Attended { get; set; }
+    public AttendanceCoverageType? CoverageType { get; set; }
+    public Guid? ClientPackageId { get; set; }
+}
+
 public class AppointmentDto
 {
     public Guid Id { get; set; }
@@ -35,8 +43,17 @@ public class AppointmentDto
     public AppointmentStatus Status { get; set; }
     public string Note { get; set; }
     public Guid? GroupId { get; set; }
+
+    /// <summary>Popunjeno samo za Form=Group, kad je grupa učitana (npr. GetByClient).</summary>
+    public string GroupName { get; set; }
+
     public Guid? RecurrenceGroupId { get; set; }
     public List<AppointmentClientDto> Clients { get; set; } = new();
+
+    /// <summary>Popunjeno samo za Form=Group u kontekstu GetByClient — prisutnost/pokriće KONKRETNOG
+    /// klijenta na ovom terminu (AppointmentAttendance redak). Null ako klijent nema evidentiran dolazak
+    /// (npr. individualni termin, ili grupni termin gdje ovaj klijent još nije čekiran).</summary>
+    public ClientAttendanceDto ClientAttendance { get; set; }
 
     /// <summary>Popunjeno samo kao odgovor na create/update (preklapanje trenera/klijenata) — inače prazno.</summary>
     public List<string> Warnings { get; set; } = new();

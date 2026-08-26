@@ -7,6 +7,7 @@ using BlueDragon.DuneLight.Infrastructure.Domain.Contexts;
 using BlueDragon.DuneLight.Infrastructure.Domain.Models.Roster;
 using BlueDragon.DuneLight.Infrastructure.Domain.Settings;
 using BlueDragon.DuneLight.Infrastructure.Handlers.Interfaces;
+using BlueDragon.DuneLight.Infrastructure.UnitOfWork;
 using Microsoft.EntityFrameworkCore;
 
 namespace BlueDragon.DuneLight.Infrastructure.Handlers.Implementations;
@@ -85,5 +86,26 @@ public class RosterTypeHandler : IRosterTypeHandler
     {
         await using DatabaseContext context = DatabaseContext.GenerateContext(_databaseSettings.ConnectionString);
         return await context.RosterEntries.AnyAsync(e => e.OrganizationId == organizationId && e.RosterTypeId == id);
+    }
+
+    public async Task SeedDefaultTypes(IUnitOfWork uow, Guid organizationId)
+    {
+        List<RosterType> types = DefaultRosterTypes.All.Select(definition => new RosterType
+        {
+            Id = Guid.NewGuid(),
+            OrganizationId = organizationId,
+            Name = definition.Name,
+            ColorHex = definition.ColorHex,
+            CountsAsWork = definition.CountsAsWork,
+            IsAbsence = definition.IsAbsence,
+            RequiresTime = definition.RequiresTime,
+            DeductsFromLeaveFund = definition.DeductsFromLeaveFund,
+            SortOrder = definition.SortOrder,
+            IsActive = true,
+            CreatedAt = DateTimeOffset.UtcNow
+        }).ToList();
+
+        uow.Context.RosterTypes.AddRange(types);
+        await uow.Context.SaveChangesAsync();
     }
 }

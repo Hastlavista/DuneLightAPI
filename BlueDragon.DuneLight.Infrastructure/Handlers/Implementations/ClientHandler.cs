@@ -36,6 +36,7 @@ public class ClientHandler : IClientHandler
             query = query.Where(c =>
                 EF.Functions.ILike(c.FirstName, $"%{request.Search}%") ||
                 EF.Functions.ILike(c.LastName, $"%{request.Search}%") ||
+                EF.Functions.ILike(c.FirstName + " " + c.LastName, $"%{request.Search}%") ||
                 (c.Phone != null && EF.Functions.ILike(c.Phone, $"%{request.Search}%")) ||
                 (c.Email != null && EF.Functions.ILike(c.Email, $"%{request.Search}%")));
 

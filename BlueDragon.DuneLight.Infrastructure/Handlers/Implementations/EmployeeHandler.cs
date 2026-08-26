@@ -38,7 +38,8 @@ public class EmployeeHandler : IEmployeeHandler
         if (!string.IsNullOrWhiteSpace(request.Search))
             query = query.Where(e =>
                 EF.Functions.ILike(e.FirstName, $"%{request.Search}%") ||
-                EF.Functions.ILike(e.LastName, $"%{request.Search}%"));
+                EF.Functions.ILike(e.LastName, $"%{request.Search}%") ||
+                EF.Functions.ILike(e.FirstName + " " + e.LastName, $"%{request.Search}%"));
 
         if (request.IsActive.HasValue)
             query = query.Where(e => e.IsActive == request.IsActive.Value);
@@ -234,7 +235,8 @@ public class EmployeeHandler : IEmployeeHandler
         if (!string.IsNullOrWhiteSpace(request.Search))
             query = query.Where(e =>
                 EF.Functions.ILike(e.FirstName, $"%{request.Search}%") ||
-                EF.Functions.ILike(e.LastName, $"%{request.Search}%"));
+                EF.Functions.ILike(e.LastName, $"%{request.Search}%") ||
+                EF.Functions.ILike(e.FirstName + " " + e.LastName, $"%{request.Search}%"));
 
         if (request.IsActive.HasValue)
             query = query.Where(e => e.IsActive == request.IsActive.Value);

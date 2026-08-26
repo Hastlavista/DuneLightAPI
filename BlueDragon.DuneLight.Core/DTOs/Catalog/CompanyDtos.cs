@@ -10,6 +10,9 @@ public class CompanyDto
     public string Address { get; set; }
     public string Phone { get; set; }
     public string ColorHex { get; set; }
+
+    /// <summary>ISO 3166-1 alpha-2 kod (npr. "HR") — određuje koji katalog fiksnih praznika Generate koristi.</summary>
+    public string Country { get; set; }
     public bool IsActive { get; set; }
     public string Note { get; set; }
     public int SortOrder { get; set; }
@@ -34,6 +37,11 @@ public class CompanyCreateRequest
     [MaxLength(7)]
     public string ColorHex { get; set; }
 
+    /// <summary>ISO 3166-1 alpha-2 kod — samo "HR" trenutno podržan u katalogu fiksnih praznika (vidi DefaultCompanyHolidays).</summary>
+    [Required]
+    [MaxLength(2)]
+    public string Country { get; set; } = "HR";
+
     public string Note { get; set; }
 
     public int SortOrder { get; set; }
@@ -53,6 +61,11 @@ public class CompanyUpdateRequest
 
     [MaxLength(7)]
     public string ColorHex { get; set; }
+
+    /// <summary>ISO 3166-1 alpha-2 kod — samo "HR" trenutno podržan u katalogu fiksnih praznika (vidi DefaultCompanyHolidays).</summary>
+    [Required]
+    [MaxLength(2)]
+    public string Country { get; set; } = "HR";
 
     public string Note { get; set; }
 

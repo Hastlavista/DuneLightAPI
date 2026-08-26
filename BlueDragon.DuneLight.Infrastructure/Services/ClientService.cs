@@ -20,6 +20,7 @@ public class ClientService : IClientService
     private readonly IClientTagHandler _clientTagHandler;
     private readonly ICompanyHandler _companyHandler;
     private readonly IEmployeeHandler _employeeHandler;
+    private readonly IAppointmentHandler _appointmentHandler;
     private readonly IClientFutureActivityProvider _futureActivityProvider;
 
     public ClientService(
@@ -27,12 +28,14 @@ public class ClientService : IClientService
         IClientTagHandler clientTagHandler,
         ICompanyHandler companyHandler,
         IEmployeeHandler employeeHandler,
+        IAppointmentHandler appointmentHandler,
         IClientFutureActivityProvider futureActivityProvider)
     {
         _clientHandler = clientHandler;
         _clientTagHandler = clientTagHandler;
         _companyHandler = companyHandler;
         _employeeHandler = employeeHandler;
+        _appointmentHandler = appointmentHandler;
         _futureActivityProvider = futureActivityProvider;
     }
 
@@ -50,7 +53,14 @@ public class ClientService : IClientService
         (List<Client> items, int totalCount) = await _clientHandler.GetPaged(
             organizationId, request, tagId, homeTrainerId, homeCompanyId, mineFirstEmployeeId);
 
-        return PagedResult<ClientDto>.Create(items.Select(ToDto).ToList(), totalCount, request.Page, request.PageSize);
+        List<Guid> clientIds = items.Select(c => c.Id.GetValueOrDefault()).ToList();
+        Dictionary<Guid, int> noShowCountsByClientId = await _appointmentHandler.GetNoShowCountsByClientIds(organizationId, clientIds);
+
+        List<ClientDto> dtos = items
+            .Select(c => ToDto(c, noShowCountsByClientId.GetValueOrDefault(c.Id.GetValueOrDefault())))
+            .ToList();
+
+        return PagedResult<ClientDto>.Create(dtos, totalCount, request.Page, request.PageSize);
     }
 
     public async Task<ClientDto> GetById(Guid organizationId, Guid id)
@@ -59,7 +69,8 @@ public class ClientService : IClientService
         if (client == null)
             throw new NotFoundAppException("Client", id);
 
-        return ToDto(client);
+        Dictionary<Guid, int> noShowCountsByClientId = await _appointmentHandler.GetNoShowCountsByClientIds(organizationId, new List<Guid> { id });
+        return ToDto(client, noShowCountsByClientId.GetValueOrDefault(id));
     }
 
     public async Task<ClientDto> Create(Guid organizationId, Guid userId, ClientCreateRequest request)
@@ -298,7 +309,7 @@ public class ClientService : IClientService
         return (false, default);
     }
 
-    private static ClientDto ToDto(Client client)
+    private static ClientDto ToDto(Client client, int noShowCount)
     {
         return new ClientDto
         {
@@ -327,6 +338,7 @@ public class ClientService : IClientService
                 Name = t.Tag?.Name,
                 ColorHex = t.Tag?.ColorHex
             }).ToList(),
+            NoShowCount = noShowCount,
             CreatedAt = client.CreatedAt,
             CreatedBy = client.CreatedBy,
             UpdatedAt = client.UpdatedAt,

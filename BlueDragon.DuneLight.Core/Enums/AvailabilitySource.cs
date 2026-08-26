@@ -6,14 +6,18 @@ public enum AvailabilitySource
     Template,
     Override,
     Absence,
+    Holiday,
     None
 }
 
 /// <summary>RosterDayCellDto/RosterPlannedDayDto (team-monthly/personal pregled) — stvarni zapisi uvijek imaju
-/// prednost; Planned se prikazuje samo za dane bez stvarnog zapisa kod kojih postoji WorkingHoursTemplate.</summary>
+/// prednost; Assumed = prošli/današnji dan bez zapisa gdje predložak razrješava radne intervale (tretira se kao
+/// odrađeno, ulazi u TotalWorkHours, FE ga prikazuje identično kao Actual); Planned = budući dan bez zapisa s
+/// predloškom (ne ulazi u zbroj).</summary>
 public enum RosterCellSource
 {
     Actual,
+    Assumed,
     Planned,
     None
 }

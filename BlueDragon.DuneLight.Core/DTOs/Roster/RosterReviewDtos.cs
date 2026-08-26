@@ -4,6 +4,9 @@ using BlueDragon.DuneLight.Core.Enums;
 
 namespace BlueDragon.DuneLight.Core.DTOs.Roster;
 
+/// <summary>Jedan po stvarnom RosterType, plus opcionalno jedan sintetički redak (RosterTypeId=Guid.Empty,
+/// RosterTypeName="Pretpostavljeno (predložak)") za sate pretpostavljene iz WorkingHoursTemplate na dane bez
+/// stvarnog zapisa — vidi RosterEntryService.BuildSums.</summary>
 public class RosterWorkHoursSumDto
 {
     public Guid RosterTypeId { get; set; }
@@ -43,14 +46,18 @@ public class RosterDayCellDto
     public int Day { get; set; }
     public List<RosterDayCellEntryDto> Entries { get; set; } = new();
 
-    /// <summary>Actual ako Entries nije prazan; Planned samo za danas/budućnost bez stvarnog zapisa kad postoji WorkingHoursTemplate; inače None.</summary>
+    /// <summary>Actual ako Entries nije prazan. Bez stvarnog zapisa: Assumed za prošlost/danas kad predložak
+    /// razrješava radne intervale (broji se u TotalWorkHours, FE prikazuje identično kao Actual); Planned za
+    /// budućnost s predloškom (ne broji se); inače None.</summary>
     public RosterCellSource Source { get; set; } = RosterCellSource.None;
 
-    /// <summary>Popunjeno samo kad Source==Planned — projekcija iz WorkingHoursTemplate, prazno = predložak kaže "slobodan dan".</summary>
+    /// <summary>Popunjeno kad Source==Planned ili Source==Assumed — projekcija iz WorkingHoursTemplate, prazno = predložak kaže "slobodan dan".</summary>
     public List<RosterPlannedIntervalDto> PlannedIntervals { get; set; } = new();
 }
 
-/// <summary>Jedan dan bez stvarnog roster zapisa (danas/budućnost) za koji postoji WorkingHoursTemplate — vidi RosterPersonalReviewDto.PlannedDays.</summary>
+/// <summary>Jedan budući dan (nakon danas) bez stvarnog roster zapisa za koji postoji WorkingHoursTemplate —
+/// vidi RosterPersonalReviewDto.PlannedDays. Dani u prošlosti/danas bez zapisa se ne pojavljuju ovdje — oni su
+/// "Assumed" i ulaze u TotalWorkHours/WorkHoursByType.</summary>
 public class RosterPlannedDayDto
 {
     public DateTimeOffset Date { get; set; }
@@ -89,6 +96,8 @@ public class RosterPersonalReviewDto
     public decimal TotalWorkHours { get; set; }
     public List<RosterAbsenceDaysSumDto> AbsenceDaysByType { get; set; } = new();
 
-    /// <summary>Dani u [From,To] bez stvarnog zapisa (danas/budućnost) za koje postoji WorkingHoursTemplate — TotalWorkHours ih NE uključuje (vidi FAZA 2 odluka).</summary>
+    /// <summary>Budući dani (nakon danas, unutar [From,To]) bez stvarnog zapisa za koje postoji WorkingHoursTemplate —
+    /// TotalWorkHours ih NE uključuje. Prošli/današnji dani bez zapisa se ovdje NE pojavljuju — oni su "Assumed" i
+    /// već ulaze u TotalWorkHours/WorkHoursByType (vidi RosterEntryService.BuildSums).</summary>
     public List<RosterPlannedDayDto> PlannedDays { get; set; } = new();
 }

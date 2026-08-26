@@ -48,10 +48,13 @@ public static class ErrorCodes
     public const string LeaveFundExceeded = "LEAVE_FUND_EXCEEDED";
     public const string LeaveFundTypeMustBeAbsence = "LEAVE_FUND_TYPE_MUST_BE_ABSENCE";
     public const string LeaveFundEntryRequiresEndDate = "LEAVE_FUND_ENTRY_REQUIRES_END_DATE";
+    public const string DuplicateHolidayDate = "DUPLICATE_HOLIDAY_DATE";
+    public const string HolidayCatalogNotDefinedForCountry = "HOLIDAY_CATALOG_NOT_DEFINED_FOR_COUNTRY";
 
     // RECURRING_CONFLICT details.conflicts[].reason vrijednosti
     public const string RecurringConflictReasonAppointment = "EXISTING_APPOINTMENT";
     public const string RecurringConflictReasonRosterAbsence = "ROSTER_ABSENCE";
     public const string RecurringConflictReasonOutsideWorkingHours = "OUTSIDE_WORKING_HOURS";
     public const string RecurringConflictReasonScheduleBreak = "EXISTING_SCHEDULE_BREAK";
+    public const string RecurringConflictReasonHoliday = "HOLIDAY";
 }

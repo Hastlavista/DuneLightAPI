@@ -44,6 +44,7 @@ public static class Tables
     public const string EmployeeLeaveSettings = "employee_leave_settings";
     public const string LeaveFunds = "leave_funds";
     public const string LeaveFundUsages = "leave_fund_usages";
+    public const string CompanyHolidays = "company_holidays";
 
     public const string GrantGroups = "grant_groups";
     public const string GrantGroupGrants = "grant_group_grants";

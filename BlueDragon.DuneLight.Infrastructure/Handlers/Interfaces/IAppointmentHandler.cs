@@ -70,4 +70,8 @@ public interface IAppointmentHandler
     Task<bool> HasFutureScheduledForEmployee(Guid organizationId, Guid employeeId);
 
     Task<bool> HasAnyForClient(Guid organizationId, Guid clientId);
+
+    /// <summary>Batch broj termina statusa NoShow po klijentu, u jednom upitu (GROUP BY) — izbjegava N+1 kod liste/detalja klijenata.
+    /// Klijent bez ijednog NoShow termina izostaje iz rezultata.</summary>
+    Task<Dictionary<Guid, int>> GetNoShowCountsByClientIds(Guid organizationId, List<Guid> clientIds);
 }

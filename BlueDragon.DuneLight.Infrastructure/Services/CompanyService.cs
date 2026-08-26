@@ -45,6 +45,7 @@ public class CompanyService : ICompanyService
             Address = request.Address,
             Phone = request.Phone,
             ColorHex = request.ColorHex,
+            Country = request.Country,
             Note = request.Note,
             SortOrder = request.SortOrder,
             IsActive = true,
@@ -66,6 +67,7 @@ public class CompanyService : ICompanyService
         company.Address = request.Address;
         company.Phone = request.Phone;
         company.ColorHex = request.ColorHex;
+        company.Country = request.Country;
         company.Note = request.Note;
         company.SortOrder = request.SortOrder;
         company.UpdatedAt = DateTimeOffset.UtcNow;
@@ -118,6 +120,7 @@ public class CompanyService : ICompanyService
             Address = company.Address,
             Phone = company.Phone,
             ColorHex = company.ColorHex,
+            Country = company.Country,
             IsActive = company.IsActive,
             Note = company.Note,
             SortOrder = company.SortOrder,

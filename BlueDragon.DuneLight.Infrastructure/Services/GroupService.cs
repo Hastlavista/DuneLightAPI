@@ -13,6 +13,7 @@ using BlueDragon.DuneLight.Infrastructure.Domain.Models.Catalog;
 using BlueDragon.DuneLight.Infrastructure.Domain.Models.Clients;
 using BlueDragon.DuneLight.Infrastructure.Domain.Models.Employees;
 using BlueDragon.DuneLight.Infrastructure.Domain.Models.Groups;
+using BlueDragon.DuneLight.Infrastructure.Domain.Models.Roster;
 using BlueDragon.DuneLight.Infrastructure.Handlers.Interfaces;
 using BlueDragon.DuneLight.Infrastructure.UnitOfWork;
 using ServiceEntity = BlueDragon.DuneLight.Infrastructure.Domain.Models.Catalog.Service;
@@ -27,6 +28,7 @@ public class GroupService : IGroupService
     private readonly ICompanyHandler _companyHandler;
     private readonly IEmployeeHandler _employeeHandler;
     private readonly IClientHandler _clientHandler;
+    private readonly ICompanyHolidayHandler _companyHolidayHandler;
     private readonly IUnitOfWorkFactory _unitOfWorkFactory;
 
     public GroupService(
@@ -36,6 +38,7 @@ public class GroupService : IGroupService
         ICompanyHandler companyHandler,
         IEmployeeHandler employeeHandler,
         IClientHandler clientHandler,
+        ICompanyHolidayHandler companyHolidayHandler,
         IUnitOfWorkFactory unitOfWorkFactory)
     {
         _groupHandler = groupHandler;
@@ -44,6 +47,7 @@ public class GroupService : IGroupService
         _companyHandler = companyHandler;
         _employeeHandler = employeeHandler;
         _clientHandler = clientHandler;
+        _companyHolidayHandler = companyHolidayHandler;
         _unitOfWorkFactory = unitOfWorkFactory;
     }
 
@@ -401,6 +405,10 @@ public class GroupService : IGroupService
             : await _groupHandler.GetExistingSlotOccurrences(
                 activeSlotIds, ComputeStartsAt(fromDate, TimeSpan.Zero, offset), ComputeStartsAt(toDate, new TimeSpan(23, 59, 59), offset));
 
+        List<Guid> candidateCompanyIds = candidateGroups.Select(g => g.CompanyId).Distinct().ToList();
+        List<CompanyHoliday> holidaysForCompanies = await _companyHolidayHandler.GetForCompaniesInRange(
+            organizationId, candidateCompanyIds, fromDate, toDate);
+
         List<Appointment> toCreate = new List<Appointment>();
         List<AppointmentScheduleCellDto> createdDtos = new List<AppointmentScheduleCellDto>();
         int skipped = 0;
@@ -413,6 +421,16 @@ public class GroupService : IGroupService
                 {
                     if (date.DayOfWeek != slot.DayOfWeek)
                         continue;
+
+                    // Poznat, zaseban propust: GenerateAppointments ne provjerava preklapanje ni radno vrijeme
+                    // trenera (vidi AppointmentService.EnsureNoOverlap/EnsureWithinWorkingHours) — rješava se
+                    // odvojeno. Holiday-check je jedina zaštita dodana ovdje, isti "tiho preskoči" obrazac kao
+                    // duplikat-provjera ispod.
+                    if (holidaysForCompanies.Any(h => h.CompanyId == group.CompanyId && h.Date.Date == date))
+                    {
+                        skipped++;
+                        continue;
+                    }
 
                     DateTimeOffset startsAt = ComputeStartsAt(date, slot.StartTime, offset);
                     (Guid, DateTimeOffset) key = (slot.Id.GetValueOrDefault(), startsAt);
