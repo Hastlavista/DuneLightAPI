@@ -16,7 +16,7 @@ public class CreateCompanyHolidaysTable : DuneLightMigration
             .WithColumn("company_id").AsGuid().NotNullable()
             .WithColumn("date").AsDateTimeOffset().NotNullable()
             .WithColumn("name").AsString(255).NotNullable()
-            .WithColumn("is_recurring_fixed").AsBoolean().NotNullable()
+            .WithColumn("is_auto_generated").AsBoolean().NotNullable()
             .WithColumn("created_at").AsDateTimeOffset().NotNullable()
             .WithColumn("created_by").AsGuid().Nullable();
 

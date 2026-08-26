@@ -22,6 +22,7 @@ using BlueDragon.DuneLight.Core.Shared;
 using BlueDragon.DuneLight.Infrastructure.Domain.Settings;
 using BlueDragon.DuneLight.Infrastructure.Handlers.Implementations;
 using BlueDragon.DuneLight.Infrastructure.Handlers.Interfaces;
+using BlueDragon.DuneLight.Infrastructure.Integrations;
 using BlueDragon.DuneLight.Infrastructure.Services;
 using BlueDragon.DuneLight.Infrastructure.UnitOfWork;
 using Microsoft.AspNetCore.Authentication;
@@ -142,6 +143,14 @@ public class Startup
         services.AddScoped<IRosterEntryService, RosterEntryService>();
         services.AddScoped<IWorkingHoursTemplateService, WorkingHoursTemplateService>();
         services.AddScoped<ICompanyHolidayService, CompanyHolidayService>();
+
+        // Best-effort vanjski izvor praznika za CompanyHolidayService.Generate (vidi IPublicHolidayApiClient) —
+        // 5s timeout jer je poziv sinkroni dio jednog admin-akcijskog zahtjeva, ne smije dugo visjeti ako servis padne.
+        services.AddHttpClient<IPublicHolidayApiClient, NagerPublicHolidayApiClient>(client =>
+        {
+            client.BaseAddress = new Uri("https://nagerholidays.com/");
+            client.Timeout = TimeSpan.FromSeconds(5);
+        });
         services.AddScoped<IEmployeeLeaveSettingsService, EmployeeLeaveSettingsService>();
         services.AddScoped<ILeaveFundService, LeaveFundService>();
 
