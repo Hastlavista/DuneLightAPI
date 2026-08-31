@@ -6,7 +6,6 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Hosting;
 using Serilog;
 using Serilog.Events;
-using X.PortUtility;
 
 namespace BlueDragon.DuneLight.API;
 
@@ -52,7 +51,7 @@ public class Program
             .AddCommandLine(args)
             .Build();
 
-        Port = bindingConfig.GetValue<int?>("port") ?? FreePorts.Find();
+        Port = bindingConfig.GetValue<int?>("port") ?? 5001;
 
         return Host.CreateDefaultBuilder(args)
             .UseSerilog((context, services, configuration) => configuration

@@ -21,7 +21,6 @@
         <PackageReference Include="Serilog.Enrichers.Environment" Version="3.0.0" />
         <PackageReference Include="Serilog.Sinks.Seq" Version="9.0.0" />
         <PackageReference Include="Swashbuckle.AspNetCore" Version="10.1.6" />
-        <PackageReference Include="X.PortUtility" Version="1.2.0" />
     </ItemGroup>
 
     <ItemGroup>
