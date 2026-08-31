@@ -29,12 +29,12 @@ public class Program
 
         try
         {
-            IHost host = CreateHostBuilder(args).Build();
-            await host.StartAsync();
+            IHost webHost = BuildWebHost(args);
+            await webHost.StartAsync();
 
             Log.Information("BlueDragon.DuneLight.API started. Listening on: http://localhost:{Port}/ Swagger: http://localhost:{Port}/swagger", Port, Port);
 
-            await host.WaitForShutdownAsync();
+            await webHost.WaitForShutdownAsync();
         }
         catch (Exception ex)
         {
@@ -46,7 +46,7 @@ public class Program
         }
     }
 
-    public static IHostBuilder CreateHostBuilder(string[] args)
+    private static IHost BuildWebHost(string[] args)
     {
         IConfiguration bindingConfig = new ConfigurationBuilder()
             .AddCommandLine(args)
@@ -64,14 +64,18 @@ public class Program
                 .WriteTo.Console()
                 .WriteTo.Seq("http://localhost:5341"))
             .UseDefaultServiceProvider(opts => opts.ValidateScopes = false)
-            .ConfigureWebHostDefaults(webBuilder =>
-            {
-                webBuilder.UseStartup<Startup>();
-                webBuilder.UseKestrel(options =>
-                {
-                    options.Limits.MaxRequestBodySize = MaxRequestBodySize;
-                    options.Listen(IPAddress.Any, Port);
-                });
-            });
+            .ConfigureWebHostDefaults(ConfigureWebHost)
+            .Build();
+    }
+
+    private static void ConfigureWebHost(IWebHostBuilder builder)
+    {
+        builder.UseStartup<Startup>();
+        builder.UseKestrel(options =>
+        {
+            options.Listen(IPAddress.Any, Port);
+            options.Limits.MaxRequestBodySize = MaxRequestBodySize;
+            options.Limits.MaxConcurrentConnections = 100;
+        });
     }
 }
