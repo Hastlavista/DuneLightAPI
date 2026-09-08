@@ -351,4 +351,73 @@ public class AppointmentHandler : IAppointmentHandler
         context.Appointments.AddRange(appointments);
         await context.SaveChangesAsync();
     }
+
+    public async Task<ClientAppointmentStatsDto> GetStatsForClient(Guid organizationId, Guid clientId, List<Guid> activeGroupIds)
+    {
+        await using DatabaseContext context = DatabaseContext.GenerateContext(_databaseSettings.ConnectionString);
+        DateTimeOffset now = DateTimeOffset.UtcNow;
+
+        IQueryable<AppointmentClient> individual = context.AppointmentClients
+            .Where(ac => ac.ClientId == clientId && ac.Appointment.OrganizationId == organizationId);
+
+        int completedIndividual = await individual.CountAsync(ac => ac.Appointment.Status == AppointmentStatus.Completed);
+        int noShowIndividual = await individual.CountAsync(ac => ac.Appointment.Status == AppointmentStatus.NoShow);
+        int cancelledIndividual = await individual.CountAsync(ac => ac.Appointment.Status == AppointmentStatus.Cancelled);
+
+        DateTimeOffset? lastIndividual = await individual
+            .Where(ac => ac.Appointment.Status == AppointmentStatus.Completed)
+            .Select(ac => (DateTimeOffset?)ac.Appointment.StartsAt)
+            .MaxAsync();
+
+        DateTimeOffset? nextIndividual = await individual
+            .Where(ac => ac.Appointment.Status == AppointmentStatus.Scheduled && ac.Appointment.StartsAt > now)
+            .Select(ac => (DateTimeOffset?)ac.Appointment.StartsAt)
+            .MinAsync();
+
+        IQueryable<AppointmentAttendance> group = context.AppointmentAttendances
+            .Where(a => a.ClientId == clientId && a.Appointment.OrganizationId == organizationId);
+
+        int completedGroup = await group.CountAsync(a => a.Attended == true);
+        int noShowGroup = await group.CountAsync(a => a.Attended == false);
+
+        DateTimeOffset? lastGroup = await group
+            .Where(a => a.Attended == true)
+            .Select(a => (DateTimeOffset?)a.Appointment.StartsAt)
+            .MaxAsync();
+
+        DateTimeOffset? nextGroup = activeGroupIds.Count == 0
+            ? null
+            : await context.Appointments
+                .Where(a =>
+                    a.OrganizationId == organizationId &&
+                    a.Form == AppointmentForm.Group &&
+                    a.GroupId != null && activeGroupIds.Contains(a.GroupId.Value) &&
+                    a.Status == AppointmentStatus.Scheduled &&
+                    a.StartsAt > now)
+                .Select(a => (DateTimeOffset?)a.StartsAt)
+                .MinAsync();
+
+        return new ClientAppointmentStatsDto
+        {
+            CompletedVisitsCount = completedIndividual + completedGroup,
+            NoShowCount = noShowIndividual + noShowGroup,
+            CancelledCount = cancelledIndividual,
+            LastVisitAt = MaxOrNull(lastIndividual, lastGroup),
+            NextVisitAt = MinOrNull(nextIndividual, nextGroup)
+        };
+    }
+
+    private static DateTimeOffset? MaxOrNull(DateTimeOffset? a, DateTimeOffset? b)
+    {
+        if (a == null) return b;
+        if (b == null) return a;
+        return a > b ? a : b;
+    }
+
+    private static DateTimeOffset? MinOrNull(DateTimeOffset? a, DateTimeOffset? b)
+    {
+        if (a == null) return b;
+        if (b == null) return a;
+        return a < b ? a : b;
+    }
 }

@@ -747,6 +747,7 @@ public class AppointmentService : IAppointmentService
 
         AppointmentStatus oldStatus = appointment.Status;
         appointment.Status = newStatus;
+        appointment.CancellationReason = request.CancellationReason;
         appointment.UpdatedAt = DateTimeOffset.UtcNow;
         appointment.UpdatedBy = userId;
 
@@ -1165,6 +1166,7 @@ public class AppointmentService : IAppointmentService
             IsPaid = a.IsPaid,
             Status = a.Status,
             Note = a.Note,
+            CancellationReason = a.CancellationReason,
             GroupId = a.GroupId,
             GroupName = a.Group?.Name,
             RecurrenceGroupId = a.RecurrenceGroupId,

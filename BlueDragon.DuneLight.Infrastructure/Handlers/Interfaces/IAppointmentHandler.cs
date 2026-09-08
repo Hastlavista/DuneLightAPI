@@ -80,4 +80,11 @@ public interface IAppointmentHandler
     /// <summary>Batch broj termina statusa NoShow po klijentu, u jednom upitu (GROUP BY) — izbjegava N+1 kod liste/detalja klijenata.
     /// Klijent bez ijednog NoShow termina izostaje iz rezultata.</summary>
     Task<Dictionary<Guid, int>> GetNoShowCountsByClientIds(Guid organizationId, List<Guid> clientIds);
+
+    /// <summary>Agregirane brojke dolazaka jednog klijenta za Povijest klijenta — spaja individualne termine
+    /// (AppointmentClient/Appointment.Status) i grupne termine (AppointmentAttendance.Attended), jer se
+    /// odrađenost/no-show evidentira na različitim mjestima ovisno o Appointment.Form (vidi GetByClient).
+    /// activeGroupIds ulazi u izračun NextVisitAt jer budući grupni termini (već generirani, Status=Scheduled)
+    /// nemaju AppointmentClient/Attendance redak dok klijent ne dođe na red za check-in.</summary>
+    Task<ClientAppointmentStatsDto> GetStatsForClient(Guid organizationId, Guid clientId, List<Guid> activeGroupIds);
 }

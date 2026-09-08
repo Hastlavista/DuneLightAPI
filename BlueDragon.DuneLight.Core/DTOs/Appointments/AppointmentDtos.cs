@@ -44,6 +44,9 @@ public class AppointmentDto
     public bool IsPaid { get; set; }
     public AppointmentStatus Status { get; set; }
     public string Note { get; set; }
+
+    /// <summary>Popunjeno samo kad je Status Cancelled ili NoShow.</summary>
+    public string CancellationReason { get; set; }
     public Guid? GroupId { get; set; }
 
     /// <summary>Popunjeno samo za Form=Group, kad je grupa učitana (npr. GetByClient).</summary>
@@ -193,6 +196,10 @@ public class AppointmentCancelRequest
 {
     /// <summary>Klijenti kojima se eksplicitno vraća skinuti ulazak iz paketa. Prazna lista = ništa se ne vraća.</summary>
     public List<Guid> ReturnEntryForClientIds { get; set; } = new();
+
+    /// <summary>Opcionalan razlog otkazivanja/no-showa — vidi Appointment.CancellationReason.</summary>
+    [MaxLength(500)]
+    public string CancellationReason { get; set; }
 }
 
 public class RecurringAppointmentCreateRequest
@@ -265,4 +272,15 @@ public class EmployeeAvailableSlotsDto
     public string EmployeeName { get; set; }
     public string ColorHex { get; set; }
     public List<AvailableSlotDto> Slots { get; set; } = new();
+}
+
+/// <summary>Agregirane brojke dolazaka jednog klijenta (individualni + grupni termini zajedno) — interni
+/// rezultat AppointmentHandler.GetStatsForClient, koristi ga IClientHistoryService za Povijest klijenta.</summary>
+public class ClientAppointmentStatsDto
+{
+    public int CompletedVisitsCount { get; set; }
+    public int NoShowCount { get; set; }
+    public int CancelledCount { get; set; }
+    public DateTimeOffset? LastVisitAt { get; set; }
+    public DateTimeOffset? NextVisitAt { get; set; }
 }

@@ -16,10 +16,12 @@ namespace BlueDragon.DuneLight.API.Controllers.Clients;
 public class ClientsController : ControllerBase
 {
     private readonly IClientService _clientService;
+    private readonly IClientHistoryService _clientHistoryService;
 
-    public ClientsController(IClientService clientService)
+    public ClientsController(IClientService clientService, IClientHistoryService clientHistoryService)
     {
         _clientService = clientService;
+        _clientHistoryService = clientHistoryService;
     }
 
     /// <summary>Popis klijenata. mineFirst=true stavlja klijente prijavljenog trenera prve (redoslijed, ne filter).</summary>
@@ -54,6 +56,15 @@ public class ClientsController : ControllerBase
     public async Task<ActionResult<ClientDto>> GetById(Guid id)
     {
         return Ok(await _clientService.GetById(this.CurrentOrganizationId(), id));
+    }
+
+    /// <summary>Sažetak povijesti klijenta (brojke dolazaka, sljedeći/zadnji termin, aktivni paketi/grupe) —
+    /// dopuna GET /api/appointments/by-client, GET .../packages i GET .../groups za "Povijest" tab.</summary>
+    [HttpGet("{id:guid}/history-summary")]
+    [RequireGrant(Grants.ClientsView)]
+    public async Task<ActionResult<ClientHistorySummaryDto>> GetHistorySummary(Guid id)
+    {
+        return Ok(await _clientHistoryService.GetSummary(this.CurrentOrganizationId(), id));
     }
 
     [HttpPost]

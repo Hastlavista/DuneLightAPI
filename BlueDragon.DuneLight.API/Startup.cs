@@ -136,6 +136,7 @@ public class Startup
         services.AddScoped<IClientTagService, ClientTagService>();
         services.AddScoped<IClientService, ClientService>();
         services.AddScoped<IClientPackageService, ClientPackageService>();
+        services.AddScoped<IClientHistoryService, ClientHistoryService>();
         services.AddSingleton<IClientFutureActivityProvider, ClientFutureActivityProvider>();
 
         services.AddScoped<IAppointmentService, AppointmentService>();

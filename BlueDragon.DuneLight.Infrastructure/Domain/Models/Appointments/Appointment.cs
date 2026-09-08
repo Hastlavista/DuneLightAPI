@@ -74,6 +74,10 @@ public class Appointment
     [Column("note")]
     public string Note { get; set; }
 
+    /// <summary>Popunjeno samo kad je Status Cancelled ili NoShow (trener/recepcija upisuje razlog kod ChangeToTerminalStatus).</summary>
+    [Column("cancellation_reason")]
+    public string CancellationReason { get; set; }
+
     [Column("group_id")]
     public Guid? GroupId { get; set; }
 
