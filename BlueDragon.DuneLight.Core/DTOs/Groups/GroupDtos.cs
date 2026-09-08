@@ -57,6 +57,8 @@ public class GroupDto
     public int Capacity { get; set; }
     public Guid? DefaultTrainerId { get; set; }
     public string DefaultTrainerName { get; set; }
+    public Guid? DefaultRoomId { get; set; }
+    public string DefaultRoomName { get; set; }
     public bool IsActive { get; set; }
     public string Note { get; set; }
     public List<GroupSlotDto> Slots { get; set; } = new();
@@ -94,6 +96,9 @@ public class GroupCreateRequest
 
     public Guid? DefaultTrainerId { get; set; }
 
+    /// <summary>Opcionalno — mora pripadati istoj CompanyId.</summary>
+    public Guid? DefaultRoomId { get; set; }
+
     public string Note { get; set; }
 
     /// <summary>Barem jedan slot je obavezan pri kreiranju grupe.</summary>
@@ -115,6 +120,9 @@ public class GroupUpdateRequest
     public int Capacity { get; set; }
 
     public Guid? DefaultTrainerId { get; set; }
+
+    /// <summary>Opcionalno — mora pripadati istoj CompanyId.</summary>
+    public Guid? DefaultRoomId { get; set; }
 
     public string Note { get; set; }
 }

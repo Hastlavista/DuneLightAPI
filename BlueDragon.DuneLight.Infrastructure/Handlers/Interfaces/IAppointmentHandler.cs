@@ -48,9 +48,15 @@ public interface IAppointmentHandler
 
     Task<List<Appointment>> GetOverlappingForClients(Guid organizationId, List<Guid> clientIds, DateTimeOffset startsAt, int durationMinutes, Guid? excludeId);
 
+    Task<List<Appointment>> GetOverlappingForRoom(Guid organizationId, Guid roomId, DateTimeOffset startsAt, int durationMinutes, Guid? excludeId);
+
     /// <summary>Svi termini trenera unutar raspona (bez otkazanih/izostalih) — kandidati za preklapanje cijelog
     /// recurring niza odjednom, precizna provjera po occurrenceu radi se u servisu u memoriji.</summary>
     Task<List<Appointment>> GetForEmployeeInRange(Guid organizationId, Guid employeeId, DateTimeOffset rangeFrom, DateTimeOffset rangeTo);
+
+    /// <summary>Kao <see cref="GetForEmployeeInRange"/>, ali po prostoriji — za /recurring provjeru sudara prostorije
+    /// cijelog niza odjednom.</summary>
+    Task<List<Appointment>> GetForRoomInRange(Guid organizationId, Guid roomId, DateTimeOffset rangeFrom, DateTimeOffset rangeTo);
 
     /// <summary>Kao <see cref="GetForEmployeeInRange"/>, ali za više zaposlenika u jednom upitu (bez otkazanih/izostalih)
     /// — za available-slots, izbjegava upit po zaposleniku u petlji.</summary>

@@ -29,6 +29,7 @@ public class AppointmentHandler : IAppointmentHandler
             .Include(a => a.Service)
             .Include(a => a.Employee)
             .Include(a => a.Company)
+            .Include(a => a.Room)
             .Include(a => a.Clients).ThenInclude(ac => ac.Client);
     }
 
@@ -179,6 +180,26 @@ public class AppointmentHandler : IAppointmentHandler
         return candidates.Where(a => a.StartsAt < newEnd && startsAt < a.StartsAt.AddMinutes(a.DurationMinutes)).ToList();
     }
 
+    public async Task<List<Appointment>> GetOverlappingForRoom(
+        Guid organizationId, Guid roomId, DateTimeOffset startsAt, int durationMinutes, Guid? excludeId)
+    {
+        DateTimeOffset newEnd = startsAt.AddMinutes(durationMinutes);
+        DateTimeOffset windowStart = startsAt.AddDays(-1);
+        DateTimeOffset windowEnd = startsAt.AddDays(1);
+
+        await using DatabaseContext context = DatabaseContext.GenerateContext(_databaseSettings.ConnectionString);
+        List<Appointment> candidates = await context.Appointments
+            .Where(a =>
+                a.OrganizationId == organizationId &&
+                a.RoomId == roomId &&
+                a.Status != AppointmentStatus.Cancelled && a.Status != AppointmentStatus.NoShow &&
+                a.StartsAt >= windowStart && a.StartsAt <= windowEnd &&
+                (excludeId == null || a.Id != excludeId))
+            .ToListAsync();
+
+        return candidates.Where(a => a.StartsAt < newEnd && startsAt < a.StartsAt.AddMinutes(a.DurationMinutes)).ToList();
+    }
+
     public async Task<List<Appointment>> GetForEmployeeInRange(
         Guid organizationId, Guid employeeId, DateTimeOffset rangeFrom, DateTimeOffset rangeTo)
     {
@@ -187,6 +208,19 @@ public class AppointmentHandler : IAppointmentHandler
             .Where(a =>
                 a.OrganizationId == organizationId &&
                 a.EmployeeId == employeeId &&
+                a.Status != AppointmentStatus.Cancelled && a.Status != AppointmentStatus.NoShow &&
+                a.StartsAt >= rangeFrom && a.StartsAt <= rangeTo)
+            .ToListAsync();
+    }
+
+    public async Task<List<Appointment>> GetForRoomInRange(
+        Guid organizationId, Guid roomId, DateTimeOffset rangeFrom, DateTimeOffset rangeTo)
+    {
+        await using DatabaseContext context = DatabaseContext.GenerateContext(_databaseSettings.ConnectionString);
+        return await context.Appointments
+            .Where(a =>
+                a.OrganizationId == organizationId &&
+                a.RoomId == roomId &&
                 a.Status != AppointmentStatus.Cancelled && a.Status != AppointmentStatus.NoShow &&
                 a.StartsAt >= rangeFrom && a.StartsAt <= rangeTo)
             .ToListAsync();
@@ -230,6 +264,9 @@ public class AppointmentHandler : IAppointmentHandler
 
         if (query.CompanyId.HasValue)
             q = q.Where(a => a.CompanyId == query.CompanyId.Value);
+
+        if (query.RoomId.HasValue)
+            q = q.Where(a => a.RoomId == query.RoomId.Value);
 
         if (query.EmployeeId.HasValue)
             q = q.Where(a => a.EmployeeId == query.EmployeeId.Value);

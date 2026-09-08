@@ -35,6 +35,8 @@ public class AppointmentDto
     public string EmployeeName { get; set; }
     public Guid CompanyId { get; set; }
     public string CompanyName { get; set; }
+    public Guid? RoomId { get; set; }
+    public string RoomName { get; set; }
     public decimal Amount { get; set; }
     public decimal SuggestedAmount { get; set; }
     public bool IsAmountManuallyOverridden { get; set; }
@@ -77,6 +79,8 @@ public class AppointmentScheduleCellDto
     public string EmployeeName { get; set; }
     public Guid CompanyId { get; set; }
     public string CompanyName { get; set; }
+    public Guid? RoomId { get; set; }
+    public string RoomName { get; set; }
     public List<string> ClientNames { get; set; } = new();
 
     /// <summary>ID-jevi klijenata, indeksno poravnati s ClientNames (isti redoslijed, isti broj elemenata). Prazan za grupne termine.</summary>
@@ -108,6 +112,7 @@ public class AppointmentScheduleQuery
     public DateTimeOffset To { get; set; }
 
     public Guid? CompanyId { get; set; }
+    public Guid? RoomId { get; set; }
     public Guid? EmployeeId { get; set; }
     public Guid? ServiceId { get; set; }
     public ServiceExecutionMode? ExecutionMode { get; set; }
@@ -137,6 +142,9 @@ public class AppointmentCreateRequest
 
     [Required]
     public Guid CompanyId { get; set; }
+
+    /// <summary>Opcionalno — mora pripadati istoj CompanyId.</summary>
+    public Guid? RoomId { get; set; }
 
     [Required]
     [MinLength(1, ErrorMessage = "Termin mora imati barem jednog klijenta.")]
@@ -176,6 +184,9 @@ public class AppointmentMoveRequest
 
     /// <summary>Null = tvrtka se ne mijenja.</summary>
     public Guid? CompanyId { get; set; }
+
+    /// <summary>Null = prostorija se ne mijenja. Za uklanjanje dodijeljene prostorije koristiti Update.</summary>
+    public Guid? RoomId { get; set; }
 }
 
 public class AppointmentCancelRequest
@@ -198,6 +209,9 @@ public class RecurringAppointmentCreateRequest
 
     [Required]
     public Guid CompanyId { get; set; }
+
+    /// <summary>Opcionalno — mora pripadati istoj CompanyId.</summary>
+    public Guid? RoomId { get; set; }
 
     [Required]
     [MinLength(1, ErrorMessage = "Termin mora imati barem jednog klijenta.")]

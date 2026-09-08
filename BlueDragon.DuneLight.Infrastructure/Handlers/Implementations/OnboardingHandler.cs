@@ -23,7 +23,7 @@ public class OnboardingHandler : IOnboardingHandler
 
         return new OnboardingStatusDto
         {
-            HasLocation = await context.Companies.AnyAsync(c => c.OrganizationId == organizationId && c.IsActive),
+            HasCompany = await context.Companies.AnyAsync(c => c.OrganizationId == organizationId && c.IsActive),
             HasEngagementType = await context.EngagementTypes.AnyAsync(e => e.OrganizationId == organizationId && e.IsActive),
             HasService = await context.Services.AnyAsync(s => s.OrganizationId == organizationId && s.IsActive),
             HasOwnerProfile = await context.Employees.AnyAsync(e => e.OrganizationId == organizationId && e.User.IsOwner),

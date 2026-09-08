@@ -47,6 +47,11 @@ public class Appointment
     [Column("company_id")]
     public Guid CompanyId { get; set; }
 
+    /// <summary>Opcionalno. Za grupne termine snapshot Group.DefaultRoomId u trenutku generiranja
+    /// (može se naknadno promijeniti po pojedinom terminu bez diranja grupe).</summary>
+    [Column("room_id")]
+    public Guid? RoomId { get; set; }
+
     [Column("amount")]
     public decimal Amount { get; set; }
 
@@ -96,6 +101,7 @@ public class Appointment
     public Service Service { get; set; }
     public Employee Employee { get; set; }
     public Company Company { get; set; }
+    public Room Room { get; set; }
     public Group Group { get; set; }
     public GroupSlot GroupSlot { get; set; }
     public List<AppointmentClient> Clients { get; set; } = new();

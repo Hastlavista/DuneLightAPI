@@ -27,7 +27,7 @@ public static class ErrorCodes
     public const string EmailAlreadyInUse = "EMAIL_ALREADY_IN_USE";
     public const string UserAlreadyLinked = "USER_ALREADY_LINKED";
     public const string LastActiveAdmin = "LAST_ACTIVE_ADMIN";
-    public const string LastActiveCompany = "LAST_ACTIVE_LOCATION";
+    public const string LastActiveCompany = "LAST_ACTIVE_COMPANY";
     public const string LastActiveSlot = "LAST_ACTIVE_SLOT";
     public const string AlreadyMember = "ALREADY_MEMBER";
     public const string AlreadyCompleted = "ALREADY_COMPLETED";
@@ -50,6 +50,7 @@ public static class ErrorCodes
     public const string LeaveFundEntryRequiresEndDate = "LEAVE_FUND_ENTRY_REQUIRES_END_DATE";
     public const string DuplicateHolidayDate = "DUPLICATE_HOLIDAY_DATE";
     public const string HolidayCatalogNotDefinedForCountry = "HOLIDAY_CATALOG_NOT_DEFINED_FOR_COUNTRY";
+    public const string RoomCompanyMismatch = "ROOM_COMPANY_MISMATCH";
 
     // RECURRING_CONFLICT details.conflicts[].reason vrijednosti
     public const string RecurringConflictReasonAppointment = "EXISTING_APPOINTMENT";
@@ -57,4 +58,5 @@ public static class ErrorCodes
     public const string RecurringConflictReasonOutsideWorkingHours = "OUTSIDE_WORKING_HOURS";
     public const string RecurringConflictReasonScheduleBreak = "EXISTING_SCHEDULE_BREAK";
     public const string RecurringConflictReasonHoliday = "HOLIDAY";
+    public const string RecurringConflictReasonRoom = "ROOM_OCCUPIED";
 }

@@ -18,6 +18,7 @@ public class DatabaseContext : DbContext
     public DbSet<User> Users { get; set; }
 
     public DbSet<Company> Companies { get; set; }
+    public DbSet<Room> Rooms { get; set; }
     public DbSet<Service> Services { get; set; }
     public DbSet<PriceListItem> PriceListItems { get; set; }
     public DbSet<PriceListItemHistory> PriceListItemHistory { get; set; }

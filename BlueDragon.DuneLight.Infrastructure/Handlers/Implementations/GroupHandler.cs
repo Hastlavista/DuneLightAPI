@@ -27,6 +27,7 @@ public class GroupHandler : IGroupHandler
             .Include(g => g.Service)
             .Include(g => g.Company)
             .Include(g => g.DefaultTrainer)
+            .Include(g => g.DefaultRoom)
             .Include(g => g.Slots)
             .Include(g => g.Members.Where(m => m.IsActive)).ThenInclude(m => m.Client);
     }
@@ -191,6 +192,7 @@ public class GroupHandler : IGroupHandler
             .Include(a => a.Service)
             .Include(a => a.Employee)
             .Include(a => a.Company)
+            .Include(a => a.Room)
             .Include(a => a.Attendances)
             .Where(a => a.OrganizationId == organizationId && a.GroupId == groupId &&
                 a.StartsAt >= from && a.StartsAt <= to)

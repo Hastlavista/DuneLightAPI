@@ -41,6 +41,10 @@ public class Group
     [Column("default_trainer_id")]
     public Guid? DefaultTrainerId { get; set; }
 
+    /// <summary>Prijedlog prostorije za generirane termine, isti obrazac kao DefaultTrainerId. Smije biti prazan.</summary>
+    [Column("default_room_id")]
+    public Guid? DefaultRoomId { get; set; }
+
     [Column("is_active")]
     public bool IsActive { get; set; }
 
@@ -62,6 +66,7 @@ public class Group
     public Service Service { get; set; }
     public Company Company { get; set; }
     public Employee DefaultTrainer { get; set; }
+    public Room DefaultRoom { get; set; }
     public List<GroupSlot> Slots { get; set; } = new();
     public List<GroupMember> Members { get; set; } = new();
 }

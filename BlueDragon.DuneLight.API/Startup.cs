@@ -15,6 +15,7 @@ using BlueDragon.DuneLight.Core.Interfaces.Clients;
 using BlueDragon.DuneLight.Core.Interfaces.Employees;
 using BlueDragon.DuneLight.Core.Interfaces.Groups;
 using BlueDragon.DuneLight.Core.Interfaces.Onboarding;
+using BlueDragon.DuneLight.Core.Interfaces.Organization;
 using BlueDragon.DuneLight.Core.Interfaces.Permissions;
 using BlueDragon.DuneLight.Core.Interfaces.Roster;
 using BlueDragon.DuneLight.Core.Interfaces.ScheduleBreaks;
@@ -76,6 +77,9 @@ public class Startup
         JwtSettings jwtSettings = Configuration.GetSection("JwtSettings").Get<JwtSettings>();
         services.AddSingleton(jwtSettings);
 
+        BrandingSettings brandingSettings = Configuration.GetSection("BrandingSettings").Get<BrandingSettings>();
+        services.AddSingleton(brandingSettings);
+
         #endregion
 
         #region UnitOfWork
@@ -119,6 +123,7 @@ public class Startup
         services.AddScoped<IAuthService, AuthService>();
 
         services.AddScoped<ICompanyService, CompanyService>();
+        services.AddScoped<IRoomService, RoomService>();
         services.AddScoped<IServiceCatalogService, ServiceCatalogService>();
         services.AddScoped<IPricingService, PricingService>();
         services.AddScoped<IPackageService, PackageService>();
@@ -160,6 +165,9 @@ public class Startup
 
         services.AddScoped<IOnboardingService, OnboardingService>();
 
+        services.AddScoped<IOrganizationBrandingService, OrganizationBrandingService>();
+        services.AddScoped<IBrandingFileStorage, BrandingFileStorage>();
+
         #endregion
 
         #region Handlers
@@ -167,6 +175,7 @@ public class Startup
         services.AddSingleton<IAuthHandler, AuthHandler>();
 
         services.AddSingleton<ICompanyHandler, CompanyHandler>();
+        services.AddSingleton<IRoomHandler, RoomHandler>();
         services.AddSingleton<IServiceHandler, ServiceHandler>();
         services.AddSingleton<IPriceListItemHandler, PriceListItemHandler>();
         services.AddSingleton<IPackageHandler, PackageHandler>();
@@ -199,6 +208,8 @@ public class Startup
         services.AddSingleton<IRoleHandler, RoleHandler>();
 
         services.AddSingleton<IOnboardingHandler, OnboardingHandler>();
+
+        services.AddSingleton<IOrganizationBrandingHandler, OrganizationBrandingHandler>();
 
         #endregion
 

@@ -27,6 +27,7 @@ public class GroupService : IGroupService
     private readonly IGroupAuditLogHandler _auditLogHandler;
     private readonly IServiceHandler _serviceHandler;
     private readonly ICompanyHandler _companyHandler;
+    private readonly IRoomHandler _roomHandler;
     private readonly IEmployeeHandler _employeeHandler;
     private readonly IClientHandler _clientHandler;
     private readonly ICompanyHolidayHandler _companyHolidayHandler;
@@ -40,6 +41,7 @@ public class GroupService : IGroupService
         IGroupAuditLogHandler auditLogHandler,
         IServiceHandler serviceHandler,
         ICompanyHandler companyHandler,
+        IRoomHandler roomHandler,
         IEmployeeHandler employeeHandler,
         IClientHandler clientHandler,
         ICompanyHolidayHandler companyHolidayHandler,
@@ -52,6 +54,7 @@ public class GroupService : IGroupService
         _auditLogHandler = auditLogHandler;
         _serviceHandler = serviceHandler;
         _companyHandler = companyHandler;
+        _roomHandler = roomHandler;
         _employeeHandler = employeeHandler;
         _clientHandler = clientHandler;
         _companyHolidayHandler = companyHolidayHandler;
@@ -72,6 +75,7 @@ public class GroupService : IGroupService
         await EnsureServiceExists(organizationId, request.ServiceId);
         await EnsureCompanyExists(organizationId, request.CompanyId);
         await EnsureTrainerExists(organizationId, request.DefaultTrainerId);
+        await EnsureRoomExists(organizationId, request.CompanyId, request.DefaultRoomId);
 
         Guid groupId = Guid.NewGuid();
         DateTimeOffset now = DateTimeOffset.UtcNow;
@@ -85,6 +89,7 @@ public class GroupService : IGroupService
             CompanyId = request.CompanyId,
             Capacity = request.Capacity,
             DefaultTrainerId = request.DefaultTrainerId,
+            DefaultRoomId = request.DefaultRoomId,
             IsActive = true,
             Note = request.Note,
             CreatedAt = now,
@@ -114,6 +119,7 @@ public class GroupService : IGroupService
         await EnsureServiceExists(organizationId, request.ServiceId);
         await EnsureCompanyExists(organizationId, request.CompanyId);
         await EnsureTrainerExists(organizationId, request.DefaultTrainerId);
+        await EnsureRoomExists(organizationId, request.CompanyId, request.DefaultRoomId);
 
         DateTimeOffset now = DateTimeOffset.UtcNow;
 
@@ -127,6 +133,7 @@ public class GroupService : IGroupService
         existing.CompanyId = request.CompanyId;
         existing.Capacity = request.Capacity;
         existing.DefaultTrainerId = request.DefaultTrainerId;
+        existing.DefaultRoomId = request.DefaultRoomId;
         existing.Note = request.Note;
         existing.UpdatedAt = now;
         existing.UpdatedBy = userId;
@@ -453,6 +460,7 @@ public class GroupService : IGroupService
         }
 
         await EnsureNoTrainerConflicts(organizationId, candidates);
+        await EnsureNoRoomConflicts(organizationId, candidates);
 
         List<Appointment> toCreate = new List<Appointment>();
         List<AppointmentScheduleCellDto> createdDtos = new List<AppointmentScheduleCellDto>();
@@ -477,6 +485,7 @@ public class GroupService : IGroupService
                 ServiceId = group.ServiceId,
                 EmployeeId = group.DefaultTrainerId,
                 CompanyId = group.CompanyId,
+                RoomId = group.DefaultRoomId,
                 Amount = 0,
                 SuggestedAmount = 0,
                 IsAmountManuallyOverridden = false,
@@ -501,6 +510,8 @@ public class GroupService : IGroupService
                 EmployeeName = group.DefaultTrainer != null ? $"{group.DefaultTrainer.FirstName} {group.DefaultTrainer.LastName}" : null,
                 CompanyId = group.CompanyId,
                 CompanyName = group.Company?.Name,
+                RoomId = group.DefaultRoomId,
+                RoomName = group.DefaultRoom?.Name,
                 Status = AppointmentStatus.Scheduled,
                 IsCancelled = false,
                 Form = AppointmentForm.Group,
@@ -628,6 +639,48 @@ public class GroupService : IGroupService
                 new { conflicts });
     }
 
+    /// <summary>Isti obrazac kao EnsureNoTrainerConflicts, ali po prostoriji — grupe bez DefaultRoomId ili čija
+    /// prostorija ima AllowConcurrentBookings=true se preskaču (nema tvrde blokade).</summary>
+    private async Task EnsureNoRoomConflicts(Guid organizationId, List<GroupOccurrenceCandidate> candidates)
+    {
+        List<RecurringConflictDetail> conflicts = new List<RecurringConflictDetail>();
+
+        IEnumerable<IGrouping<Guid, GroupOccurrenceCandidate>> byRoom = candidates
+            .Where(c => c.Group.DefaultRoomId.HasValue && c.Group.DefaultRoom?.AllowConcurrentBookings != true)
+            .GroupBy(c => c.Group.DefaultRoomId.GetValueOrDefault());
+
+        foreach (IGrouping<Guid, GroupOccurrenceCandidate> roomCandidates in byRoom)
+        {
+            Guid roomId = roomCandidates.Key;
+            List<GroupOccurrenceCandidate> ordered = roomCandidates.OrderBy(c => c.StartsAt).ToList();
+
+            DateTimeOffset rangeFrom = ordered[0].StartsAt.AddDays(-1);
+            DateTimeOffset rangeTo = ordered[^1].StartsAt.AddDays(1);
+
+            List<Appointment> candidateAppointments = await _appointmentHandler.GetForRoomInRange(
+                organizationId, roomId, rangeFrom, rangeTo);
+
+            foreach (GroupOccurrenceCandidate candidate in ordered)
+            {
+                int durationMinutes = candidate.Group.Service.DefaultDurationMinutes;
+                DateTimeOffset startsAt = candidate.StartsAt;
+                DateTimeOffset occurrenceEnd = startsAt.AddMinutes(durationMinutes);
+
+                bool roomHit = candidateAppointments.Any(a =>
+                    a.StartsAt < occurrenceEnd && startsAt < a.StartsAt.AddMinutes(a.DurationMinutes));
+
+                if (roomHit)
+                    conflicts.Add(new RecurringConflictDetail { Date = startsAt, Reason = ErrorCodes.RecurringConflictReasonRoom });
+            }
+        }
+
+        if (conflicts.Count > 0)
+            throw new BusinessRuleException(
+                ErrorCodes.RecurringConflict,
+                "Neki termini u nizu se sudaraju s postojećom zauzetošću prostorije.",
+                new { conflicts });
+    }
+
     /// <summary>Isto pravilo kao AppointmentService.IsWithinWorkingHours, bez holiday parametra — holiday je za ovaj
     /// poziv već obrađen ranije u GenerateAppointments (tiho preskačanje), pa kandidati koji stignu ovamo po
     /// definiciji nisu na praznik.</summary>
@@ -689,6 +742,21 @@ public class GroupService : IGroupService
             throw new NotFoundAppException("Employee", employeeId.Value);
     }
 
+    /// <summary>Isti oblik kao EnsureTrainerExists — prostorija je opcionalna, ali ako je zadana mora pripadati
+    /// istoj poslovnici kao grupa.</summary>
+    private async Task EnsureRoomExists(Guid organizationId, Guid companyId, Guid? roomId)
+    {
+        if (!roomId.HasValue)
+            return;
+
+        Room room = await _roomHandler.GetById(organizationId, roomId.Value);
+        if (room == null)
+            throw new NotFoundAppException("Room", roomId.Value);
+
+        if (room.CompanyId != companyId)
+            throw new BusinessRuleException(ErrorCodes.RoomCompanyMismatch, "Prostorija ne pripada odabranoj poslovnici.");
+    }
+
     private async Task<GroupDto> GetDtoById(Guid organizationId, Guid id)
     {
         Group group = await _groupHandler.GetById(organizationId, id);
@@ -711,6 +779,8 @@ public class GroupService : IGroupService
         dto.Capacity = group.Capacity;
         dto.DefaultTrainerId = group.DefaultTrainerId;
         dto.DefaultTrainerName = group.DefaultTrainer != null ? $"{group.DefaultTrainer.FirstName} {group.DefaultTrainer.LastName}" : null;
+        dto.DefaultRoomId = group.DefaultRoomId;
+        dto.DefaultRoomName = group.DefaultRoom?.Name;
         dto.IsActive = group.IsActive;
         dto.Note = group.Note;
         dto.Slots = group.Slots.Select(s => new GroupSlotDto
@@ -755,6 +825,8 @@ public class GroupService : IGroupService
             EmployeeName = a.Employee != null ? $"{a.Employee.FirstName} {a.Employee.LastName}" : null,
             CompanyId = a.CompanyId,
             CompanyName = a.Company?.Name,
+            RoomId = a.RoomId,
+            RoomName = a.Room?.Name,
             Status = a.Status,
             IsCancelled = a.Status == AppointmentStatus.Cancelled,
             Form = AppointmentForm.Group,

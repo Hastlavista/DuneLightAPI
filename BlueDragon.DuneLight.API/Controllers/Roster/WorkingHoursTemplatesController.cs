@@ -9,7 +9,7 @@ using Microsoft.AspNetCore.Mvc;
 
 namespace BlueDragon.DuneLight.API.Controllers.Roster;
 
-/// <summary>Predložak radnog vremena (zaposlenik/lokacija) i izračun dostupnosti — FAZA 1/2. Uređivanje je namjerno
+/// <summary>Predložak radnog vremena (zaposlenik/poslovnica) i izračun dostupnosti — FAZA 1/2. Uređivanje je namjerno
 /// Admin/Owner-only (roster.templates.manage, bez own/all) jer generira tvrdu blokadu zakazivanja za sve role.</summary>
 [ApiController]
 [Route("api")]

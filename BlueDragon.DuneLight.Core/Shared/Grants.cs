@@ -24,6 +24,8 @@ public static class Grants
     public const string CatalogPackagesManage = "catalog.packages.manage";
     public const string CatalogPriceListView = "catalog.price-list.view";
     public const string CatalogPriceListManage = "catalog.price-list.manage";
+    public const string CatalogRoomsView = "catalog.rooms.view";
+    public const string CatalogRoomsManage = "catalog.rooms.manage";
 
     public const string ClientsView = "clients.view";
     public const string ClientsManage = "clients.manage";
@@ -69,6 +71,8 @@ public static class Grants
     public const string RosterLeaveFundViewAll = "roster.leave-fund.view.all";
     public const string RosterLeaveFundManage = "roster.leave-fund.manage";
 
+    public const string OrganizationBrandingManage = "organization.branding.manage";
+
     /// <summary>Puni katalog za GET /api/grants — UI koristi za slaganje GrantGroup-a.</summary>
     public static readonly IReadOnlyList<GrantDefinition> Catalog = new List<GrantDefinition>
     {
@@ -79,14 +83,16 @@ public static class Grants
         new(EmployeesEngagementTypesView, "employees", "Pregled šifrarnika vrsta angažmana."),
         new(EmployeesEngagementTypesManage, "employees", "Uređivanje šifrarnika vrsta angažmana."),
 
-        new(CatalogCompaniesView, "catalog", "Pregled tvrtki/lokacija."),
-        new(CatalogCompaniesManage, "catalog", "Uređivanje tvrtki/lokacija."),
+        new(CatalogCompaniesView, "catalog", "Pregled tvrtki."),
+        new(CatalogCompaniesManage, "catalog", "Uređivanje tvrtki."),
         new(CatalogServicesView, "catalog", "Pregled usluga."),
         new(CatalogServicesManage, "catalog", "Uređivanje usluga."),
         new(CatalogPackagesView, "catalog", "Pregled paketa."),
         new(CatalogPackagesManage, "catalog", "Uređivanje paketa."),
         new(CatalogPriceListView, "catalog", "Pregled cjenika."),
         new(CatalogPriceListManage, "catalog", "Uređivanje cjenika."),
+        new(CatalogRoomsView, "catalog", "Pregled prostorija po poslovnici."),
+        new(CatalogRoomsManage, "catalog", "Uređivanje prostorija po poslovnici."),
 
         new(ClientsView, "clients", "Pregled klijenata (potpuno transparentno, bez own/all podjele)."),
         new(ClientsManage, "clients", "Kreiranje i uređivanje klijenata."),
@@ -120,13 +126,15 @@ public static class Grants
         new(RosterReviewsTeamView, "roster", "Timski mjesečni pregled rostera (transparentno)."),
         new(RosterReviewsPersonalViewOwn, "roster", "Osobni pregled rostera — samo vlastiti."),
         new(RosterReviewsPersonalViewAll, "roster", "Osobni pregled rostera — bilo čiji."),
-        new(RosterTemplatesView, "roster", "Pregled predložaka radnog vremena (zaposlenik/lokacija)."),
+        new(RosterTemplatesView, "roster", "Pregled predložaka radnog vremena (zaposlenik/poslovnica)."),
         new(RosterTemplatesManage, "roster", "Uređivanje predložaka radnog vremena — generira tvrdu blokadu zakazivanja."),
         new(RosterLeaveFundSettingsView, "roster", "Pregled postavki fonda godišnjeg odmora po zaposleniku."),
         new(RosterLeaveFundSettingsManage, "roster", "Uređivanje postavki fonda godišnjeg odmora (broj dana, datum obnove/isteka prijenosa)."),
         new(RosterLeaveFundViewOwn, "roster", "Pregled fonda godišnjeg odmora — samo vlastiti."),
         new(RosterLeaveFundViewAll, "roster", "Pregled fonda godišnjeg odmora — bilo čiji."),
         new(RosterLeaveFundManage, "roster", "Ručno otvaranje/korekcija fonda godišnjeg odmora za određenu godinu."),
+
+        new(OrganizationBrandingManage, "organization", "Uređivanje vizualnog identiteta organizacije (logo, favicon, boje)."),
     };
 }
 

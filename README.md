@@ -128,7 +128,7 @@ Sve greške (validacijske, poslovne, auth, framework-level 401/403) vraćaju se 
 | `EMAIL_ALREADY_IN_USE` | 409 | E-mail već postoji kao korisnički račun u organizaciji (`POST /api/employees/with-login`). |
 | `USER_ALREADY_LINKED` | 409 | Odabrani korisnički račun je već povezan s drugim zaposlenikom. |
 | `LAST_ACTIVE_ADMIN` | 409 | Pokušaj deaktivacije ili promjene uloge zadnjeg aktivnog Admina. |
-| `LAST_ACTIVE_LOCATION` | 409 | Pokušaj deaktivacije zadnje aktivne tvrtke. |
+| `LAST_ACTIVE_COMPANY` | 409 | Pokušaj deaktivacije zadnje aktivne tvrtke. |
 | `LAST_ACTIVE_SLOT` | 409 | Pokušaj deaktivacije zadnjeg aktivnog slota grupe. |
 | `ALREADY_MEMBER` | 409 | Klijent je već aktivan član grupe. |
 | `ALREADY_COMPLETED` | 409 | Termin je već označen kao odrađen. |
