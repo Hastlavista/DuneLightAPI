@@ -1,4 +1,5 @@
 using System;
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using BlueDragon.DuneLight.DatabaseMigration.Models;
@@ -35,7 +36,7 @@ public class DatabaseConfiguration
                 "Production", new ConfigurationModel
                 {
                     Database = "PostgreSQL",
-                    ConnectionString = @"",
+                    ConnectionString = Environment.GetEnvironmentVariable("DatabaseSettings__ConnectionString") ?? string.Empty,
                     Description = "Production database",
                     PreviewOnly = false,
                     Timeout = TimeSpan.FromSeconds(180)

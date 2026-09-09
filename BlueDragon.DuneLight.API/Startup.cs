@@ -211,6 +211,7 @@ public class Startup
         services.AddSingleton<IOnboardingHandler, OnboardingHandler>();
 
         services.AddSingleton<IOrganizationBrandingHandler, OrganizationBrandingHandler>();
+        services.AddSingleton<IOrganizationBrandingAuditLogHandler, OrganizationBrandingAuditLogHandler>();
 
         #endregion
 

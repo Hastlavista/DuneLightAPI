@@ -6,6 +6,7 @@ using BlueDragon.DuneLight.Infrastructure.Domain.Models.Catalog;
 using BlueDragon.DuneLight.Infrastructure.Domain.Models.Clients;
 using BlueDragon.DuneLight.Infrastructure.Domain.Models.Employees;
 using BlueDragon.DuneLight.Infrastructure.Domain.Models.Groups;
+using BlueDragon.DuneLight.Infrastructure.Domain.Models.Organizations;
 using BlueDragon.DuneLight.Infrastructure.Domain.Models.Permissions;
 using BlueDragon.DuneLight.Infrastructure.Domain.Models.Roster;
 using Microsoft.EntityFrameworkCore;
@@ -58,6 +59,8 @@ public class DatabaseContext : DbContext
     public DbSet<LeaveFundUsage> LeaveFundUsages { get; set; }
     public DbSet<CompanyHoliday> CompanyHolidays { get; set; }
 
+    public DbSet<OrganizationBrandingAuditLog> OrganizationBrandingAuditLog { get; set; }
+
     public DbSet<GrantGroup> GrantGroups { get; set; }
     public DbSet<GrantGroupGrant> GrantGroupGrants { get; set; }
     public DbSet<UserGrantGroup> UserGrantGroups { get; set; }
@@ -74,6 +77,9 @@ public class DatabaseContext : DbContext
 
         modelBuilder.Entity<Organization>().HasKey(o => new { o.Id });
         modelBuilder.Entity<Organization>().HasIndex(o => o.Slug).IsUnique();
+
+        modelBuilder.Entity<OrganizationBrandingAuditLog>().HasKey(a => a.Id);
+        modelBuilder.Entity<OrganizationBrandingAuditLog>().HasIndex(a => a.OrganizationId);
 
         modelBuilder.Entity<User>().HasKey(u => new { u.Id });
         modelBuilder.Entity<User>().HasIndex(u => new { u.OrganizationId, u.Email }).IsUnique();

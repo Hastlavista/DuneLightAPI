@@ -34,7 +34,7 @@ public class OrganizationBrandingController : ControllerBase
     /// <summary>Javni branding za login screen — bez prijave, po slugu organizacije.</summary>
     [HttpGet("public/{organizationSlug}")]
     [AllowAnonymous]
-    public async Task<ActionResult<OrganizationBrandingDto>> GetPublicBranding(string organizationSlug)
+    public async Task<ActionResult<OrganizationBrandingResponse>> GetPublicBranding(string organizationSlug)
     {
         return Ok(await _organizationBrandingService.GetPublicBranding(organizationSlug));
     }
@@ -50,7 +50,15 @@ public class OrganizationBrandingController : ControllerBase
     [RequireGrant(Grants.OrganizationBrandingManage)]
     public async Task<ActionResult<OrganizationBrandingDto>> UpdateColors([FromBody] BrandingColorsUpdateRequest request)
     {
-        return Ok(await _organizationBrandingService.UpdateColors(this.CurrentOrganizationId(), request));
+        return Ok(await _organizationBrandingService.UpdateColors(this.CurrentOrganizationId(), this.CurrentUserId(), request));
+    }
+
+    /// <summary>Vraća obje boje na platformski default (NULL) — čist "reset" postupak, odvojen od PUT colors.</summary>
+    [HttpDelete("colors")]
+    [RequireGrant(Grants.OrganizationBrandingManage)]
+    public async Task<ActionResult<OrganizationBrandingDto>> ResetColors()
+    {
+        return Ok(await _organizationBrandingService.ResetColors(this.CurrentOrganizationId(), this.CurrentUserId()));
     }
 
     [HttpPost("upload/logo")]
@@ -62,7 +70,7 @@ public class OrganizationBrandingController : ControllerBase
             throw new ValidationAppException("Nije poslana datoteka za upload.");
 
         await using Stream stream = file.OpenReadStream();
-        BrandingUploadResponse result = await _organizationBrandingService.UploadLogo(this.CurrentOrganizationId(), stream, file.FileName);
+        BrandingUploadResponse result = await _organizationBrandingService.UploadLogo(this.CurrentOrganizationId(), this.CurrentUserId(), stream, file.FileName, file.ContentType);
         return Ok(result);
     }
 
@@ -75,7 +83,7 @@ public class OrganizationBrandingController : ControllerBase
             throw new ValidationAppException("Nije poslana datoteka za upload.");
 
         await using Stream stream = file.OpenReadStream();
-        BrandingUploadResponse result = await _organizationBrandingService.UploadFavicon(this.CurrentOrganizationId(), stream, file.FileName);
+        BrandingUploadResponse result = await _organizationBrandingService.UploadFavicon(this.CurrentOrganizationId(), this.CurrentUserId(), stream, file.FileName, file.ContentType);
         return Ok(result);
     }
 
@@ -83,13 +91,13 @@ public class OrganizationBrandingController : ControllerBase
     [RequireGrant(Grants.OrganizationBrandingManage)]
     public async Task<ActionResult<OrganizationBrandingDto>> RemoveLogo()
     {
-        return Ok(await _organizationBrandingService.RemoveLogo(this.CurrentOrganizationId()));
+        return Ok(await _organizationBrandingService.RemoveLogo(this.CurrentOrganizationId(), this.CurrentUserId()));
     }
 
     [HttpDelete("favicon")]
     [RequireGrant(Grants.OrganizationBrandingManage)]
     public async Task<ActionResult<OrganizationBrandingDto>> RemoveFavicon()
     {
-        return Ok(await _organizationBrandingService.RemoveFavicon(this.CurrentOrganizationId()));
+        return Ok(await _organizationBrandingService.RemoveFavicon(this.CurrentOrganizationId(), this.CurrentUserId()));
     }
 }

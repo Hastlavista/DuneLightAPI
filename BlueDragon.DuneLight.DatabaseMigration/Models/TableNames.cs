@@ -47,6 +47,8 @@ public static class Tables
     public const string LeaveFundUsages = "leave_fund_usages";
     public const string CompanyHolidays = "company_holidays";
 
+    public const string OrganizationBrandingAuditLog = "organization_branding_audit_log";
+
     public const string GrantGroups = "grant_groups";
     public const string GrantGroupGrants = "grant_group_grants";
     public const string UserGrantGroups = "user_grant_groups";
