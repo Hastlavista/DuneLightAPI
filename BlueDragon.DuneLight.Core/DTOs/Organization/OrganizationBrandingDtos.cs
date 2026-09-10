@@ -12,6 +12,7 @@ public class OrganizationBrandingDto
     public string Favicon { get; set; }
     public string PrimaryColor { get; set; }
     public string SecondaryColor { get; set; }
+    public string SurfaceColor { get; set; }
 }
 
 /// <summary>Puni branding koji dobiva organizacija prilikom uređivanja u settingsima.</summary>
@@ -37,6 +38,11 @@ public class BrandingColorsUpdateRequest
     [RegularExpression(@"^#([0-9A-Fa-f]{6})$", ErrorMessage = "Sekundarna boja mora biti u HEX formatu (npr. #185ABC).")]
     [MaxLength(7)]
     public string SecondaryColor { get; set; }
+
+    /// <summary>Neobavezna — smije biti null (nema custom boju površine) ili validan HEX.</summary>
+    [RegularExpression(@"^#([0-9A-Fa-f]{6})$", ErrorMessage = "Boja površine mora biti u HEX formatu (npr. #F5F5F5).")]
+    [MaxLength(7)]
+    public string SurfaceColor { get; set; }
 }
 
 /// <summary>Odgovor nakon uspješnog uploada logo/favicona.</summary>

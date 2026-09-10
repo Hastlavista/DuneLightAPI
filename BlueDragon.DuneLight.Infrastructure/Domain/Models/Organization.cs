@@ -34,6 +34,10 @@ public class Organization
     [Column("secondary_color")]
     public string SecondaryColor { get; set; }
 
+    /// <summary>Boja površine (kartice/paneli). HEX format (npr. #F5F5F5). Nullable — nije obavezna.</summary>
+    [Column("surface_color")]
+    public string SurfaceColor { get; set; }
+
     [Column("created_at")]
     public DateTimeOffset? CreatedAt { get; set; }
 }

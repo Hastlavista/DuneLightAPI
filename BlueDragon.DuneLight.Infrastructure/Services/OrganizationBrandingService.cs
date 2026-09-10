@@ -51,14 +51,17 @@ public class OrganizationBrandingService : IOrganizationBrandingService
 
         string oldPrimary = organization.PrimaryColor;
         string oldSecondary = organization.SecondaryColor;
+        string oldSurface = organization.SurfaceColor;
         string newPrimary = NormalizeHex(request.PrimaryColor);
         string newSecondary = NormalizeHex(request.SecondaryColor);
+        string newSurface = NormalizeHex(request.SurfaceColor);
 
         organization.PrimaryColor = newPrimary;
         organization.SecondaryColor = newSecondary;
+        organization.SurfaceColor = newSurface;
         await _organizationBrandingHandler.Update(organization);
 
-        await AddAuditEntry(organizationId, userId, "ColorsUpdated", $"{oldPrimary}/{oldSecondary}", $"{newPrimary}/{newSecondary}");
+        await AddAuditEntry(organizationId, userId, "ColorsUpdated", $"{oldPrimary}/{oldSecondary}/{oldSurface}", $"{newPrimary}/{newSecondary}/{newSurface}");
 
         return ToDto(organization);
     }
@@ -69,12 +72,14 @@ public class OrganizationBrandingService : IOrganizationBrandingService
 
         string oldPrimary = organization.PrimaryColor;
         string oldSecondary = organization.SecondaryColor;
+        string oldSurface = organization.SurfaceColor;
 
         organization.PrimaryColor = null;
         organization.SecondaryColor = null;
+        organization.SurfaceColor = null;
         await _organizationBrandingHandler.Update(organization);
 
-        await AddAuditEntry(organizationId, userId, "ColorsReset", $"{oldPrimary}/{oldSecondary}", null);
+        await AddAuditEntry(organizationId, userId, "ColorsReset", $"{oldPrimary}/{oldSecondary}/{oldSurface}", null);
 
         return ToDto(organization);
     }
@@ -204,7 +209,8 @@ public class OrganizationBrandingService : IOrganizationBrandingService
             Logo = organization.Logo,
             Favicon = organization.Favicon,
             PrimaryColor = organization.PrimaryColor,
-            SecondaryColor = organization.SecondaryColor
+            SecondaryColor = organization.SecondaryColor,
+            SurfaceColor = organization.SurfaceColor
         };
     }
 
@@ -216,6 +222,7 @@ public class OrganizationBrandingService : IOrganizationBrandingService
             Favicon = organization.Favicon,
             PrimaryColor = organization.PrimaryColor,
             SecondaryColor = organization.SecondaryColor,
+            SurfaceColor = organization.SurfaceColor,
             OrganizationName = organization.Name,
             OrganizationSlug = organization.Slug
         };
