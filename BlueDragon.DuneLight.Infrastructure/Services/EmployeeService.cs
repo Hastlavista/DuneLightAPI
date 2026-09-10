@@ -294,7 +294,7 @@ public class EmployeeService : IEmployeeService
         {
             bool hasFutureAppointments = await _futureAppointmentsProvider.HasFutureAppointments(organizationId, id);
             if (hasFutureAppointments)
-                result.Warning = "Zaposlenik ima buduće termine.";
+                result.Warning = new WarningDto(WarningCodes.EmployeeHasFutureAppointments);
         }
 
         return result;

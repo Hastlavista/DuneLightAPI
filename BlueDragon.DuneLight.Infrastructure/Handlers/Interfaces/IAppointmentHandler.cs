@@ -44,6 +44,11 @@ public interface IAppointmentHandler
 
     Task Delete(Appointment appointment);
 
+    /// <summary>Trajno briše više termina odjednom unutar zajedničke transakcije (npr. otkazivanje generiranih
+    /// grupnih termina pri deaktivaciji grupe) — vidi IUnitOfWork. AppointmentClient/AppointmentAttendance/
+    /// AppointmentAuditLog redci se brišu kaskadno na razini baze (ON DELETE CASCADE).</summary>
+    Task DeleteRange(IUnitOfWork uow, List<Appointment> appointments);
+
     Task<List<Appointment>> GetOverlappingForEmployee(Guid organizationId, Guid employeeId, DateTimeOffset startsAt, int durationMinutes, Guid? excludeId);
 
     Task<List<Appointment>> GetOverlappingForClients(Guid organizationId, List<Guid> clientIds, DateTimeOffset startsAt, int durationMinutes, Guid? excludeId);
@@ -72,6 +77,13 @@ public interface IAppointmentHandler
     Task AddRange(List<Appointment> appointments);
 
     Task<(List<Appointment> Items, int TotalCount)> GetByClient(Guid organizationId, Guid clientId, PagedRequest request);
+
+    /// <summary>Povijest odrađenih termina po zaposleniku (samo Completed), najnoviji prvi — vidi GetByClient.</summary>
+    Task<(List<Appointment> Items, int TotalCount)> GetByEmployee(Guid organizationId, Guid employeeId, PagedRequest request);
+
+    /// <summary>Budući, još neodržani termini grupe (Scheduled, StartsAt u budućnosti) — kandidati za otkazivanje
+    /// pri deaktivaciji grupe. Unutar zajedničke transakcije — vidi IUnitOfWork.</summary>
+    Task<List<Appointment>> GetFutureScheduledForGroup(IUnitOfWork uow, Guid organizationId, Guid groupId);
 
     Task<bool> HasFutureScheduledForEmployee(Guid organizationId, Guid employeeId);
 

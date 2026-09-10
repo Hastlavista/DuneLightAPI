@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.ComponentModel.DataAnnotations;
+using BlueDragon.DuneLight.Core.Shared;
 
 namespace BlueDragon.DuneLight.Core.DTOs.Employees;
 
@@ -55,8 +56,8 @@ public class EmployeeDto
     public DateTimeOffset? UpdatedAt { get; set; }
     public Guid? UpdatedBy { get; set; }
 
-    /// <summary>Transient poruka upozorenja (npr. "ima buduće termine") — nije perzistirana, popunjava se samo u odgovoru na (de)aktivaciju.</summary>
-    public string Warning { get; set; }
+    /// <summary>Transient upozorenje (npr. ima buduće termine) — nije perzistirano, popunjava se samo u odgovoru na (de)aktivaciju.</summary>
+    public WarningDto Warning { get; set; }
 }
 
 public class EmployeeCreateRequest

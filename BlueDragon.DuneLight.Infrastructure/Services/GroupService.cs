@@ -34,6 +34,7 @@ public class GroupService : IGroupService
     private readonly IAppointmentHandler _appointmentHandler;
     private readonly IRosterEntryHandler _rosterEntryHandler;
     private readonly IWorkingHoursTemplateHandler _workingHoursTemplateHandler;
+    private readonly IScheduleBreakHandler _scheduleBreakHandler;
     private readonly IUnitOfWorkFactory _unitOfWorkFactory;
 
     public GroupService(
@@ -48,6 +49,7 @@ public class GroupService : IGroupService
         IAppointmentHandler appointmentHandler,
         IRosterEntryHandler rosterEntryHandler,
         IWorkingHoursTemplateHandler workingHoursTemplateHandler,
+        IScheduleBreakHandler scheduleBreakHandler,
         IUnitOfWorkFactory unitOfWorkFactory)
     {
         _groupHandler = groupHandler;
@@ -61,6 +63,7 @@ public class GroupService : IGroupService
         _appointmentHandler = appointmentHandler;
         _rosterEntryHandler = rosterEntryHandler;
         _workingHoursTemplateHandler = workingHoursTemplateHandler;
+        _scheduleBreakHandler = scheduleBreakHandler;
         _unitOfWorkFactory = unitOfWorkFactory;
     }
 
@@ -72,10 +75,18 @@ public class GroupService : IGroupService
         foreach (GroupSlotCreateRequest slot in request.Slots)
             ValidateSlotTime(slot.StartTime);
 
-        await EnsureServiceExists(organizationId, request.ServiceId);
+        ServiceEntity service = await EnsureServiceExists(organizationId, request.ServiceId);
         await EnsureCompanyExists(organizationId, request.CompanyId);
         await EnsureTrainerExists(organizationId, request.DefaultTrainerId);
         await EnsureRoomExists(organizationId, request.CompanyId, request.DefaultRoomId);
+
+        List<(DayOfWeek DayOfWeek, TimeSpan StartTime)> slotTuples =
+            request.Slots.Select(s => (s.DayOfWeek, s.StartTime)).ToList();
+
+        await EnsureNoRoomSlotConflict(
+            organizationId, excludeGroupId: null, request.DefaultRoomId, service.DefaultDurationMinutes, slotTuples);
+        List<WarningDto> warnings = await ComputeWorkingHoursWarnings(
+            organizationId, request.CompanyId, request.DefaultTrainerId, service.DefaultDurationMinutes, slotTuples);
 
         Guid groupId = Guid.NewGuid();
         DateTimeOffset now = DateTimeOffset.UtcNow;
@@ -107,7 +118,9 @@ public class GroupService : IGroupService
         }).ToList();
 
         await _groupHandler.Add(group);
-        return await GetDtoById(organizationId, groupId);
+        GroupDto dto = await GetDtoById(organizationId, groupId);
+        dto.Warnings.AddRange(warnings);
+        return dto;
     }
 
     public async Task<GroupDto> Update(Guid organizationId, Guid userId, Guid id, GroupUpdateRequest request)
@@ -116,10 +129,19 @@ public class GroupService : IGroupService
         if (existing == null)
             throw new NotFoundAppException("Group", id);
 
-        await EnsureServiceExists(organizationId, request.ServiceId);
+        ServiceEntity service = await EnsureServiceExists(organizationId, request.ServiceId);
         await EnsureCompanyExists(organizationId, request.CompanyId);
         await EnsureTrainerExists(organizationId, request.DefaultTrainerId);
         await EnsureRoomExists(organizationId, request.CompanyId, request.DefaultRoomId);
+
+        Group fullExisting = await _groupHandler.GetById(organizationId, id);
+        List<(DayOfWeek DayOfWeek, TimeSpan StartTime)> slotTuples = fullExisting.Slots
+            .Where(s => s.IsActive).Select(s => (s.DayOfWeek, s.StartTime)).ToList();
+
+        await EnsureNoRoomSlotConflict(
+            organizationId, excludeGroupId: id, request.DefaultRoomId, service.DefaultDurationMinutes, slotTuples);
+        List<WarningDto> warnings = await ComputeWorkingHoursWarnings(
+            organizationId, request.CompanyId, request.DefaultTrainerId, service.DefaultDurationMinutes, slotTuples);
 
         DateTimeOffset now = DateTimeOffset.UtcNow;
 
@@ -173,7 +195,9 @@ public class GroupService : IGroupService
             await uow.CommitAsync();
         }
 
-        return await GetDtoById(organizationId, id);
+        GroupDto dto = await GetDtoById(organizationId, id);
+        dto.Warnings.AddRange(warnings);
+        return dto;
     }
 
     public async Task<GroupDto> SetActive(Guid organizationId, Guid userId, Guid id, bool isActive)
@@ -205,6 +229,16 @@ public class GroupService : IGroupService
                 ChangedAt = now,
                 ChangedBy = userId
             });
+
+            // Deaktivacija grupe trajno briše njene već generirane buduće termine (Scheduled, StartsAt u
+            // budućnosti) — ne otkazuje ih. Ne čuvamo ih kao Cancelled povijest jer su to bili tek generirani
+            // "prazni" slotovi (nitko nije čekiran, ništa nije naplaćeno), pa nema smisla trajno gomilati te
+            // retke po organizaciji. Prošli/već odrađeni termini se ne diraju — vidi GetFutureScheduledForGroup.
+            if (wasActive && !isActive)
+            {
+                List<Appointment> futureAppointments = await _appointmentHandler.GetFutureScheduledForGroup(uow, organizationId, id);
+                await _appointmentHandler.DeleteRange(uow, futureAppointments);
+            }
 
             await uow.CommitAsync();
         }
@@ -253,6 +287,15 @@ public class GroupService : IGroupService
 
         ValidateSlotTime(request.StartTime);
 
+        ServiceEntity service = await _serviceHandler.GetById(organizationId, group.ServiceId);
+        List<(DayOfWeek DayOfWeek, TimeSpan StartTime)> slotTuple =
+            new() { (request.DayOfWeek, request.StartTime) };
+
+        await EnsureNoRoomSlotConflict(
+            organizationId, excludeGroupId: groupId, group.DefaultRoomId, service.DefaultDurationMinutes, slotTuple);
+        List<WarningDto> warnings = await ComputeWorkingHoursWarnings(
+            organizationId, group.CompanyId, group.DefaultTrainerId, service.DefaultDurationMinutes, slotTuple);
+
         await _groupHandler.AddSlot(new GroupSlot
         {
             Id = Guid.NewGuid(),
@@ -263,12 +306,16 @@ public class GroupService : IGroupService
             CreatedAt = DateTimeOffset.UtcNow
         });
 
-        return await GetDtoById(organizationId, groupId);
+        GroupDto dto = await GetDtoById(organizationId, groupId);
+        dto.Warnings.AddRange(warnings);
+        return dto;
     }
 
     public async Task<GroupDto> UpdateSlot(Guid organizationId, Guid userId, Guid groupId, Guid slotId, GroupSlotUpdateRequest request)
     {
-        await EnsureGroupExists(organizationId, groupId);
+        Group group = await _groupHandler.GetByIdLight(organizationId, groupId);
+        if (group == null)
+            throw new NotFoundAppException("Group", groupId);
 
         GroupSlot slot = await _groupHandler.GetSlotById(organizationId, groupId, slotId);
         if (slot == null)
@@ -276,12 +323,23 @@ public class GroupService : IGroupService
 
         ValidateSlotTime(request.StartTime);
 
+        ServiceEntity service = await _serviceHandler.GetById(organizationId, group.ServiceId);
+        List<(DayOfWeek DayOfWeek, TimeSpan StartTime)> slotTuple =
+            new() { (request.DayOfWeek, request.StartTime) };
+
+        await EnsureNoRoomSlotConflict(
+            organizationId, excludeGroupId: groupId, group.DefaultRoomId, service.DefaultDurationMinutes, slotTuple);
+        List<WarningDto> warnings = await ComputeWorkingHoursWarnings(
+            organizationId, group.CompanyId, group.DefaultTrainerId, service.DefaultDurationMinutes, slotTuple);
+
         // Izmjena ne dira već generirane termine (GroupSlotId ostaje isti) — utječe samo na sljedeća generiranja.
         slot.DayOfWeek = request.DayOfWeek;
         slot.StartTime = request.StartTime;
         await _groupHandler.UpdateSlot(slot);
 
-        return await GetDtoById(organizationId, groupId);
+        GroupDto dto = await GetDtoById(organizationId, groupId);
+        dto.Warnings.AddRange(warnings);
+        return dto;
     }
 
     public async Task<GroupDto> RemoveSlot(Guid organizationId, Guid userId, Guid groupId, Guid slotId)
@@ -351,7 +409,11 @@ public class GroupService : IGroupService
 
         int activeMembers = await _groupHandler.CountActiveMembers(groupId);
         if (activeMembers > group.Capacity)
-            dto.Warnings.Add("Kapacitet grupe je premašen.");
+            dto.Warnings.Add(new WarningDto(WarningCodes.GroupCapacityExceeded, new WarningGroupCapacityDetails
+            {
+                Capacity = group.Capacity,
+                ActiveMemberCount = activeMembers
+            }));
 
         return dto;
     }
@@ -459,7 +521,8 @@ public class GroupService : IGroupService
             }
         }
 
-        await EnsureNoTrainerConflicts(organizationId, candidates);
+        Dictionary<(Guid SlotId, DateTimeOffset StartsAt), List<WarningDto>> warningsByCandidate =
+            await EnsureNoTrainerConflicts(organizationId, candidates);
         await EnsureNoRoomConflicts(organizationId, candidates);
 
         List<Appointment> toCreate = new List<Appointment>();
@@ -498,6 +561,8 @@ public class GroupService : IGroupService
                 CreatedBy = userId
             });
 
+            warningsByCandidate.TryGetValue((slot.Id.GetValueOrDefault(), startsAt), out List<WarningDto> occurrenceWarnings);
+
             createdDtos.Add(new AppointmentScheduleCellDto
             {
                 Id = appointmentId,
@@ -518,7 +583,8 @@ public class GroupService : IGroupService
                 GroupId = group.Id,
                 GroupName = group.Name,
                 AttendanceCount = 0,
-                ExpectedCount = group.Members.Count(m => m.IsActive)
+                ExpectedCount = group.Members.Count(m => m.IsActive),
+                Warnings = occurrenceWarnings ?? new List<WarningDto>()
             });
         }
 
@@ -562,14 +628,19 @@ public class GroupService : IGroupService
         public DateTimeOffset StartsAt { get; init; }
     }
 
-    /// <summary>Tvrda, unaprijedna provjera za GenerateAppointments — ako bilo koji kandidat u nizu sudara s postojećim
-    /// terminom trenera ili pada izvan njegovog radnog vremena/rostera, baca RECURRING_CONFLICT (409) prije nego se
-    /// bilo što spremi (isti obrazac kao AppointmentService.EnsureNoRecurringConflicts). Grupe bez dodijeljenog
-    /// trenera (DefaultTrainerId == null) se preskaču — nema koga provjeriti. Kandidati se grupiraju po treneru kako
-    /// bi se termini/roster/predlošci dohvatili JEDNOM po treneru za cijeli raspon, umjesto po occurrenceu.</summary>
-    private async Task EnsureNoTrainerConflicts(Guid organizationId, List<GroupOccurrenceCandidate> candidates)
+    /// <summary>Za GenerateAppointments — STVARNI sudar (trener već ima termin/grupu u to vrijeme) i dalje baca
+    /// RECURRING_CONFLICT (409) prije nego se bilo što spremi, cijeli batch abortira (isti obrazac kao
+    /// AppointmentService.EnsureNoRecurringConflicts). Trener odsutan (roster), izvan radnog vremena, ili na pauzi
+    /// (ScheduleBreak) VIŠE ne blokiraju — vraćaju se kao upozorenje po kandidatu (ključ (GroupSlotId, StartsAt),
+    /// isti ključ kao dedup-set u GenerateAppointments) koje pozivatelj upisuje u AppointmentScheduleCellDto.Warnings
+    /// nakon što se termini stvarno kreiraju. Grupe bez dodijeljenog trenera (DefaultTrainerId == null) se
+    /// preskaču — nema koga provjeriti. Kandidati se grupiraju po treneru kako bi se termini/roster/pauze/predlošci
+    /// dohvatili JEDNOM po treneru za cijeli raspon, umjesto po occurrenceu.</summary>
+    private async Task<Dictionary<(Guid SlotId, DateTimeOffset StartsAt), List<WarningDto>>> EnsureNoTrainerConflicts(
+        Guid organizationId, List<GroupOccurrenceCandidate> candidates)
     {
-        List<RecurringConflictDetail> conflicts = new List<RecurringConflictDetail>();
+        List<RecurringConflictDetail> hardConflicts = new List<RecurringConflictDetail>();
+        Dictionary<(Guid, DateTimeOffset), List<WarningDto>> warningsByCandidate = new Dictionary<(Guid, DateTimeOffset), List<WarningDto>>();
 
         IEnumerable<IGrouping<Guid, GroupOccurrenceCandidate>> byEmployee = candidates
             .Where(c => c.Group.DefaultTrainerId.HasValue)
@@ -584,6 +655,9 @@ public class GroupService : IGroupService
             DateTimeOffset rangeTo = ordered[^1].StartsAt.AddDays(1);
 
             List<Appointment> candidateAppointments = await _appointmentHandler.GetForEmployeeInRange(
+                organizationId, employeeId, rangeFrom, rangeTo);
+
+            List<ScheduleBreak> candidateBreaks = await _scheduleBreakHandler.GetForEmployeeInRange(
                 organizationId, employeeId, rangeFrom, rangeTo);
 
             List<RosterEntry> rosterEntriesInRange = await _rosterEntryHandler.GetForPeriod(
@@ -602,41 +676,55 @@ public class GroupService : IGroupService
                 int durationMinutes = candidate.Group.Service.DefaultDurationMinutes;
                 DateTimeOffset startsAt = candidate.StartsAt;
                 DateTimeOffset occurrenceEnd = startsAt.AddMinutes(durationMinutes);
+                (Guid, DateTimeOffset) key = (candidate.Slot.Id.GetValueOrDefault(), startsAt);
 
                 bool appointmentHit = candidateAppointments.Any(a =>
                     a.StartsAt < occurrenceEnd && startsAt < a.StartsAt.AddMinutes(a.DurationMinutes));
 
                 if (appointmentHit)
                 {
-                    conflicts.Add(new RecurringConflictDetail { Date = startsAt, Reason = ErrorCodes.RecurringConflictReasonAppointment });
+                    hardConflicts.Add(new RecurringConflictDetail { Date = startsAt, Reason = ErrorCodes.RecurringConflictReasonAppointment });
                     continue;
                 }
+
+                List<WarningDto> warnings = new List<WarningDto>();
+
+                bool breakHit = candidateBreaks.Any(b =>
+                    b.StartsAt < occurrenceEnd && startsAt < b.StartsAt.AddMinutes(b.DurationMinutes));
+                if (breakHit)
+                    warnings.Add(new WarningDto(WarningCodes.EmployeeOnBreak));
 
                 bool absenceHit = absences.Any(a =>
                     a.DateFrom.Date <= startsAt.Date && (a.DateTo == null || startsAt.Date <= a.DateTo.Value.Date));
 
                 if (absenceHit)
                 {
-                    conflicts.Add(new RecurringConflictDetail { Date = startsAt, Reason = ErrorCodes.RecurringConflictReasonRosterAbsence });
-                    continue;
+                    warnings.Add(new WarningDto(WarningCodes.EmployeeAbsent));
+                }
+                else
+                {
+                    List<RosterEntry> rosterEntriesForOccurrence = rosterEntriesInRange
+                        .Where(e => !e.RosterType.IsAbsence && e.DateFrom.Date == startsAt.Date)
+                        .ToList();
+
+                    WorkingHoursTemplate companyTemplate = companyTemplatesById[candidate.Group.CompanyId];
+
+                    if (!IsWithinWorkingHours(employeeTemplate, companyTemplate, rosterEntriesForOccurrence, startsAt, durationMinutes))
+                        warnings.Add(new WarningDto(WarningCodes.OutsideWorkingHours));
                 }
 
-                List<RosterEntry> rosterEntriesForOccurrence = rosterEntriesInRange
-                    .Where(e => !e.RosterType.IsAbsence && e.DateFrom.Date == startsAt.Date)
-                    .ToList();
-
-                WorkingHoursTemplate companyTemplate = companyTemplatesById[candidate.Group.CompanyId];
-
-                if (!IsWithinWorkingHours(employeeTemplate, companyTemplate, rosterEntriesForOccurrence, startsAt, durationMinutes))
-                    conflicts.Add(new RecurringConflictDetail { Date = startsAt, Reason = ErrorCodes.RecurringConflictReasonOutsideWorkingHours });
+                if (warnings.Count > 0)
+                    warningsByCandidate[key] = warnings;
             }
         }
 
-        if (conflicts.Count > 0)
+        if (hardConflicts.Count > 0)
             throw new BusinessRuleException(
                 ErrorCodes.RecurringConflict,
                 "Neki termini u nizu se sudaraju s postojećim obavezama.",
-                new { conflicts });
+                new { conflicts = hardConflicts });
+
+        return warningsByCandidate;
     }
 
     /// <summary>Isti obrazac kao EnsureNoTrainerConflicts, ali po prostoriji — grupe bez DefaultRoomId ili čija
@@ -705,6 +793,91 @@ public class GroupService : IGroupService
         return new DateTimeOffset(date.Year, date.Month, date.Day, 0, 0, 0, offsetSource.Offset).Add(timeOfDay);
     }
 
+    /// <summary>Radno vrijeme (trener/poslovnica) za definiciju grupe (Create/Update/AddSlot/UpdateSlot) je
+    /// UPOZORENJE, ne blokada — isti obrazac kao AppointmentService za pojedinačni termin. Provjerava se prema
+    /// predlošku (bez roster odsutnosti/override-a — nema konkretnog datuma na razini definicije grupe, samo
+    /// dan-u-tjednu + vrijeme), pa se za svaki slot uzima najbliži budući datum tog dana kao reprezentativni.</summary>
+    private async Task<List<WarningDto>> ComputeWorkingHoursWarnings(
+        Guid organizationId, Guid companyId, Guid? trainerId, int durationMinutes,
+        List<(DayOfWeek DayOfWeek, TimeSpan StartTime)> slots)
+    {
+        List<WarningDto> warnings = new List<WarningDto>();
+        if (!trainerId.HasValue)
+            return warnings;
+
+        WorkingHoursTemplate employeeTemplate = await _workingHoursTemplateHandler.GetForEmployee(organizationId, trainerId.Value);
+        WorkingHoursTemplate companyTemplate = await _workingHoursTemplateHandler.GetForCompany(organizationId, companyId);
+        DateTimeOffset now = DateTimeOffset.UtcNow;
+
+        foreach ((DayOfWeek dayOfWeek, TimeSpan startTime) in slots)
+        {
+            DateTime representativeDate = NextOccurrenceDate(now, dayOfWeek);
+            DateTimeOffset startsAt = ComputeStartsAt(representativeDate, startTime, now);
+
+            if (!IsWithinWorkingHours(employeeTemplate, companyTemplate, new List<RosterEntry>(), startsAt, durationMinutes))
+            {
+                warnings.Add(new WarningDto(WarningCodes.OutsideWorkingHours, new WarningSlotDetails
+                {
+                    DayOfWeek = dayOfWeek,
+                    StartTime = startTime
+                }));
+            }
+        }
+
+        return warnings;
+    }
+
+    private static DateTime NextOccurrenceDate(DateTimeOffset from, DayOfWeek dayOfWeek)
+    {
+        int diff = ((int)dayOfWeek - (int)from.DayOfWeek + 7) % 7;
+        return from.Date.AddDays(diff);
+    }
+
+    /// <summary>Tvrda blokada (409) — druga aktivna grupa već koristi istu prostoriju u preklapajućem
+    /// danu-u-tjednu/vremenu, a prostorija ne dopušta paralelne rezervacije (AllowConcurrentBookings=false).
+    /// excludeGroupId isključuje grupu koja se upravo ažurira (ne sudara se sama sa sobom).</summary>
+    private async Task EnsureNoRoomSlotConflict(
+        Guid organizationId, Guid? excludeGroupId, Guid? roomId, int durationMinutes,
+        List<(DayOfWeek DayOfWeek, TimeSpan StartTime)> slots)
+    {
+        if (!roomId.HasValue)
+            return;
+
+        Room room = await _roomHandler.GetById(organizationId, roomId.Value);
+        if (room == null || room.AllowConcurrentBookings)
+            return;
+
+        List<Group> otherGroups = await _groupHandler.GetAll(organizationId, isActive: true);
+
+        foreach (Group other in otherGroups)
+        {
+            if (other.Id == excludeGroupId || other.DefaultRoomId != roomId)
+                continue;
+
+            int otherDuration = other.Service?.DefaultDurationMinutes ?? 0;
+
+            foreach (GroupSlot otherSlot in other.Slots.Where(s => s.IsActive))
+            {
+                TimeSpan otherStart = otherSlot.StartTime;
+                TimeSpan otherEnd = otherStart + TimeSpan.FromMinutes(otherDuration);
+
+                foreach ((DayOfWeek dayOfWeek, TimeSpan startTime) in slots)
+                {
+                    if (dayOfWeek != otherSlot.DayOfWeek)
+                        continue;
+
+                    TimeSpan end = startTime + TimeSpan.FromMinutes(durationMinutes);
+                    if (startTime < otherEnd && otherStart < end)
+                    {
+                        throw new BusinessRuleException(
+                            ErrorCodes.AppointmentOverlap,
+                            $"Prostorija je već zauzeta u ovom terminu (grupa \"{other.Name}\").");
+                    }
+                }
+            }
+        }
+    }
+
     private static void ValidateSlotTime(TimeSpan startTime)
     {
         if (startTime < TimeSpan.Zero || startTime >= TimeSpan.FromDays(1))
@@ -718,11 +891,17 @@ public class GroupService : IGroupService
             throw new NotFoundAppException("Group", groupId);
     }
 
-    private async Task EnsureServiceExists(Guid organizationId, Guid serviceId)
+    private async Task<ServiceEntity> EnsureServiceExists(Guid organizationId, Guid serviceId)
     {
         ServiceEntity service = await _serviceHandler.GetById(organizationId, serviceId);
         if (service == null)
             throw new NotFoundAppException("Service", serviceId);
+
+        if (service.ExecutionMode != ServiceExecutionMode.Group)
+            throw new BusinessRuleException(
+                ErrorCodes.ServiceNotGroupMode, "Grupa može koristiti samo uslugu s grupnim načinom izvođenja.");
+
+        return service;
     }
 
     private async Task EnsureCompanyExists(Guid organizationId, Guid companyId)

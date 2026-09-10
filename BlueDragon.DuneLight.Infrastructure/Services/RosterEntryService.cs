@@ -90,7 +90,7 @@ public class RosterEntryService : IRosterEntryService
         if (!type.IsAbsence)
             await ValidateIsOverrideConsistency(organizationId, request.EmployeeId, dateFrom, isOverride, excludeId: null);
 
-        List<string> warnings = await ComputeOverlapWarnings(
+        List<WarningDto> warnings = await ComputeOverlapWarnings(
             organizationId, request.EmployeeId, type, dateFrom, dateTo, startTime, endTime, excludeId: null);
 
         Guid entryId = Guid.NewGuid();
@@ -171,7 +171,7 @@ public class RosterEntryService : IRosterEntryService
         if (!type.IsAbsence)
             await ValidateIsOverrideConsistency(organizationId, request.EmployeeId, dateFrom, isOverride, excludeId: id);
 
-        List<string> warnings = await ComputeOverlapWarnings(
+        List<WarningDto> warnings = await ComputeOverlapWarnings(
             organizationId, request.EmployeeId, type, dateFrom, dateTo, startTime, endTime, excludeId: id);
 
         RosterEntry entry = await _rosterEntryHandler.GetByIdLight(organizationId, id);
@@ -541,7 +541,7 @@ public class RosterEntryService : IRosterEntryService
                 "Svi zapisi rada istog zaposlenika i datuma (dvokratni rad) moraju imati istu vrijednost \"override\" — uredite ih zajedno.");
     }
 
-    private async Task<List<string>> ComputeOverlapWarnings(
+    private async Task<List<WarningDto>> ComputeOverlapWarnings(
         Guid organizationId, Guid employeeId, RosterType candidateType,
         DateTimeOffset dateFrom, DateTimeOffset? dateTo, TimeSpan? startTime, TimeSpan? endTime, Guid? excludeId)
     {
@@ -552,14 +552,22 @@ public class RosterEntryService : IRosterEntryService
 
         List<RosterEntry> candidates = await _rosterEntryHandler.GetOverlapCandidates(organizationId, employeeId, windowFrom, windowTo, excludeId);
 
-        List<string> warnings = new List<string>();
+        List<WarningDto> warnings = new List<WarningDto>();
         foreach (RosterEntry candidate in candidates)
         {
             (DateTimeOffset otherFrom, DateTimeOffset? otherTo) = ComputeBounds(
                 candidate.RosterType.IsAbsence, candidate.DateFrom, candidate.DateTo, candidate.StartTime, candidate.EndTime);
 
             if (DateRangeOverlap.Overlaps(candidateFrom, candidateTo, otherFrom, otherTo))
-                warnings.Add($"Preklapa se s postojećim zapisom: {candidate.RosterType.Name} ({DescribeRange(candidate)})");
+                warnings.Add(new WarningDto(WarningCodes.RosterEntryOverlap, new WarningRosterOverlapDetails
+                {
+                    RosterTypeName = candidate.RosterType.Name,
+                    IsAbsence = candidate.RosterType.IsAbsence,
+                    DateFrom = candidate.DateFrom,
+                    DateTo = candidate.DateTo,
+                    StartTime = candidate.StartTime,
+                    EndTime = candidate.EndTime
+                }));
         }
 
         return warnings;
@@ -578,17 +586,6 @@ public class RosterEntryService : IRosterEntryService
         }
 
         return (dateFrom.Date + startTime!.Value, dateFrom.Date + endTime!.Value);
-    }
-
-    private static string DescribeRange(RosterEntry entry)
-    {
-        if (entry.RosterType.IsAbsence)
-        {
-            string to = entry.DateTo.HasValue ? entry.DateTo.Value.ToString("dd.MM.yyyy.") : "otvoreno";
-            return $"{entry.DateFrom:dd.MM.yyyy.} - {to}";
-        }
-
-        return $"{entry.DateFrom:dd.MM.yyyy.} {entry.StartTime:hh\\:mm}-{entry.EndTime:hh\\:mm}";
     }
 
     /// <summary>Sentinel RosterTypeId za sintetički "Pretpostavljeno" redak u WorkHoursByType — nema stvaran

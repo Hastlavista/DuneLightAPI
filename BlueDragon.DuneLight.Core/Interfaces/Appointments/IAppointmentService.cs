@@ -38,6 +38,9 @@ public interface IAppointmentService
 
     Task<PagedResult<AppointmentDto>> GetByClient(Guid organizationId, Guid clientId, PagedRequest request);
 
+    /// <summary>Povijest odrađenih termina po zaposleniku (samo Completed), najnoviji prvi — vidi GetByClient.</summary>
+    Task<PagedResult<AppointmentDto>> GetByEmployee(Guid organizationId, Guid employeeId, PagedRequest request);
+
     /// <summary>Gotovi, izrezani slobodni termini točne duljine usluge, za sve zaposlenike poslovnice koji smiju
     /// tu uslugu izvoditi (ili samo za query.EmployeeId ako je zadan) — za "Pronađi dostupan termin" u formi novog termina.</summary>
     Task<List<EmployeeAvailableSlotsDto>> GetAvailableSlots(Guid organizationId, AvailableSlotsQuery query);

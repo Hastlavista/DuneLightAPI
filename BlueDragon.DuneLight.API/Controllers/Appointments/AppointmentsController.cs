@@ -73,6 +73,15 @@ public class AppointmentsController : ControllerBase
         return Ok(await _appointmentService.GetByClient(this.CurrentOrganizationId(), clientId, request));
     }
 
+    /// <summary>Povijest odrađenih termina po zaposleniku (samo Completed — usluge, individualni i grupni termini
+    /// koje je stvarno odradio), najnoviji prvi.</summary>
+    [HttpGet("by-employee/{employeeId:guid}")]
+    [RequireGrant(Grants.AppointmentsView)]
+    public async Task<ActionResult<PagedResult<AppointmentDto>>> GetByEmployee(Guid employeeId, [FromQuery] PagedRequest request)
+    {
+        return Ok(await _appointmentService.GetByEmployee(this.CurrentOrganizationId(), employeeId, request));
+    }
+
     /// <summary>"Zakaži" — status Scheduled, bez naplate.</summary>
     [HttpPost("schedule")]
     [RequireGrant(Grants.AppointmentsWriteOwn, Grants.AppointmentsWriteAll)]

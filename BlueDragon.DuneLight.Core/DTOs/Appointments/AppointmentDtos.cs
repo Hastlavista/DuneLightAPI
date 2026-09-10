@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.ComponentModel.DataAnnotations;
 using BlueDragon.DuneLight.Core.Enums;
+using BlueDragon.DuneLight.Core.Shared;
 
 namespace BlueDragon.DuneLight.Core.DTOs.Appointments;
 
@@ -61,7 +62,7 @@ public class AppointmentDto
     public ClientAttendanceDto ClientAttendance { get; set; }
 
     /// <summary>Popunjeno samo kao odgovor na create/update (preklapanje trenera/klijenata) — inače prazno.</summary>
-    public List<string> Warnings { get; set; } = new();
+    public List<WarningDto> Warnings { get; set; } = new();
 
     public DateTimeOffset CreatedAt { get; set; }
     public Guid? CreatedBy { get; set; }
@@ -104,6 +105,10 @@ public class AppointmentScheduleCellDto
 
     /// <summary>Broj aktivnih članova grupe (roster kapacitet za prikaz, npr. "6/8"). Null za individualne termine.</summary>
     public int? ExpectedCount { get; set; }
+
+    /// <summary>Popunjeno samo kao odgovor na GroupService.GenerateAppointments (izvan radnog vremena/odsutnost
+    /// trenera na ovoj konkretnoj instanci) — inače prazno. Isto polje/semantika kao AppointmentDto.Warnings.</summary>
+    public List<WarningDto> Warnings { get; set; } = new();
 }
 
 public class AppointmentScheduleQuery

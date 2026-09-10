@@ -6,8 +6,8 @@ namespace BlueDragon.DuneLight.Infrastructure.Domain.Models.Appointments;
 
 /// <summary>
 /// Audit log za osjetljive promjene na terminu (ručna izmjena iznosa, vraćanje ulaska iz paketa,
-/// promjena statusa) — bilježi tko, kada i koja je bila prethodna vrijednost. Isti obrazac kao
-/// EmployeeAuditLog.
+/// promjena statusa, promjena trenera) — bilježi tko, kada i koja je bila prethodna vrijednost. Isti
+/// obrazac kao EmployeeAuditLog.
 /// </summary>
 [Table("appointment_audit_log")]
 public class AppointmentAuditLog
@@ -20,7 +20,7 @@ public class AppointmentAuditLog
     [Column("appointment_id")]
     public Guid AppointmentId { get; set; }
 
-    /// <summary>"Amount", "Status" ili "PackageEntryReturn".</summary>
+    /// <summary>"Amount", "Status", "PackageEntryReturn" ili "EmployeeId".</summary>
     [Column("change_type")]
     public string ChangeType { get; set; }
 

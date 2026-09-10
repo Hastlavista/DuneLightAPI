@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.ComponentModel.DataAnnotations;
+using BlueDragon.DuneLight.Core.Shared;
 
 namespace BlueDragon.DuneLight.Core.DTOs.Roster;
 
@@ -30,7 +31,7 @@ public class RosterEntryDto
     public bool IsOverride { get; set; }
 
     /// <summary>Popunjeno samo kao odgovor na create/update (preklapanje s drugim zapisom istog zaposlenika) — inače prazno.</summary>
-    public List<string> Warnings { get; set; } = new();
+    public List<WarningDto> Warnings { get; set; } = new();
 
     public DateTimeOffset CreatedAt { get; set; }
     public Guid? CreatedBy { get; set; }

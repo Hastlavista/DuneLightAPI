@@ -51,6 +51,7 @@ public static class ErrorCodes
     public const string DuplicateHolidayDate = "DUPLICATE_HOLIDAY_DATE";
     public const string HolidayCatalogNotDefinedForCountry = "HOLIDAY_CATALOG_NOT_DEFINED_FOR_COUNTRY";
     public const string RoomCompanyMismatch = "ROOM_COMPANY_MISMATCH";
+    public const string ServiceNotGroupMode = "SERVICE_NOT_GROUP_MODE";
 
     // RECURRING_CONFLICT details.conflicts[].reason vrijednosti
     public const string RecurringConflictReasonAppointment = "EXISTING_APPOINTMENT";

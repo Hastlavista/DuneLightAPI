@@ -139,11 +139,17 @@ public class AppointmentService : IAppointmentService
 
         // CompleteNew loguje odrađeno — provjera radnog vremena vrijedi samo ako je StartsAt u budućnosti
         // (zakazuje se i odmah naplaćuje); za prošlost je ovo evidentiranje stvarnosti, ne planiranje (vidi FAZA 2).
+        List<WarningDto> warnings = new List<WarningDto>();
         if (request.StartsAt > DateTimeOffset.UtcNow)
-            await EnsureWithinWorkingHours(organizationId, request.EmployeeId, request.CompanyId, request.StartsAt, service.DefaultDurationMinutes);
+        {
+            WarningDto workingHoursWarning = await BuildWorkingHoursWarning(
+                organizationId, request.EmployeeId, request.CompanyId, request.StartsAt, service.DefaultDurationMinutes);
+            if (workingHoursWarning != null)
+                warnings.Add(workingHoursWarning);
+        }
 
-        await EnsureNoOverlap(
-            organizationId, request.EmployeeId, clients, request.StartsAt, appointment.DurationMinutes, excludeId: null, room);
+        warnings.AddRange(await EnsureNoHardOverlapCollectWarnings(
+            organizationId, request.EmployeeId, clients, request.StartsAt, appointment.DurationMinutes, excludeId: null, room));
 
         try
         {
@@ -163,6 +169,7 @@ public class AppointmentService : IAppointmentService
         }
 
         AppointmentDto dto = await GetByIdInternal(organizationId, appointmentId);
+        dto.Warnings = warnings;
         return dto;
     }
 
@@ -210,7 +217,7 @@ public class AppointmentService : IAppointmentService
         appointment.UpdatedAt = DateTimeOffset.UtcNow;
         appointment.UpdatedBy = userId;
 
-        await EnsureNoOverlap(
+        List<WarningDto> warnings = await EnsureNoHardOverlapCollectWarnings(
             organizationId, request.EmployeeId, clients, request.StartsAt, appointment.DurationMinutes, excludeId: id, room);
 
         try
@@ -247,6 +254,7 @@ public class AppointmentService : IAppointmentService
         }
 
         AppointmentDto dto = await GetByIdInternal(organizationId, id);
+        dto.Warnings = warnings;
         return dto;
     }
 
@@ -271,6 +279,9 @@ public class AppointmentService : IAppointmentService
         if (amount != appointment.Amount)
             await LogAmountChange(id, appointment.Amount, amount, userId);
 
+        if (appointment.EmployeeId != request.EmployeeId)
+            await LogEmployeeChange(id, appointment.EmployeeId, request.EmployeeId, userId);
+
         appointment.StartsAt = request.StartsAt;
         appointment.DurationMinutes = service.DefaultDurationMinutes;
         appointment.ServiceId = request.ServiceId;
@@ -284,14 +295,19 @@ public class AppointmentService : IAppointmentService
         appointment.UpdatedAt = DateTimeOffset.UtcNow;
         appointment.UpdatedBy = userId;
 
-        await EnsureWithinWorkingHours(organizationId, request.EmployeeId, request.CompanyId, request.StartsAt, appointment.DurationMinutes);
+        List<WarningDto> warnings = new List<WarningDto>();
+        WarningDto workingHoursWarning = await BuildWorkingHoursWarning(
+            organizationId, request.EmployeeId, request.CompanyId, request.StartsAt, appointment.DurationMinutes);
+        if (workingHoursWarning != null)
+            warnings.Add(workingHoursWarning);
 
-        await EnsureNoOverlap(
-            organizationId, request.EmployeeId, clients, request.StartsAt, appointment.DurationMinutes, excludeId: id, room);
+        warnings.AddRange(await EnsureNoHardOverlapCollectWarnings(
+            organizationId, request.EmployeeId, clients, request.StartsAt, appointment.DurationMinutes, excludeId: id, room));
 
         await _appointmentHandler.UpdateWithClients(appointment, request.ClientIds.Distinct().ToList());
 
         AppointmentDto dto = await GetByIdInternal(organizationId, id);
+        dto.Warnings = warnings;
         return dto;
     }
 
@@ -318,8 +334,11 @@ public class AppointmentService : IAppointmentService
         List<Client> clients = full.Clients.Select(ac => ac.Client).ToList();
 
         appointment.StartsAt = request.StartsAt;
-        if (request.EmployeeId.HasValue)
+        if (request.EmployeeId.HasValue && request.EmployeeId.Value != appointment.EmployeeId)
+        {
+            await LogEmployeeChange(id, appointment.EmployeeId, request.EmployeeId.Value, userId);
             appointment.EmployeeId = request.EmployeeId.Value;
+        }
         if (request.CompanyId.HasValue)
             appointment.CompanyId = request.CompanyId.Value;
         if (request.RoomId.HasValue)
@@ -331,14 +350,19 @@ public class AppointmentService : IAppointmentService
         // poslovnicu bez zadanog RoomId inače bi ostavilo prostoriju iz stare poslovnice na terminu nove.
         Room room = await EnsureRoomExists(organizationId, appointment.CompanyId, appointment.RoomId);
 
-        await EnsureWithinWorkingHours(organizationId, effectiveEmployeeId, appointment.CompanyId, request.StartsAt, appointment.DurationMinutes);
+        List<WarningDto> warnings = new List<WarningDto>();
+        WarningDto workingHoursWarning = await BuildWorkingHoursWarning(
+            organizationId, effectiveEmployeeId, appointment.CompanyId, request.StartsAt, appointment.DurationMinutes);
+        if (workingHoursWarning != null)
+            warnings.Add(workingHoursWarning);
 
-        await EnsureNoOverlap(
-            organizationId, effectiveEmployeeId, clients, request.StartsAt, appointment.DurationMinutes, excludeId: id, room);
+        warnings.AddRange(await EnsureNoHardOverlapCollectWarnings(
+            organizationId, effectiveEmployeeId, clients, request.StartsAt, appointment.DurationMinutes, excludeId: id, room));
 
         await _appointmentHandler.UpdateScalar(appointment);
 
         AppointmentDto dto = await GetByIdInternal(organizationId, id);
+        dto.Warnings = warnings;
         return dto;
     }
 
@@ -375,7 +399,8 @@ public class AppointmentService : IAppointmentService
         await EnsureCompanyExists(organizationId, request.CompanyId);
         Room room = await EnsureRoomExists(organizationId, request.CompanyId, request.RoomId);
 
-        await EnsureNoRecurringConflicts(organizationId, request.EmployeeId, request.CompanyId, occurrences, service.DefaultDurationMinutes, room);
+        Dictionary<DateTimeOffset, List<WarningDto>> warningsByOccurrence = await EnsureNoRecurringConflicts(
+            organizationId, request.EmployeeId, request.CompanyId, occurrences, service.DefaultDurationMinutes, room);
 
         await ValidateOwnership(organizationId, userId, hasFullScope, request.EmployeeId);
         await EnsureEmployeeExists(organizationId, request.EmployeeId);
@@ -432,7 +457,12 @@ public class AppointmentService : IAppointmentService
 
         List<AppointmentDto> created = new List<AppointmentDto>();
         foreach (Appointment appointment in toCreate)
-            created.Add(await GetByIdInternal(organizationId, appointment.Id.GetValueOrDefault()));
+        {
+            AppointmentDto dto = await GetByIdInternal(organizationId, appointment.Id.GetValueOrDefault());
+            if (warningsByOccurrence.TryGetValue(appointment.StartsAt, out List<WarningDto> occurrenceWarnings))
+                dto.Warnings = occurrenceWarnings;
+            created.Add(dto);
+        }
 
         return created;
     }
@@ -449,13 +479,15 @@ public class AppointmentService : IAppointmentService
         return occurrences;
     }
 
-    /// <summary>Tvrda, unaprijedna provjera SAMO za /recurring — ako bilo koji datum u nizu sudara s postojećim
-    /// terminom trenera (jednokratnim ili ponavljajućim), pauzom trenera, ili s roster odsutnošću, baca
-    /// RECURRING_CONFLICT (409) prije nego se bilo što spremi. Pojedinačni endpointi umjesto ovoga koriste
-    /// EnsureNoOverlap (isto tvrda blokada, ali baca AppointmentOverlap za prvi sudar bez liste svih konflikata).
-    /// Kandidati (termini trenera + roster odsutnosti) dohvaćaju se JEDNOM za cijeli raspon niza, precizna
-    /// provjera po occurrenceu radi se u memoriji — izbjegava upit po occurrenceu za duge nizove.</summary>
-    private async Task EnsureNoRecurringConflicts(
+    /// <summary>SAMO za /recurring. STVARNI sudari (trener već ima termin/grupu u to vrijeme, ili soba zauzeta)
+    /// i dalje abortiraju CIJELI niz s RECURRING_CONFLICT (409) prije nego se bilo što spremi — pojedinačni
+    /// endpointi umjesto ovoga koriste EnsureNoHardOverlapCollectWarnings (isto tvrda blokada za iste razloge, ali
+    /// baca AppointmentOverlap za prvi sudar bez liste svih konflikata). Radno vrijeme/praznik/godišnji-ili-druga
+    /// odsutnost/pauza trenera VIŠE ne isključuju instancu iz niza — vraćaju se kao upozorenja po occurrenceu koje
+    /// pozivatelj upisuje u AppointmentDto.Warnings nakon što se niz stvarno kreira. Kandidati (termini trenera +
+    /// roster odsutnosti) dohvaćaju se JEDNOM za cijeli raspon niza, precizna provjera po occurrenceu radi se u
+    /// memoriji — izbjegava upit po occurrenceu za duge nizove.</summary>
+    private async Task<Dictionary<DateTimeOffset, List<WarningDto>>> EnsureNoRecurringConflicts(
         Guid organizationId, Guid employeeId, Guid companyId, List<DateTimeOffset> occurrences, int durationMinutes, Room room = null)
     {
         DateTimeOffset rangeFrom = occurrences[0].AddDays(-1);
@@ -486,74 +518,69 @@ public class AppointmentService : IAppointmentService
         List<CompanyHoliday> companyHolidaysInRange = await _companyHolidayHandler.GetForCompaniesInRange(
             organizationId, new List<Guid> { companyId }, occurrences[0], occurrences[^1]);
 
-        List<RecurringConflictDetail> conflicts = new List<RecurringConflictDetail>();
+        List<RecurringConflictDetail> hardConflicts = new List<RecurringConflictDetail>();
+        Dictionary<DateTimeOffset, List<WarningDto>> warningsByOccurrence = new Dictionary<DateTimeOffset, List<WarningDto>>();
 
         foreach (DateTimeOffset occurrence in occurrences)
         {
             DateTimeOffset occurrenceEnd = occurrence.AddMinutes(durationMinutes);
+            List<WarningDto> warnings = new List<WarningDto>();
 
             bool appointmentHit = candidateAppointments.Any(a =>
                 a.StartsAt < occurrenceEnd && occurrence < a.StartsAt.AddMinutes(a.DurationMinutes));
-
             if (appointmentHit)
-            {
-                conflicts.Add(new RecurringConflictDetail { Date = occurrence, Reason = ErrorCodes.RecurringConflictReasonAppointment });
-                continue;
-            }
-
-            bool breakHit = candidateBreaks.Any(b =>
-                b.StartsAt < occurrenceEnd && occurrence < b.StartsAt.AddMinutes(b.DurationMinutes));
-
-            if (breakHit)
-            {
-                conflicts.Add(new RecurringConflictDetail { Date = occurrence, Reason = ErrorCodes.RecurringConflictReasonScheduleBreak });
-                continue;
-            }
+                hardConflicts.Add(new RecurringConflictDetail { Date = occurrence, Reason = ErrorCodes.RecurringConflictReasonAppointment });
 
             bool roomHit = checkRoom && candidateRoomAppointments.Any(a =>
                 a.StartsAt < occurrenceEnd && occurrence < a.StartsAt.AddMinutes(a.DurationMinutes));
-
             if (roomHit)
-            {
-                conflicts.Add(new RecurringConflictDetail { Date = occurrence, Reason = ErrorCodes.RecurringConflictReasonRoom });
-                continue;
-            }
+                hardConflicts.Add(new RecurringConflictDetail { Date = occurrence, Reason = ErrorCodes.RecurringConflictReasonRoom });
+
+            bool breakHit = candidateBreaks.Any(b =>
+                b.StartsAt < occurrenceEnd && occurrence < b.StartsAt.AddMinutes(b.DurationMinutes));
+            if (breakHit)
+                warnings.Add(new WarningDto(WarningCodes.EmployeeOnBreak));
 
             bool absenceHit = absences.Any(a =>
                 a.DateFrom.Date <= occurrence.Date && (a.DateTo == null || occurrence.Date <= a.DateTo.Value.Date));
 
             if (absenceHit)
             {
-                conflicts.Add(new RecurringConflictDetail { Date = occurrence, Reason = ErrorCodes.RecurringConflictReasonRosterAbsence });
-                continue;
+                warnings.Add(new WarningDto(WarningCodes.EmployeeAbsent));
             }
-
-            List<RosterEntry> rosterEntriesForOccurrence = rosterEntriesInRange
-                .Where(e => !e.RosterType.IsAbsence && e.DateFrom.Date == occurrence.Date)
-                .ToList();
-
-            List<CompanyHoliday> companyHolidaysForOccurrence = companyHolidaysInRange
-                .Where(h => h.Date.Date == occurrence.Date)
-                .ToList();
-
-            if (!IsWithinWorkingHours(employeeTemplate, companyTemplate, rosterEntriesForOccurrence, occurrence, durationMinutes, companyHolidaysForOccurrence))
+            else
             {
-                string reason = companyHolidaysForOccurrence.Count > 0
-                    ? ErrorCodes.RecurringConflictReasonHoliday
-                    : ErrorCodes.RecurringConflictReasonOutsideWorkingHours;
-                conflicts.Add(new RecurringConflictDetail { Date = occurrence, Reason = reason });
+                List<RosterEntry> rosterEntriesForOccurrence = rosterEntriesInRange
+                    .Where(e => !e.RosterType.IsAbsence && e.DateFrom.Date == occurrence.Date)
+                    .ToList();
+
+                List<CompanyHoliday> companyHolidaysForOccurrence = companyHolidaysInRange
+                    .Where(h => h.Date.Date == occurrence.Date)
+                    .ToList();
+
+                if (!IsWithinWorkingHours(employeeTemplate, companyTemplate, rosterEntriesForOccurrence, occurrence, durationMinutes, companyHolidaysForOccurrence))
+                {
+                    warnings.Add(companyHolidaysForOccurrence.Count > 0
+                        ? new WarningDto(WarningCodes.CompanyClosedHoliday)
+                        : new WarningDto(WarningCodes.OutsideWorkingHours));
+                }
             }
+
+            if (warnings.Count > 0)
+                warningsByOccurrence[occurrence] = warnings;
         }
 
-        if (conflicts.Count > 0)
+        if (hardConflicts.Count > 0)
             throw new BusinessRuleException(
                 ErrorCodes.RecurringConflict,
                 "Neki termini u nizu se sudaraju s postojećim obavezama.",
-                new { conflicts });
+                new { conflicts = hardConflicts });
+
+        return warningsByOccurrence;
     }
 
-    /// <summary>Provjera preklapanja klijenata za /recurring — odgovara klijentskoj grani EnsureNoOverlap, ali
-    /// nad cijelim nizom odjednom: kandidati se dohvaćaju JEDNOM za cijeli raspon, a za prvi occurrence (kronološki)
+    /// <summary>Provjera preklapanja klijenata za /recurring — odgovara klijentskoj grani EnsureNoHardOverlapCollectWarnings,
+    /// ali nad cijelim nizom odjednom: kandidati se dohvaćaju JEDNOM za cijeli raspon, a za prvi occurrence (kronološki)
     /// s pogođenim klijentom baca se APPOINTMENT_OVERLAP (409), isto ponašanje/kod kao i za pojedinačne termine.</summary>
     private async Task EnsureNoRecurringClientOverlap(
         Guid organizationId, List<Client> clients, List<DateTimeOffset> occurrences, int durationMinutes)
@@ -598,6 +625,12 @@ public class AppointmentService : IAppointmentService
     {
         (List<Appointment> items, int totalCount) = await _appointmentHandler.GetByClient(organizationId, clientId, request);
         return PagedResult<AppointmentDto>.Create(items.Select(a => ToDto(a, clientId)).ToList(), totalCount, request.Page, request.PageSize);
+    }
+
+    public async Task<PagedResult<AppointmentDto>> GetByEmployee(Guid organizationId, Guid employeeId, PagedRequest request)
+    {
+        (List<Appointment> items, int totalCount) = await _appointmentHandler.GetByEmployee(organizationId, employeeId, request);
+        return PagedResult<AppointmentDto>.Create(items.Select(a => ToDto(a)).ToList(), totalCount, request.Page, request.PageSize);
     }
 
     public async Task<List<EmployeeAvailableSlotsDto>> GetAvailableSlots(Guid organizationId, AvailableSlotsQuery query)
@@ -725,14 +758,19 @@ public class AppointmentService : IAppointmentService
             });
         }
 
-        await EnsureWithinWorkingHours(organizationId, request.EmployeeId, request.CompanyId, request.StartsAt, appointment.DurationMinutes);
+        List<WarningDto> warnings = new List<WarningDto>();
+        WarningDto workingHoursWarning = await BuildWorkingHoursWarning(
+            organizationId, request.EmployeeId, request.CompanyId, request.StartsAt, appointment.DurationMinutes);
+        if (workingHoursWarning != null)
+            warnings.Add(workingHoursWarning);
 
-        await EnsureNoOverlap(
-            organizationId, request.EmployeeId, clients, request.StartsAt, appointment.DurationMinutes, excludeId: null, room);
+        warnings.AddRange(await EnsureNoHardOverlapCollectWarnings(
+            organizationId, request.EmployeeId, clients, request.StartsAt, appointment.DurationMinutes, excludeId: null, room));
 
         await _appointmentHandler.Add(appointment);
 
         AppointmentDto dto = await GetByIdInternal(organizationId, appointmentId);
+        dto.Warnings = warnings;
         return dto;
     }
 
@@ -921,21 +959,18 @@ public class AppointmentService : IAppointmentService
         return result;
     }
 
-    /// <summary>Baca APPOINTMENT_OVERLAP (409) prije spremanja ako se termin preklapa s postojećim
-    /// (trener, pauza trenera, prostorija, ili bilo koji od klijenata) — trener se provjerava prvi, zatim pauza,
-    /// zatim prostorija, zatim klijenti redom. room=null ili room.AllowConcurrentBookings=true preskaču provjeru prostorije.</summary>
-    private async Task EnsureNoOverlap(
+    /// <summary>Koriste svi write endpointi (Create/CompleteNew/CompleteExisting/Update/Move/CreateRecurring preko
+    /// EnsureNoRecurringClientOverlap) — STVARNI sudari (trener već ima termin/grupu, soba zauzeta, klijent već
+    /// zakazan) uvijek bacaju APPOINTMENT_OVERLAP (409), ne mogu se presnimiti. Pauza trenera (ScheduleBreak) ne
+    /// blokira — zaposlenik je tehnički dostupan, samo se vraća kao upozorenje u povratnoj listi umjesto bacanja
+    /// iznimke.</summary>
+    private async Task<List<WarningDto>> EnsureNoHardOverlapCollectWarnings(
         Guid organizationId, Guid employeeId, List<Client> clients, DateTimeOffset startsAt, int durationMinutes, Guid? excludeId, Room room = null)
     {
         List<Appointment> employeeOverlaps = await _appointmentHandler.GetOverlappingForEmployee(
             organizationId, employeeId, startsAt, durationMinutes, excludeId);
         if (employeeOverlaps.Count > 0)
             throw new BusinessRuleException(ErrorCodes.AppointmentOverlap, "Trener već ima termin u ovom vremenskom razdoblju.");
-
-        List<ScheduleBreak> breakOverlaps = await _scheduleBreakHandler.GetOverlappingForEmployee(
-            organizationId, employeeId, startsAt, durationMinutes, excludeId: null);
-        if (breakOverlaps.Count > 0)
-            throw new BusinessRuleException(ErrorCodes.AppointmentOverlap, "Trener ima pauzu u ovom vremenu.");
 
         if (room != null && !room.AllowConcurrentBookings)
         {
@@ -955,12 +990,22 @@ public class AppointmentService : IAppointmentService
             if (hasOverlap)
                 throw new BusinessRuleException(ErrorCodes.AppointmentOverlap, $"Klijent {client.FirstName} {client.LastName} je već zakazan u ovom vremenskom razdoblju.");
         }
+
+        List<WarningDto> warnings = new List<WarningDto>();
+
+        List<ScheduleBreak> breakOverlaps = await _scheduleBreakHandler.GetOverlappingForEmployee(
+            organizationId, employeeId, startsAt, durationMinutes, excludeId: null);
+        if (breakOverlaps.Count > 0)
+            warnings.Add(new WarningDto(WarningCodes.EmployeeOnBreak));
+
+        return warnings;
     }
 
-    /// <summary>Baca OUTSIDE_WORKING_HOURS (409) prije spremanja ako termin pada izvan radnog vremena zaposlenika ILI
-    /// poslovnice — tvrda blokada bez iznimke (vidi WorkingHoursCalculator, FAZA 1 dizajn). Ne primjenjuje se retroaktivno
-    /// (CompleteExisting, ili CompleteNew za StartsAt u prošlosti) — vidi pozivna mjesta.</summary>
-    private async Task EnsureWithinWorkingHours(
+    /// <summary>Koriste svi write endpointi osim CompleteExisting (retroaktivno evidentiranje odrađenog, ne
+    /// planiranje unaprijed — vidi CompleteExisting) i CompleteNew za StartsAt u prošlosti (isti razlog). Radno
+    /// vrijeme/praznik/godišnji/druga odsutnost NE sprječavaju spremanje termina — zaposlenik je tehnički dostupan,
+    /// samo se poruka vraća za AppointmentDto.Warnings.</summary>
+    private async Task<WarningDto> BuildWorkingHoursWarning(
         Guid organizationId, Guid employeeId, Guid companyId, DateTimeOffset startsAt, int durationMinutes)
     {
         WorkingHoursTemplate employeeTemplate = await _workingHoursTemplateHandler.GetForEmployee(organizationId, employeeId);
@@ -970,8 +1015,9 @@ public class AppointmentService : IAppointmentService
         List<CompanyHoliday> companyHolidaysForDate = await _companyHolidayHandler.GetForCompaniesInRange(
             organizationId, new List<Guid> { companyId }, startsAt.Date, startsAt.Date);
 
-        if (!IsWithinWorkingHours(employeeTemplate, companyTemplate, rosterEntriesForDate, startsAt, durationMinutes, companyHolidaysForDate))
-            throw new BusinessRuleException(ErrorCodes.OutsideWorkingHours, "Termin je izvan radnog vremena zaposlenika ili poslovnice.");
+        return IsWithinWorkingHours(employeeTemplate, companyTemplate, rosterEntriesForDate, startsAt, durationMinutes, companyHolidaysForDate)
+            ? null
+            : new WarningDto(WarningCodes.OutsideWorkingHours);
     }
 
     /// <summary>Čista provjera dijeljena s EnsureNoRecurringConflicts (batch grana) — rosterEntriesForDate/
@@ -1060,6 +1106,22 @@ public class AppointmentService : IAppointmentService
             ChangeType = "Amount",
             OldValue = oldAmount.ToString(CultureInfo.InvariantCulture),
             NewValue = newAmount.ToString(CultureInfo.InvariantCulture),
+            ChangedAt = DateTimeOffset.UtcNow,
+            ChangedBy = userId
+        });
+    }
+
+    /// <summary>Bilježi zamjenu trenera na terminu (npr. netko drugi uskoči na grupu umjesto zadanog/planiranog
+    /// trenera) — bez ovoga bi se EmployeeId tiho prepisao i izgubio bi se trag tko je prije bio raspoređen.</summary>
+    private async Task LogEmployeeChange(Guid appointmentId, Guid? oldEmployeeId, Guid? newEmployeeId, Guid userId)
+    {
+        await _auditLogHandler.Add(new AppointmentAuditLog
+        {
+            Id = Guid.NewGuid(),
+            AppointmentId = appointmentId,
+            ChangeType = "EmployeeId",
+            OldValue = oldEmployeeId?.ToString(),
+            NewValue = newEmployeeId?.ToString(),
             ChangedAt = DateTimeOffset.UtcNow,
             ChangedBy = userId
         });

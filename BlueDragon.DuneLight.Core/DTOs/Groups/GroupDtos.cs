@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.ComponentModel.DataAnnotations;
 using BlueDragon.DuneLight.Core.DTOs.Appointments;
+using BlueDragon.DuneLight.Core.Shared;
 
 namespace BlueDragon.DuneLight.Core.DTOs.Groups;
 
@@ -64,8 +65,9 @@ public class GroupDto
     public List<GroupSlotDto> Slots { get; set; } = new();
     public int ActiveMemberCount { get; set; }
 
-    /// <summary>Popunjeno samo kao odgovor na dodavanje člana preko kapaciteta — inače prazno.</summary>
-    public List<string> Warnings { get; set; } = new();
+    /// <summary>Neblokirajuća upozorenja — kapacitet grupe premašen (AddMember) ili slot izvan radnog vremena
+    /// trenera/poslovnice (Create/Update/AddSlot/UpdateSlot). Inače prazno.</summary>
+    public List<WarningDto> Warnings { get; set; } = new();
 
     public DateTimeOffset CreatedAt { get; set; }
     public Guid? CreatedBy { get; set; }

@@ -139,6 +139,15 @@ public class AppointmentHandler : IAppointmentHandler
         await context.SaveChangesAsync();
     }
 
+    public async Task DeleteRange(IUnitOfWork uow, List<Appointment> appointments)
+    {
+        if (appointments.Count == 0)
+            return;
+
+        uow.Context.Appointments.RemoveRange(appointments);
+        await uow.Context.SaveChangesAsync();
+    }
+
     public async Task<List<Appointment>> GetOverlappingForEmployee(
         Guid organizationId, Guid employeeId, DateTimeOffset startsAt, int durationMinutes, Guid? excludeId)
     {
@@ -305,6 +314,38 @@ public class AppointmentHandler : IAppointmentHandler
             .ToListAsync();
 
         return (items, totalCount);
+    }
+
+    public async Task<(List<Appointment> Items, int TotalCount)> GetByEmployee(Guid organizationId, Guid employeeId, PagedRequest request)
+    {
+        await using DatabaseContext context = DatabaseContext.GenerateContext(_databaseSettings.ConnectionString);
+        IQueryable<Appointment> query = IncludeGraph(context.Appointments)
+            .Include(a => a.Group)
+            .Where(a => a.OrganizationId == organizationId &&
+                a.EmployeeId == employeeId &&
+                a.Status == AppointmentStatus.Completed);
+
+        int totalCount = await query.CountAsync();
+
+        List<Appointment> items = await query
+            .OrderByDescending(a => a.StartsAt)
+            .Skip((request.Page - 1) * request.PageSize)
+            .Take(request.PageSize)
+            .ToListAsync();
+
+        return (items, totalCount);
+    }
+
+    public Task<List<Appointment>> GetFutureScheduledForGroup(IUnitOfWork uow, Guid organizationId, Guid groupId)
+    {
+        DateTimeOffset now = DateTimeOffset.UtcNow;
+        return uow.Context.Appointments
+            .Where(a =>
+                a.OrganizationId == organizationId &&
+                a.GroupId == groupId &&
+                a.Status == AppointmentStatus.Scheduled &&
+                a.StartsAt >= now)
+            .ToListAsync();
     }
 
     public async Task<bool> HasFutureScheduledForEmployee(Guid organizationId, Guid employeeId)
