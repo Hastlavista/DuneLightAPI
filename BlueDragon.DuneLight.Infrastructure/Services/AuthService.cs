@@ -18,16 +18,14 @@ namespace BlueDragon.DuneLight.Infrastructure.Services;
 public class AuthService : IAuthService
 {
     private readonly IAuthHandler _authHandler;
-    private readonly IGrantGroupHandler _grantGroupHandler;
     private readonly IRosterTypeHandler _rosterTypeHandler;
     private readonly IJwtService _jwtService;
     private readonly JwtSettings _jwtSettings;
     private readonly IUnitOfWorkFactory _unitOfWorkFactory;
 
-    public AuthService(IAuthHandler authHandler, IGrantGroupHandler grantGroupHandler, IRosterTypeHandler rosterTypeHandler, IJwtService jwtService, JwtSettings jwtSettings, IUnitOfWorkFactory unitOfWorkFactory)
+    public AuthService(IAuthHandler authHandler, IRosterTypeHandler rosterTypeHandler, IJwtService jwtService, JwtSettings jwtSettings, IUnitOfWorkFactory unitOfWorkFactory)
     {
         _authHandler = authHandler;
-        _grantGroupHandler = grantGroupHandler;
         _rosterTypeHandler = rosterTypeHandler;
         _jwtService = jwtService;
         _jwtSettings = jwtSettings;
@@ -56,7 +54,7 @@ public class AuthService : IAuthService
         user.ApiKey = Guid.NewGuid().ToString("N");
         user.Role = UserRole.Admin;
         // Onaj tko odradi Register je trajno Owner ove organizacije — jedini koji zaobilazi grant sustav
-        // (vidi RequireOwnerAttribute). Ne dodjeljuje mu se GrantGroup jer mu ionako ništa ne treba provjeravati.
+        // (vidi RequireOwnerAttribute), pa ima sva prava bez GrantGroup-e.
         user.IsOwner = true;
         user.IsActive = true;
         user.CreatedAt = DateTimeOffset.UtcNow;
@@ -67,7 +65,6 @@ public class AuthService : IAuthService
 
             await _authHandler.AddOrganization(uow, organization);
             await _authHandler.AddUser(uow, user);
-            await _grantGroupHandler.SeedDefaultGroups(uow, organization.Id.GetValueOrDefault());
             await _rosterTypeHandler.SeedDefaultTypes(uow, organization.Id.GetValueOrDefault());
 
             await uow.CommitAsync();

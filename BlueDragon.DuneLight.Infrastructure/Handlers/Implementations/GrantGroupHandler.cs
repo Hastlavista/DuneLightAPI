@@ -2,13 +2,11 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
-using BlueDragon.DuneLight.Core.Shared;
 using BlueDragon.DuneLight.Infrastructure.Domain.Contexts;
 using BlueDragon.DuneLight.Infrastructure.Domain.Models;
 using BlueDragon.DuneLight.Infrastructure.Domain.Models.Permissions;
 using BlueDragon.DuneLight.Infrastructure.Domain.Settings;
 using BlueDragon.DuneLight.Infrastructure.Handlers.Interfaces;
-using BlueDragon.DuneLight.Infrastructure.UnitOfWork;
 using Microsoft.EntityFrameworkCore;
 
 namespace BlueDragon.DuneLight.Infrastructure.Handlers.Implementations;
@@ -54,31 +52,6 @@ public class GrantGroupHandler : IGrantGroupHandler
         await using DatabaseContext context = DatabaseContext.GenerateContext(_databaseSettings.ConnectionString);
         context.GrantGroups.Add(grantGroup);
         await context.SaveChangesAsync();
-    }
-
-    public async Task SeedDefaultGroups(IUnitOfWork uow, Guid organizationId)
-    {
-        List<GrantGroup> groups = new()
-        {
-            ToDefaultGroup(organizationId, DefaultGrantGroups.AdminGroupName, DefaultGrantGroups.AdminGrants),
-            ToDefaultGroup(organizationId, DefaultGrantGroups.TrainerGroupName, DefaultGrantGroups.TrainerGrants),
-            ToDefaultGroup(organizationId, DefaultGrantGroups.ReceptionGroupName, DefaultGrantGroups.ReceptionGrants)
-        };
-
-        uow.Context.GrantGroups.AddRange(groups);
-        await uow.Context.SaveChangesAsync();
-    }
-
-    private static GrantGroup ToDefaultGroup(Guid organizationId, string name, IReadOnlyList<string> grantKeys)
-    {
-        return new GrantGroup
-        {
-            Id = Guid.NewGuid(),
-            OrganizationId = organizationId,
-            Name = name,
-            CreatedAt = DateTimeOffset.UtcNow,
-            Grants = grantKeys.Select(key => new GrantGroupGrant { GrantKey = key }).ToList()
-        };
     }
 
     public async Task Update(GrantGroup grantGroup, List<string> newGrantKeys)

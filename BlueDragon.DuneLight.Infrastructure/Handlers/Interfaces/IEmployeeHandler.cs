@@ -45,4 +45,7 @@ public interface IEmployeeHandler
 
     /// <summary>Svi aktivni zaposlenici poslovnice u jednom upitu (Services uključen radi filtera po usluzi) — za available-slots, izbjegava upit po zaposleniku u petlji.</summary>
     Task<List<Employee>> GetForCompany(Guid organizationId, Guid companyId);
+
+    /// <summary>Je li zaposlenik prijavljenog korisnika dodijeljen zadanoj poslovnici — za GET ovlasti gdje zaposlenik smije vidjeti podatke vlastite poslovnice bez posebnog granta (vidi RequireGrantOrAssignedCompanyAttribute).</summary>
+    Task<bool> IsUserAssignedToCompany(Guid organizationId, Guid userId, Guid companyId);
 }

@@ -11,7 +11,9 @@ using Microsoft.AspNetCore.Mvc;
 namespace BlueDragon.DuneLight.API.Controllers.Roster;
 
 /// <summary>Neradni dani poslovnice — dio radno-vremenskog mehanizma (vidi WorkingHoursCalculator), zato
-/// ponovno koristi roster.templates.view/.manage umjesto zasebnog kataloškog granta.</summary>
+/// ponovno koristi roster.templates.view/.manage umjesto zasebnog kataloškog granta. Čitanje (GET) dodatno
+/// dopušteno i zaposleniku dodijeljenom toj poslovnici bez tih grantova (vidi RequireGrantOrAssignedCompanyAttribute);
+/// pisanje (POST/DELETE/generate) ostaje isključivo roster.templates.manage.</summary>
 [ApiController]
 [Route("api/companies/{companyId:guid}/holidays")]
 [Produces("application/json")]
@@ -25,7 +27,7 @@ public class CompanyHolidaysController : ControllerBase
     }
 
     [HttpGet]
-    [RequireGrant(Grants.RosterTemplatesView, Grants.RosterTemplatesManage)]
+    [RequireGrantOrAssignedCompany(Grants.RosterTemplatesView, Grants.RosterTemplatesManage)]
     public async Task<ActionResult<List<CompanyHolidayDto>>> GetForCompany(Guid companyId, [FromQuery] int year)
     {
         return Ok(await _companyHolidayService.GetForCompany(this.CurrentOrganizationId(), companyId, year));

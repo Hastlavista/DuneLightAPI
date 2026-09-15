@@ -33,8 +33,7 @@ public class EmployeesController : ControllerBase
 
     [HttpGet]
     [RequireGrant(Grants.EmployeesView)]
-    public async Task<ActionResult<PagedResult<EmployeeDto>>> GetPaged(
-        [FromQuery] PagedRequest request, [FromQuery] Guid? companyId, [FromQuery] Guid? engagementTypeId, [FromQuery] UserRole? role)
+    public async Task<ActionResult<PagedResult<EmployeeDto>>> GetPaged([FromQuery] PagedRequest request, [FromQuery] Guid? companyId, [FromQuery] Guid? engagementTypeId, [FromQuery] UserRole? role)
     {
         return Ok(await _employeeService.GetPaged(this.CurrentOrganizationId(), request, companyId, engagementTypeId, role));
     }

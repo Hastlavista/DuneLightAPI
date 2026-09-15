@@ -277,4 +277,13 @@ public class EmployeeHandler : IEmployeeHandler
             .ThenBy(e => e.FirstName)
             .ToListAsync();
     }
+
+    public async Task<bool> IsUserAssignedToCompany(Guid organizationId, Guid userId, Guid companyId)
+    {
+        await using DatabaseContext context = DatabaseContext.GenerateContext(_databaseSettings.ConnectionString);
+        return await context.Employees.AnyAsync(e =>
+            e.OrganizationId == organizationId &&
+            e.UserId == userId &&
+            e.Companies.Any(c => c.CompanyId == companyId));
+    }
 }

@@ -16,7 +16,7 @@ namespace BlueDragon.DuneLight.API.Controllers.Organization;
 /// <summary>
 /// Vizualni identitet (branding) organizacije — boje, upload/brisanje logotipa i favicona. Sve upravljačke
 /// akcije zahtijevaju Grant <see cref="Grants.OrganizationBrandingManage"/> (Owner ga uvijek ima — vidi
-/// GrantContext.Has — a Admin grupa ga dobiva po defaultu, vidi DefaultGrantGroups.AdminGrants).
+/// GrantContext.Has — ostali korisnici ga dobivaju kroz GrantGroup koju im dodijeli Owner).
 /// Javni GET za login screen (<see cref="GetPublicBranding"/>) ne zahtijeva prijavu.
 /// </summary>
 [ApiController]

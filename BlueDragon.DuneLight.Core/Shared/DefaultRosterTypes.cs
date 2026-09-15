@@ -4,8 +4,8 @@ namespace BlueDragon.DuneLight.Core.Shared;
 
 /// <summary>
 /// Kanonski popis tri default RosterType zapisa (Rad/Godišnji/Bolovanje) koje svaka organizacija treba imati
-/// odmah nakon nastanka, isti obrazac kao DefaultGrantGroups. Jedini izvor istine za AuthService.Register
-/// (nove organizacije) — postojeće organizacije se retroaktivno NE dopunjuju.
+/// odmah nakon nastanka. Jedini izvor istine za AuthService.Register (nove organizacije) — postojeće
+/// organizacije se retroaktivno NE dopunjuju.
 /// </summary>
 public static class DefaultRosterTypes
 {
