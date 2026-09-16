@@ -86,13 +86,38 @@ public class RoomHandler : IRoomHandler
         await context.SaveChangesAsync();
     }
 
+    public async Task<bool> NameExistsAmongActive(Guid organizationId, Guid companyId, string name, Guid? excludeId)
+    {
+        string normalized = Normalize(name);
+
+        await using DatabaseContext context = DatabaseContext.GenerateContext(_databaseSettings.ConnectionString);
+        return await context.Rooms.AnyAsync(r =>
+            r.OrganizationId == organizationId &&
+            r.CompanyId == companyId &&
+            r.IsActive &&
+            r.Name.Trim().ToLower() == normalized &&
+            (excludeId == null || r.Id != excludeId));
+    }
+
+    /// <summary>Sve poznate FK reference na prostoriju, provjerene u jednom upitu (UNION podupita) umjesto
+    /// dva zasebna round-tripa — isti obrazac kao CompanyHandler.IsReferenced.</summary>
     public async Task<bool> IsReferenced(Guid organizationId, Guid id)
     {
         await using DatabaseContext context = DatabaseContext.GenerateContext(_databaseSettings.ConnectionString);
-        bool referencedByAppointment = await context.Appointments.AnyAsync(a => a.OrganizationId == organizationId && a.RoomId == id);
-        if (referencedByAppointment)
-            return true;
 
-        return await context.Groups.AnyAsync(g => g.OrganizationId == organizationId && g.DefaultRoomId == id);
+        IQueryable<int> appointments = context.Appointments
+            .Where(a => a.OrganizationId == organizationId && a.RoomId == id)
+            .Select(a => 1);
+
+        IQueryable<int> groups = context.Groups
+            .Where(g => g.OrganizationId == organizationId && g.DefaultRoomId == id)
+            .Select(g => 1);
+
+        return await appointments.Union(groups).AnyAsync();
+    }
+
+    private static string Normalize(string name)
+    {
+        return name?.Trim().ToLowerInvariant() ?? string.Empty;
     }
 }

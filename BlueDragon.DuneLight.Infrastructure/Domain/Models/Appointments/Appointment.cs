@@ -10,9 +10,10 @@ using BlueDragon.DuneLight.Infrastructure.Domain.Models.Groups;
 namespace BlueDragon.DuneLight.Infrastructure.Domain.Models.Appointments;
 
 /// <summary>
-/// Termin. Form=Individual: jedan ili više klijenata, naplata po terminu. Form=Group: veza na
-/// Group/GroupSlot koji ga je generirao; termin nema vlastiti iznos (Amount=0, IsPaid=false) —
-/// naplata ide kroz pakete članova na razini AppointmentAttendance.
+/// Termin — okvir/resurs (usluga, vrijeme, trener, prostorija). Naplata (Amount/SuggestedAmount, i
+/// monetarni Payment ledger) živi isključivo na/preko Booking, ne ovdje — omogućuje mješovito plaćanje po
+/// klijentu na istom terminu (npr. duo: jedan klijent iz paketa, drugi karticom). Vidi Booking.cs za punu
+/// domensku napomenu. Form=Group: veza na Group/GroupSlot koji ga je generirao.
 /// </summary>
 [Table("appointments")]
 public class Appointment
@@ -51,22 +52,6 @@ public class Appointment
     /// (može se naknadno promijeniti po pojedinom terminu bez diranja grupe).</summary>
     [Column("room_id")]
     public Guid? RoomId { get; set; }
-
-    [Column("amount")]
-    public decimal Amount { get; set; }
-
-    /// <summary>Snapshot predložene cijene iz IPriceResolutionService u trenutku kreiranja/naplate.</summary>
-    [Column("suggested_amount")]
-    public decimal SuggestedAmount { get; set; }
-
-    [Column("is_amount_manually_overridden")]
-    public bool IsAmountManuallyOverridden { get; set; }
-
-    [Column("payment_method")]
-    public PaymentMethod? PaymentMethod { get; set; }
-
-    [Column("is_paid")]
-    public bool IsPaid { get; set; }
 
     [Column("status")]
     public AppointmentStatus Status { get; set; }
@@ -108,8 +93,5 @@ public class Appointment
     public Room Room { get; set; }
     public Group Group { get; set; }
     public GroupSlot GroupSlot { get; set; }
-    public List<AppointmentClient> Clients { get; set; } = new();
-
-    /// <summary>Evidencija prisutnosti — relevantno samo kad je Form=Group.</summary>
-    public List<AppointmentAttendance> Attendances { get; set; } = new();
+    public List<Booking> Bookings { get; set; } = new();
 }

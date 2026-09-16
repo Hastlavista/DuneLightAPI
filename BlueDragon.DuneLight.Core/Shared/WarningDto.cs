@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 
 namespace BlueDragon.DuneLight.Core.Shared;
 
@@ -36,6 +37,14 @@ public class WarningGroupCapacityDetails
 {
     public int Capacity { get; set; }
     public int ActiveMemberCount { get; set; }
+}
+
+/// <summary>WarningCodes.GroupAppointmentUnresolvedBookings details — Bookinzi koji su ostali Confirmed
+/// (nerazrješeni) u trenutku zatvaranja grupnog termina. ClientId nije PII u ovom ugovoru (isti nivo detalja
+/// kao ostali booking payloadi u ovom API-ju).</summary>
+public class WarningUnresolvedBookingsDetails
+{
+    public List<Guid> ClientIds { get; set; } = new();
 }
 
 /// <summary>WarningCodes.RosterEntryOverlap details — postojeći zapis s kojim se preklapa.</summary>

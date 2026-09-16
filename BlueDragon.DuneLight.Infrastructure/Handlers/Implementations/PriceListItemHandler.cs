@@ -83,17 +83,18 @@ public class PriceListItemHandler : IPriceListItemHandler
         await context.SaveChangesAsync();
     }
 
+    public async Task UpdateWithHistory(PriceListItem item, PriceListItemHistory history)
+    {
+        await using DatabaseContext context = DatabaseContext.GenerateContext(_databaseSettings.ConnectionString);
+        context.PriceListItems.Update(item);
+        context.PriceListItemHistory.Add(history);
+        await context.SaveChangesAsync();
+    }
+
     public async Task Delete(PriceListItem item)
     {
         await using DatabaseContext context = DatabaseContext.GenerateContext(_databaseSettings.ConnectionString);
         context.PriceListItems.Remove(item);
-        await context.SaveChangesAsync();
-    }
-
-    public async Task AddHistory(PriceListItemHistory history)
-    {
-        await using DatabaseContext context = DatabaseContext.GenerateContext(_databaseSettings.ConnectionString);
-        context.PriceListItemHistory.Add(history);
         await context.SaveChangesAsync();
     }
 

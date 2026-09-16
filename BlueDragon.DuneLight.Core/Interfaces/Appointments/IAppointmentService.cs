@@ -14,8 +14,14 @@ public interface IAppointmentService
     /// <summary>"Upiši odrađeno" — novi termin odmah u statusu Completed, naplata odmah.</summary>
     Task<AppointmentDto> CompleteNew(Guid organizationId, Guid userId, bool hasFullScope, AppointmentCompleteRequest request);
 
-    /// <summary>Prijelaz postojećeg (obično Scheduled) termina u Completed, naplata odmah.</summary>
+    /// <summary>Prijelaz postojećeg (obično Scheduled) termina u Completed, naplata odmah. Samo Form=Individual
+    /// — za Form=Group koristi CompleteGroupAppointment.</summary>
     Task<AppointmentDto> CompleteExisting(Guid organizationId, Guid userId, bool hasFullScope, Guid id, AppointmentCompleteRequest request);
+
+    /// <summary>Appointment-razina "odrađeno" za GRUPNI termin — samo prijelaz Scheduled → Completed, ne dira
+    /// Booking retke (svaki se razrješava neovisno kroz BookingService.SetStatus/GroupAttendanceService).
+    /// Upozorava (ne blokira) ako neki Booking ostane Confirmed u trenutku zatvaranja.</summary>
+    Task<AppointmentDto> CompleteGroupAppointment(Guid organizationId, Guid userId, bool hasFullScope, Guid id);
 
     /// <summary>Izmjena vremena/usluge/trenera/tvrtke/klijenata/napomene/iznosa. Ne dira plaćanje/paket.</summary>
     Task<AppointmentDto> Update(Guid organizationId, Guid userId, bool hasFullScope, Guid id, AppointmentUpdateRequest request);
@@ -36,7 +42,7 @@ public interface IAppointmentService
 
     Task<AppointmentDto> GetById(Guid organizationId, Guid id);
 
-    Task<PagedResult<AppointmentDto>> GetByClient(Guid organizationId, Guid clientId, PagedRequest request);
+    Task<PagedResult<ClientAppointmentHistoryDto>> GetByClient(Guid organizationId, Guid clientId, PagedRequest request);
 
     /// <summary>Povijest odrađenih termina po zaposleniku (samo Completed), najnoviji prvi — vidi GetByClient.</summary>
     Task<PagedResult<AppointmentDto>> GetByEmployee(Guid organizationId, Guid employeeId, PagedRequest request);

@@ -55,8 +55,8 @@ public class PricingService : IPricingService
     public async Task<PriceListItemDto> Create(Guid organizationId, Guid userId, PriceListItemCreateRequest request)
     {
         Guid subjectId = ValidateSubject(request.SubjectType, request.ServiceId, request.PackageId);
-        await EnsureSubjectExists(organizationId, request.SubjectType, subjectId);
-        await EnsureCompanyExists(organizationId, request.CompanyId);
+        await GetDefaultPrice(organizationId, request.SubjectType, subjectId, requireActive: true);
+        await EnsureCompanyExists(organizationId, request.CompanyId, requireActive: true);
         ValidateDateRange(request.ValidFrom, request.ValidTo);
 
         await EnsureNoOverlap(organizationId, request.SubjectType, subjectId, request.CompanyId, request.ValidFrom, request.ValidTo, excludeId: null);
@@ -94,18 +94,22 @@ public class PricingService : IPricingService
         if (item.IsActive)
             await EnsureNoOverlap(organizationId, subjectType, subjectId, item.CompanyId, request.ValidFrom, request.ValidTo, excludeId: id);
 
-        if (item.Price != request.Price)
-        {
-            await _priceListItemHandler.AddHistory(new PriceListItemHistory
+        bool changed = item.Price != request.Price || item.ValidFrom != request.ValidFrom || item.ValidTo != request.ValidTo;
+        PriceListItemHistory history = changed
+            ? new PriceListItemHistory
             {
                 Id = Guid.NewGuid(),
                 PriceListItemId = id,
                 OldPrice = item.Price,
                 NewPrice = request.Price,
+                OldValidFrom = item.ValidFrom,
+                NewValidFrom = request.ValidFrom,
+                OldValidTo = item.ValidTo,
+                NewValidTo = request.ValidTo,
                 ChangedAt = DateTimeOffset.UtcNow,
                 ChangedBy = userId
-            });
-        }
+            }
+            : null;
 
         item.Price = request.Price;
         item.ValidFrom = request.ValidFrom;
@@ -113,7 +117,11 @@ public class PricingService : IPricingService
         item.UpdatedAt = DateTimeOffset.UtcNow;
         item.UpdatedBy = userId;
 
-        await _priceListItemHandler.Update(item);
+        if (history != null)
+            await _priceListItemHandler.UpdateWithHistory(item, history);
+        else
+            await _priceListItemHandler.Update(item);
+
         return await GetById(organizationId, id);
     }
 
@@ -220,13 +228,20 @@ public class PricingService : IPricingService
         };
     }
 
-    private async Task<decimal> GetDefaultPrice(Guid organizationId, PricingSubjectType subjectType, Guid subjectId)
+    /// <summary>
+    /// Dohvaća zadanu (default) cijenu subjekta. requireActive: true smije se koristiti SAMO pri kreiranju
+    /// nove stavke cjenika (INACTIVE_SERVICE/INACTIVE_PACKAGE) — razrješavanje cijene (ResolvePrice) i pregled
+    /// postojećih stavki moraju raditi i za već neaktivan subjekt (povijesni zapisi se ne smiju blokirati).
+    /// </summary>
+    private async Task<decimal> GetDefaultPrice(Guid organizationId, PricingSubjectType subjectType, Guid subjectId, bool requireActive = false)
     {
         if (subjectType == PricingSubjectType.Service)
         {
             ServiceEntity service = await _serviceHandler.GetById(organizationId, subjectId);
             if (service == null)
                 throw new NotFoundAppException("Service", subjectId);
+            if (requireActive && !service.IsActive)
+                throw new BusinessRuleException(ErrorCodes.InactiveService, $"Usluga '{service.Name}' nije aktivna — nova stavka cjenika se ne može kreirati.");
 
             return service.DefaultPrice;
         }
@@ -234,16 +249,13 @@ public class PricingService : IPricingService
         Package package = await _packageHandler.GetById(organizationId, subjectId);
         if (package == null)
             throw new NotFoundAppException("Package", subjectId);
+        if (requireActive && !package.IsActive)
+            throw new BusinessRuleException(ErrorCodes.InactivePackage, $"Paket '{package.Name}' nije aktivan — nova stavka cjenika se ne može kreirati.");
 
         return package.DefaultPrice;
     }
 
-    private async Task EnsureSubjectExists(Guid organizationId, PricingSubjectType subjectType, Guid subjectId)
-    {
-        await GetDefaultPrice(organizationId, subjectType, subjectId);
-    }
-
-    private async Task EnsureCompanyExists(Guid organizationId, Guid? companyId)
+    private async Task EnsureCompanyExists(Guid organizationId, Guid? companyId, bool requireActive = false)
     {
         if (!companyId.HasValue)
             return;
@@ -251,6 +263,8 @@ public class PricingService : IPricingService
         Company company = await _companyHandler.GetById(organizationId, companyId.Value);
         if (company == null)
             throw new NotFoundAppException("Company", companyId.Value);
+        if (requireActive && !company.IsActive)
+            throw new BusinessRuleException(ErrorCodes.InactiveCompany, $"Tvrtka '{company.Name}' nije aktivna — nova stavka cjenika se ne može kreirati za nju.");
     }
 
     private async Task EnsureNoOverlap(

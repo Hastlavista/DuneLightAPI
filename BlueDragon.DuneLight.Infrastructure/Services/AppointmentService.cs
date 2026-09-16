@@ -14,6 +14,7 @@ using BlueDragon.DuneLight.Core.Shared;
 using BlueDragon.DuneLight.Core.Shared.Exceptions;
 using BlueDragon.DuneLight.Infrastructure.Domain.Models.Appointments;
 using BlueDragon.DuneLight.Infrastructure.Domain.Models.Catalog;
+using BlueDragon.DuneLight.Infrastructure.Domain.Models.Checkouts;
 using BlueDragon.DuneLight.Infrastructure.Domain.Models.Clients;
 using BlueDragon.DuneLight.Infrastructure.Domain.Models.Employees;
 using BlueDragon.DuneLight.Infrastructure.Domain.Models.Roster;
@@ -33,6 +34,7 @@ public class AppointmentService : IAppointmentService
     private readonly IClientPackageHandler _clientPackageHandler;
     private readonly IPricingService _pricingService;
     private readonly IServiceHandler _serviceHandler;
+    private readonly IServiceAvailabilityService _serviceAvailabilityService;
     private readonly IEmployeeHandler _employeeHandler;
     private readonly ICompanyHandler _companyHandler;
     private readonly IRoomHandler _roomHandler;
@@ -41,6 +43,10 @@ public class AppointmentService : IAppointmentService
     private readonly IWorkingHoursTemplateHandler _workingHoursTemplateHandler;
     private readonly ICompanyHolidayHandler _companyHolidayHandler;
     private readonly IScheduleBreakHandler _scheduleBreakHandler;
+    private readonly IWaitlistPromotionService _waitlistPromotionService;
+    private readonly IPaymentLedgerService _paymentLedgerService;
+    private readonly ICheckoutHandler _checkoutHandler;
+    private readonly ICommissionLedgerService _commissionLedgerService;
     private readonly IUnitOfWorkFactory _unitOfWorkFactory;
 
     public AppointmentService(
@@ -50,6 +56,7 @@ public class AppointmentService : IAppointmentService
         IClientPackageHandler clientPackageHandler,
         IPricingService pricingService,
         IServiceHandler serviceHandler,
+        IServiceAvailabilityService serviceAvailabilityService,
         IEmployeeHandler employeeHandler,
         ICompanyHandler companyHandler,
         IRoomHandler roomHandler,
@@ -58,6 +65,10 @@ public class AppointmentService : IAppointmentService
         IWorkingHoursTemplateHandler workingHoursTemplateHandler,
         ICompanyHolidayHandler companyHolidayHandler,
         IScheduleBreakHandler scheduleBreakHandler,
+        IWaitlistPromotionService waitlistPromotionService,
+        IPaymentLedgerService paymentLedgerService,
+        ICheckoutHandler checkoutHandler,
+        ICommissionLedgerService commissionLedgerService,
         IUnitOfWorkFactory unitOfWorkFactory)
     {
         _appointmentHandler = appointmentHandler;
@@ -66,6 +77,7 @@ public class AppointmentService : IAppointmentService
         _clientPackageHandler = clientPackageHandler;
         _pricingService = pricingService;
         _serviceHandler = serviceHandler;
+        _serviceAvailabilityService = serviceAvailabilityService;
         _employeeHandler = employeeHandler;
         _companyHandler = companyHandler;
         _roomHandler = roomHandler;
@@ -74,6 +86,10 @@ public class AppointmentService : IAppointmentService
         _workingHoursTemplateHandler = workingHoursTemplateHandler;
         _companyHolidayHandler = companyHolidayHandler;
         _scheduleBreakHandler = scheduleBreakHandler;
+        _waitlistPromotionService = waitlistPromotionService;
+        _paymentLedgerService = paymentLedgerService;
+        _checkoutHandler = checkoutHandler;
+        _commissionLedgerService = commissionLedgerService;
         _unitOfWorkFactory = unitOfWorkFactory;
     }
 
@@ -86,18 +102,15 @@ public class AppointmentService : IAppointmentService
     {
         await ValidateOwnership(organizationId, userId, hasFullScope, request.EmployeeId);
         ServiceEntity service = await LoadServiceOrThrow(organizationId, request.ServiceId);
-        await EnsureEmployeeExists(organizationId, request.EmployeeId);
-        await EnsureCompanyExists(organizationId, request.CompanyId);
+        bool overrideAvailability = request.OverrideAvailability && hasFullScope;
+        await EnsureStructuralEligibility(organizationId, service, request.CompanyId, request.EmployeeId);
         Room room = await EnsureRoomExists(organizationId, request.CompanyId, request.RoomId);
         List<Client> clients = await EnsureClientsExist(organizationId, request.ClientIds);
 
         decimal suggestedAmount = await ResolveSuggestedAmount(organizationId, request.ServiceId, request.CompanyId, request.StartsAt);
-        decimal amount = request.Amount ?? suggestedAmount;
-        bool overridden = request.Amount.HasValue && request.Amount.Value != suggestedAmount;
 
-        Dictionary<Guid, Guid> packageByClient = await ValidatePackageSelections(
-            organizationId, clients.Select(c => c.Id.GetValueOrDefault()).ToList(),
-            request.ServiceId, request.StartsAt, request.PaymentMethod, request.PackageSelections);
+        Dictionary<Guid, AppointmentClientSettlement> settlementByClient = await ValidateSettlements(
+            organizationId, clients.Select(c => c.Id.GetValueOrDefault()).ToList(), request.ServiceId, request.StartsAt, request.Settlements);
 
         Guid appointmentId = Guid.NewGuid();
         Appointment appointment = new Appointment
@@ -111,45 +124,55 @@ public class AppointmentService : IAppointmentService
             EmployeeId = request.EmployeeId,
             CompanyId = request.CompanyId,
             RoomId = request.RoomId,
-            Amount = amount,
-            SuggestedAmount = suggestedAmount,
-            IsAmountManuallyOverridden = overridden,
-            PaymentMethod = request.PaymentMethod,
-            IsPaid = true,
             Status = AppointmentStatus.Completed,
             Note = request.Note,
             CreatedAt = DateTimeOffset.UtcNow,
             CreatedBy = userId
         };
 
+        Dictionary<Guid, Guid> packageByClient = new Dictionary<Guid, Guid>();
+        List<(Booking Booking, PaymentMethod Method, decimal Amount)> pendingPayments = new List<(Booking, PaymentMethod, decimal)>();
+
         foreach (Client client in clients)
         {
             Guid clientId = client.Id.GetValueOrDefault();
-            bool hasPackage = packageByClient.TryGetValue(clientId, out Guid clientPackageId);
-            appointment.Clients.Add(new AppointmentClient
+            AppointmentClientSettlement settlement = settlementByClient[clientId];
+            bool hasPackage = settlement.ClientPackageId.HasValue;
+            decimal bookingAmount = settlement.Amount ?? suggestedAmount;
+
+            if (hasPackage)
+                packageByClient[clientId] = settlement.ClientPackageId.GetValueOrDefault();
+
+            Booking booking = new Booking
             {
                 Id = Guid.NewGuid(),
+                OrganizationId = organizationId,
                 AppointmentId = appointmentId,
                 ClientId = clientId,
-                ClientPackageId = hasPackage ? clientPackageId : (Guid?)null,
-                PackageEntryDeducted = hasPackage,
+                Status = BookingStatus.Completed,
+                Amount = bookingAmount,
+                SuggestedAmount = suggestedAmount,
+                IsAmountManuallyOverridden = settlement.Amount.HasValue && settlement.Amount.Value != suggestedAmount,
+                ClientPackageId = hasPackage ? settlement.ClientPackageId : (Guid?)null,
+                PackageCoverageApplied = hasPackage,
                 CreatedAt = DateTimeOffset.UtcNow
-            });
+            };
+            appointment.Bookings.Add(booking);
+
+            // Paket namiruje obvezu bez Paymenta (vidi Payment.cs/spec section 3/40) — monetarni Payment se
+            // stvara samo bez paketa, uz zatraženu metodu, IsPaid=true i stvaran pozitivan iznos.
+            if (!hasPackage && settlement.PaymentMethod.HasValue && settlement.IsPaid && bookingAmount > 0m)
+                pendingPayments.Add((booking, settlement.PaymentMethod.Value, bookingAmount));
         }
 
-        // CompleteNew loguje odrađeno — provjera radnog vremena vrijedi samo ako je StartsAt u budućnosti
+        // CompleteNew loguje odrađeno — provjera radne-snage dostupnosti vrijedi samo ako je StartsAt u budućnosti
         // (zakazuje se i odmah naplaćuje); za prošlost je ovo evidentiranje stvarnosti, ne planiranje (vidi FAZA 2).
         List<WarningDto> warnings = new List<WarningDto>();
         if (request.StartsAt > DateTimeOffset.UtcNow)
-        {
-            WarningDto workingHoursWarning = await BuildWorkingHoursWarning(
-                organizationId, request.EmployeeId, request.CompanyId, request.StartsAt, service.DefaultDurationMinutes);
-            if (workingHoursWarning != null)
-                warnings.Add(workingHoursWarning);
-        }
+            warnings.AddRange(await EnsureWorkforceAvailability(
+                organizationId, request.EmployeeId, request.CompanyId, request.StartsAt, service.DefaultDurationMinutes, overrideAvailability));
 
-        warnings.AddRange(await EnsureNoHardOverlapCollectWarnings(
-            organizationId, request.EmployeeId, clients, request.StartsAt, appointment.DurationMinutes, excludeId: null, room));
+        await EnsureNoHardOverlap(organizationId, request.EmployeeId, clients, request.StartsAt, appointment.DurationMinutes, excludeId: null, room);
 
         try
         {
@@ -159,6 +182,17 @@ public class AppointmentService : IAppointmentService
 
             foreach (KeyValuePair<Guid, Guid> kvp in packageByClient)
                 await DeductPackageEntryInTransaction(uow, organizationId, kvp.Value, request.ServiceId, userId);
+
+            // Payment ide TEK nakon _appointmentHandler.Add (FK payments.booking_id) — Booking.Id je već
+            // poznat (dodijeljen prije Add), pa je isti in-memory objekt (sad persistiran) siguran za referencu.
+            foreach ((Booking booking, PaymentMethod method, decimal amount) in pendingPayments)
+                await _paymentLedgerService.RecordPayment(
+                    uow, organizationId, userId, appointment.CompanyId, booking, method, amount, note: null, isCheckInGenerated: true);
+
+            // Provizija se zarađuje ISTOM transakcijom kao completion — svaki upravo odrađen Booking je jedan
+            // izvor (vidi ICommissionLedgerService, spec section 27/28).
+            foreach (Booking booking in appointment.Bookings)
+                await _commissionLedgerService.GenerateForIndividualServiceCompletion(uow, organizationId, appointment, booking);
 
             await uow.CommitAsync();
         }
@@ -179,70 +213,105 @@ public class AppointmentService : IAppointmentService
         if (appointment == null)
             throw new NotFoundAppException("Appointment", id);
 
+        // Ovaj put (ClientIds/Settlements popis koji reconcilea Booking retke, uklj. hard-delete izbačenih)
+        // pretpostavlja Form=Individual — za Form=Group to bi netočno restrukturiralo Bookinge koji već
+        // postoje po GroupMemberima (vidi GroupService.GenerateAppointments/AddMember). Grupni termin se
+        // zatvara kroz IAppointmentService.CompleteGroupAppointment, koji ne dira Booking retke.
+        if (appointment.Form != AppointmentForm.Individual)
+            throw new ValidationAppException(
+                "Grupni termin se odrađuje kroz complete-group, ne kroz complete-existing (naplata je po klijentu/Bookingu, ne po popisu klijenata termina).");
+
         if (appointment.Status == AppointmentStatus.Completed)
             throw new BusinessRuleException(ErrorCodes.AlreadyCompleted, "Termin je već označen kao odrađen.");
 
         await ValidateOwnership(organizationId, userId, hasFullScope, appointment.EmployeeId.GetValueOrDefault());
 
         ServiceEntity service = await LoadServiceOrThrow(organizationId, request.ServiceId);
-        await EnsureEmployeeExists(organizationId, request.EmployeeId);
-        await EnsureCompanyExists(organizationId, request.CompanyId);
+        await EnsureStructuralEligibility(organizationId, service, request.CompanyId, request.EmployeeId);
         Room room = await EnsureRoomExists(organizationId, request.CompanyId, request.RoomId);
         List<Client> clients = await EnsureClientsExist(organizationId, request.ClientIds);
 
         decimal suggestedAmount = await ResolveSuggestedAmount(organizationId, request.ServiceId, request.CompanyId, request.StartsAt);
-        decimal amount = request.Amount ?? suggestedAmount;
-        bool overridden = request.Amount.HasValue && request.Amount.Value != suggestedAmount;
 
-        Dictionary<Guid, Guid> packageByClient = await ValidatePackageSelections(
-            organizationId, clients.Select(c => c.Id.GetValueOrDefault()).ToList(),
-            request.ServiceId, request.StartsAt, request.PaymentMethod, request.PackageSelections);
+        Dictionary<Guid, AppointmentClientSettlement> settlementByClient = await ValidateSettlements(
+            organizationId, clients.Select(c => c.Id.GetValueOrDefault()).ToList(), request.ServiceId, request.StartsAt, request.Settlements);
 
-        bool amountChanged = amount != appointment.Amount;
-        decimal previousAmount = appointment.Amount;
-
-        appointment.StartsAt = request.StartsAt;
-        appointment.DurationMinutes = service.DefaultDurationMinutes;
-        appointment.ServiceId = request.ServiceId;
-        appointment.EmployeeId = request.EmployeeId;
-        appointment.CompanyId = request.CompanyId;
-        appointment.RoomId = request.RoomId;
-        appointment.Amount = amount;
-        appointment.SuggestedAmount = suggestedAmount;
-        appointment.IsAmountManuallyOverridden = overridden;
-        appointment.PaymentMethod = request.PaymentMethod;
-        appointment.IsPaid = true;
-        appointment.Status = AppointmentStatus.Completed;
-        appointment.Note = request.Note;
-        appointment.UpdatedAt = DateTimeOffset.UtcNow;
-        appointment.UpdatedBy = userId;
-
-        List<WarningDto> warnings = await EnsureNoHardOverlapCollectWarnings(
-            organizationId, request.EmployeeId, clients, request.StartsAt, appointment.DurationMinutes, excludeId: id, room);
+        await EnsureNoHardOverlap(organizationId, request.EmployeeId, clients, request.StartsAt, service.DefaultDurationMinutes, excludeId: id, room);
 
         try
         {
             await using IUnitOfWork uow = await _unitOfWorkFactory.Begin();
 
-            if (amountChanged)
-                await LogAmountChangeInTransaction(uow, id, previousAmount, amount, userId);
+            // Zaključava Appointment redak (FOR UPDATE) i ponovno čita Status prije mutacije — sprječava utrku s
+            // konkurentnim drugim completion/cancel zahtjevom na ISTOM terminu (drugi zahtjev čeka na lock pa vidi
+            // svježe stanje nakon commita prvog, vidi spec section 8-11). Zamjenjuje pred-transakcijski appointment
+            // (GetByIdLight iznad, koji je poslužio samo za brzu Form/ownership/AlreadyCompleted provjeru).
+            appointment = await _appointmentHandler.GetForUpdate(uow, organizationId, id);
+            if (appointment == null)
+                throw new NotFoundAppException("Appointment", id);
+            if (appointment.Status == AppointmentStatus.Completed)
+                throw new BusinessRuleException(ErrorCodes.AlreadyCompleted, "Termin je već označen kao odrađen.");
 
-            await _appointmentHandler.UpdateWithClients(uow, appointment, request.ClientIds.Distinct().ToList());
+            appointment.StartsAt = request.StartsAt;
+            appointment.DurationMinutes = service.DefaultDurationMinutes;
+            appointment.ServiceId = request.ServiceId;
+            appointment.EmployeeId = request.EmployeeId;
+            appointment.CompanyId = request.CompanyId;
+            appointment.RoomId = request.RoomId;
+            appointment.Status = AppointmentStatus.Completed;
+            appointment.Note = request.Note;
+            appointment.UpdatedAt = DateTimeOffset.UtcNow;
+            appointment.UpdatedBy = userId;
 
-            Dictionary<Guid, AppointmentClient> clientRowsByClientId = (await _appointmentHandler.GetAppointmentClients(
-                    uow, organizationId, id, packageByClient.Keys.ToList()))
-                .ToDictionary(ac => ac.ClientId);
+            await _appointmentHandler.UpdateWithBookings(uow, appointment, request.ClientIds.Distinct().ToList());
 
-            foreach (KeyValuePair<Guid, Guid> kvp in packageByClient)
+            List<Booking> bookingRows = await _appointmentHandler.GetBookings(uow, organizationId, id, request.ClientIds.Distinct().ToList());
+
+            foreach (Booking bookingRow in bookingRows)
             {
-                if (!clientRowsByClientId.TryGetValue(kvp.Key, out AppointmentClient clientRow))
-                    continue;
+                AppointmentClientSettlement settlement = settlementByClient[bookingRow.ClientId];
+                bool hasPackage = settlement.ClientPackageId.HasValue;
+                decimal bookingAmount = settlement.Amount ?? suggestedAmount;
 
-                await DeductPackageEntryInTransaction(uow, organizationId, kvp.Value, request.ServiceId, userId);
+                if (bookingRow.Amount != bookingAmount)
+                    await LogAmountChangeInTransaction(uow, id, bookingRow.Id, bookingRow.Amount, bookingAmount, userId);
 
-                clientRow.ClientPackageId = kvp.Value;
-                clientRow.PackageEntryDeducted = true;
-                await _appointmentHandler.UpdateAppointmentClient(uow, clientRow);
+                bookingRow.Status = BookingStatus.Completed;
+                bookingRow.Amount = bookingAmount;
+                bookingRow.SuggestedAmount = suggestedAmount;
+                bookingRow.IsAmountManuallyOverridden = settlement.Amount.HasValue && settlement.Amount.Value != suggestedAmount;
+
+                if (hasPackage && !bookingRow.PackageCoverageApplied)
+                {
+                    // Paket-namirenje i novčano namirenje su međusobno isključivi dok nemamo surcharge/refund/
+                    // store-credit semantiku (vidi spec fix section 2) — bookingRow je POSTOJEĆI redak (Confirmed
+                    // termin koji se sad zatvara), mogao je već primiti djelomičnu novčanu uplatu preko POS
+                    // Checkouta prije ovog completiona. Ne "orphan-aj" taj novac tihom primjenom paketa.
+                    List<CheckoutItem> existingCheckoutItems = await _checkoutHandler.GetItemsForBooking(
+                        uow, organizationId, bookingRow.Id.GetValueOrDefault());
+                    decimal existingMonetaryPaid = BookingFinancialsCalculator.CalculatePaidAmount(existingCheckoutItems);
+                    if (existingMonetaryPaid > 0m)
+                        throw new BusinessRuleException(
+                            ErrorCodes.BookingAlreadyHasMonetaryPayment,
+                            "Booking već ima aktivnu novčanu uplatu — pokriće paketom se ne može primijeniti dok se ne poništi ta uplata.",
+                            new { bookingId = bookingRow.Id, existingMonetaryPaid });
+
+                    Guid clientPackageId = settlement.ClientPackageId.GetValueOrDefault();
+                    await DeductPackageEntryInTransaction(uow, organizationId, clientPackageId, request.ServiceId, userId);
+                    bookingRow.ClientPackageId = clientPackageId;
+                    bookingRow.PackageCoverageApplied = true;
+                }
+
+                await _appointmentHandler.UpdateBooking(uow, bookingRow);
+
+                // Booking je već persistiran (postojeći redak, samo ažuriran) — Payment sigurno može odmah nakon.
+                if (!hasPackage && settlement.PaymentMethod.HasValue && settlement.IsPaid && bookingAmount > 0m)
+                    await _paymentLedgerService.RecordPayment(
+                        uow, organizationId, userId, appointment.CompanyId, bookingRow, settlement.PaymentMethod.Value, bookingAmount,
+                        note: null, isCheckInGenerated: true);
+
+                // Provizija se zarađuje ISTOM transakcijom kao completion — vidi CompleteNew.
+                await _commissionLedgerService.GenerateForIndividualServiceCompletion(uow, organizationId, appointment, bookingRow);
             }
 
             await uow.CommitAsync();
@@ -253,22 +322,99 @@ public class AppointmentService : IAppointmentService
                 ErrorCodes.ConcurrencyConflict, "Podaci su upravo promijenjeni od strane drugog zahtjeva — pokušajte ponovno.");
         }
 
+        return await GetByIdInternal(organizationId, id);
+    }
+
+    /// <summary>Appointment-razina "odrađeno" za GRUPNI termin — jedina zadaća je prijelaz okvira Scheduled →
+    /// Completed. Namjerno NE dira nijedan Booking redak: svaki se već razrješava neovisno kroz
+    /// BookingService.SetStatus/GroupAttendanceService (check-in po klijentu), koji ostaje jedini put za
+    /// Booking.Status. Ako neki Booking ostane Confirmed (nerazrješen) u trenutku zatvaranja, zatvaranje se
+    /// SVEJEDNO dopušta (isto lijenije ponašanje kao ostatak ovog API-ja — upozorenje, ne blokada) uz
+    /// GROUP_APPOINTMENT_UNRESOLVED_BOOKINGS upozorenje koje nabraja pogođene ClientId-jeve.</summary>
+    public async Task<AppointmentDto> CompleteGroupAppointment(Guid organizationId, Guid userId, bool hasFullScope, Guid id)
+    {
+        Appointment appointment;
+
+        await using (IUnitOfWork uow = await _unitOfWorkFactory.Begin())
+        {
+            // Zaključava Appointment redak (FOR UPDATE) i čita Form/Status/EmployeeId pod lockom PRIJE bilo kakve
+            // provjere/mutacije — sprječava utrku s konkurentnim drugim completion/cancel zahtjevom na ISTOM
+            // terminu (drugi zahtjev čeka na lock pa vidi svježe stanje nakon commita prvog, vidi spec section
+            // 8-11). Bookings su uključeni jer se čitaju i nakon commita (unresolvedClientIds upozorenje niže).
+            appointment = await _appointmentHandler.GetForUpdateWithBookings(uow, organizationId, id);
+            if (appointment == null)
+                throw new NotFoundAppException("Appointment", id);
+
+            if (appointment.Form != AppointmentForm.Group)
+                throw new ValidationAppException(
+                    "Individualni termin se odrađuje kroz complete/complete-existing, ne kroz complete-group.");
+
+            if (appointment.Status == AppointmentStatus.Completed)
+                throw new BusinessRuleException(ErrorCodes.AlreadyCompleted, "Termin je već označen kao odrađen.");
+
+            if (appointment.Status == AppointmentStatus.Cancelled)
+                throw new BusinessRuleException(ErrorCodes.AppointmentNotMovable, "Otkazan termin se ne može označiti kao odrađen.");
+
+            await ValidateOwnership(organizationId, userId, hasFullScope, appointment.EmployeeId.GetValueOrDefault());
+
+            AppointmentStatus oldStatus = appointment.Status;
+            appointment.Status = AppointmentStatus.Completed;
+            appointment.UpdatedAt = DateTimeOffset.UtcNow;
+            appointment.UpdatedBy = userId;
+
+            await _appointmentHandler.UpdateScalar(uow, appointment);
+
+            await _auditLogHandler.Add(uow, new AppointmentAuditLog
+            {
+                Id = Guid.NewGuid(),
+                AppointmentId = id,
+                ChangeType = "Status",
+                OldValue = oldStatus.ToString(),
+                NewValue = appointment.Status.ToString(),
+                ChangedAt = DateTimeOffset.UtcNow,
+                ChangedBy = userId
+            });
+
+            // Occurrence je zatvoren — preostali Waiting retci više nisu smisleni (spec section 20), ne promovira se.
+            await _waitlistPromotionService.ExpireWaitingForAppointment(
+                uow, organizationId, id, userId, WaitlistExpiredReasons.AppointmentCompleted);
+
+            // Provizija se zarađuje PO CIJELOM odrađenom terminu, ne po sudioniku — vidi CommissionService
+            // domensku napomenu (spec section 14/27/28).
+            await _commissionLedgerService.GenerateForGroupServiceCompletion(uow, organizationId, appointment);
+
+            await uow.CommitAsync();
+        }
+
+        List<Guid> unresolvedClientIds = appointment.Bookings
+            .Where(b => b.Status == BookingStatus.Confirmed)
+            .Select(b => b.ClientId)
+            .ToList();
+
         AppointmentDto dto = await GetByIdInternal(organizationId, id);
-        dto.Warnings = warnings;
+        if (unresolvedClientIds.Count > 0)
+            dto.Warnings.Add(new WarningDto(
+                WarningCodes.GroupAppointmentUnresolvedBookings, new WarningUnresolvedBookingsDetails { ClientIds = unresolvedClientIds }));
+
         return dto;
     }
 
+    /// <summary>Statusi koji ZAKLJUČUJU komercijalnu evidenciju bookinga — Update ih nikad ne repricinga
+    /// (historijski Amount se ne smije mijenjati naknadno, vidi spec section 18/20).</summary>
+    private static readonly BookingStatus[] TerminalBookingStatuses =
+        { BookingStatus.Completed, BookingStatus.Cancelled, BookingStatus.NoShow };
+
     public async Task<AppointmentDto> Update(Guid organizationId, Guid userId, bool hasFullScope, Guid id, AppointmentUpdateRequest request)
     {
-        Appointment appointment = await _appointmentHandler.GetByIdLight(organizationId, id);
+        Appointment appointment = await _appointmentHandler.GetWithBookingsForMutation(organizationId, id);
         if (appointment == null)
             throw new NotFoundAppException("Appointment", id);
 
         await ValidateOwnership(organizationId, userId, hasFullScope, appointment.EmployeeId.GetValueOrDefault());
 
         ServiceEntity service = await LoadServiceOrThrow(organizationId, request.ServiceId);
-        await EnsureEmployeeExists(organizationId, request.EmployeeId);
-        await EnsureCompanyExists(organizationId, request.CompanyId);
+        bool overrideAvailability = request.OverrideAvailability && hasFullScope;
+        await EnsureStructuralEligibility(organizationId, service, request.CompanyId, request.EmployeeId);
         Room room = await EnsureRoomExists(organizationId, request.CompanyId, request.RoomId);
         List<Client> clients = await EnsureClientsExist(organizationId, request.ClientIds);
 
@@ -276,8 +422,13 @@ public class AppointmentService : IAppointmentService
         decimal amount = request.Amount ?? suggestedAmount;
         bool overridden = request.Amount.HasValue && request.Amount.Value != suggestedAmount;
 
-        if (amount != appointment.Amount)
-            await LogAmountChange(id, appointment.Amount, amount, userId);
+        // Re-cijenjenje (persistira ga AppointmentHandler.UpdateWithBookings niže) se primjenjuje samo na
+        // Bookinge koji NISU terminalni — historijski Amount na već odrađenom/otkazanom/izostalom Bookingu
+        // se ne dira (vidi TerminalBookingStatuses). Ovdje samo audit-logiramo promjenu za te retke.
+        List<Guid> requestedClientIds = request.ClientIds.Distinct().ToList();
+        foreach (Booking booking in appointment.Bookings.Where(b =>
+            requestedClientIds.Contains(b.ClientId) && !TerminalBookingStatuses.Contains(b.Status) && amount != b.Amount))
+            await LogAmountChange(id, booking.Id, booking.Amount, amount, userId);
 
         if (appointment.EmployeeId != request.EmployeeId)
             await LogEmployeeChange(id, appointment.EmployeeId, request.EmployeeId, userId);
@@ -288,23 +439,17 @@ public class AppointmentService : IAppointmentService
         appointment.EmployeeId = request.EmployeeId;
         appointment.CompanyId = request.CompanyId;
         appointment.RoomId = request.RoomId;
-        appointment.Amount = amount;
-        appointment.SuggestedAmount = suggestedAmount;
-        appointment.IsAmountManuallyOverridden = overridden;
         appointment.Note = request.Note;
         appointment.UpdatedAt = DateTimeOffset.UtcNow;
         appointment.UpdatedBy = userId;
 
         List<WarningDto> warnings = new List<WarningDto>();
-        WarningDto workingHoursWarning = await BuildWorkingHoursWarning(
-            organizationId, request.EmployeeId, request.CompanyId, request.StartsAt, appointment.DurationMinutes);
-        if (workingHoursWarning != null)
-            warnings.Add(workingHoursWarning);
+        warnings.AddRange(await EnsureWorkforceAvailability(
+            organizationId, request.EmployeeId, request.CompanyId, request.StartsAt, appointment.DurationMinutes, overrideAvailability));
 
-        warnings.AddRange(await EnsureNoHardOverlapCollectWarnings(
-            organizationId, request.EmployeeId, clients, request.StartsAt, appointment.DurationMinutes, excludeId: id, room));
+        await EnsureNoHardOverlap(organizationId, request.EmployeeId, clients, request.StartsAt, appointment.DurationMinutes, excludeId: id, room);
 
-        await _appointmentHandler.UpdateWithClients(appointment, request.ClientIds.Distinct().ToList());
+        await _appointmentHandler.UpdateWithBookings(appointment, requestedClientIds, amount, suggestedAmount, overridden);
 
         AppointmentDto dto = await GetByIdInternal(organizationId, id);
         dto.Warnings = warnings;
@@ -317,10 +462,12 @@ public class AppointmentService : IAppointmentService
         if (appointment == null)
             throw new NotFoundAppException("Appointment", id);
 
-        if (appointment.Status == AppointmentStatus.Cancelled || appointment.Status == AppointmentStatus.NoShow)
-            throw new BusinessRuleException(ErrorCodes.AppointmentNotMovable, "Otkazan ili izostao termin se ne može pomicati.");
+        if (appointment.Status == AppointmentStatus.Cancelled)
+            throw new BusinessRuleException(ErrorCodes.AppointmentNotMovable, "Otkazan termin se ne može pomicati.");
 
         await ValidateOwnership(organizationId, userId, hasFullScope, appointment.EmployeeId.GetValueOrDefault());
+
+        bool overrideAvailability = request.OverrideAvailability && hasFullScope;
 
         if (request.EmployeeId.HasValue)
             await EnsureEmployeeExists(organizationId, request.EmployeeId.Value);
@@ -329,9 +476,14 @@ public class AppointmentService : IAppointmentService
             await EnsureCompanyExists(organizationId, request.CompanyId.Value);
 
         Guid effectiveEmployeeId = request.EmployeeId ?? appointment.EmployeeId.GetValueOrDefault();
+        Guid effectiveCompanyId = request.CompanyId ?? appointment.CompanyId;
 
         Appointment full = await _appointmentHandler.GetById(organizationId, id);
-        List<Client> clients = full.Clients.Select(ac => ac.Client).ToList();
+        List<Client> clients = full.Bookings.Where(b => b.Status != BookingStatus.Cancelled && b.Status != BookingStatus.NoShow)
+            .Select(b => b.Client).ToList();
+
+        ServiceEntity service = await LoadServiceOrThrow(organizationId, appointment.ServiceId);
+        await EnsureStructuralEligibility(organizationId, service, effectiveCompanyId, effectiveEmployeeId);
 
         appointment.StartsAt = request.StartsAt;
         if (request.EmployeeId.HasValue && request.EmployeeId.Value != appointment.EmployeeId)
@@ -351,13 +503,10 @@ public class AppointmentService : IAppointmentService
         Room room = await EnsureRoomExists(organizationId, appointment.CompanyId, appointment.RoomId);
 
         List<WarningDto> warnings = new List<WarningDto>();
-        WarningDto workingHoursWarning = await BuildWorkingHoursWarning(
-            organizationId, effectiveEmployeeId, appointment.CompanyId, request.StartsAt, appointment.DurationMinutes);
-        if (workingHoursWarning != null)
-            warnings.Add(workingHoursWarning);
+        warnings.AddRange(await EnsureWorkforceAvailability(
+            organizationId, effectiveEmployeeId, appointment.CompanyId, request.StartsAt, appointment.DurationMinutes, overrideAvailability));
 
-        warnings.AddRange(await EnsureNoHardOverlapCollectWarnings(
-            organizationId, effectiveEmployeeId, clients, request.StartsAt, appointment.DurationMinutes, excludeId: id, room));
+        await EnsureNoHardOverlap(organizationId, effectiveEmployeeId, clients, request.StartsAt, appointment.DurationMinutes, excludeId: id, room);
 
         await _appointmentHandler.UpdateScalar(appointment);
 
@@ -366,14 +515,20 @@ public class AppointmentService : IAppointmentService
         return dto;
     }
 
+    /// <summary>Otkazuje CIJELI termin — svi aktivni (Confirmed) Bookinzi prelaze u Cancelled zajedno s
+    /// Appointment.Status. Za otkazivanje SAMO jednog klijenta (npr. duo/grupa) koristi se
+    /// IBookingService.SetStatus umjesto ovoga (vidi Booking.cs section 44).</summary>
     public Task<AppointmentDto> Cancel(Guid organizationId, Guid userId, bool hasFullScope, Guid id, AppointmentCancelRequest request)
     {
-        return ChangeToTerminalStatus(organizationId, userId, hasFullScope, id, request, AppointmentStatus.Cancelled);
+        return ChangeToTerminalStatus(organizationId, userId, hasFullScope, id, request, BookingStatus.Cancelled);
     }
 
+    /// <summary>Bulk no-show — svi aktivni Bookinzi prelaze u NoShow, Appointment.Status ipak završava na
+    /// Cancelled (termin kao okvir NIKAD nije NoShow — vidi AppointmentStatus.cs). Za pojedinačni no-show na
+    /// terminu s više klijenata koristi se IBookingService.SetStatus.</summary>
     public Task<AppointmentDto> MarkNoShow(Guid organizationId, Guid userId, bool hasFullScope, Guid id, AppointmentCancelRequest request)
     {
-        return ChangeToTerminalStatus(organizationId, userId, hasFullScope, id, request, AppointmentStatus.NoShow);
+        return ChangeToTerminalStatus(organizationId, userId, hasFullScope, id, request, BookingStatus.NoShow);
     }
 
     public async Task Delete(Guid organizationId, Guid userId, Guid id)
@@ -394,16 +549,16 @@ public class AppointmentService : IAppointmentService
             throw new ValidationAppException("Datum kraja ne smije biti prije prvog termina.");
 
         ServiceEntity service = await LoadServiceOrThrow(organizationId, request.ServiceId);
+        bool overrideAvailability = request.OverrideAvailability && hasFullScope;
         List<DateTimeOffset> occurrences = BuildOccurrenceDates(request.RecurrenceType, request.FirstOccurrenceStartsAt, request.EndDate);
 
-        await EnsureCompanyExists(organizationId, request.CompanyId);
+        await EnsureStructuralEligibility(organizationId, service, request.CompanyId, request.EmployeeId);
         Room room = await EnsureRoomExists(organizationId, request.CompanyId, request.RoomId);
 
         Dictionary<DateTimeOffset, List<WarningDto>> warningsByOccurrence = await EnsureNoRecurringConflicts(
-            organizationId, request.EmployeeId, request.CompanyId, occurrences, service.DefaultDurationMinutes, room);
+            organizationId, request.EmployeeId, request.CompanyId, occurrences, service.DefaultDurationMinutes, overrideAvailability, room);
 
         await ValidateOwnership(organizationId, userId, hasFullScope, request.EmployeeId);
-        await EnsureEmployeeExists(organizationId, request.EmployeeId);
         List<Client> clients = await EnsureClientsExist(organizationId, request.ClientIds);
 
         await EnsureNoRecurringClientOverlap(organizationId, clients, occurrences, service.DefaultDurationMinutes);
@@ -427,11 +582,6 @@ public class AppointmentService : IAppointmentService
                 EmployeeId = request.EmployeeId,
                 CompanyId = request.CompanyId,
                 RoomId = request.RoomId,
-                Amount = suggestedAmount,
-                SuggestedAmount = suggestedAmount,
-                IsAmountManuallyOverridden = false,
-                PaymentMethod = null,
-                IsPaid = false,
                 Status = AppointmentStatus.Scheduled,
                 Note = request.Note,
                 RecurrenceGroupId = recurrenceGroupId,
@@ -441,11 +591,15 @@ public class AppointmentService : IAppointmentService
 
             foreach (Client client in clients)
             {
-                appointment.Clients.Add(new AppointmentClient
+                appointment.Bookings.Add(new Booking
                 {
                     Id = Guid.NewGuid(),
+                    OrganizationId = organizationId,
                     AppointmentId = appointmentId,
                     ClientId = client.Id.GetValueOrDefault(),
+                    Status = BookingStatus.Confirmed,
+                    Amount = suggestedAmount,
+                    SuggestedAmount = suggestedAmount,
                     CreatedAt = DateTimeOffset.UtcNow
                 });
             }
@@ -481,14 +635,15 @@ public class AppointmentService : IAppointmentService
 
     /// <summary>SAMO za /recurring. STVARNI sudari (trener već ima termin/grupu u to vrijeme, ili soba zauzeta)
     /// i dalje abortiraju CIJELI niz s RECURRING_CONFLICT (409) prije nego se bilo što spremi — pojedinačni
-    /// endpointi umjesto ovoga koriste EnsureNoHardOverlapCollectWarnings (isto tvrda blokada za iste razloge, ali
-    /// baca AppointmentOverlap za prvi sudar bez liste svih konflikata). Radno vrijeme/praznik/godišnji-ili-druga
-    /// odsutnost/pauza trenera VIŠE ne isključuju instancu iz niza — vraćaju se kao upozorenja po occurrenceu koje
-    /// pozivatelj upisuje u AppointmentDto.Warnings nakon što se niz stvarno kreira. Kandidati (termini trenera +
-    /// roster odsutnosti) dohvaćaju se JEDNOM za cijeli raspon niza, precizna provjera po occurrenceu radi se u
-    /// memoriji — izbjegava upit po occurrenceu za duge nizove.</summary>
+    /// endpointi umjesto ovoga koriste EnsureNoHardOverlap (isto tvrda blokada za iste razloge, ali baca
+    /// APPOINTMENT_OVERLAP za prvi sudar bez liste svih konflikata). Radno vrijeme/praznik/odsutnost/pauza trenera
+    /// su TAKOĐER tvrda blokada za cijeli niz OSIM kad je overrideAvailability=true — tad se vraćaju kao
+    /// upozorenje po occurrenceu koje pozivatelj upisuje u AppointmentDto.Warnings nakon što se niz stvarno
+    /// kreira (isto ponašanje kao prije uvođenja tvrde blokade). Kandidati (termini trenera + roster odsutnosti)
+    /// dohvaćaju se JEDNOM za cijeli raspon niza, precizna provjera po occurrenceu radi se u memoriji.</summary>
     private async Task<Dictionary<DateTimeOffset, List<WarningDto>>> EnsureNoRecurringConflicts(
-        Guid organizationId, Guid employeeId, Guid companyId, List<DateTimeOffset> occurrences, int durationMinutes, Room room = null)
+        Guid organizationId, Guid employeeId, Guid companyId, List<DateTimeOffset> occurrences, int durationMinutes,
+        bool overrideAvailability, Room room = null)
     {
         DateTimeOffset rangeFrom = occurrences[0].AddDays(-1);
         DateTimeOffset rangeTo = occurrences[^1].AddDays(1);
@@ -538,31 +693,33 @@ public class AppointmentService : IAppointmentService
 
             bool breakHit = candidateBreaks.Any(b =>
                 b.StartsAt < occurrenceEnd && occurrence < b.StartsAt.AddMinutes(b.DurationMinutes));
-            if (breakHit)
-                warnings.Add(new WarningDto(WarningCodes.EmployeeOnBreak));
 
             bool absenceHit = absences.Any(a =>
                 a.DateFrom.Date <= occurrence.Date && (a.DateTo == null || occurrence.Date <= a.DateTo.Value.Date));
 
-            if (absenceHit)
-            {
-                warnings.Add(new WarningDto(WarningCodes.EmployeeAbsent));
-            }
-            else
-            {
-                List<RosterEntry> rosterEntriesForOccurrence = rosterEntriesInRange
-                    .Where(e => !e.RosterType.IsAbsence && e.DateFrom.Date == occurrence.Date)
-                    .ToList();
+            List<RosterEntry> rosterEntriesForOccurrence = rosterEntriesInRange
+                .Where(e => !e.RosterType.IsAbsence && e.DateFrom.Date == occurrence.Date)
+                .ToList();
 
-                List<CompanyHoliday> companyHolidaysForOccurrence = companyHolidaysInRange
-                    .Where(h => h.Date.Date == occurrence.Date)
-                    .ToList();
+            List<CompanyHoliday> companyHolidaysForOccurrence = companyHolidaysInRange
+                .Where(h => h.Date.Date == occurrence.Date)
+                .ToList();
 
-                if (!IsWithinWorkingHours(employeeTemplate, companyTemplate, rosterEntriesForOccurrence, occurrence, durationMinutes, companyHolidaysForOccurrence))
+            bool withinHours = absenceHit || IsWithinWorkingHours(
+                employeeTemplate, companyTemplate, rosterEntriesForOccurrence, occurrence, durationMinutes, companyHolidaysForOccurrence);
+
+            AppointmentEligibilityHelper.WorkforceViolation violation = AppointmentEligibilityHelper.Classify(
+                absenceHit, breakHit, companyHolidaysForOccurrence.Count > 0, withinHours);
+
+            if (violation != AppointmentEligibilityHelper.WorkforceViolation.None)
+            {
+                if (!overrideAvailability)
                 {
-                    warnings.Add(companyHolidaysForOccurrence.Count > 0
-                        ? new WarningDto(WarningCodes.CompanyClosedHoliday)
-                        : new WarningDto(WarningCodes.OutsideWorkingHours));
+                    hardConflicts.Add(new RecurringConflictDetail { Date = occurrence, Reason = ToRecurringConflictReason(violation) });
+                }
+                else
+                {
+                    AppointmentEligibilityHelper.ThrowOrWarn(violation, overrideAvailability: true, warnings);
                 }
             }
 
@@ -579,7 +736,15 @@ public class AppointmentService : IAppointmentService
         return warningsByOccurrence;
     }
 
-    /// <summary>Provjera preklapanja klijenata za /recurring — odgovara klijentskoj grani EnsureNoHardOverlapCollectWarnings,
+    private static string ToRecurringConflictReason(AppointmentEligibilityHelper.WorkforceViolation violation) => violation switch
+    {
+        AppointmentEligibilityHelper.WorkforceViolation.EmployeeAbsent => ErrorCodes.RecurringConflictReasonRosterAbsence,
+        AppointmentEligibilityHelper.WorkforceViolation.EmployeeOnBreak => ErrorCodes.RecurringConflictReasonScheduleBreak,
+        AppointmentEligibilityHelper.WorkforceViolation.CompanyClosedHoliday => ErrorCodes.RecurringConflictReasonHoliday,
+        _ => ErrorCodes.RecurringConflictReasonOutsideWorkingHours
+    };
+
+    /// <summary>Provjera preklapanja klijenata za /recurring — odgovara klijentskoj grani EnsureNoHardOverlap,
     /// ali nad cijelim nizom odjednom: kandidati se dohvaćaju JEDNOM za cijeli raspon, a za prvi occurrence (kronološki)
     /// s pogođenim klijentom baca se APPOINTMENT_OVERLAP (409), isto ponašanje/kod kao i za pojedinačne termine.</summary>
     private async Task EnsureNoRecurringClientOverlap(
@@ -603,7 +768,8 @@ public class AppointmentService : IAppointmentService
 
             foreach (Client client in clients)
             {
-                bool hasOverlap = overlapping.Any(a => a.Clients.Any(ac => ac.ClientId == client.Id));
+                bool hasOverlap = overlapping.Any(a => a.Bookings.Any(b =>
+                    b.ClientId == client.Id && b.Status != BookingStatus.Cancelled && b.Status != BookingStatus.NoShow));
                 if (hasOverlap)
                     throw new BusinessRuleException(ErrorCodes.AppointmentOverlap, $"Klijent {client.FirstName} {client.LastName} je već zakazan u ovom vremenskom razdoblju.");
             }
@@ -621,10 +787,11 @@ public class AppointmentService : IAppointmentService
         return GetByIdInternal(organizationId, id);
     }
 
-    public async Task<PagedResult<AppointmentDto>> GetByClient(Guid organizationId, Guid clientId, PagedRequest request)
+    public async Task<PagedResult<ClientAppointmentHistoryDto>> GetByClient(Guid organizationId, Guid clientId, PagedRequest request)
     {
         (List<Appointment> items, int totalCount) = await _appointmentHandler.GetByClient(organizationId, clientId, request);
-        return PagedResult<AppointmentDto>.Create(items.Select(a => ToDto(a, clientId)).ToList(), totalCount, request.Page, request.PageSize);
+        return PagedResult<ClientAppointmentHistoryDto>.Create(
+            items.Select(a => ToClientHistoryDto(a, clientId)).ToList(), totalCount, request.Page, request.PageSize);
     }
 
     public async Task<PagedResult<AppointmentDto>> GetByEmployee(Guid organizationId, Guid employeeId, PagedRequest request)
@@ -644,15 +811,24 @@ public class AppointmentService : IAppointmentService
         TimeSpan? minimumStart = requestedDay == now.Date ? now.TimeOfDay + AvailableSlotLeadTime : null;
 
         ServiceEntity service = await LoadServiceOrThrow(organizationId, query.ServiceId);
-        await EnsureCompanyExists(organizationId, query.CompanyId);
+        Company company = await _companyHandler.GetById(organizationId, query.CompanyId);
+        if (company == null)
+            throw new NotFoundAppException("Company", query.CompanyId);
+
+        // Slot se ne smije ponuditi ako Create ne bi mogao proći strukturne provjere — vidi EnsureStructuralEligibility.
+        if (!service.IsActive || !company.IsActive ||
+            !await _serviceAvailabilityService.IsServiceAvailableAtCompany(organizationId, query.ServiceId, query.CompanyId))
+            return new List<EmployeeAvailableSlotsDto>();
 
         List<Employee> employees = await _employeeHandler.GetForCompany(organizationId, query.CompanyId);
 
         if (query.EmployeeId.HasValue)
             employees = employees.Where(e => e.Id == query.EmployeeId.Value).ToList();
 
+        // Capability je isključivo eksplicitna (vidi EmployeeServiceAssignment) — prazan popis znači
+        // zaposlenik ne smije nijednu uslugu, ne "smije sve".
         employees = employees
-            .Where(e => e.Services.Count == 0 || e.Services.Any(s => s.ServiceId == query.ServiceId))
+            .Where(e => e.IsActive && e.Services.Any(s => s.ServiceId == query.ServiceId))
             .ToList();
 
         if (employees.Count == 0)
@@ -714,8 +890,8 @@ public class AppointmentService : IAppointmentService
     {
         await ValidateOwnership(organizationId, userId, hasFullScope, request.EmployeeId);
         ServiceEntity service = await LoadServiceOrThrow(organizationId, request.ServiceId);
-        await EnsureEmployeeExists(organizationId, request.EmployeeId);
-        await EnsureCompanyExists(organizationId, request.CompanyId);
+        bool overrideAvailability = request.OverrideAvailability && hasFullScope;
+        await EnsureStructuralEligibility(organizationId, service, request.CompanyId, request.EmployeeId);
         Room room = await EnsureRoomExists(organizationId, request.CompanyId, request.RoomId);
         List<Client> clients = await EnsureClientsExist(organizationId, request.ClientIds);
 
@@ -735,11 +911,6 @@ public class AppointmentService : IAppointmentService
             EmployeeId = request.EmployeeId,
             CompanyId = request.CompanyId,
             RoomId = request.RoomId,
-            Amount = amount,
-            SuggestedAmount = suggestedAmount,
-            IsAmountManuallyOverridden = overridden,
-            PaymentMethod = null,
-            IsPaid = false,
             Status = AppointmentStatus.Scheduled,
             Note = request.Note,
             RecurrenceGroupId = recurrenceGroupId,
@@ -749,23 +920,25 @@ public class AppointmentService : IAppointmentService
 
         foreach (Client client in clients)
         {
-            appointment.Clients.Add(new AppointmentClient
+            appointment.Bookings.Add(new Booking
             {
                 Id = Guid.NewGuid(),
+                OrganizationId = organizationId,
                 AppointmentId = appointmentId,
                 ClientId = client.Id.GetValueOrDefault(),
+                Status = BookingStatus.Confirmed,
+                Amount = amount,
+                SuggestedAmount = suggestedAmount,
+                IsAmountManuallyOverridden = overridden,
                 CreatedAt = DateTimeOffset.UtcNow
             });
         }
 
         List<WarningDto> warnings = new List<WarningDto>();
-        WarningDto workingHoursWarning = await BuildWorkingHoursWarning(
-            organizationId, request.EmployeeId, request.CompanyId, request.StartsAt, appointment.DurationMinutes);
-        if (workingHoursWarning != null)
-            warnings.Add(workingHoursWarning);
+        warnings.AddRange(await EnsureWorkforceAvailability(
+            organizationId, request.EmployeeId, request.CompanyId, request.StartsAt, appointment.DurationMinutes, overrideAvailability));
 
-        warnings.AddRange(await EnsureNoHardOverlapCollectWarnings(
-            organizationId, request.EmployeeId, clients, request.StartsAt, appointment.DurationMinutes, excludeId: null, room));
+        await EnsureNoHardOverlap(organizationId, request.EmployeeId, clients, request.StartsAt, appointment.DurationMinutes, excludeId: null, room);
 
         await _appointmentHandler.Add(appointment);
 
@@ -774,67 +947,115 @@ public class AppointmentService : IAppointmentService
         return dto;
     }
 
+    /// <summary>Zajednička implementacija za Cancel/MarkNoShow — cijeli termin završava na
+    /// AppointmentStatus.Cancelled (termin kao okvir nikad nije NoShow), svi Bookinzi koji još nisu u
+    /// terminalnom stanju prelaze na targetBookingStatus (Cancelled ili NoShow).</summary>
     private async Task<AppointmentDto> ChangeToTerminalStatus(
-        Guid organizationId, Guid userId, bool hasFullScope, Guid id, AppointmentCancelRequest request, AppointmentStatus newStatus)
+        Guid organizationId, Guid userId, bool hasFullScope, Guid id, AppointmentCancelRequest request, BookingStatus targetBookingStatus)
     {
-        Appointment appointment = await _appointmentHandler.GetByIdLight(organizationId, id);
-        if (appointment == null)
-            throw new NotFoundAppException("Appointment", id);
-
-        await ValidateOwnership(organizationId, userId, hasFullScope, appointment.EmployeeId.GetValueOrDefault());
-
-        AppointmentStatus oldStatus = appointment.Status;
-        appointment.Status = newStatus;
-        appointment.CancellationReason = request.CancellationReason;
-        appointment.UpdatedAt = DateTimeOffset.UtcNow;
-        appointment.UpdatedBy = userId;
+        List<Guid> returnClientIds = (request.ReturnEntryForClientIds ?? new List<Guid>()).Distinct().ToList();
 
         try
         {
             await using IUnitOfWork uow = await _unitOfWorkFactory.Begin();
 
+            // Zaključava Appointment redak (FOR UPDATE) i čita Status/EmployeeId pod lockom PRIJE bilo kakve
+            // provjere/mutacije — sprječava utrku s konkurentnim CompleteExisting/CompleteGroupAppointment na
+            // ISTOM terminu (drugi zahtjev čeka na lock pa vidi svježe stanje nakon commita prvog, vidi spec
+            // section 8-11). Ownership se namjerno provjerava OVDJE (ne pred-transakcijski) — jeftina provjera,
+            // nema razloga za dodatan round-trip prije zaključavanja.
+            Appointment appointment = await _appointmentHandler.GetForUpdateWithBookings(uow, organizationId, id);
+            if (appointment == null)
+                throw new NotFoundAppException("Appointment", id);
+
+            await ValidateOwnership(organizationId, userId, hasFullScope, appointment.EmployeeId.GetValueOrDefault());
+
+            // Completed je terminalno i za Cancel/MarkNoShow — već odrađen (i eventualno proviziran) termin se
+            // ne smije naknadno "otkazati" kroz ove putanje (vidi spec section 1/3, CommissionService domenska
+            // napomena o "poznatoj postojećoj praznini" koju ovo zatvara).
+            if (appointment.Status == AppointmentStatus.Completed)
+                throw new BusinessRuleException(
+                    ErrorCodes.AlreadyCompleted,
+                    "Termin je već odrađen (Completed) i ne može se otkazati niti označiti kao izostanak.");
+
+            AppointmentStatus oldStatus = appointment.Status;
+            appointment.Status = AppointmentStatus.Cancelled;
+            appointment.CancellationReason = request.CancellationReason;
+            appointment.UpdatedAt = DateTimeOffset.UtcNow;
+            appointment.UpdatedBy = userId;
+
             await _appointmentHandler.UpdateScalar(uow, appointment);
 
-            await _auditLogHandler.Add(uow, new AppointmentAuditLog
+            if (oldStatus != appointment.Status)
             {
-                Id = Guid.NewGuid(),
-                AppointmentId = id,
-                ChangeType = "Status",
-                OldValue = oldStatus.ToString(),
-                NewValue = newStatus.ToString(),
-                ChangedAt = DateTimeOffset.UtcNow,
-                ChangedBy = userId
-            });
+                await _auditLogHandler.Add(uow, new AppointmentAuditLog
+                {
+                    Id = Guid.NewGuid(),
+                    AppointmentId = id,
+                    ChangeType = "Status",
+                    OldValue = oldStatus.ToString(),
+                    NewValue = appointment.Status.ToString(),
+                    ChangedAt = DateTimeOffset.UtcNow,
+                    ChangedBy = userId
+                });
+            }
 
-            List<Guid> returnClientIds = (request.ReturnEntryForClientIds ?? new List<Guid>()).Distinct().ToList();
-            Dictionary<Guid, AppointmentClient> clientRowsByClientId = returnClientIds.Count == 0
-                ? new Dictionary<Guid, AppointmentClient>()
-                : (await _appointmentHandler.GetAppointmentClients(uow, organizationId, id, returnClientIds)).ToDictionary(ac => ac.ClientId);
-
-            foreach (Guid clientId in returnClientIds)
+            foreach (Booking booking in appointment.Bookings.Where(b => b.Status == BookingStatus.Confirmed))
             {
-                if (!clientRowsByClientId.TryGetValue(clientId, out AppointmentClient clientRow) ||
-                    !clientRow.PackageEntryDeducted || clientRow.PackageEntryReturned || clientRow.ClientPackageId == null)
-                    continue;
+                BookingStatus oldBookingStatus = booking.Status;
+                booking.Status = targetBookingStatus;
+                booking.CancellationReason = request.CancellationReason;
+                booking.UpdatedAt = DateTimeOffset.UtcNow;
+                booking.UpdatedBy = userId;
+                // IsLateCancellation namjerno OSTAJE null ovdje (poslovno/appointment-wide otkazivanje, ne
+                // klijentska inicijativa) — vidi Booking.cs domensku napomenu i spec section 38.
 
-                await ReturnPackageEntryInTransaction(uow, organizationId, clientRow.ClientPackageId.Value, appointment.ServiceId, userId);
+                bool shouldReturn = returnClientIds.Contains(booking.ClientId) &&
+                    booking.PackageCoverageApplied && !booking.PackageCoverageReturned && booking.ClientPackageId.HasValue;
 
-                clientRow.PackageEntryReturned = true;
-                clientRow.PackageEntryReturnedAt = DateTimeOffset.UtcNow;
-                clientRow.PackageEntryReturnedBy = userId;
-                await _appointmentHandler.UpdateAppointmentClient(uow, clientRow);
+                if (shouldReturn)
+                {
+                    await ReturnPackageEntryInTransaction(uow, organizationId, booking.ClientPackageId.Value, appointment.ServiceId, userId);
+                    booking.PackageCoverageReturned = true;
+                    booking.PackageCoverageReturnedAt = DateTimeOffset.UtcNow;
+                    booking.PackageCoverageReturnedBy = userId;
+                }
+
+                await _appointmentHandler.UpdateBooking(uow, booking);
 
                 await _auditLogHandler.Add(uow, new AppointmentAuditLog
                 {
                     Id = Guid.NewGuid(),
                     AppointmentId = id,
-                    ChangeType = "PackageEntryReturn",
-                    OldValue = "Deducted",
-                    NewValue = "Returned",
+                    BookingId = booking.Id,
+                    ChangeType = "BookingStatus",
+                    OldValue = oldBookingStatus.ToString(),
+                    NewValue = booking.Status.ToString(),
                     ChangedAt = DateTimeOffset.UtcNow,
                     ChangedBy = userId
                 });
+
+                if (shouldReturn)
+                {
+                    await _auditLogHandler.Add(uow, new AppointmentAuditLog
+                    {
+                        Id = Guid.NewGuid(),
+                        AppointmentId = id,
+                        BookingId = booking.Id,
+                        ChangeType = "BookingPackageCoverageReturned",
+                        OldValue = "Applied",
+                        NewValue = "Returned",
+                        ChangedAt = DateTimeOffset.UtcNow,
+                        ChangedBy = userId
+                    });
+                }
             }
+
+            // Cijeli occurrence je zatvoren (otkazan ili bulk no-show, oboje završavaju na Appointment.Status =
+            // Cancelled) — preostali Waiting retci više nisu smisleni, ne promovira se (spec section 19/41/42).
+            if (appointment.Form == AppointmentForm.Group)
+                await _waitlistPromotionService.ExpireWaitingForAppointment(
+                    uow, organizationId, id, userId, WaitlistExpiredReasons.AppointmentCancelled);
 
             await uow.CommitAsync();
         }
@@ -880,8 +1101,43 @@ public class AppointmentService : IAppointmentService
             throw new NotFoundAppException("Company", companyId);
     }
 
+    /// <summary>Puni strukturni lanac podobnosti (FAZA 3): Company/Service aktivni, Service stvarno ponuđen u
+    /// toj Company (ServiceCompany), Employee aktivan i eksplicitno dodijeljen i toj Company i toj usluzi. Tvrda
+    /// blokada BEZ override-a — override smije zaobići samo MEKE radne-snage provjere (vidi EnsureWorkforceAvailability),
+    /// nikad strukturne (vidi AppointmentEligibilityHelper domensku napomenu / spec section 20).</summary>
+    private async Task EnsureStructuralEligibility(Guid organizationId, ServiceEntity service, Guid companyId, Guid employeeId)
+    {
+        if (!service.IsActive)
+            throw new BusinessRuleException(ErrorCodes.InactiveService, $"Usluga '{service.Name}' nije aktivna.");
+
+        Company company = await _companyHandler.GetById(organizationId, companyId);
+        if (company == null)
+            throw new NotFoundAppException("Company", companyId);
+        if (!company.IsActive)
+            throw new BusinessRuleException(ErrorCodes.InactiveCompany, $"Poslovnica '{company.Name}' nije aktivna.");
+
+        if (!await _serviceAvailabilityService.IsServiceAvailableAtCompany(organizationId, service.Id.GetValueOrDefault(), companyId))
+            throw new BusinessRuleException(
+                ErrorCodes.ServiceNotAvailableAtCompany, $"Usluga '{service.Name}' nije dostupna u poslovnici '{company.Name}'.");
+
+        Employee employee = await _employeeHandler.GetById(organizationId, employeeId);
+        if (employee == null)
+            throw new NotFoundAppException("Employee", employeeId);
+        if (!employee.IsActive)
+            throw new BusinessRuleException(ErrorCodes.InactiveEmployee, $"Zaposlenik '{employee.FirstName} {employee.LastName}' nije aktivan.");
+
+        if (!await _employeeHandler.IsEmployeeAssignedToCompany(organizationId, employeeId, companyId))
+            throw new BusinessRuleException(
+                ErrorCodes.EmployeeNotAssignedToCompany, $"Zaposlenik nije dodijeljen poslovnici '{company.Name}'.");
+
+        if (!await _employeeHandler.CanEmployeePerformService(organizationId, employeeId, service.Id.GetValueOrDefault()))
+            throw new BusinessRuleException(
+                ErrorCodes.EmployeeNotAssignedToService, $"Zaposlenik nije ovlašten izvoditi uslugu '{service.Name}'.");
+    }
+
     /// <summary>Vraća null ako roomId nije zadan (prostorija je opcionalna). Baca NOT_FOUND ako prostorija ne
-    /// postoji, ROOM_COMPANY_MISMATCH ako pripada drugoj poslovnici od one na koju se termin zakazuje.</summary>
+    /// postoji, INACTIVE_ROOM ako nije aktivna, ROOM_COMPANY_MISMATCH ako pripada drugoj poslovnici od one na
+    /// koju se termin zakazuje.</summary>
     private async Task<Room> EnsureRoomExists(Guid organizationId, Guid companyId, Guid? roomId)
     {
         if (!roomId.HasValue)
@@ -891,12 +1147,17 @@ public class AppointmentService : IAppointmentService
         if (room == null)
             throw new NotFoundAppException("Room", roomId.Value);
 
+        if (!room.IsActive)
+            throw new BusinessRuleException(ErrorCodes.InactiveRoom, $"Prostorija '{room.Name}' nije aktivna.");
+
         if (room.CompanyId != companyId)
             throw new BusinessRuleException(ErrorCodes.RoomCompanyMismatch, "Prostorija ne pripada odabranoj poslovnici.");
 
         return room;
     }
 
+    /// <summary>Uz postojanje i tenant provjeru, sad dodatno zahtijeva IsActive/!IsAnonymized za svakog klijenta
+    /// (FAZA 3) — prije ovoga se anonimizirani/neaktivni klijent tiho mogao dodati na novi termin.</summary>
     private async Task<List<Client>> EnsureClientsExist(Guid organizationId, List<Guid> clientIds)
     {
         List<Guid> distinctIds = clientIds.Distinct().ToList();
@@ -907,6 +1168,14 @@ public class AppointmentService : IAppointmentService
             HashSet<Guid> foundIds = clients.Select(c => c.Id.GetValueOrDefault()).ToHashSet();
             Guid missingId = distinctIds.First(id => !foundIds.Contains(id));
             throw new NotFoundAppException("Client", missingId);
+        }
+
+        foreach (Client client in clients)
+        {
+            if (client.IsAnonymized)
+                throw new BusinessRuleException(ErrorCodes.ClientAnonymized, $"Klijent {client.FirstName} {client.LastName} je anonimiziran.");
+            if (!client.IsActive)
+                throw new BusinessRuleException(ErrorCodes.InactiveClient, $"Klijent {client.FirstName} {client.LastName} nije aktivan.");
         }
 
         return clients;
@@ -924,89 +1193,85 @@ public class AppointmentService : IAppointmentService
         return resolved.Price;
     }
 
-    /// <summary>Kod PaymentMethod=Package svaki klijent na terminu mora imati odabran svoj vlastiti valjani paket
-    /// (npr. duo/par usluga: svaki klijent skida ulazak iz svog profila, neovisno o ostalima).</summary>
-    private async Task<Dictionary<Guid, Guid>> ValidatePackageSelections(
-        Guid organizationId, List<Guid> clientIds, Guid serviceId, DateTimeOffset date,
-        PaymentMethod paymentMethod, List<AppointmentClientPackageSelection> selections)
+    /// <summary>Kad je ClientPackageId popunjen, svaki klijent na terminu mora imati odabran svoj vlastiti
+    /// valjani paket (npr. duo/par usluga: svaki klijent skida ulazak iz svog profila, neovisno o ostalima).
+    /// Validira da Settlements pokriva SVAKI klijent termina TOČNO JEDNOM (mješovito plaćanje po klijentu —
+    /// vidi spec section 10/12). Zamjenjuje staru ValidatePackageSelections (koja je pokrivala samo
+    /// paket-granu uz jedan zajednički PaymentMethod za sve — mješovito plaćanje strukturno nije bilo moguće).</summary>
+    private async Task<Dictionary<Guid, AppointmentClientSettlement>> ValidateSettlements(
+        Guid organizationId, List<Guid> clientIds, Guid serviceId, DateTimeOffset date, List<AppointmentClientSettlement> settlements)
     {
-        Dictionary<Guid, Guid> result = new Dictionary<Guid, Guid>();
-        if (paymentMethod != PaymentMethod.Package)
-            return result;
-
-        selections ??= new List<AppointmentClientPackageSelection>();
-        List<Guid> selectedClientIds = selections.Select(s => s.ClientId).ToList();
+        settlements ??= new List<AppointmentClientSettlement>();
+        List<Guid> settledClientIds = settlements.Select(s => s.ClientId).ToList();
 
         bool coversAllClientsExactlyOnce =
-            selections.Count == clientIds.Count &&
-            selectedClientIds.Distinct().Count() == selectedClientIds.Count &&
-            clientIds.All(id => selectedClientIds.Contains(id));
+            settlements.Count == clientIds.Count &&
+            settledClientIds.Distinct().Count() == settledClientIds.Count &&
+            clientIds.All(id => settledClientIds.Contains(id));
 
         if (!coversAllClientsExactlyOnce)
-            throw new ValidationAppException("Kod plaćanja iz paketa potrebno je odabrati točno jedan paket za svakog klijenta na terminu.");
+            throw new ValidationAppException("Potrebno je odabrati točno jedno plaćanje (Settlements) za svakog klijenta na terminu.");
 
-        foreach (AppointmentClientPackageSelection selection in selections)
+        Dictionary<Guid, AppointmentClientSettlement> result = new Dictionary<Guid, AppointmentClientSettlement>();
+
+        foreach (AppointmentClientSettlement settlement in settlements)
         {
-            List<ClientPackageDto> eligible = await _clientPackageService.GetEligibleForService(
-                organizationId, selection.ClientId, serviceId, date);
+            if (settlement.ClientPackageId.HasValue)
+            {
+                List<ClientPackageDto> eligible = await _clientPackageService.GetEligibleForService(
+                    organizationId, settlement.ClientId, serviceId, date);
 
-            if (eligible.All(p => p.Id != selection.ClientPackageId))
-                throw new BusinessRuleException(ErrorCodes.PackageNotEligible, "Odabrani paket nije valjan za klijenta ili ne pokriva ovu uslugu.");
+                if (eligible.All(p => p.Id != settlement.ClientPackageId.Value))
+                    throw new BusinessRuleException(ErrorCodes.PackageNotEligible, "Odabrani paket nije valjan za klijenta ili ne pokriva ovu uslugu.");
+            }
 
-            result[selection.ClientId] = selection.ClientPackageId;
+            result[settlement.ClientId] = settlement;
         }
 
         return result;
     }
 
-    /// <summary>Koriste svi write endpointi (Create/CompleteNew/CompleteExisting/Update/Move/CreateRecurring preko
-    /// EnsureNoRecurringClientOverlap) — STVARNI sudari (trener već ima termin/grupu, soba zauzeta, klijent već
-    /// zakazan) uvijek bacaju APPOINTMENT_OVERLAP (409), ne mogu se presnimiti. Pauza trenera (ScheduleBreak) ne
-    /// blokira — zaposlenik je tehnički dostupan, samo se vraća kao upozorenje u povratnoj listi umjesto bacanja
-    /// iznimke.</summary>
-    private async Task<List<WarningDto>> EnsureNoHardOverlapCollectWarnings(
-        Guid organizationId, Guid employeeId, List<Client> clients, DateTimeOffset startsAt, int durationMinutes, Guid? excludeId, Room room = null)
+    /// <summary>Koriste svi write endpointi (Create/CompleteNew/CompleteExisting/Update/Move preko poziva ovdje) —
+    /// STVARNI sudari (trener već ima termin/grupu, soba zauzeta, klijent već zakazan) uvijek bacaju
+    /// APPOINTMENT_OVERLAP (409), NIKAD se ne mogu zaobići s OverrideAvailability (vidi spec section 20/21-23) —
+    /// za razliku od EnsureWorkforceAvailability, ovdje nema override parametra.</summary>
+    private async Task EnsureNoHardOverlap(
+        Guid organizationId, Guid employeeId, List<Client> clients, DateTimeOffset startsAt, int durationMinutes, Guid? excludeId, Room room)
     {
-        List<Appointment> employeeOverlaps = await _appointmentHandler.GetOverlappingForEmployee(
-            organizationId, employeeId, startsAt, durationMinutes, excludeId);
+        List<Appointment> employeeOverlaps = await _appointmentHandler
+            .GetOverlappingForEmployee(organizationId, employeeId, startsAt, durationMinutes, excludeId);
         if (employeeOverlaps.Count > 0)
             throw new BusinessRuleException(ErrorCodes.AppointmentOverlap, "Trener već ima termin u ovom vremenskom razdoblju.");
 
         if (room != null && !room.AllowConcurrentBookings)
         {
-            List<Appointment> roomOverlaps = await _appointmentHandler.GetOverlappingForRoom(
-                organizationId, room.Id.GetValueOrDefault(), startsAt, durationMinutes, excludeId);
+            List<Appointment> roomOverlaps = await _appointmentHandler
+                .GetOverlappingForRoom(organizationId, room.Id.GetValueOrDefault(), startsAt, durationMinutes, excludeId);
             if (roomOverlaps.Count > 0)
                 throw new BusinessRuleException(ErrorCodes.AppointmentOverlap, "Prostorija je već zauzeta u ovom vremenskom razdoblju.");
         }
 
         List<Guid> clientIds = clients.Select(c => c.Id.GetValueOrDefault()).ToList();
-        List<Appointment> clientOverlaps = await _appointmentHandler.GetOverlappingForClients(
-            organizationId, clientIds, startsAt, durationMinutes, excludeId);
+        List<Appointment> clientOverlaps = await _appointmentHandler
+            .GetOverlappingForClients(organizationId, clientIds, startsAt, durationMinutes, excludeId);
 
         foreach (Client client in clients)
         {
-            bool hasOverlap = clientOverlaps.Any(a => a.Clients.Any(ac => ac.ClientId == client.Id));
+            bool hasOverlap = clientOverlaps.Any(a => a.Bookings.Any(b =>
+                b.ClientId == client.Id && b.Status != BookingStatus.Cancelled && b.Status != BookingStatus.NoShow));
             if (hasOverlap)
                 throw new BusinessRuleException(ErrorCodes.AppointmentOverlap, $"Klijent {client.FirstName} {client.LastName} je već zakazan u ovom vremenskom razdoblju.");
         }
-
-        List<WarningDto> warnings = new List<WarningDto>();
-
-        List<ScheduleBreak> breakOverlaps = await _scheduleBreakHandler.GetOverlappingForEmployee(
-            organizationId, employeeId, startsAt, durationMinutes, excludeId: null);
-        if (breakOverlaps.Count > 0)
-            warnings.Add(new WarningDto(WarningCodes.EmployeeOnBreak));
-
-        return warnings;
     }
 
-    /// <summary>Koriste svi write endpointi osim CompleteExisting (retroaktivno evidentiranje odrađenog, ne
-    /// planiranje unaprijed — vidi CompleteExisting) i CompleteNew za StartsAt u prošlosti (isti razlog). Radno
-    /// vrijeme/praznik/godišnji/druga odsutnost NE sprječavaju spremanje termina — zaposlenik je tehnički dostupan,
-    /// samo se poruka vraća za AppointmentDto.Warnings.</summary>
-    private async Task<WarningDto> BuildWorkingHoursWarning(
-        Guid organizationId, Guid employeeId, Guid companyId, DateTimeOffset startsAt, int durationMinutes)
+    /// <summary>Zamjenjuje staro BuildWorkingHoursWarning — sada TVRDA blokada (throw) za sve četiri "meke"
+    /// radne-snage kategorije (odsutnost/pauza/praznik/izvan-radnog-vremena) OSIM kad je overrideAvailability=true
+    /// (već provjereno kod pozivatelja da ima appointments.write.all), kad se umjesto bacanja vraća WarningDto
+    /// lista (vidljivost bez blokade — isto ponašanje kao prije ovog zahvata). Koriste svi write endpointi osim
+    /// CompleteExisting (retroaktivno evidentiranje odrađenog, ne planiranje unaprijed) i CompleteNew za StartsAt
+    /// u prošlosti (isti razlog, provjereno kod pozivatelja).</summary>
+    private async Task<List<WarningDto>> EnsureWorkforceAvailability(
+        Guid organizationId, Guid employeeId, Guid companyId, DateTimeOffset startsAt, int durationMinutes, bool overrideAvailability)
     {
         WorkingHoursTemplate employeeTemplate = await _workingHoursTemplateHandler.GetForEmployee(organizationId, employeeId);
         WorkingHoursTemplate companyTemplate = await _workingHoursTemplateHandler.GetForCompany(organizationId, companyId);
@@ -1014,10 +1279,23 @@ public class AppointmentService : IAppointmentService
             organizationId, new List<Guid> { employeeId }, startsAt.Date, startsAt.Date);
         List<CompanyHoliday> companyHolidaysForDate = await _companyHolidayHandler.GetForCompaniesInRange(
             organizationId, new List<Guid> { companyId }, startsAt.Date, startsAt.Date);
+        List<ScheduleBreak> breakOverlaps = await _scheduleBreakHandler.GetOverlappingForEmployee(
+            organizationId, employeeId, startsAt, durationMinutes, excludeId: null);
 
-        return IsWithinWorkingHours(employeeTemplate, companyTemplate, rosterEntriesForDate, startsAt, durationMinutes, companyHolidaysForDate)
-            ? null
-            : new WarningDto(WarningCodes.OutsideWorkingHours);
+        bool absenceHit = rosterEntriesForDate.Any(e =>
+            e.RosterType.IsAbsence && e.DateFrom.Date <= startsAt.Date && (e.DateTo == null || startsAt.Date <= e.DateTo.Value.Date));
+        bool breakHit = breakOverlaps.Count > 0;
+
+        List<RosterEntry> nonAbsenceEntries = rosterEntriesForDate.Where(e => !e.RosterType.IsAbsence).ToList();
+        bool withinHours = absenceHit || IsWithinWorkingHours(
+            employeeTemplate, companyTemplate, nonAbsenceEntries, startsAt, durationMinutes, companyHolidaysForDate);
+
+        AppointmentEligibilityHelper.WorkforceViolation violation = AppointmentEligibilityHelper.Classify(
+            absenceHit, breakHit, companyHolidaysForDate.Count > 0, withinHours);
+
+        List<WarningDto> warnings = new List<WarningDto>();
+        AppointmentEligibilityHelper.ThrowOrWarn(violation, overrideAvailability, warnings);
+        return warnings;
     }
 
     /// <summary>Čista provjera dijeljena s EnsureNoRecurringConflicts (batch grana) — rosterEntriesForDate/
@@ -1083,12 +1361,13 @@ public class AppointmentService : IAppointmentService
         return remainder == 0 ? value : TimeSpan.FromTicks(value.Ticks + (step.Ticks - remainder));
     }
 
-    private async Task LogAmountChange(Guid appointmentId, decimal oldAmount, decimal newAmount, Guid userId)
+    private async Task LogAmountChange(Guid appointmentId, Guid? bookingId, decimal oldAmount, decimal newAmount, Guid userId)
     {
         await _auditLogHandler.Add(new AppointmentAuditLog
         {
             Id = Guid.NewGuid(),
             AppointmentId = appointmentId,
+            BookingId = bookingId,
             ChangeType = "Amount",
             OldValue = oldAmount.ToString(CultureInfo.InvariantCulture),
             NewValue = newAmount.ToString(CultureInfo.InvariantCulture),
@@ -1097,12 +1376,14 @@ public class AppointmentService : IAppointmentService
         });
     }
 
-    private async Task LogAmountChangeInTransaction(IUnitOfWork uow, Guid appointmentId, decimal oldAmount, decimal newAmount, Guid userId)
+    private async Task LogAmountChangeInTransaction(
+        IUnitOfWork uow, Guid appointmentId, Guid? bookingId, decimal oldAmount, decimal newAmount, Guid userId)
     {
         await _auditLogHandler.Add(uow, new AppointmentAuditLog
         {
             Id = Guid.NewGuid(),
             AppointmentId = appointmentId,
+            BookingId = bookingId,
             ChangeType = "Amount",
             OldValue = oldAmount.ToString(CultureInfo.InvariantCulture),
             NewValue = newAmount.ToString(CultureInfo.InvariantCulture),
@@ -1136,7 +1417,7 @@ public class AppointmentService : IAppointmentService
         if (clientPackage == null)
             throw new NotFoundAppException("ClientPackage", clientPackageId);
 
-        ClientPackageEntryMutator.Deduct(clientPackage, serviceId);
+        ClientPackageEntryMutator.Deduct(clientPackage, serviceId, DateTimeOffset.UtcNow);
         clientPackage.UpdatedAt = DateTimeOffset.UtcNow;
         clientPackage.UpdatedBy = userId;
 
@@ -1150,7 +1431,7 @@ public class AppointmentService : IAppointmentService
         if (clientPackage == null)
             throw new NotFoundAppException("ClientPackage", clientPackageId);
 
-        ClientPackageEntryMutator.Return(clientPackage, serviceId);
+        ClientPackageEntryMutator.Return(clientPackage, serviceId, DateTimeOffset.UtcNow);
         clientPackage.UpdatedAt = DateTimeOffset.UtcNow;
         clientPackage.UpdatedBy = userId;
 
@@ -1169,7 +1450,7 @@ public class AppointmentService : IAppointmentService
     private static AppointmentScheduleCellDto ToScheduleCellDto(Appointment a)
     {
         bool isGroup = a.Form == AppointmentForm.Group;
-        List<Client> clients = a.Clients.Where(c => c.Client != null).Select(c => c.Client).ToList();
+        List<Client> clients = a.Bookings.Where(b => b.Client != null).Select(b => b.Client).ToList();
 
         return new AppointmentScheduleCellDto
         {
@@ -1192,20 +1473,54 @@ public class AppointmentService : IAppointmentService
             Form = a.Form,
             GroupId = a.GroupId,
             GroupName = isGroup ? a.Group?.Name : null,
-            AttendanceCount = isGroup ? a.Attendances.Count(x => x.Attended == true) : (int?)null,
+            AttendanceCount = isGroup ? a.Bookings.Count(b => b.Status == BookingStatus.Completed) : (int?)null,
             ExpectedCount = isGroup ? a.Group?.Members.Count(m => m.IsActive) : (int?)null
         };
     }
 
-    /// <summary>forClientId: kad je zadan i a.Form je Group, popunjava ClientAttendance iz AppointmentAttendance
-    /// retka tog klijenta (poziva se iz GetByClient — a.Attendances mora biti unaprijed filtriran/učitan na tog
-    /// klijenta, vidi AppointmentHandler.GetByClient).</summary>
-    private static AppointmentDto ToDto(Appointment a, Guid? forClientId = null)
+    /// <summary>Klijent-povijest projekcija (GetByClient) — namjerno NE vraća a.Bookings (ostali klijenti na
+    /// istom Appointmentu, npr. grupni/duo termin). Klijent koji gleda vlastitu povijest smije vidjeti samo
+    /// vlastiti Booking; roster/admin prikaz cijelog termina i dalje ide preko ToDto/GetById. Amount/PaymentMethod/
+    /// IsPaid ostaju Appointment-razina (vidi domensku napomenu na Booking.cs) — dijele ih svi Bookinzi termina,
+    /// mixed plaćanje po klijentu trenutno nije podržano.</summary>
+    private static ClientAppointmentHistoryDto ToClientHistoryDto(Appointment a, Guid clientId)
     {
-        AppointmentAttendance clientAttendance = forClientId.HasValue && a.Form == AppointmentForm.Group
-            ? a.Attendances.FirstOrDefault(att => att.ClientId == forClientId.Value)
-            : null;
+        Booking booking = a.Bookings.First(b => b.ClientId == clientId);
+        decimal outstandingAmount = BookingFinancialsCalculator.CalculateOutstanding(booking);
 
+        return new ClientAppointmentHistoryDto
+        {
+            Id = a.Id.GetValueOrDefault(),
+            Form = a.Form,
+            StartsAt = a.StartsAt,
+            DurationMinutes = a.DurationMinutes,
+            ServiceId = a.ServiceId,
+            ServiceName = a.Service?.Name,
+            ServiceCategoryColorHex = a.Service?.ColorHex,
+            EmployeeId = a.EmployeeId,
+            EmployeeName = a.Employee != null ? $"{a.Employee.FirstName} {a.Employee.LastName}" : null,
+            CompanyId = a.CompanyId,
+            CompanyName = a.Company?.Name,
+            Status = a.Status,
+            GroupId = a.GroupId,
+            GroupName = a.Group?.Name,
+            Amount = booking.Amount,
+            PaidAmount = BookingFinancialsCalculator.CalculatePaidAmount(booking),
+            OutstandingAmount = outstandingAmount,
+            IsPaid = outstandingAmount <= 0m,
+            BookingId = booking.Id.GetValueOrDefault(),
+            BookingStatus = booking.Status,
+            ClientPackageId = booking.ClientPackageId,
+            CoverageType = booking.CoverageType,
+            PackageCoverageApplied = booking.PackageCoverageApplied,
+            PackageCoverageReturned = booking.PackageCoverageReturned,
+            BookingNote = booking.Note,
+            BookingCancellationReason = booking.CancellationReason
+        };
+    }
+
+    private static AppointmentDto ToDto(Appointment a)
+    {
         return new AppointmentDto
         {
             Id = a.Id.GetValueOrDefault(),
@@ -1221,31 +1536,37 @@ public class AppointmentService : IAppointmentService
             CompanyName = a.Company?.Name,
             RoomId = a.RoomId,
             RoomName = a.Room?.Name,
-            Amount = a.Amount,
-            SuggestedAmount = a.SuggestedAmount,
-            IsAmountManuallyOverridden = a.IsAmountManuallyOverridden,
-            PaymentMethod = a.PaymentMethod,
-            IsPaid = a.IsPaid,
             Status = a.Status,
             Note = a.Note,
             CancellationReason = a.CancellationReason,
             GroupId = a.GroupId,
             GroupName = a.Group?.Name,
             RecurrenceGroupId = a.RecurrenceGroupId,
-            Clients = a.Clients.Select(c => new AppointmentClientDto
+            Bookings = a.Bookings.Select(b =>
             {
-                ClientId = c.ClientId,
-                ClientName = c.Client != null ? $"{c.Client.FirstName} {c.Client.LastName}" : null,
-                ClientPackageId = c.ClientPackageId,
-                PackageEntryDeducted = c.PackageEntryDeducted,
-                PackageEntryReturned = c.PackageEntryReturned
+                decimal outstandingAmount = BookingFinancialsCalculator.CalculateOutstanding(b);
+                return new BookingDto
+                {
+                    Id = b.Id.GetValueOrDefault(),
+                    ClientId = b.ClientId,
+                    ClientName = b.Client != null ? $"{b.Client.FirstName} {b.Client.LastName}" : null,
+                    Status = b.Status,
+                    Amount = b.Amount,
+                    SuggestedAmount = b.SuggestedAmount,
+                    IsAmountManuallyOverridden = b.IsAmountManuallyOverridden,
+                    PaidAmount = BookingFinancialsCalculator.CalculatePaidAmount(b),
+                    OutstandingAmount = outstandingAmount,
+                    IsPaid = outstandingAmount <= 0m,
+                    ClientPackageId = b.ClientPackageId,
+                    CoverageType = b.CoverageType,
+                    PackageCoverageApplied = b.PackageCoverageApplied,
+                    PackageCoverageReturned = b.PackageCoverageReturned,
+                    Payments = BookingFinancialsCalculator.GetPayments(b).Select(PaymentDtoFactory.ToDto).ToList(),
+                    Note = b.Note,
+                    CancellationReason = b.CancellationReason,
+                    IsLateCancellation = b.IsLateCancellation
+                };
             }).ToList(),
-            ClientAttendance = clientAttendance == null ? null : new ClientAttendanceDto
-            {
-                Attended = clientAttendance.Attended,
-                CoverageType = clientAttendance.CoverageType,
-                ClientPackageId = clientAttendance.ClientPackageId
-            },
             CreatedAt = a.CreatedAt,
             CreatedBy = a.CreatedBy,
             UpdatedAt = a.UpdatedAt,

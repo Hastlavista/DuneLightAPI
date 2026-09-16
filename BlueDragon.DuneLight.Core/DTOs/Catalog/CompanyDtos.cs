@@ -39,7 +39,7 @@ public class CompanyCreateRequest
 
     /// <summary>ISO 3166-1 alpha-2 kod — samo "HR" trenutno podržan u katalogu fiksnih praznika (vidi DefaultCompanyHolidays).</summary>
     [Required]
-    [MaxLength(2)]
+    [RegularExpression("^[A-Z]{2}$", ErrorMessage = "Country mora biti ISO 3166-1 alpha-2 kod (npr. HR, DE, AT).")]
     public string Country { get; set; } = "HR";
 
     public string Note { get; set; }
@@ -64,7 +64,7 @@ public class CompanyUpdateRequest
 
     /// <summary>ISO 3166-1 alpha-2 kod — samo "HR" trenutno podržan u katalogu fiksnih praznika (vidi DefaultCompanyHolidays).</summary>
     [Required]
-    [MaxLength(2)]
+    [RegularExpression("^[A-Z]{2}$", ErrorMessage = "Country mora biti ISO 3166-1 alpha-2 kod (npr. HR, DE, AT).")]
     public string Country { get; set; } = "HR";
 
     public string Note { get; set; }

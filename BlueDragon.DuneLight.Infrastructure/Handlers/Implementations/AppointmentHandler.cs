@@ -23,6 +23,10 @@ public class AppointmentHandler : IAppointmentHandler
         _databaseSettings = databaseSettings;
     }
 
+    /// <summary>Booking statusi koji "zauzimaju" klijentov raspored — Cancelled/NoShow namjerno isključeni
+    /// (klijent koji je otkazao/izostao nije stvarno spriječen zakazati nešto drugo u to vrijeme).</summary>
+    private static bool IsActiveBookingStatus(BookingStatus status) => status != BookingStatus.Cancelled && status != BookingStatus.NoShow;
+
     private static IQueryable<Appointment> IncludeGraph(IQueryable<Appointment> query)
     {
         return query
@@ -30,7 +34,7 @@ public class AppointmentHandler : IAppointmentHandler
             .Include(a => a.Employee)
             .Include(a => a.Company)
             .Include(a => a.Room)
-            .Include(a => a.Clients).ThenInclude(ac => ac.Client);
+            .Include(a => a.Bookings).ThenInclude(b => b.Client);
     }
 
     public async Task Add(Appointment appointment)
@@ -50,6 +54,8 @@ public class AppointmentHandler : IAppointmentHandler
     {
         await using DatabaseContext context = DatabaseContext.GenerateContext(_databaseSettings.ConnectionString);
         return await IncludeGraph(context.Appointments)
+            .Include(a => a.Bookings).ThenInclude(b => b.CheckoutItems).ThenInclude(i => i.Allocations).ThenInclude(alloc => alloc.Payment)
+            .AsSplitQuery()
             .SingleOrDefaultAsync(a => a.OrganizationId == organizationId && a.Id == id);
     }
 
@@ -60,13 +66,76 @@ public class AppointmentHandler : IAppointmentHandler
             .SingleOrDefaultAsync(a => a.OrganizationId == organizationId && a.Id == id);
     }
 
-    public Task<List<AppointmentClient>> GetAppointmentClients(IUnitOfWork uow, Guid organizationId, Guid appointmentId, List<Guid> clientIds)
+    public async Task<Appointment> GetWithBookingsForMutation(Guid organizationId, Guid id)
     {
-        DatabaseContext context = uow.Context;
-        return context.AppointmentClients
-            .Where(ac => ac.AppointmentId == appointmentId && clientIds.Contains(ac.ClientId) &&
-                context.Appointments.Any(a => a.Id == appointmentId && a.OrganizationId == organizationId))
+        await using DatabaseContext context = DatabaseContext.GenerateContext(_databaseSettings.ConnectionString);
+        return await context.Appointments
+            .Include(a => a.Service)
+            .Include(a => a.Employee)
+            .Include(a => a.Group).ThenInclude(g => g.Members.Where(m => m.IsActive)).ThenInclude(m => m.Client)
+            .Include(a => a.Bookings).ThenInclude(b => b.Client)
+            .Include(a => a.Bookings).ThenInclude(b => b.CheckoutItems).ThenInclude(i => i.Allocations).ThenInclude(alloc => alloc.Payment)
+            .AsSplitQuery()
+            .SingleOrDefaultAsync(a => a.OrganizationId == organizationId && a.Id == id);
+    }
+
+    public async Task<Booking> GetBooking(Guid organizationId, Guid appointmentId, Guid clientId)
+    {
+        await using DatabaseContext context = DatabaseContext.GenerateContext(_databaseSettings.ConnectionString);
+        return await context.Bookings
+            .Include(b => b.Client)
+            .Include(b => b.CheckoutItems).ThenInclude(i => i.Allocations).ThenInclude(a => a.Payment)
+            .AsSplitQuery()
+            .SingleOrDefaultAsync(b => b.AppointmentId == appointmentId && b.ClientId == clientId && b.OrganizationId == organizationId);
+    }
+
+    public Task<Booking> GetBooking(IUnitOfWork uow, Guid organizationId, Guid appointmentId, Guid clientId)
+    {
+        return uow.Context.Bookings
+            .Include(b => b.CheckoutItems).ThenInclude(i => i.Allocations).ThenInclude(a => a.Payment)
+            .AsSplitQuery()
+            .SingleOrDefaultAsync(b => b.AppointmentId == appointmentId && b.ClientId == clientId && b.OrganizationId == organizationId);
+    }
+
+    public async Task<Booking> GetBookingById(Guid organizationId, Guid id)
+    {
+        await using DatabaseContext context = DatabaseContext.GenerateContext(_databaseSettings.ConnectionString);
+        return await context.Bookings
+            .Include(b => b.Appointment).ThenInclude(a => a.Service)
+            .SingleOrDefaultAsync(b => b.OrganizationId == organizationId && b.Id == id);
+    }
+
+    public Task<Booking> GetBookingById(IUnitOfWork uow, Guid organizationId, Guid id)
+    {
+        return uow.Context.Bookings
+            .Include(b => b.Appointment).ThenInclude(a => a.Service)
+            .SingleOrDefaultAsync(b => b.OrganizationId == organizationId && b.Id == id);
+    }
+
+    public Task<List<Booking>> GetBookings(IUnitOfWork uow, Guid organizationId, Guid appointmentId, List<Guid> clientIds)
+    {
+        return uow.Context.Bookings
+            .Where(b => b.AppointmentId == appointmentId && b.OrganizationId == organizationId && clientIds.Contains(b.ClientId))
             .ToListAsync();
+    }
+
+    public async Task AddBooking(IUnitOfWork uow, Booking booking)
+    {
+        uow.Context.Bookings.Add(booking);
+        await uow.Context.SaveChangesAsync();
+    }
+
+    public async Task UpdateBooking(Booking booking)
+    {
+        await using DatabaseContext context = DatabaseContext.GenerateContext(_databaseSettings.ConnectionString);
+        context.Bookings.Update(booking);
+        await context.SaveChangesAsync();
+    }
+
+    public async Task UpdateBooking(IUnitOfWork uow, Booking booking)
+    {
+        uow.Context.Bookings.Update(booking);
+        await uow.Context.SaveChangesAsync();
     }
 
     public async Task UpdateScalar(Appointment appointment)
@@ -82,36 +151,58 @@ public class AppointmentHandler : IAppointmentHandler
         await uow.Context.SaveChangesAsync();
     }
 
-    public async Task UpdateWithClients(Appointment appointment, List<Guid> clientIds)
+    public async Task UpdateWithBookings(
+        Appointment appointment, List<Guid> clientIds, decimal amount = 0, decimal suggestedAmount = 0, bool overridden = false)
     {
         await using DatabaseContext context = DatabaseContext.GenerateContext(_databaseSettings.ConnectionString);
-        await UpdateWithClientsCore(context, appointment, clientIds);
+        await UpdateWithBookingsCore(context, appointment, clientIds, amount, suggestedAmount, overridden);
         await context.SaveChangesAsync();
     }
 
-    public async Task UpdateWithClients(IUnitOfWork uow, Appointment appointment, List<Guid> clientIds)
+    public async Task UpdateWithBookings(
+        IUnitOfWork uow, Appointment appointment, List<Guid> clientIds,
+        decimal amount = 0, decimal suggestedAmount = 0, bool overridden = false)
     {
-        await UpdateWithClientsCore(uow.Context, appointment, clientIds);
+        await UpdateWithBookingsCore(uow.Context, appointment, clientIds, amount, suggestedAmount, overridden);
         await uow.Context.SaveChangesAsync();
     }
 
-    private static async Task UpdateWithClientsCore(DatabaseContext context, Appointment appointment, List<Guid> clientIds)
+    private static bool IsTerminalBookingStatus(BookingStatus status) =>
+        status == BookingStatus.Completed || status == BookingStatus.Cancelled || status == BookingStatus.NoShow;
+
+    private static async Task UpdateWithBookingsCore(
+        DatabaseContext context, Appointment appointment, List<Guid> clientIds,
+        decimal amount, decimal suggestedAmount, bool overridden)
     {
-        List<AppointmentClient> existing = await context.AppointmentClients
-            .Where(ac => ac.AppointmentId == appointment.Id)
+        List<Booking> existing = await context.Bookings
+            .Where(b => b.AppointmentId == appointment.Id)
             .ToListAsync();
 
-        List<AppointmentClient> toRemove = existing.Where(ac => !clientIds.Contains(ac.ClientId)).ToList();
-        context.AppointmentClients.RemoveRange(toRemove);
+        List<Booking> toRemove = existing.Where(b => !clientIds.Contains(b.ClientId)).ToList();
+        context.Bookings.RemoveRange(toRemove);
 
-        List<Guid> existingClientIds = existing.Select(ac => ac.ClientId).ToList();
+        // Re-cijenjenje se primjenjuje samo na preživjele retke koji NISU terminalni — već naplaćen/otkazan/
+        // izostao Booking čuva svoj povijesni Amount (vidi spec section 18/20).
+        foreach (Booking survivor in existing.Where(b => clientIds.Contains(b.ClientId) && !IsTerminalBookingStatus(b.Status)))
+        {
+            survivor.Amount = amount;
+            survivor.SuggestedAmount = suggestedAmount;
+            survivor.IsAmountManuallyOverridden = overridden;
+        }
+
+        List<Guid> existingClientIds = existing.Select(b => b.ClientId).ToList();
         foreach (Guid clientId in clientIds.Where(id => !existingClientIds.Contains(id)))
         {
-            context.AppointmentClients.Add(new AppointmentClient
+            context.Bookings.Add(new Booking
             {
                 Id = Guid.NewGuid(),
+                OrganizationId = appointment.OrganizationId,
                 AppointmentId = appointment.Id.GetValueOrDefault(),
                 ClientId = clientId,
+                Status = BookingStatus.Confirmed,
+                Amount = amount,
+                SuggestedAmount = suggestedAmount,
+                IsAmountManuallyOverridden = overridden,
                 CreatedAt = DateTimeOffset.UtcNow
             });
         }
@@ -119,33 +210,11 @@ public class AppointmentHandler : IAppointmentHandler
         context.Appointments.Update(appointment);
     }
 
-    public async Task UpdateAppointmentClient(AppointmentClient appointmentClient)
-    {
-        await using DatabaseContext context = DatabaseContext.GenerateContext(_databaseSettings.ConnectionString);
-        context.AppointmentClients.Update(appointmentClient);
-        await context.SaveChangesAsync();
-    }
-
-    public async Task UpdateAppointmentClient(IUnitOfWork uow, AppointmentClient appointmentClient)
-    {
-        uow.Context.AppointmentClients.Update(appointmentClient);
-        await uow.Context.SaveChangesAsync();
-    }
-
     public async Task Delete(Appointment appointment)
     {
         await using DatabaseContext context = DatabaseContext.GenerateContext(_databaseSettings.ConnectionString);
         context.Appointments.Remove(appointment);
         await context.SaveChangesAsync();
-    }
-
-    public async Task DeleteRange(IUnitOfWork uow, List<Appointment> appointments)
-    {
-        if (appointments.Count == 0)
-            return;
-
-        uow.Context.Appointments.RemoveRange(appointments);
-        await uow.Context.SaveChangesAsync();
     }
 
     public async Task<List<Appointment>> GetOverlappingForEmployee(
@@ -160,7 +229,7 @@ public class AppointmentHandler : IAppointmentHandler
             .Where(a =>
                 a.OrganizationId == organizationId &&
                 a.EmployeeId == employeeId &&
-                a.Status != AppointmentStatus.Cancelled && a.Status != AppointmentStatus.NoShow &&
+                a.Status != AppointmentStatus.Cancelled &&
                 a.StartsAt >= windowStart && a.StartsAt <= windowEnd &&
                 (excludeId == null || a.Id != excludeId))
             .ToListAsync();
@@ -177,12 +246,12 @@ public class AppointmentHandler : IAppointmentHandler
 
         await using DatabaseContext context = DatabaseContext.GenerateContext(_databaseSettings.ConnectionString);
         List<Appointment> candidates = await context.Appointments
-            .Include(a => a.Clients)
+            .Include(a => a.Bookings)
             .Where(a =>
                 a.OrganizationId == organizationId &&
-                a.Status != AppointmentStatus.Cancelled && a.Status != AppointmentStatus.NoShow &&
+                a.Status != AppointmentStatus.Cancelled &&
                 a.StartsAt >= windowStart && a.StartsAt <= windowEnd &&
-                a.Clients.Any(ac => clientIds.Contains(ac.ClientId)) &&
+                a.Bookings.Any(b => clientIds.Contains(b.ClientId) && b.Status != BookingStatus.Cancelled && b.Status != BookingStatus.NoShow) &&
                 (excludeId == null || a.Id != excludeId))
             .ToListAsync();
 
@@ -201,7 +270,7 @@ public class AppointmentHandler : IAppointmentHandler
             .Where(a =>
                 a.OrganizationId == organizationId &&
                 a.RoomId == roomId &&
-                a.Status != AppointmentStatus.Cancelled && a.Status != AppointmentStatus.NoShow &&
+                a.Status != AppointmentStatus.Cancelled &&
                 a.StartsAt >= windowStart && a.StartsAt <= windowEnd &&
                 (excludeId == null || a.Id != excludeId))
             .ToListAsync();
@@ -217,7 +286,7 @@ public class AppointmentHandler : IAppointmentHandler
             .Where(a =>
                 a.OrganizationId == organizationId &&
                 a.EmployeeId == employeeId &&
-                a.Status != AppointmentStatus.Cancelled && a.Status != AppointmentStatus.NoShow &&
+                a.Status != AppointmentStatus.Cancelled &&
                 a.StartsAt >= rangeFrom && a.StartsAt <= rangeTo)
             .ToListAsync();
     }
@@ -230,7 +299,7 @@ public class AppointmentHandler : IAppointmentHandler
             .Where(a =>
                 a.OrganizationId == organizationId &&
                 a.RoomId == roomId &&
-                a.Status != AppointmentStatus.Cancelled && a.Status != AppointmentStatus.NoShow &&
+                a.Status != AppointmentStatus.Cancelled &&
                 a.StartsAt >= rangeFrom && a.StartsAt <= rangeTo)
             .ToListAsync();
     }
@@ -243,7 +312,7 @@ public class AppointmentHandler : IAppointmentHandler
             .Where(a =>
                 a.OrganizationId == organizationId &&
                 a.EmployeeId != null && employeeIds.Contains(a.EmployeeId.Value) &&
-                a.Status != AppointmentStatus.Cancelled && a.Status != AppointmentStatus.NoShow &&
+                a.Status != AppointmentStatus.Cancelled &&
                 a.StartsAt >= rangeFrom && a.StartsAt <= rangeTo)
             .ToListAsync();
     }
@@ -253,12 +322,12 @@ public class AppointmentHandler : IAppointmentHandler
     {
         await using DatabaseContext context = DatabaseContext.GenerateContext(_databaseSettings.ConnectionString);
         return await context.Appointments
-            .Include(a => a.Clients)
+            .Include(a => a.Bookings)
             .Where(a =>
                 a.OrganizationId == organizationId &&
-                a.Status != AppointmentStatus.Cancelled && a.Status != AppointmentStatus.NoShow &&
+                a.Status != AppointmentStatus.Cancelled &&
                 a.StartsAt >= rangeFrom && a.StartsAt <= rangeTo &&
-                a.Clients.Any(ac => clientIds.Contains(ac.ClientId)))
+                a.Bookings.Any(b => clientIds.Contains(b.ClientId) && b.Status != BookingStatus.Cancelled && b.Status != BookingStatus.NoShow))
             .ToListAsync();
     }
 
@@ -267,7 +336,6 @@ public class AppointmentHandler : IAppointmentHandler
         await using DatabaseContext context = DatabaseContext.GenerateContext(_databaseSettings.ConnectionString);
         IQueryable<Appointment> q = IncludeGraph(context.Appointments)
             .Include(a => a.Group).ThenInclude(g => g.Members.Where(m => m.IsActive))
-            .Include(a => a.Attendances)
             .AsSplitQuery()
             .Where(a => a.OrganizationId == organizationId && a.StartsAt >= query.From && a.StartsAt <= query.To);
 
@@ -292,18 +360,28 @@ public class AppointmentHandler : IAppointmentHandler
         return await q.OrderBy(a => a.StartsAt).ToListAsync();
     }
 
-    /// <summary>Kombinira individualne termine (preko AppointmentClient) i grupne termine na kojima klijent
-    /// ima AppointmentAttendance zapis (bilo attended=true bilo false — obje su relevantne za povijest,
-    /// analogno tome što individualna povijest već uključuje i Cancelled/NoShow termine bez filtriranja).</summary>
+    public async Task<List<Appointment>> GetForDashboard(Guid organizationId, Guid companyId, DateTimeOffset dayStart, DateTimeOffset dayEnd)
+    {
+        await using DatabaseContext context = DatabaseContext.GenerateContext(_databaseSettings.ConnectionString);
+        return await IncludeGraph(context.Appointments)
+            .Include(a => a.Group).ThenInclude(g => g.Members.Where(m => m.IsActive))
+            .Include(a => a.Bookings).ThenInclude(b => b.CheckoutItems).ThenInclude(i => i.Allocations).ThenInclude(alloc => alloc.Payment)
+            .AsSplitQuery()
+            .Where(a => a.OrganizationId == organizationId && a.CompanyId == companyId &&
+                a.StartsAt >= dayStart && a.StartsAt < dayEnd)
+            .OrderBy(a => a.StartsAt).ThenBy(a => a.Id)
+            .ToListAsync();
+    }
+
+    /// <summary>Termini na kojima klijent ima BILO KOJI Booking redak (bilo kojeg statusa — povijest uključuje i
+    /// Cancelled/NoShow, isto kao prije uvođenja Bookinga).</summary>
     public async Task<(List<Appointment> Items, int TotalCount)> GetByClient(Guid organizationId, Guid clientId, PagedRequest request)
     {
         await using DatabaseContext context = DatabaseContext.GenerateContext(_databaseSettings.ConnectionString);
         IQueryable<Appointment> query = IncludeGraph(context.Appointments)
             .Include(a => a.Group)
-            .Include(a => a.Attendances.Where(att => att.ClientId == clientId))
-            .AsSplitQuery()
-            .Where(a => a.OrganizationId == organizationId &&
-                (a.Clients.Any(ac => ac.ClientId == clientId) || a.Attendances.Any(att => att.ClientId == clientId)));
+            .Include(a => a.Bookings).ThenInclude(b => b.CheckoutItems).ThenInclude(i => i.Allocations).ThenInclude(alloc => alloc.Payment)
+            .Where(a => a.OrganizationId == organizationId && a.Bookings.Any(b => b.ClientId == clientId));
 
         int totalCount = await query.CountAsync();
 
@@ -321,6 +399,7 @@ public class AppointmentHandler : IAppointmentHandler
         await using DatabaseContext context = DatabaseContext.GenerateContext(_databaseSettings.ConnectionString);
         IQueryable<Appointment> query = IncludeGraph(context.Appointments)
             .Include(a => a.Group)
+            .Include(a => a.Bookings).ThenInclude(b => b.CheckoutItems).ThenInclude(i => i.Allocations).ThenInclude(alloc => alloc.Payment)
             .Where(a => a.OrganizationId == organizationId &&
                 a.EmployeeId == employeeId &&
                 a.Status == AppointmentStatus.Completed);
@@ -340,6 +419,7 @@ public class AppointmentHandler : IAppointmentHandler
     {
         DateTimeOffset now = DateTimeOffset.UtcNow;
         return uow.Context.Appointments
+            .Include(a => a.Bookings)
             .Where(a =>
                 a.OrganizationId == organizationId &&
                 a.GroupId == groupId &&
@@ -362,9 +442,66 @@ public class AppointmentHandler : IAppointmentHandler
     public async Task<bool> HasAnyForClient(Guid organizationId, Guid clientId)
     {
         await using DatabaseContext context = DatabaseContext.GenerateContext(_databaseSettings.ConnectionString);
-        return await context.AppointmentClients.AnyAsync(ac =>
-            ac.ClientId == clientId &&
-            context.Appointments.Any(a => a.Id == ac.AppointmentId && a.OrganizationId == organizationId));
+        return await context.Bookings.AnyAsync(b =>
+            b.ClientId == clientId &&
+            b.OrganizationId == organizationId);
+    }
+
+    /// <summary>Ima li klijent ijedan budući termin statusa Scheduled s aktivnim (Confirmed) Bookingom — koristi
+    /// ClientService.Anonymize da blokira anonimizaciju dok postoji operativno aktivna rezervacija. Otkazan/
+    /// odrađen/izostao ne blokira.</summary>
+    public async Task<bool> HasFutureScheduledForClient(Guid organizationId, Guid clientId)
+    {
+        await using DatabaseContext context = DatabaseContext.GenerateContext(_databaseSettings.ConnectionString);
+        DateTimeOffset now = DateTimeOffset.UtcNow;
+        return await context.Bookings.AnyAsync(b =>
+            b.ClientId == clientId &&
+            b.OrganizationId == organizationId &&
+            b.Status == BookingStatus.Confirmed &&
+            context.Appointments.Any(a =>
+                a.Id == b.AppointmentId &&
+                a.Status == AppointmentStatus.Scheduled &&
+                a.StartsAt >= now));
+    }
+
+    /// <summary>FOR UPDATE preko FromSqlInterpolated (parametrizirano, sigurno od SQL injection) — Postgres Read
+    /// Committed onda blokira konkurentni poziv nad ISTIM terminom dok se ova transakcija ne commita/rollbacka,
+    /// nakon čega konkurentni poziv čita već-commitano stanje (svježi SELECT po statementu). Include(a => a.Group)
+    /// se komponira nad FromSql rezultatom (podržano u EF Core/Npgsql).</summary>
+    public async Task<Appointment> GetForUpdateWithGroup(IUnitOfWork uow, Guid organizationId, Guid appointmentId)
+    {
+        return await uow.Context.Appointments
+            .FromSqlInterpolated($"SELECT * FROM dunelight.appointments WHERE organization_id = {organizationId} AND id = {appointmentId} FOR UPDATE")
+            .Include(a => a.Group)
+            .SingleOrDefaultAsync();
+    }
+
+    public async Task<Appointment> GetForUpdate(IUnitOfWork uow, Guid organizationId, Guid appointmentId)
+    {
+        return await uow.Context.Appointments
+            .FromSqlInterpolated($"SELECT * FROM dunelight.appointments WHERE organization_id = {organizationId} AND id = {appointmentId} FOR UPDATE")
+            .SingleOrDefaultAsync();
+    }
+
+    public async Task<Appointment> GetForUpdateWithBookings(IUnitOfWork uow, Guid organizationId, Guid appointmentId)
+    {
+        return await uow.Context.Appointments
+            .FromSqlInterpolated($"SELECT * FROM dunelight.appointments WHERE organization_id = {organizationId} AND id = {appointmentId} FOR UPDATE")
+            .Include(a => a.Bookings)
+            .SingleOrDefaultAsync();
+    }
+
+    public async Task<int> CountConfirmedBookings(Guid organizationId, Guid appointmentId)
+    {
+        await using DatabaseContext context = DatabaseContext.GenerateContext(_databaseSettings.ConnectionString);
+        return await context.Bookings.CountAsync(b =>
+            b.OrganizationId == organizationId && b.AppointmentId == appointmentId && b.Status == BookingStatus.Confirmed);
+    }
+
+    public Task<int> CountConfirmedBookings(IUnitOfWork uow, Guid organizationId, Guid appointmentId)
+    {
+        return uow.Context.Bookings.CountAsync(b =>
+            b.OrganizationId == organizationId && b.AppointmentId == appointmentId && b.Status == BookingStatus.Confirmed);
     }
 
     public async Task<Dictionary<Guid, int>> GetNoShowCountsByClientIds(Guid organizationId, List<Guid> clientIds)
@@ -373,12 +510,12 @@ public class AppointmentHandler : IAppointmentHandler
             return new Dictionary<Guid, int>();
 
         await using DatabaseContext context = DatabaseContext.GenerateContext(_databaseSettings.ConnectionString);
-        return await context.AppointmentClients
-            .Where(ac =>
-                clientIds.Contains(ac.ClientId) &&
-                ac.Appointment.OrganizationId == organizationId &&
-                ac.Appointment.Status == AppointmentStatus.NoShow)
-            .GroupBy(ac => ac.ClientId)
+        return await context.Bookings
+            .Where(b =>
+                clientIds.Contains(b.ClientId) &&
+                b.OrganizationId == organizationId &&
+                b.Status == BookingStatus.NoShow)
+            .GroupBy(b => b.ClientId)
             .Select(g => new { ClientId = g.Key, Count = g.Count() })
             .ToDictionaryAsync(g => g.ClientId, g => g.Count);
     }
@@ -393,72 +530,37 @@ public class AppointmentHandler : IAppointmentHandler
         await context.SaveChangesAsync();
     }
 
+    /// <summary>Jedan upit nad Booking — individualni i grupni termini dijele istu tablicu, pa više nema potrebe
+    /// za odvojenim AppointmentClient/AppointmentAttendance granama (vidi Booking.cs).</summary>
     public async Task<ClientAppointmentStatsDto> GetStatsForClient(Guid organizationId, Guid clientId, List<Guid> activeGroupIds)
     {
         await using DatabaseContext context = DatabaseContext.GenerateContext(_databaseSettings.ConnectionString);
         DateTimeOffset now = DateTimeOffset.UtcNow;
 
-        IQueryable<AppointmentClient> individual = context.AppointmentClients
-            .Where(ac => ac.ClientId == clientId && ac.Appointment.OrganizationId == organizationId);
+        IQueryable<Booking> bookings = context.Bookings
+            .Where(b => b.ClientId == clientId && b.OrganizationId == organizationId);
 
-        int completedIndividual = await individual.CountAsync(ac => ac.Appointment.Status == AppointmentStatus.Completed);
-        int noShowIndividual = await individual.CountAsync(ac => ac.Appointment.Status == AppointmentStatus.NoShow);
-        int cancelledIndividual = await individual.CountAsync(ac => ac.Appointment.Status == AppointmentStatus.Cancelled);
+        int completed = await bookings.CountAsync(b => b.Status == BookingStatus.Completed);
+        int noShow = await bookings.CountAsync(b => b.Status == BookingStatus.NoShow);
+        int cancelled = await bookings.CountAsync(b => b.Status == BookingStatus.Cancelled);
 
-        DateTimeOffset? lastIndividual = await individual
-            .Where(ac => ac.Appointment.Status == AppointmentStatus.Completed)
-            .Select(ac => (DateTimeOffset?)ac.Appointment.StartsAt)
+        DateTimeOffset? lastVisit = await bookings
+            .Where(b => b.Status == BookingStatus.Completed)
+            .Select(b => (DateTimeOffset?)b.Appointment.StartsAt)
             .MaxAsync();
 
-        DateTimeOffset? nextIndividual = await individual
-            .Where(ac => ac.Appointment.Status == AppointmentStatus.Scheduled && ac.Appointment.StartsAt > now)
-            .Select(ac => (DateTimeOffset?)ac.Appointment.StartsAt)
+        DateTimeOffset? nextVisit = await bookings
+            .Where(b => b.Status == BookingStatus.Confirmed && b.Appointment.Status == AppointmentStatus.Scheduled && b.Appointment.StartsAt > now)
+            .Select(b => (DateTimeOffset?)b.Appointment.StartsAt)
             .MinAsync();
-
-        IQueryable<AppointmentAttendance> group = context.AppointmentAttendances
-            .Where(a => a.ClientId == clientId && a.Appointment.OrganizationId == organizationId);
-
-        int completedGroup = await group.CountAsync(a => a.Attended == true);
-        int noShowGroup = await group.CountAsync(a => a.Attended == false);
-
-        DateTimeOffset? lastGroup = await group
-            .Where(a => a.Attended == true)
-            .Select(a => (DateTimeOffset?)a.Appointment.StartsAt)
-            .MaxAsync();
-
-        DateTimeOffset? nextGroup = activeGroupIds.Count == 0
-            ? null
-            : await context.Appointments
-                .Where(a =>
-                    a.OrganizationId == organizationId &&
-                    a.Form == AppointmentForm.Group &&
-                    a.GroupId != null && activeGroupIds.Contains(a.GroupId.Value) &&
-                    a.Status == AppointmentStatus.Scheduled &&
-                    a.StartsAt > now)
-                .Select(a => (DateTimeOffset?)a.StartsAt)
-                .MinAsync();
 
         return new ClientAppointmentStatsDto
         {
-            CompletedVisitsCount = completedIndividual + completedGroup,
-            NoShowCount = noShowIndividual + noShowGroup,
-            CancelledCount = cancelledIndividual,
-            LastVisitAt = MaxOrNull(lastIndividual, lastGroup),
-            NextVisitAt = MinOrNull(nextIndividual, nextGroup)
+            CompletedVisitsCount = completed,
+            NoShowCount = noShow,
+            CancelledCount = cancelled,
+            LastVisitAt = lastVisit,
+            NextVisitAt = nextVisit
         };
-    }
-
-    private static DateTimeOffset? MaxOrNull(DateTimeOffset? a, DateTimeOffset? b)
-    {
-        if (a == null) return b;
-        if (b == null) return a;
-        return a > b ? a : b;
-    }
-
-    private static DateTimeOffset? MinOrNull(DateTimeOffset? a, DateTimeOffset? b)
-    {
-        if (a == null) return b;
-        if (b == null) return a;
-        return a < b ? a : b;
     }
 }

@@ -15,8 +15,11 @@ public interface IPriceListItemHandler
     Task<PriceListItem> GetById(Guid organizationId, Guid id);
     Task Add(PriceListItem item);
     Task Update(PriceListItem item);
+
+    /// <summary>Update stavke i upis povijesnog zapisa u istom kontekstu/SaveChanges (atomično).</summary>
+    Task UpdateWithHistory(PriceListItem item, PriceListItemHistory history);
+
     Task Delete(PriceListItem item);
-    Task AddHistory(PriceListItemHistory history);
     Task<bool> HasHistory(Guid priceListItemId);
 
     /// <summary>Aktivne stavke za TOČNO istu tvrtku (uklj. null) — koristi se za provjeru preklapanja.</summary>

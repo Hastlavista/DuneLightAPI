@@ -10,6 +10,10 @@ public interface IGroupService
     Task<GroupDto> Create(Guid organizationId, Guid userId, GroupCreateRequest request);
     Task<GroupDto> Update(Guid organizationId, Guid userId, Guid id, GroupUpdateRequest request);
     Task<GroupDto> SetActive(Guid organizationId, Guid userId, Guid id, bool isActive);
+
+    /// <summary>Trajno briše grupu SAMO ako nikad nije generirala termin i nema ni jedan članski redak (aktivan
+    /// ili povijesni) — inače REFERENCED_CANNOT_DELETE (deaktivirajte umjesto toga). Vidi spec section 42/43.</summary>
+    Task Delete(Guid organizationId, Guid id);
     Task<GroupDetailDto> GetById(Guid organizationId, Guid id);
     Task<List<GroupDto>> GetAll(Guid organizationId, bool? isActive);
 

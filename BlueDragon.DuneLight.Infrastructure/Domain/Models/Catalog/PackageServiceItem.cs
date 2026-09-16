@@ -4,7 +4,8 @@ using System.ComponentModel.DataAnnotations.Schema;
 
 namespace BlueDragon.DuneLight.Infrastructure.Domain.Models.Catalog;
 
-/// <summary>Usluga uključena u paket. EntryCount se koristi samo kod PerService načina trošenja.</summary>
+/// <summary>Usluga uključena u paket. EntryCount se koristi samo kod PerService načina trošenja — null tamo
+/// znači neograničeno za tu uslugu (isto načelo kao Package.TotalEntryCount == null kod SharedPool).</summary>
 [Table("package_services")]
 public class PackageServiceItem
 {

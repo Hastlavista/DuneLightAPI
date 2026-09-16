@@ -6,6 +6,7 @@ using BlueDragon.DuneLight.API.Extensions;
 using BlueDragon.DuneLight.Core.DTOs.Appointments;
 using BlueDragon.DuneLight.Core.DTOs.Schedule;
 using BlueDragon.DuneLight.Core.DTOs.ScheduleBreaks;
+using BlueDragon.DuneLight.Core.Enums;
 using BlueDragon.DuneLight.Core.Interfaces.Appointments;
 using BlueDragon.DuneLight.Core.Interfaces.ScheduleBreaks;
 using BlueDragon.DuneLight.Core.Shared;
@@ -19,12 +20,20 @@ namespace BlueDragon.DuneLight.API.Controllers.Appointments;
 public class AppointmentsController : ControllerBase
 {
     private readonly IAppointmentService _appointmentService;
+    private readonly IBookingService _bookingService;
+    private readonly IWaitlistService _waitlistService;
     private readonly IScheduleBreakService _scheduleBreakService;
+    private readonly IPaymentService _paymentService;
 
-    public AppointmentsController(IAppointmentService appointmentService, IScheduleBreakService scheduleBreakService)
+    public AppointmentsController(
+        IAppointmentService appointmentService, IBookingService bookingService, IWaitlistService waitlistService,
+        IScheduleBreakService scheduleBreakService, IPaymentService paymentService)
     {
         _appointmentService = appointmentService;
+        _bookingService = bookingService;
+        _waitlistService = waitlistService;
         _scheduleBreakService = scheduleBreakService;
+        _paymentService = paymentService;
     }
 
     /// <summary>Raspored za razdoblje — filtri: tvrtka (zadano sve), trener, usluga/kategorija, status. Uključuje
@@ -68,7 +77,7 @@ public class AppointmentsController : ControllerBase
     /// <summary>Povijest termina po klijentu, najnoviji prvi.</summary>
     [HttpGet("by-client/{clientId:guid}")]
     [RequireGrant(Grants.AppointmentsView)]
-    public async Task<ActionResult<PagedResult<AppointmentDto>>> GetByClient(Guid clientId, [FromQuery] PagedRequest request)
+    public async Task<ActionResult<PagedResult<ClientAppointmentHistoryDto>>> GetByClient(Guid clientId, [FromQuery] PagedRequest request)
     {
         return Ok(await _appointmentService.GetByClient(this.CurrentOrganizationId(), clientId, request));
     }
@@ -160,5 +169,91 @@ public class AppointmentsController : ControllerBase
     {
         return Ok(await _appointmentService.CreateRecurring(
             this.CurrentOrganizationId(), this.CurrentUserId(), this.HasGrant(Grants.AppointmentsWriteAll), request));
+    }
+
+    /// <summary>Bookinzi (klijenti) na jednom terminu — korisno za duo/grupne termine gdje treba prikazati
+    /// stanje po klijentu neovisno o cijelom terminu.</summary>
+    [HttpGet("{appointmentId:guid}/bookings")]
+    [RequireGrant(Grants.AppointmentsView)]
+    public async Task<ActionResult<List<BookingDto>>> GetBookings(Guid appointmentId)
+    {
+        return Ok(await _bookingService.GetForAppointment(this.CurrentOrganizationId(), appointmentId));
+    }
+
+    /// <summary>Ad-hoc dodavanje Bookinga na postojeći termin (npr. dodatni gost na duo terminu bez pune izmjene).</summary>
+    [HttpPost("{appointmentId:guid}/bookings")]
+    [RequireGrant(Grants.AppointmentsWriteOwn, Grants.AppointmentsWriteAll)]
+    public async Task<ActionResult<BookingDto>> AddBooking(Guid appointmentId, [FromBody] BookingCreateRequest request)
+    {
+        return Ok(await _bookingService.AddBooking(
+            this.CurrentOrganizationId(), this.CurrentUserId(), this.HasGrant(Grants.AppointmentsWriteAll), appointmentId, request));
+    }
+
+    /// <summary>Otkazuje SAMO jednog klijenta na terminu (npr. jedan od dvoje na duo terminu) bez otkazivanja
+    /// cijelog termina — za cijeli termin koristiti POST {id}/cancel.</summary>
+    [HttpPatch("{appointmentId:guid}/bookings/{clientId:guid}/cancel")]
+    [RequireGrant(Grants.AppointmentsWriteOwn, Grants.AppointmentsWriteAll)]
+    public async Task<ActionResult<BookingDto>> CancelBooking(Guid appointmentId, Guid clientId, [FromBody] BookingCancelRequest request)
+    {
+        return Ok(await _bookingService.SetStatus(
+            this.CurrentOrganizationId(), this.CurrentUserId(), this.HasGrant(Grants.AppointmentsWriteAll), appointmentId, clientId,
+            new BookingSetStatusRequest
+            {
+                Status = BookingStatus.Cancelled,
+                ReturnPackageEntry = request.ReturnPackageEntry,
+                CancellationReason = request.CancellationReason
+            }));
+    }
+
+    /// <summary>Izostanak SAMO jednog klijenta na terminu (npr. jedan od dvoje na duo terminu) bez da cijeli
+    /// termin postane izostao — za cijeli termin koristiti POST {id}/no-show.</summary>
+    [HttpPatch("{appointmentId:guid}/bookings/{clientId:guid}/no-show")]
+    [RequireGrant(Grants.AppointmentsWriteOwn, Grants.AppointmentsWriteAll)]
+    public async Task<ActionResult<BookingDto>> MarkBookingNoShow(Guid appointmentId, Guid clientId, [FromBody] BookingCancelRequest request)
+    {
+        return Ok(await _bookingService.SetStatus(
+            this.CurrentOrganizationId(), this.CurrentUserId(), this.HasGrant(Grants.AppointmentsWriteAll), appointmentId, clientId,
+            new BookingSetStatusRequest
+            {
+                Status = BookingStatus.NoShow,
+                ReturnPackageEntry = request.ReturnPackageEntry,
+                CancellationReason = request.CancellationReason
+            }));
+    }
+
+    /// <summary>Povijest Paymenta (monetarnih naplata) jednog Bookinga, uklj. voidane, preko svih njegovih
+    /// povijesnih Checkout stavki — vidi IPaymentService. Kreiranje/void Paymenta ide kroz ICheckoutService
+    /// (vidi CheckoutsController) jer Payment pripada Checkoutu, ne izravno Bookingu.</summary>
+    [HttpGet("{appointmentId:guid}/bookings/{clientId:guid}/payments")]
+    [RequireGrant(Grants.AppointmentsView)]
+    public async Task<ActionResult<List<PaymentDto>>> GetPayments(Guid appointmentId, Guid clientId)
+    {
+        return Ok(await _paymentService.GetForBooking(this.CurrentOrganizationId(), appointmentId, clientId));
+    }
+
+    /// <summary>Lista čekanja termina (puna povijest, uklj. Promoted/Cancelled/Expired) — admin/trener roster prikaz.</summary>
+    [HttpGet("{appointmentId:guid}/waitlist")]
+    [RequireGrant(Grants.AppointmentsView)]
+    public async Task<ActionResult<List<WaitlistEntryDto>>> GetWaitlist(Guid appointmentId)
+    {
+        return Ok(await _waitlistService.GetForAppointment(this.CurrentOrganizationId(), appointmentId));
+    }
+
+    /// <summary>Upis na listu čekanja — dopušteno samo kad je termin pun (inače CAPACITY_AVAILABLE).</summary>
+    [HttpPost("{appointmentId:guid}/waitlist")]
+    [RequireGrant(Grants.AppointmentsWriteOwn, Grants.AppointmentsWriteAll)]
+    public async Task<ActionResult<WaitlistEntryDto>> JoinWaitlist(Guid appointmentId, [FromBody] WaitlistJoinRequest request)
+    {
+        return Ok(await _waitlistService.Join(
+            this.CurrentOrganizationId(), this.CurrentUserId(), this.HasGrant(Grants.AppointmentsWriteAll), appointmentId, request));
+    }
+
+    /// <summary>Ručno uklanjanje s liste čekanja (Waiting -&gt; Cancelled) — idempotentno.</summary>
+    [HttpDelete("{appointmentId:guid}/waitlist/{clientId:guid}")]
+    [RequireGrant(Grants.AppointmentsWriteOwn, Grants.AppointmentsWriteAll)]
+    public async Task<ActionResult<WaitlistEntryDto>> CancelWaitlistEntry(Guid appointmentId, Guid clientId)
+    {
+        return Ok(await _waitlistService.Cancel(
+            this.CurrentOrganizationId(), this.CurrentUserId(), this.HasGrant(Grants.AppointmentsWriteAll), appointmentId, clientId));
     }
 }

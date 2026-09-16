@@ -72,6 +72,13 @@ public class LeaveFundService : ILeaveFundService
                 ErrorCodes.LeaveSettingsNotConfigured,
                 "Zaposlenik nema podešen fond godišnjeg odmora — postavite postavke prije otvaranja/korekcije fonda.");
 
+        List<LeaveFund> existingFunds = await _leaveFundHandler.GetForEmployee(organizationId, employeeId);
+        LeaveFund existingFund = existingFunds.SingleOrDefault(f => f.FundYear == request.FundYear);
+        if (existingFund != null && request.AllocatedDays < existingFund.UsedDays)
+            throw new BusinessRuleException(
+                ErrorCodes.LeaveFundAllocatedBelowUsed,
+                $"Novi broj dodijeljenih dana ({request.AllocatedDays}) je manji od već potrošenih ({existingFund.UsedDays}) — prvo stornirajte/izmijenite povezane roster zapise.");
+
         LeaveFund saved = await _leaveFundHandler.ManualUpsert(organizationId, employeeId, settings, request.FundYear, request.AllocatedDays, userId);
         return ToDto(saved);
     }

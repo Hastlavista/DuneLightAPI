@@ -111,7 +111,7 @@ public class EmployeeCreateRequest
     [Required]
     public Guid PrimaryCompanyId { get; set; }
 
-    /// <summary>Prazno = smije izvoditi sve usluge.</summary>
+    /// <summary>Prazno = zaposlenik (još) ne smije izvoditi nijednu uslugu — capability je isključivo eksplicitna.</summary>
     public List<Guid> ServiceIds { get; set; } = new();
 }
 
@@ -226,7 +226,7 @@ public class EmployeeWithLoginCreateRequest
     [Required]
     public Guid PrimaryCompanyId { get; set; }
 
-    /// <summary>Prazno = smije izvoditi sve usluge.</summary>
+    /// <summary>Prazno = zaposlenik (još) ne smije izvoditi nijednu uslugu — capability je isključivo eksplicitna.</summary>
     public List<Guid> ServiceIds { get; set; } = new();
 
     /// <summary>Inicijalna lozinka koju upisuje admin.</summary>

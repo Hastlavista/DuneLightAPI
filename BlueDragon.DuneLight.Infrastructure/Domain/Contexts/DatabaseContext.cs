@@ -3,11 +3,14 @@ using BlueDragon.DuneLight.Core.Enums;
 using BlueDragon.DuneLight.Infrastructure.Domain.Models;
 using BlueDragon.DuneLight.Infrastructure.Domain.Models.Appointments;
 using BlueDragon.DuneLight.Infrastructure.Domain.Models.Catalog;
+using BlueDragon.DuneLight.Infrastructure.Domain.Models.Checkouts;
 using BlueDragon.DuneLight.Infrastructure.Domain.Models.Clients;
+using BlueDragon.DuneLight.Infrastructure.Domain.Models.Commissions;
 using BlueDragon.DuneLight.Infrastructure.Domain.Models.Employees;
 using BlueDragon.DuneLight.Infrastructure.Domain.Models.Groups;
 using BlueDragon.DuneLight.Infrastructure.Domain.Models.Organizations;
 using BlueDragon.DuneLight.Infrastructure.Domain.Models.Permissions;
+using BlueDragon.DuneLight.Infrastructure.Domain.Models.Products;
 using BlueDragon.DuneLight.Infrastructure.Domain.Models.Roster;
 using Microsoft.EntityFrameworkCore;
 
@@ -21,6 +24,7 @@ public class DatabaseContext : DbContext
     public DbSet<Company> Companies { get; set; }
     public DbSet<Room> Rooms { get; set; }
     public DbSet<Service> Services { get; set; }
+    public DbSet<ServiceCompany> ServiceCompanies { get; set; }
     public DbSet<PriceListItem> PriceListItems { get; set; }
     public DbSet<PriceListItemHistory> PriceListItemHistory { get; set; }
     public DbSet<Package> Packages { get; set; }
@@ -39,15 +43,28 @@ public class DatabaseContext : DbContext
     public DbSet<ClientPackageServiceEntry> ClientPackageServiceEntries { get; set; }
 
     public DbSet<Appointment> Appointments { get; set; }
-    public DbSet<AppointmentClient> AppointmentClients { get; set; }
-    public DbSet<AppointmentAttendance> AppointmentAttendances { get; set; }
+    public DbSet<Booking> Bookings { get; set; }
+    public DbSet<Payment> Payments { get; set; }
     public DbSet<AppointmentAuditLog> AppointmentAuditLog { get; set; }
     public DbSet<ScheduleBreak> ScheduleBreaks { get; set; }
+
+    public DbSet<Checkout> Checkouts { get; set; }
+    public DbSet<CheckoutItem> CheckoutItems { get; set; }
+    public DbSet<PaymentAllocation> PaymentAllocations { get; set; }
+    public DbSet<CheckoutAuditLog> CheckoutAuditLog { get; set; }
+
+    public DbSet<Product> Products { get; set; }
+    public DbSet<ProductStock> ProductStock { get; set; }
+    public DbSet<StockMovement> StockMovements { get; set; }
+
+    public DbSet<CommissionRule> CommissionRules { get; set; }
+    public DbSet<CommissionEntry> CommissionEntries { get; set; }
 
     public DbSet<Group> Groups { get; set; }
     public DbSet<GroupSlot> GroupSlots { get; set; }
     public DbSet<GroupMember> GroupMembers { get; set; }
     public DbSet<GroupAuditLog> GroupAuditLog { get; set; }
+    public DbSet<WaitlistEntry> WaitlistEntries { get; set; }
 
     public DbSet<RosterType> RosterTypes { get; set; }
     public DbSet<RosterEntry> RosterEntries { get; set; }
@@ -60,6 +77,7 @@ public class DatabaseContext : DbContext
     public DbSet<CompanyHoliday> CompanyHolidays { get; set; }
 
     public DbSet<OrganizationBrandingAuditLog> OrganizationBrandingAuditLog { get; set; }
+    public DbSet<OrganizationSettings> OrganizationSettings { get; set; }
 
     public DbSet<GrantGroup> GrantGroups { get; set; }
     public DbSet<GrantGroupGrant> GrantGroupGrants { get; set; }
@@ -81,6 +99,9 @@ public class DatabaseContext : DbContext
         modelBuilder.Entity<OrganizationBrandingAuditLog>().HasKey(a => a.Id);
         modelBuilder.Entity<OrganizationBrandingAuditLog>().HasIndex(a => a.OrganizationId);
 
+        modelBuilder.Entity<OrganizationSettings>().HasKey(s => s.Id);
+        modelBuilder.Entity<OrganizationSettings>().HasIndex(s => s.OrganizationId).IsUnique();
+
         modelBuilder.Entity<User>().HasKey(u => new { u.Id });
         modelBuilder.Entity<User>().HasIndex(u => new { u.OrganizationId, u.Email }).IsUnique();
 
@@ -94,6 +115,9 @@ public class DatabaseContext : DbContext
         ConfigureEmployees(modelBuilder);
         ConfigureClients(modelBuilder);
         ConfigureAppointments(modelBuilder);
+        ConfigureCheckouts(modelBuilder);
+        ConfigureProducts(modelBuilder);
+        ConfigureCommissions(modelBuilder);
         ConfigureScheduleBreaks(modelBuilder);
         ConfigureGroups(modelBuilder);
         ConfigureRoster(modelBuilder);
@@ -107,14 +131,45 @@ public class DatabaseContext : DbContext
         modelBuilder.Entity<Company>().HasKey(l => l.Id);
         modelBuilder.Entity<Company>().HasIndex(l => l.OrganizationId);
 
+        modelBuilder.Entity<Room>().HasKey(r => r.Id);
+        modelBuilder.Entity<Room>().HasIndex(r => new { r.OrganizationId, r.CompanyId });
+        modelBuilder.Entity<Room>()
+            .HasOne(r => r.Company)
+            .WithMany()
+            .HasForeignKey(r => r.CompanyId)
+            .OnDelete(DeleteBehavior.Restrict);
+
         modelBuilder.Entity<Service>().HasKey(s => s.Id);
+        modelBuilder.Entity<Service>().HasIndex(s => s.OrganizationId);
         modelBuilder.Entity<Service>()
             .Property(s => s.ExecutionMode)
             .HasConversion(v => v.ToString(), v => Enum.Parse<ServiceExecutionMode>(v));
-        modelBuilder.Entity<Service>()
-            .HasIndex(s => new { s.OrganizationId, s.Name })
-            .IsUnique()
-            .HasFilter("is_active = true");
+        // Aktivni normalizirani (trim + case-insensitive) unique naziv po Organization je izražen kao
+        // raw SQL expression indeks (ux_services_org_name_active) u migraciji, ne ovdje — EF Core HasIndex
+        // ne zna izraziti lower(trim(name)), pa bi deklaracija ovdje bila netočna metapodatka. Isti obrazac
+        // kao Company/Room (vidi ServiceHandler.NameExistsAmongActive i AddServiceActiveNameUniqueIndex).
+
+        // ServiceCompany: eksplicitna dostupnost usluge po poslovnici — prazno = dostupna nigdje (vidi
+        // domensku napomenu na ServiceCompany). Cascade s obje strane jer je ovo konfiguracijski, ne
+        // povijesni zapis — hard-delete inače neiskorištenog Service/Company ne smije biti blokiran samo
+        // zbog ovih redaka (vidi ServiceHandler/CompanyHandler.IsReferenced, koji namjerno ne provjerava
+        // service_companies).
+        modelBuilder.Entity<ServiceCompany>().HasKey(sc => sc.Id);
+        modelBuilder.Entity<ServiceCompany>()
+            .HasIndex(sc => new { sc.ServiceId, sc.CompanyId })
+            .IsUnique();
+        modelBuilder.Entity<ServiceCompany>()
+            .HasIndex(sc => sc.CompanyId);
+        modelBuilder.Entity<ServiceCompany>()
+            .HasOne(sc => sc.Service)
+            .WithMany()
+            .HasForeignKey(sc => sc.ServiceId)
+            .OnDelete(DeleteBehavior.Cascade);
+        modelBuilder.Entity<ServiceCompany>()
+            .HasOne(sc => sc.Company)
+            .WithMany()
+            .HasForeignKey(sc => sc.CompanyId)
+            .OnDelete(DeleteBehavior.Cascade);
 
         modelBuilder.Entity<PriceListItem>().HasKey(p => p.Id);
         modelBuilder.Entity<PriceListItem>()
@@ -222,11 +277,11 @@ public class DatabaseContext : DbContext
 
     private static void ConfigureClients(ModelBuilder modelBuilder)
     {
+        // Normalizirana (trim + case-insensitive) uniqueness živi u DB-u kao partial index preko lower(trim(name))
+        // (vidi AddClientTagActiveNameUniqueIndex) — isti obrazac kao Company/Service/Room/Package, namjerno bez
+        // fluent HasIndex ovdje jer EF ne zna izraziti lower(trim(...)) izraz u indeksu.
         modelBuilder.Entity<ClientTag>().HasKey(t => t.Id);
-        modelBuilder.Entity<ClientTag>()
-            .HasIndex(t => new { t.OrganizationId, t.Name })
-            .IsUnique()
-            .HasFilter("is_active = true");
+        modelBuilder.Entity<ClientTag>().HasIndex(t => t.OrganizationId);
 
         modelBuilder.Entity<Client>().HasKey(c => c.Id);
         modelBuilder.Entity<Client>()
@@ -326,11 +381,6 @@ public class DatabaseContext : DbContext
             .Property(a => a.Status)
             .HasConversion(v => v.ToString(), v => Enum.Parse<AppointmentStatus>(v));
         modelBuilder.Entity<Appointment>()
-            .Property(a => a.PaymentMethod)
-            .HasConversion(
-                v => v == null ? null : v.ToString(),
-                v => v == null ? (PaymentMethod?)null : Enum.Parse<PaymentMethod>(v));
-        modelBuilder.Entity<Appointment>()
             .HasOne(a => a.Service)
             .WithMany()
             .HasForeignKey(a => a.ServiceId)
@@ -346,6 +396,11 @@ public class DatabaseContext : DbContext
             .HasForeignKey(a => a.CompanyId)
             .OnDelete(DeleteBehavior.Restrict);
         modelBuilder.Entity<Appointment>()
+            .HasOne(a => a.Room)
+            .WithMany()
+            .HasForeignKey(a => a.RoomId)
+            .OnDelete(DeleteBehavior.Restrict);
+        modelBuilder.Entity<Appointment>()
             .HasOne(a => a.Group)
             .WithMany()
             .HasForeignKey(a => a.GroupId)
@@ -356,53 +411,279 @@ public class DatabaseContext : DbContext
             .HasForeignKey(a => a.GroupSlotId)
             .OnDelete(DeleteBehavior.Restrict);
 
-        modelBuilder.Entity<AppointmentClient>().HasKey(ac => ac.Id);
-        modelBuilder.Entity<AppointmentClient>()
-            .HasIndex(ac => new { ac.AppointmentId, ac.ClientId })
+        modelBuilder.Entity<Booking>().HasKey(b => b.Id);
+        modelBuilder.Entity<Booking>().HasIndex(b => new { b.OrganizationId, b.ClientId });
+        modelBuilder.Entity<Booking>()
+            .HasIndex(b => new { b.AppointmentId, b.ClientId })
             .IsUnique();
-        modelBuilder.Entity<AppointmentClient>()
-            .HasOne(ac => ac.Appointment)
-            .WithMany(a => a.Clients)
-            .HasForeignKey(ac => ac.AppointmentId)
-            .OnDelete(DeleteBehavior.Cascade);
-        modelBuilder.Entity<AppointmentClient>()
-            .HasOne(ac => ac.Client)
-            .WithMany()
-            .HasForeignKey(ac => ac.ClientId)
-            .OnDelete(DeleteBehavior.Restrict);
-        modelBuilder.Entity<AppointmentClient>()
-            .HasOne(ac => ac.ClientPackage)
-            .WithMany()
-            .HasForeignKey(ac => ac.ClientPackageId)
-            .OnDelete(DeleteBehavior.Restrict);
-
-        modelBuilder.Entity<AppointmentAttendance>().HasKey(aa => aa.Id);
-        modelBuilder.Entity<AppointmentAttendance>()
-            .HasIndex(aa => new { aa.AppointmentId, aa.ClientId })
-            .IsUnique();
-        modelBuilder.Entity<AppointmentAttendance>()
-            .Property(aa => aa.CoverageType)
+        modelBuilder.Entity<Booking>()
+            .Property(b => b.Status)
+            .HasConversion(v => v.ToString(), v => Enum.Parse<BookingStatus>(v));
+        modelBuilder.Entity<Booking>()
+            .Property(b => b.CoverageType)
             .HasConversion(
                 v => v == null ? null : v.ToString(),
                 v => v == null ? (AttendanceCoverageType?)null : Enum.Parse<AttendanceCoverageType>(v));
-        modelBuilder.Entity<AppointmentAttendance>()
-            .HasOne(aa => aa.Appointment)
-            .WithMany(a => a.Attendances)
-            .HasForeignKey(aa => aa.AppointmentId)
+        modelBuilder.Entity<Booking>()
+            .HasOne(b => b.Appointment)
+            .WithMany(a => a.Bookings)
+            .HasForeignKey(b => b.AppointmentId)
             .OnDelete(DeleteBehavior.Cascade);
-        modelBuilder.Entity<AppointmentAttendance>()
-            .HasOne(aa => aa.Client)
+        modelBuilder.Entity<Booking>()
+            .HasOne(b => b.Client)
             .WithMany()
-            .HasForeignKey(aa => aa.ClientId)
+            .HasForeignKey(b => b.ClientId)
             .OnDelete(DeleteBehavior.Restrict);
-        modelBuilder.Entity<AppointmentAttendance>()
-            .HasOne(aa => aa.ClientPackage)
+        modelBuilder.Entity<Booking>()
+            .HasOne(b => b.ClientPackage)
             .WithMany()
-            .HasForeignKey(aa => aa.ClientPackageId)
+            .HasForeignKey(b => b.ClientPackageId)
             .OnDelete(DeleteBehavior.Restrict);
+
+        modelBuilder.Entity<Payment>().HasKey(p => p.Id);
+        modelBuilder.Entity<Payment>().HasIndex(p => new { p.OrganizationId, p.CheckoutId });
+        modelBuilder.Entity<Payment>()
+            .Property(p => p.Method)
+            .HasConversion(v => v.ToString(), v => Enum.Parse<PaymentMethod>(v));
+        modelBuilder.Entity<Payment>()
+            .Property(p => p.Status)
+            .HasConversion(v => v.ToString(), v => Enum.Parse<PaymentStatus>(v));
+        modelBuilder.Entity<Payment>()
+            .HasOne(p => p.Checkout)
+            .WithMany(c => c.Payments)
+            .HasForeignKey(p => p.CheckoutId)
+            .OnDelete(DeleteBehavior.Cascade);
 
         modelBuilder.Entity<AppointmentAuditLog>().HasKey(a => a.Id);
         modelBuilder.Entity<AppointmentAuditLog>().HasIndex(a => a.AppointmentId);
+        modelBuilder.Entity<AppointmentAuditLog>().HasIndex(a => a.BookingId);
+        modelBuilder.Entity<AppointmentAuditLog>().HasIndex(a => a.WaitlistEntryId);
+    }
+
+    private static void ConfigureCheckouts(ModelBuilder modelBuilder)
+    {
+        modelBuilder.Entity<Checkout>().HasKey(c => c.Id);
+        modelBuilder.Entity<Checkout>().HasIndex(c => new { c.OrganizationId, c.ClientId });
+        modelBuilder.Entity<Checkout>().HasIndex(c => new { c.OrganizationId, c.CompanyId, c.Status });
+        modelBuilder.Entity<Checkout>()
+            .Property(c => c.Status)
+            .HasConversion(v => v.ToString(), v => Enum.Parse<CheckoutStatus>(v));
+        modelBuilder.Entity<Checkout>()
+            .HasOne(c => c.Company)
+            .WithMany()
+            .HasForeignKey(c => c.CompanyId)
+            .OnDelete(DeleteBehavior.Restrict);
+        modelBuilder.Entity<Checkout>()
+            .HasOne(c => c.Client)
+            .WithMany()
+            .HasForeignKey(c => c.ClientId)
+            .OnDelete(DeleteBehavior.Restrict);
+
+        // Vlastita stavka nosi točno jedan tipizirani subjekt (BookingId XOR PackageId, prema Type) — CHECK
+        // constraint ide raw SQL-om u migraciji (isto obrazac kao PriceListItem.ServiceId/PackageId), ovdje
+        // samo FK/navigacije.
+        modelBuilder.Entity<CheckoutItem>().HasKey(ci => ci.Id);
+        modelBuilder.Entity<CheckoutItem>().HasIndex(ci => new { ci.OrganizationId, ci.CheckoutId });
+        // Djelomični unique indeks (locks_booking = true) sprječava isti Booking u dva istovremeno Open
+        // checkouta — vidi CheckoutItem.LocksBooking domensku napomenu i spec section 29/60. Izražen kao raw
+        // SQL partial index u migraciji (EF fluent HasFilter podržava samo statičan SQL fragment, što je ovdje
+        // dovoljno — "locks_booking = true").
+        modelBuilder.Entity<CheckoutItem>()
+            .HasIndex(ci => ci.BookingId)
+            .IsUnique()
+            .HasFilter("locks_booking = true");
+        modelBuilder.Entity<CheckoutItem>()
+            .Property(ci => ci.Type)
+            .HasConversion(v => v.ToString(), v => Enum.Parse<CheckoutItemType>(v));
+        modelBuilder.Entity<CheckoutItem>()
+            .HasOne(ci => ci.Checkout)
+            .WithMany(c => c.Items)
+            .HasForeignKey(ci => ci.CheckoutId)
+            .OnDelete(DeleteBehavior.Cascade);
+        modelBuilder.Entity<CheckoutItem>()
+            .HasOne(ci => ci.Booking)
+            .WithMany(b => b.CheckoutItems)
+            .HasForeignKey(ci => ci.BookingId)
+            .OnDelete(DeleteBehavior.Restrict);
+        modelBuilder.Entity<CheckoutItem>()
+            .HasOne(ci => ci.Package)
+            .WithMany()
+            .HasForeignKey(ci => ci.PackageId)
+            .OnDelete(DeleteBehavior.Restrict);
+        modelBuilder.Entity<CheckoutItem>()
+            .HasOne(ci => ci.Product)
+            .WithMany()
+            .HasForeignKey(ci => ci.ProductId)
+            .OnDelete(DeleteBehavior.Restrict);
+        modelBuilder.Entity<CheckoutItem>()
+            .HasOne(ci => ci.ClientPackage)
+            .WithMany()
+            .HasForeignKey(ci => ci.ClientPackageId)
+            .OnDelete(DeleteBehavior.Restrict);
+
+        modelBuilder.Entity<PaymentAllocation>().HasKey(a => a.Id);
+        modelBuilder.Entity<PaymentAllocation>().HasIndex(a => a.PaymentId);
+        modelBuilder.Entity<PaymentAllocation>().HasIndex(a => a.CheckoutItemId);
+        modelBuilder.Entity<PaymentAllocation>()
+            .HasOne(a => a.Payment)
+            .WithMany(p => p.Allocations)
+            .HasForeignKey(a => a.PaymentId)
+            .OnDelete(DeleteBehavior.Cascade);
+        modelBuilder.Entity<PaymentAllocation>()
+            .HasOne(a => a.CheckoutItem)
+            .WithMany(ci => ci.Allocations)
+            .HasForeignKey(a => a.CheckoutItemId)
+            .OnDelete(DeleteBehavior.Restrict);
+
+        modelBuilder.Entity<CheckoutAuditLog>().HasKey(a => a.Id);
+        modelBuilder.Entity<CheckoutAuditLog>().HasIndex(a => a.CheckoutId);
+    }
+
+    private static void ConfigureProducts(ModelBuilder modelBuilder)
+    {
+        // Aktivni normalizirani (trim + case-insensitive) unique naziv i opcionalni normalizirani unique SKU
+        // po Organization su izraženi kao raw SQL expression indeksi u migraciji (ux_products_org_name_active/
+        // ux_products_org_sku) — isti obrazac kao Service/Company/Room (vidi ProductHandler.NameExistsAmongActive/
+        // SkuExists), EF fluent HasIndex ne zna izraziti lower(trim(...)).
+        modelBuilder.Entity<Product>().HasKey(p => p.Id);
+        modelBuilder.Entity<Product>().HasIndex(p => p.OrganizationId);
+
+        // Točno jedan ProductStock redak po (ProductId, CompanyId) — vidi ProductStock.cs klasnu napomenu.
+        // Unique indeks je ujedno ON CONFLICT cilj u ProductStockHandler.GetOrCreateForUpdate.
+        modelBuilder.Entity<ProductStock>().HasKey(s => s.Id);
+        modelBuilder.Entity<ProductStock>()
+            .HasIndex(s => new { s.ProductId, s.CompanyId })
+            .IsUnique();
+        modelBuilder.Entity<ProductStock>()
+            .HasIndex(s => new { s.OrganizationId, s.CompanyId });
+        modelBuilder.Entity<ProductStock>()
+            .HasOne(s => s.Product)
+            .WithMany()
+            .HasForeignKey(s => s.ProductId)
+            .OnDelete(DeleteBehavior.Restrict);
+        modelBuilder.Entity<ProductStock>()
+            .HasOne(s => s.Company)
+            .WithMany()
+            .HasForeignKey(s => s.CompanyId)
+            .OnDelete(DeleteBehavior.Restrict);
+
+        modelBuilder.Entity<StockMovement>().HasKey(m => m.Id);
+        modelBuilder.Entity<StockMovement>()
+            .HasIndex(m => new { m.OrganizationId, m.ProductId, m.CreatedAt });
+        modelBuilder.Entity<StockMovement>()
+            .Property(m => m.Type)
+            .HasConversion(v => v.ToString(), v => Enum.Parse<StockMovementType>(v));
+        // Djelomični unique indeks (type = 'Sale') sprječava dvostruki decrement iste CheckoutItem stavke —
+        // izražen kao raw SQL partial index u migraciji (isti obrazac kao ux_checkout_items_locks_booking),
+        // ovdje samo FK/navigacija.
+        modelBuilder.Entity<StockMovement>()
+            .HasOne(m => m.Product)
+            .WithMany()
+            .HasForeignKey(m => m.ProductId)
+            .OnDelete(DeleteBehavior.Restrict);
+        modelBuilder.Entity<StockMovement>()
+            .HasOne(m => m.Company)
+            .WithMany()
+            .HasForeignKey(m => m.CompanyId)
+            .OnDelete(DeleteBehavior.Restrict);
+        modelBuilder.Entity<StockMovement>()
+            .HasOne(m => m.RelatedCompany)
+            .WithMany()
+            .HasForeignKey(m => m.RelatedCompanyId)
+            .OnDelete(DeleteBehavior.Restrict);
+        modelBuilder.Entity<StockMovement>()
+            .HasOne(m => m.CheckoutItem)
+            .WithMany()
+            .HasForeignKey(m => m.CheckoutItemId)
+            .OnDelete(DeleteBehavior.Restrict);
+    }
+
+    private static void ConfigureCommissions(ModelBuilder modelBuilder)
+    {
+        // Vlasnik predmeta je točno jedno od Service/Product/PackageId prema SubjectType (CHECK constraint u
+        // migraciji, isto obrazac kao CheckoutItem) — najviše jedno AKTIVNO pravilo po Employee+Subject je
+        // djelomični unique indeks preko COALESCE u raw SQL-u (EF fluent HasIndex ne zna izraziti COALESCE),
+        // ovdje samo FK/navigacije. Sve tri Restrict jer su to konfiguracijski katalog-referenciraju retci čije
+        // hard-delete guardove (IsReferenced) proširuje ovaj modul (vidi ServiceHandler/ProductHandler/
+        // PackageHandler/EmployeeHandler).
+        modelBuilder.Entity<CommissionRule>().HasKey(r => r.Id);
+        modelBuilder.Entity<CommissionRule>().HasIndex(r => new { r.OrganizationId, r.EmployeeId });
+        modelBuilder.Entity<CommissionRule>()
+            .Property(r => r.SubjectType)
+            .HasConversion(v => v.ToString(), v => Enum.Parse<CommissionSubjectType>(v));
+        modelBuilder.Entity<CommissionRule>()
+            .Property(r => r.CalculationType)
+            .HasConversion(v => v.ToString(), v => Enum.Parse<CommissionCalculationType>(v));
+        modelBuilder.Entity<CommissionRule>()
+            .HasOne(r => r.Employee)
+            .WithMany()
+            .HasForeignKey(r => r.EmployeeId)
+            .OnDelete(DeleteBehavior.Restrict);
+        modelBuilder.Entity<CommissionRule>()
+            .HasOne(r => r.Service)
+            .WithMany()
+            .HasForeignKey(r => r.ServiceId)
+            .OnDelete(DeleteBehavior.Restrict);
+        modelBuilder.Entity<CommissionRule>()
+            .HasOne(r => r.Product)
+            .WithMany()
+            .HasForeignKey(r => r.ProductId)
+            .OnDelete(DeleteBehavior.Restrict);
+        modelBuilder.Entity<CommissionRule>()
+            .HasOne(r => r.Package)
+            .WithMany()
+            .HasForeignKey(r => r.PackageId)
+            .OnDelete(DeleteBehavior.Restrict);
+
+        // Izvor je točno jedno od Booking(+Appointment)/Appointment(samo, GroupService)/CheckoutItem prema
+        // SourceType (CHECK constraint u migraciji) — idempotencija preko tri unique indeksa (dva standardna
+        // nullable, jedan djelomični za GroupService, vidi migraciju/CommissionEntry.cs). Appointment/Booking su
+        // Cascade (isto ponašanje kao AppointmentAuditLog — "isti dan" hard-delete termina briše i commission
+        // trag), Employee/Company/CommissionRule/CheckoutItem su Restrict (povijesni/katalog retci se ne
+        // hard-brišu ispod commission povijesti bez eksplicitnog guarda, vidi CommissionRuleHandler.IsReferenced/
+        // CompanyHandler.IsReferenced/EmployeeHandler.HasBusinessReferences).
+        modelBuilder.Entity<CommissionEntry>().HasKey(e => e.Id);
+        modelBuilder.Entity<CommissionEntry>().HasIndex(e => new { e.OrganizationId, e.EmployeeId, e.EarnedAt });
+        modelBuilder.Entity<CommissionEntry>().HasIndex(e => new { e.OrganizationId, e.CompanyId, e.EarnedAt });
+        modelBuilder.Entity<CommissionEntry>()
+            .Property(e => e.SourceType)
+            .HasConversion(v => v.ToString(), v => Enum.Parse<CommissionSourceType>(v));
+        modelBuilder.Entity<CommissionEntry>()
+            .Property(e => e.CalculationType)
+            .HasConversion(v => v.ToString(), v => Enum.Parse<CommissionCalculationType>(v));
+        modelBuilder.Entity<CommissionEntry>()
+            .Property(e => e.Status)
+            .HasConversion(v => v.ToString(), v => Enum.Parse<CommissionEntryStatus>(v));
+        modelBuilder.Entity<CommissionEntry>()
+            .HasOne(e => e.Employee)
+            .WithMany()
+            .HasForeignKey(e => e.EmployeeId)
+            .OnDelete(DeleteBehavior.Restrict);
+        modelBuilder.Entity<CommissionEntry>()
+            .HasOne(e => e.Company)
+            .WithMany()
+            .HasForeignKey(e => e.CompanyId)
+            .OnDelete(DeleteBehavior.Restrict);
+        modelBuilder.Entity<CommissionEntry>()
+            .HasOne(e => e.CommissionRule)
+            .WithMany()
+            .HasForeignKey(e => e.CommissionRuleId)
+            .OnDelete(DeleteBehavior.Restrict);
+        modelBuilder.Entity<CommissionEntry>()
+            .HasOne(e => e.Appointment)
+            .WithMany()
+            .HasForeignKey(e => e.AppointmentId)
+            .OnDelete(DeleteBehavior.Cascade);
+        modelBuilder.Entity<CommissionEntry>()
+            .HasOne(e => e.Booking)
+            .WithMany()
+            .HasForeignKey(e => e.BookingId)
+            .OnDelete(DeleteBehavior.Cascade);
+        modelBuilder.Entity<CommissionEntry>()
+            .HasOne(e => e.CheckoutItem)
+            .WithMany()
+            .HasForeignKey(e => e.CheckoutItemId)
+            .OnDelete(DeleteBehavior.Restrict);
     }
 
     private static void ConfigureScheduleBreaks(ModelBuilder modelBuilder)
@@ -441,6 +722,11 @@ public class DatabaseContext : DbContext
             .WithMany()
             .HasForeignKey(g => g.DefaultTrainerId)
             .OnDelete(DeleteBehavior.Restrict);
+        modelBuilder.Entity<Group>()
+            .HasOne(g => g.DefaultRoom)
+            .WithMany()
+            .HasForeignKey(g => g.DefaultRoomId)
+            .OnDelete(DeleteBehavior.Restrict);
 
         modelBuilder.Entity<GroupSlot>().HasKey(gs => gs.Id);
         modelBuilder.Entity<GroupSlot>().HasIndex(gs => new { gs.GroupId, gs.IsActive });
@@ -471,15 +757,40 @@ public class DatabaseContext : DbContext
 
         modelBuilder.Entity<GroupAuditLog>().HasKey(a => a.Id);
         modelBuilder.Entity<GroupAuditLog>().HasIndex(a => a.GroupId);
+
+        modelBuilder.Entity<WaitlistEntry>().HasKey(w => w.Id);
+        modelBuilder.Entity<WaitlistEntry>().HasIndex(w => new { w.AppointmentId, w.Status, w.JoinedAt });
+        modelBuilder.Entity<WaitlistEntry>()
+            .HasIndex(w => new { w.AppointmentId, w.ClientId })
+            .IsUnique()
+            .HasFilter("status = 'Waiting'");
+        modelBuilder.Entity<WaitlistEntry>()
+            .Property(w => w.Status)
+            .HasConversion(v => v.ToString(), v => Enum.Parse<WaitlistEntryStatus>(v));
+        modelBuilder.Entity<WaitlistEntry>()
+            .HasOne(w => w.Appointment)
+            .WithMany()
+            .HasForeignKey(w => w.AppointmentId)
+            .OnDelete(DeleteBehavior.Cascade);
+        modelBuilder.Entity<WaitlistEntry>()
+            .HasOne(w => w.Client)
+            .WithMany()
+            .HasForeignKey(w => w.ClientId)
+            .OnDelete(DeleteBehavior.Restrict);
+        modelBuilder.Entity<WaitlistEntry>()
+            .HasOne(w => w.PromotedBooking)
+            .WithMany()
+            .HasForeignKey(w => w.PromotedBookingId)
+            .OnDelete(DeleteBehavior.Restrict);
     }
 
     private static void ConfigureRoster(ModelBuilder modelBuilder)
     {
+        // Normalizirana (trim + case-insensitive) uniqueness živi u DB-u kao partial index preko lower(trim(name))
+        // (vidi AddRosterTypeActiveNameUniqueIndex) — isti obrazac kao Company/Service/Room/Package/ClientTag,
+        // namjerno bez fluent HasIndex ovdje jer EF ne zna izraziti lower(trim(...)) izraz u indeksu.
         modelBuilder.Entity<RosterType>().HasKey(t => t.Id);
-        modelBuilder.Entity<RosterType>()
-            .HasIndex(t => new { t.OrganizationId, t.Name })
-            .IsUnique()
-            .HasFilter("is_active = true");
+        modelBuilder.Entity<RosterType>().HasIndex(t => t.OrganizationId);
 
         modelBuilder.Entity<RosterEntry>().HasKey(e => e.Id);
         modelBuilder.Entity<RosterEntry>().HasIndex(e => new { e.OrganizationId, e.EmployeeId, e.DateFrom });

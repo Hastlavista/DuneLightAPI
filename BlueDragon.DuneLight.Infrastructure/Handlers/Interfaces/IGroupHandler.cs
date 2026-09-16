@@ -46,6 +46,15 @@ public interface IGroupHandler
     /// <summary>Grupe (aktivne i povijesne) čiji je klijent član — za dopunu Klijent detalja.</summary>
     Task<List<GroupMember>> GetMembershipsByClient(Guid organizationId, Guid clientId);
 
+    /// <summary>Ima li klijent ijedan redak članstva (aktivan ili povijesni) — group_members.client_id nema
+    /// ON DELETE, pa ovo koristi ClientFutureActivityProvider da blokira tvrdo brisanje umjesto da pusti
+    /// da padne na sirovoj FK grešci.</summary>
+    Task<bool> HasAnyMembershipForClient(Guid organizationId, Guid clientId);
+
+    /// <summary>Ima li klijent ijedno TRENUTNO aktivno članstvo (IsActive = true) — povijesno/napušteno
+    /// članstvo se namjerno ne broji. Koristi ClientService.Anonymize.</summary>
+    Task<bool> HasActiveMembershipForClient(Guid organizationId, Guid clientId);
+
     /// <summary>Već postojeći (GroupSlotId, StartsAt) parovi u zadanom rasponu — idempotentna provjera generiranja.</summary>
     Task<HashSet<(Guid GroupSlotId, DateTimeOffset StartsAt)>> GetExistingSlotOccurrences(
         List<Guid> groupSlotIds, DateTimeOffset from, DateTimeOffset to);
@@ -53,4 +62,10 @@ public interface IGroupHandler
     Task AddAppointments(List<Appointment> appointments);
 
     Task<List<Appointment>> GetAppointmentsForGroup(Guid organizationId, Guid groupId, DateTimeOffset from, DateTimeOffset to);
+
+    /// <summary>Ima li grupa ijedan generirani termin (bilo kada) ili ijedan članski redak (aktivan ili
+    /// povijesni) — vidi spec section 42/43. Grupa bez ijedne reference smije se trajno obrisati.</summary>
+    Task<bool> IsReferenced(Guid organizationId, Guid id);
+
+    Task Delete(Group group);
 }

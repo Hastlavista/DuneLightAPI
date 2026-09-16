@@ -86,8 +86,42 @@ public class WorkingHoursTemplateService : IWorkingHoursTemplateService
         return ToDto(saved);
     }
 
+    /// <summary>Workforce-only dostupnost (bez Appointment sudara, vidi FAZA 1) — GetEffectiveEmployeeAvailability
+    /// ekvivalent. Neaktivan Employee/Company ili nepostojeća EmployeeCompany veza uvijek daju praznu dostupnost
+    /// (Source=Inactive/NotAssignedToCompany), NE grešku — ovo je upit za planiranje (npr. "pronađi slobodan
+    /// termin"), ne mutacija, pa fail-soft umjesto fail-closed (usporedi sa ScheduleBreakService koji na CREATE
+    /// baca tvrdu grešku za isto stanje).</summary>
     public async Task<AvailabilityDto> GetAvailability(Guid organizationId, Guid employeeId, Guid companyId, DateTimeOffset date)
     {
+        Employee employee = await _employeeHandler.GetByIdLight(organizationId, employeeId);
+        if (employee == null)
+            throw new NotFoundAppException("Employee", employeeId);
+
+        Company company = await _companyHandler.GetById(organizationId, companyId);
+        if (company == null)
+            throw new NotFoundAppException("Company", companyId);
+
+        if (!employee.IsActive || !company.IsActive)
+        {
+            return new AvailabilityDto
+            {
+                Date = date.Date,
+                EmployeeSource = employee.IsActive ? AvailabilitySource.None : AvailabilitySource.Inactive,
+                CompanySource = company.IsActive ? AvailabilitySource.None : AvailabilitySource.Inactive
+            };
+        }
+
+        bool assigned = await _employeeHandler.IsEmployeeAssignedToCompany(organizationId, employeeId, companyId);
+        if (!assigned)
+        {
+            return new AvailabilityDto
+            {
+                Date = date.Date,
+                EmployeeSource = AvailabilitySource.NotAssignedToCompany,
+                CompanySource = AvailabilitySource.None
+            };
+        }
+
         WorkingHoursTemplate employeeTemplate = await _templateHandler.GetForEmployee(organizationId, employeeId);
         WorkingHoursTemplate companyTemplate = await _templateHandler.GetForCompany(organizationId, companyId);
 

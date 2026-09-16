@@ -52,6 +52,16 @@ public class GroupsController : ControllerBase
         return Ok(await _groupService.Update(this.CurrentOrganizationId(), this.CurrentUserId(), id, request));
     }
 
+    /// <summary>Trajno briše grupu — dopušteno samo ako nikad nije generirala termin i nema nijednog članskog
+    /// retka (aktivnog ili povijesnog); u suprotnom REFERENCED_CANNOT_DELETE (deaktivirajte umjesto toga).</summary>
+    [HttpDelete("{id:guid}")]
+    [RequireGrant(Grants.GroupsManage)]
+    public async Task<IActionResult> Delete(Guid id)
+    {
+        await _groupService.Delete(this.CurrentOrganizationId(), id);
+        return NoContent();
+    }
+
     [HttpPatch("{id:guid}/activate")]
     [RequireGrant(Grants.GroupsManage)]
     public async Task<ActionResult<GroupDto>> Activate(Guid id)
@@ -90,7 +100,8 @@ public class GroupsController : ControllerBase
         return Ok(await _groupService.RemoveSlot(this.CurrentOrganizationId(), this.CurrentUserId(), id, slotId));
     }
 
-    /// <summary>Kapacitet je upozorenje, ne zabrana — dodavanje preko kapaciteta se dopušta uz Warnings u odgovoru.</summary>
+    /// <summary>Tvrda blokada na kapacitetu (GROUP_CAPACITY_REACHED) i na sudaru s postojećim rasporedom klijenta
+    /// na bilo kojem budućem generiranom terminu grupe (RECURRING_CONFLICT) — nema override-a u ovoj fazi.</summary>
     [HttpPost("{id:guid}/members")]
     [RequireGrant(Grants.GroupsManage)]
     public async Task<ActionResult<GroupDto>> AddMember(Guid id, [FromBody] GroupMemberAddRequest request)

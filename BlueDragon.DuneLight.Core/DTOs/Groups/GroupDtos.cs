@@ -139,6 +139,11 @@ public class GenerateGroupAppointmentsRequest
 
     [Required]
     public DateTimeOffset ToDate { get; set; }
+
+    /// <summary>Zaobilazi MEKE radne-snage blokade (izvan radnog vremena, odsutnost, praznik, pauza trenera)
+    /// za sve occurrence u ovom rasponu — vidi AppointmentCreateRequest.OverrideAvailability. Nema posebnog
+    /// grant zahtjeva jer je groups.manage već jedini (own/all nepodijeljen) grant ovog endpointa.</summary>
+    public bool OverrideAvailability { get; set; }
 }
 
 public class GenerateGroupAppointmentsResult

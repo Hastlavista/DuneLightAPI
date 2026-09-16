@@ -53,12 +53,19 @@ public class RosterTypeHandler : IRosterTypeHandler
 
     public async Task<bool> NameExistsAmongActive(Guid organizationId, string name, Guid? excludeId)
     {
+        string normalized = Normalize(name);
+
         await using DatabaseContext context = DatabaseContext.GenerateContext(_databaseSettings.ConnectionString);
         return await context.RosterTypes.AnyAsync(t =>
             t.OrganizationId == organizationId &&
             t.IsActive &&
-            t.Name == name &&
+            t.Name.Trim().ToLower() == normalized &&
             (excludeId == null || t.Id != excludeId));
+    }
+
+    private static string Normalize(string name)
+    {
+        return name?.Trim().ToLowerInvariant() ?? string.Empty;
     }
 
     public async Task Add(RosterType rosterType)

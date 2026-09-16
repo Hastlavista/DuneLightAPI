@@ -60,11 +60,13 @@ public class ClientTagHandler : IClientTagHandler
 
     public async Task<bool> NameExistsAmongActive(Guid organizationId, string name, Guid? excludeId)
     {
+        string normalized = Normalize(name);
+
         await using DatabaseContext context = DatabaseContext.GenerateContext(_databaseSettings.ConnectionString);
         return await context.ClientTags.AnyAsync(t =>
             t.OrganizationId == organizationId &&
             t.IsActive &&
-            t.Name == name &&
+            t.Name.Trim().ToLower() == normalized &&
             (excludeId == null || t.Id != excludeId));
     }
 
@@ -93,5 +95,10 @@ public class ClientTagHandler : IClientTagHandler
     {
         await using DatabaseContext context = DatabaseContext.GenerateContext(_databaseSettings.ConnectionString);
         return await context.ClientTagAssignments.AnyAsync(a => a.TagId == id);
+    }
+
+    private static string Normalize(string name)
+    {
+        return name?.Trim().ToLowerInvariant() ?? string.Empty;
     }
 }

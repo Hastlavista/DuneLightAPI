@@ -48,4 +48,17 @@ public interface IEmployeeHandler
 
     /// <summary>Je li zaposlenik prijavljenog korisnika dodijeljen zadanoj poslovnici — za GET ovlasti gdje zaposlenik smije vidjeti podatke vlastite poslovnice bez posebnog granta (vidi RequireGrantOrAssignedCompanyAttribute).</summary>
     Task<bool> IsUserAssignedToCompany(Guid organizationId, Guid userId, Guid companyId);
+
+    /// <summary>Eksplicitna EmployeeCompany veza (radno mjesto) — bez "prazno = svugdje" fallbacka.
+    /// Građevni blok za buduću Appointment eligibility (vidi domensku napomenu na EmployeeCompany).</summary>
+    Task<bool> IsEmployeeAssignedToCompany(Guid organizationId, Guid employeeId, Guid companyId);
+
+    /// <summary>Eksplicitna EmployeeServiceAssignment veza (capability) — bez "prazno = sve" fallbacka.
+    /// Građevni blok za buduću Appointment eligibility (vidi domensku napomenu na EmployeeServiceAssignment).</summary>
+    Task<bool> CanEmployeePerformService(Guid organizationId, Guid employeeId, Guid serviceId);
+
+    /// <summary>Ima li zaposlenik ikakvu povijesnu/poslovnu referencu (termini, pauze, roster, radno vrijeme,
+    /// fond godišnjeg, matični trener klijenta/grupe) koja mora blokirati tvrdo brisanje — vidi EmployeeService.Delete.
+    /// Namjerno eksplicitno nabrojano po tablici (ne generička refleksija) da se izbjegne oslanjanje na FK grešku iz baze.</summary>
+    Task<bool> HasBusinessReferences(Guid organizationId, Guid employeeId);
 }

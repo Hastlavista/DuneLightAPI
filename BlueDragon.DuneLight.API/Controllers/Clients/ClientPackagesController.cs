@@ -52,4 +52,11 @@ public class ClientPackagesController : ControllerBase
         ClientPackageDto created = await _clientPackageService.Create(this.CurrentOrganizationId(), this.CurrentUserId(), clientId, request);
         return CreatedAtAction(nameof(GetById), new { clientId, id = created.Id }, created);
     }
+
+    [HttpPatch("{id:guid}/cancel")]
+    [RequireGrant(Grants.ClientsPackagesManage)]
+    public async Task<ActionResult<ClientPackageDto>> Cancel(Guid clientId, Guid id)
+    {
+        return Ok(await _clientPackageService.Cancel(this.CurrentOrganizationId(), clientId, id, this.CurrentUserId()));
+    }
 }

@@ -49,8 +49,7 @@ public class ScheduleBreakService : IScheduleBreakService
         if (request.EmployeeId != scheduleBreak.EmployeeId)
             await ValidateOwnership(organizationId, userId, hasFullScope, request.EmployeeId);
 
-        await EnsureEmployeeExists(organizationId, request.EmployeeId);
-        await EnsureCompanyExists(organizationId, request.CompanyId);
+        await EnsureEmployeeAndCompanyOperational(organizationId, request.EmployeeId, request.CompanyId);
 
         scheduleBreak.EmployeeId = request.EmployeeId;
         scheduleBreak.CompanyId = request.CompanyId;
@@ -84,8 +83,7 @@ public class ScheduleBreakService : IScheduleBreakService
             throw new ValidationAppException("Datum kraja ne smije biti prije prve pauze.");
 
         await ValidateOwnership(organizationId, userId, hasFullScope, request.EmployeeId);
-        await EnsureEmployeeExists(organizationId, request.EmployeeId);
-        await EnsureCompanyExists(organizationId, request.CompanyId);
+        await EnsureEmployeeAndCompanyOperational(organizationId, request.EmployeeId, request.CompanyId);
 
         List<DateTimeOffset> occurrences = BuildOccurrenceDates(request.RecurrenceType, request.FirstOccurrenceStartsAt, request.EndDate);
 
@@ -141,8 +139,7 @@ public class ScheduleBreakService : IScheduleBreakService
         Guid organizationId, Guid userId, bool hasFullScope, ScheduleBreakCreateRequest request, Guid? recurrenceGroupId)
     {
         await ValidateOwnership(organizationId, userId, hasFullScope, request.EmployeeId);
-        await EnsureEmployeeExists(organizationId, request.EmployeeId);
-        await EnsureCompanyExists(organizationId, request.CompanyId);
+        await EnsureEmployeeAndCompanyOperational(organizationId, request.EmployeeId, request.CompanyId);
 
         Guid id = Guid.NewGuid();
         ScheduleBreak scheduleBreak = new ScheduleBreak
@@ -242,18 +239,27 @@ public class ScheduleBreakService : IScheduleBreakService
             throw new BusinessRuleException(ErrorCodes.NotOwner, "Trener smije upravljati samo svojim vlastitim pauzama.");
     }
 
-    private async Task EnsureEmployeeExists(Guid organizationId, Guid employeeId)
+    /// <summary>Nova/promijenjena pauza mora imati aktivnog Employee, aktivnu Company, I eksplicitnu EmployeeCompany
+    /// vezu (radno mjesto) — za razliku od WorkingHoursTemplateService.GetAvailability (upit, fail-soft), ovo je
+    /// mutacija pa fail-closed: bilo koje kršenje baca tvrdu grešku umjesto tihog prihvaćanja nemoguće kombinacije.</summary>
+    private async Task EnsureEmployeeAndCompanyOperational(Guid organizationId, Guid employeeId, Guid companyId)
     {
         Employee employee = await _employeeHandler.GetById(organizationId, employeeId);
         if (employee == null)
             throw new NotFoundAppException("Employee", employeeId);
-    }
+        if (!employee.IsActive)
+            throw new BusinessRuleException(ErrorCodes.InactiveEmployee, "Zaposlenik nije aktivan.");
 
-    private async Task EnsureCompanyExists(Guid organizationId, Guid companyId)
-    {
         Company company = await _companyHandler.GetById(organizationId, companyId);
         if (company == null)
             throw new NotFoundAppException("Company", companyId);
+        if (!company.IsActive)
+            throw new BusinessRuleException(ErrorCodes.InactiveCompany, "Poslovnica nije aktivna.");
+
+        bool assigned = await _employeeHandler.IsEmployeeAssignedToCompany(organizationId, employeeId, companyId);
+        if (!assigned)
+            throw new BusinessRuleException(
+                ErrorCodes.EmployeeNotAssignedToCompany, "Zaposlenik nije dodijeljen ovoj poslovnici.");
     }
 
     private async Task<ScheduleBreakDto> GetByIdInternal(Guid organizationId, Guid id)

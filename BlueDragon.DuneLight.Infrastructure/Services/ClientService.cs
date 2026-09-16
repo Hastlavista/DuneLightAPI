@@ -21,6 +21,9 @@ public class ClientService : IClientService
     private readonly ICompanyHandler _companyHandler;
     private readonly IEmployeeHandler _employeeHandler;
     private readonly IAppointmentHandler _appointmentHandler;
+    private readonly IGroupHandler _groupHandler;
+    private readonly IClientPackageHandler _clientPackageHandler;
+    private readonly IWaitlistHandler _waitlistHandler;
     private readonly IClientFutureActivityProvider _futureActivityProvider;
 
     public ClientService(
@@ -29,6 +32,9 @@ public class ClientService : IClientService
         ICompanyHandler companyHandler,
         IEmployeeHandler employeeHandler,
         IAppointmentHandler appointmentHandler,
+        IGroupHandler groupHandler,
+        IClientPackageHandler clientPackageHandler,
+        IWaitlistHandler waitlistHandler,
         IClientFutureActivityProvider futureActivityProvider)
     {
         _clientHandler = clientHandler;
@@ -36,6 +42,9 @@ public class ClientService : IClientService
         _companyHandler = companyHandler;
         _employeeHandler = employeeHandler;
         _appointmentHandler = appointmentHandler;
+        _groupHandler = groupHandler;
+        _clientPackageHandler = clientPackageHandler;
+        _waitlistHandler = waitlistHandler;
         _futureActivityProvider = futureActivityProvider;
     }
 
@@ -78,8 +87,10 @@ public class ClientService : IClientService
         ValidateDateOfBirth(request.DateOfBirth);
         ValidateGdprConsent(request.GdprConsentGiven, request.GdprConsentDate);
         await EnsureMemberNumberIsFree(organizationId, request.MemberNumber, excludeId: null);
-        await EnsureHomeCompanyExists(organizationId, request.HomeCompanyId);
-        await EnsureHomeTrainerExists(organizationId, request.HomeTrainerId);
+        // Create nema prethodnu vrijednost — svaki zadani HomeCompany/HomeTrainer se tretira kao nova dodjela
+        // i mora biti aktivan (za razliku od Update, gdje je nepromijenjena dodjela "grandfathered").
+        await EnsureHomeCompanyValid(organizationId, request.HomeCompanyId, previousHomeCompanyId: null);
+        await EnsureHomeTrainerValid(organizationId, request.HomeTrainerId, previousHomeTrainerId: null);
         await EnsureTagsExist(organizationId, request.TagIds);
 
         Client client = new Client
@@ -96,7 +107,7 @@ public class ClientService : IClientService
             Note = request.Note,
             HealthNote = request.HealthNote,
             GdprConsentGiven = request.GdprConsentGiven,
-            GdprConsentDate = request.GdprConsentDate,
+            GdprConsentDate = request.GdprConsentGiven ? request.GdprConsentDate : null,
             HomeCompanyId = request.HomeCompanyId,
             HomeTrainerId = request.HomeTrainerId,
             IsActive = true,
@@ -120,8 +131,10 @@ public class ClientService : IClientService
         ValidateDateOfBirth(request.DateOfBirth);
         ValidateGdprConsent(request.GdprConsentGiven, request.GdprConsentDate);
         await EnsureMemberNumberIsFree(organizationId, request.MemberNumber, excludeId: id);
-        await EnsureHomeCompanyExists(organizationId, request.HomeCompanyId);
-        await EnsureHomeTrainerExists(organizationId, request.HomeTrainerId);
+        // Nepromijenjena dodjela ostaje "grandfathered" i smije upućivati na sad-neaktivnu Company/Employee;
+        // tek promjena na drugu (ili novo postavljanje) zahtijeva da meta bude aktivna.
+        await EnsureHomeCompanyValid(organizationId, request.HomeCompanyId, existing.HomeCompanyId);
+        await EnsureHomeTrainerValid(organizationId, request.HomeTrainerId, existing.HomeTrainerId);
         await EnsureTagsExist(organizationId, request.TagIds);
 
         existing.MemberNumber = request.MemberNumber;
@@ -134,7 +147,7 @@ public class ClientService : IClientService
         existing.Note = request.Note;
         existing.HealthNote = request.HealthNote;
         existing.GdprConsentGiven = request.GdprConsentGiven;
-        existing.GdprConsentDate = request.GdprConsentDate;
+        existing.GdprConsentDate = request.GdprConsentGiven ? request.GdprConsentDate : null;
         existing.HomeCompanyId = request.HomeCompanyId;
         existing.HomeTrainerId = request.HomeTrainerId;
         existing.UpdatedAt = DateTimeOffset.UtcNow;
@@ -181,9 +194,41 @@ public class ClientService : IClientService
             throw new NotFoundAppException("Client", id);
 
         if (!client.IsAnonymized)
+        {
+            await EnsureNoActiveBusinessRelationships(organizationId, id);
             await _clientHandler.Anonymize(organizationId, id, DateTimeOffset.UtcNow, userId);
+        }
 
         return await GetById(organizationId, id);
+    }
+
+    /// <summary>
+    /// Anonimizacija ne smije ostaviti operativno aktivno poslovno stanje vezano na anonimizirani identitet.
+    /// Namjerno NE otkazuje/uklanja ništa automatski (nema skrivenih scheduling/financijskih posljedica) —
+    /// samo odbija operaciju dok se te relacije eksplicitno ne razriješe u vlastitim modulima (termini/grupe/paketi).
+    /// </summary>
+    private async Task EnsureNoActiveBusinessRelationships(Guid organizationId, Guid clientId)
+    {
+        DateTimeOffset now = DateTimeOffset.UtcNow;
+
+        bool hasFutureScheduledAppointments = await _appointmentHandler.HasFutureScheduledForClient(organizationId, clientId);
+        bool hasActiveGroupMemberships = await _groupHandler.HasActiveMembershipForClient(organizationId, clientId);
+        bool hasUsablePackages = await _clientPackageHandler.HasUsableForClient(organizationId, clientId, now);
+        bool hasActiveWaitlistEntries = await _waitlistHandler.HasActiveWaitingForClient(organizationId, clientId);
+
+        if (!hasFutureScheduledAppointments && !hasActiveGroupMemberships && !hasUsablePackages && !hasActiveWaitlistEntries)
+            return;
+
+        throw new BusinessRuleException(
+            ErrorCodes.ClientHasActiveRelationships,
+            "Klijent ima aktivne poslovne relacije (budući termini, aktivno članstvo u grupi, iskoristiv paket i/ili aktivna lista čekanja) i ne može se anonimizirati dok se one ne razriješe.",
+            new
+            {
+                futureAppointments = hasFutureScheduledAppointments,
+                activeGroupMemberships = hasActiveGroupMemberships,
+                activePackages = hasUsablePackages,
+                activeWaitlistEntries = hasActiveWaitlistEntries
+            });
     }
 
     public async Task<List<ClientBirthdayDto>> GetBirthdays(Guid organizationId, DateTimeOffset from, DateTimeOffset to)
@@ -241,7 +286,7 @@ public class ClientService : IClientService
             throw new BusinessRuleException(ErrorCodes.DuplicateMemberNumber, $"Broj člana {memberNumber} je već zauzet.");
     }
 
-    private async Task EnsureHomeCompanyExists(Guid organizationId, Guid? homeCompanyId)
+    private async Task EnsureHomeCompanyValid(Guid organizationId, Guid? homeCompanyId, Guid? previousHomeCompanyId)
     {
         if (!homeCompanyId.HasValue)
             return;
@@ -249,9 +294,13 @@ public class ClientService : IClientService
         Company company = await _companyHandler.GetById(organizationId, homeCompanyId.Value);
         if (company == null)
             throw new NotFoundAppException("Company", homeCompanyId.Value);
+
+        bool isNewAssignment = homeCompanyId != previousHomeCompanyId;
+        if (isNewAssignment && !company.IsActive)
+            throw new BusinessRuleException(ErrorCodes.InactiveCompany, $"Tvrtka '{company.Name}' nije aktivna — ne može se postaviti kao matična.");
     }
 
-    private async Task EnsureHomeTrainerExists(Guid organizationId, Guid? homeTrainerId)
+    private async Task EnsureHomeTrainerValid(Guid organizationId, Guid? homeTrainerId, Guid? previousHomeTrainerId)
     {
         if (!homeTrainerId.HasValue)
             return;
@@ -259,6 +308,10 @@ public class ClientService : IClientService
         Employee employee = await _employeeHandler.GetByIdLight(organizationId, homeTrainerId.Value);
         if (employee == null)
             throw new NotFoundAppException("Employee", homeTrainerId.Value);
+
+        bool isNewAssignment = homeTrainerId != previousHomeTrainerId;
+        if (isNewAssignment && !employee.IsActive)
+            throw new BusinessRuleException(ErrorCodes.InactiveEmployee, $"Zaposlenik '{employee.FirstName} {employee.LastName}' nije aktivan — ne može se postaviti kao matični trener.");
     }
 
     private async Task EnsureTagsExist(Guid organizationId, List<Guid> tagIds)

@@ -97,4 +97,21 @@ public class ClientPackageHandler : IClientPackageHandler
         await using DatabaseContext context = DatabaseContext.GenerateContext(_databaseSettings.ConnectionString);
         return await context.ClientPackages.AnyAsync(cp => cp.OrganizationId == organizationId && cp.ClientId == clientId);
     }
+
+    /// <summary>
+    /// Ekvivalent ClientPackageStatusResolver.GetEffectiveStatus(cp, now) == Active, izražen kao upit umjesto
+    /// učitavanja punih entiteta. Persistirani Status prima samo Active/Depleted/Cancelled (Expired se nikad
+    /// ne perzistira — vidi ClientPackageStatus.cs), pa je "efektivno Active" logički točno
+    /// Status == Active && ExpiryDate >= now (Cancelled/Depleted su isključeni samim Status == Active uvjetom,
+    /// Expired samim ExpiryDate uvjetom). Ako se presedan Resolvera ikad promijeni, uskladiti i ovdje.
+    /// </summary>
+    public async Task<bool> HasUsableForClient(Guid organizationId, Guid clientId, DateTimeOffset now)
+    {
+        await using DatabaseContext context = DatabaseContext.GenerateContext(_databaseSettings.ConnectionString);
+        return await context.ClientPackages.AnyAsync(cp =>
+            cp.OrganizationId == organizationId &&
+            cp.ClientId == clientId &&
+            cp.Status == ClientPackageStatus.Active &&
+            cp.ExpiryDate >= now);
+    }
 }

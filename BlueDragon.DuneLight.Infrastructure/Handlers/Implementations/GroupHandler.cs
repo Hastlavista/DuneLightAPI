@@ -162,6 +162,19 @@ public class GroupHandler : IGroupHandler
             .ToListAsync();
     }
 
+    public async Task<bool> HasAnyMembershipForClient(Guid organizationId, Guid clientId)
+    {
+        await using DatabaseContext context = DatabaseContext.GenerateContext(_databaseSettings.ConnectionString);
+        return await context.GroupMembers.AnyAsync(m => m.ClientId == clientId && m.Group.OrganizationId == organizationId);
+    }
+
+    public async Task<bool> HasActiveMembershipForClient(Guid organizationId, Guid clientId)
+    {
+        await using DatabaseContext context = DatabaseContext.GenerateContext(_databaseSettings.ConnectionString);
+        return await context.GroupMembers.AnyAsync(m =>
+            m.ClientId == clientId && m.IsActive && m.Group.OrganizationId == organizationId);
+    }
+
     public async Task<HashSet<(Guid GroupSlotId, DateTimeOffset StartsAt)>> GetExistingSlotOccurrences(
         List<Guid> groupSlotIds, DateTimeOffset from, DateTimeOffset to)
     {
@@ -193,10 +206,35 @@ public class GroupHandler : IGroupHandler
             .Include(a => a.Employee)
             .Include(a => a.Company)
             .Include(a => a.Room)
-            .Include(a => a.Attendances)
+            .Include(a => a.Bookings)
             .Where(a => a.OrganizationId == organizationId && a.GroupId == groupId &&
                 a.StartsAt >= from && a.StartsAt <= to)
             .OrderBy(a => a.StartsAt)
             .ToListAsync();
+    }
+
+    /// <summary>Sve poznate reference na grupu (generirani termin BILO KADA — ne samo budući, i svaki članski
+    /// redak, uklj. povijesni/napušteni) — isti obrazac kao RoomHandler.IsReferenced. Grupa s bilo kojom od ovih
+    /// referenci nosi stvarnu poslovnu povijest i ne smije se trajno obrisati (vidi spec section 42/43).</summary>
+    public async Task<bool> IsReferenced(Guid organizationId, Guid id)
+    {
+        await using DatabaseContext context = DatabaseContext.GenerateContext(_databaseSettings.ConnectionString);
+
+        IQueryable<int> appointments = context.Appointments
+            .Where(a => a.OrganizationId == organizationId && a.GroupId == id)
+            .Select(a => 1);
+
+        IQueryable<int> members = context.GroupMembers
+            .Where(m => m.GroupId == id && m.Group.OrganizationId == organizationId)
+            .Select(m => 1);
+
+        return await appointments.Union(members).AnyAsync();
+    }
+
+    public async Task Delete(Group group)
+    {
+        await using DatabaseContext context = DatabaseContext.GenerateContext(_databaseSettings.ConnectionString);
+        context.Groups.Remove(group);
+        await context.SaveChangesAsync();
     }
 }

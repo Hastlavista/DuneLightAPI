@@ -75,11 +75,13 @@ public class ServiceHandler : IServiceHandler
 
     public async Task<bool> NameExistsAmongActive(Guid organizationId, string name, Guid? excludeId)
     {
+        string normalized = Normalize(name);
+
         await using DatabaseContext context = DatabaseContext.GenerateContext(_databaseSettings.ConnectionString);
         return await context.Services.AnyAsync(s =>
             s.OrganizationId == organizationId &&
             s.IsActive &&
-            s.Name == name &&
+            s.Name.Trim().ToLower() == normalized &&
             (excludeId == null || s.Id != excludeId));
     }
 
@@ -104,13 +106,74 @@ public class ServiceHandler : IServiceHandler
         await context.SaveChangesAsync();
     }
 
+    /// <summary>Sve poznate FK reference na uslugu, provjerene u jednom upitu (UNION podupita) umjesto pet
+    /// zasebnih round-tripova — isti obrazac kao CompanyHandler.IsReferenced. EmployeeServiceAssignments nema
+    /// vlastiti organization_id (samo employee_id/service_id), ali id je već tenant-provjeren kod pozivatelja
+    /// (ServiceCatalogService.Delete radi GetById(organizationId, id) prije ovog poziva), pa je service_id sam
+    /// po sebi dovoljan i tenant-siguran — isti obrazac kao EmployeeCompanies u CompanyHandler.IsReferenced.</summary>
     public async Task<bool> IsReferenced(Guid organizationId, Guid id)
     {
         await using DatabaseContext context = DatabaseContext.GenerateContext(_databaseSettings.ConnectionString);
-        bool inPriceList = await context.PriceListItems.AnyAsync(p => p.OrganizationId == organizationId && p.ServiceId == id);
-        if (inPriceList)
-            return true;
 
-        return await context.PackageServiceItems.AnyAsync(ps => ps.ServiceId == id && ps.Package.OrganizationId == organizationId);
+        IQueryable<int> priceListItems = context.PriceListItems
+            .Where(p => p.OrganizationId == organizationId && p.ServiceId == id)
+            .Select(p => 1);
+
+        IQueryable<int> packageServiceItems = context.PackageServiceItems
+            .Where(ps => ps.ServiceId == id && ps.Package.OrganizationId == organizationId)
+            .Select(ps => 1);
+
+        IQueryable<int> employeeServiceAssignments = context.EmployeeServiceAssignments
+            .Where(es => es.ServiceId == id)
+            .Select(es => 1);
+
+        IQueryable<int> clientPackageServiceEntries = context.ClientPackageServiceEntries
+            .Where(e => e.ServiceId == id && e.ClientPackage.OrganizationId == organizationId)
+            .Select(e => 1);
+
+        IQueryable<int> appointments = context.Appointments
+            .Where(a => a.OrganizationId == organizationId && a.ServiceId == id)
+            .Select(a => 1);
+
+        IQueryable<int> groups = context.Groups
+            .Where(g => g.OrganizationId == organizationId && g.ServiceId == id)
+            .Select(g => 1);
+
+        IQueryable<int> commissionRules = context.CommissionRules
+            .Where(r => r.OrganizationId == organizationId && r.ServiceId == id)
+            .Select(r => 1);
+
+        IQueryable<int> anyReference = priceListItems
+            .Union(packageServiceItems)
+            .Union(employeeServiceAssignments)
+            .Union(clientPackageServiceEntries)
+            .Union(appointments)
+            .Union(groups)
+            .Union(commissionRules);
+
+        return await anyReference.AnyAsync();
+    }
+
+    /// <summary>Usluga je "korištena u zakazivanju" ako je referencirana od Appointment ili Group — namjerno UŽI
+    /// skup od IsReferenced (koji uključuje i katalog/konfiguracijske reference poput PriceList/Package/Employee).
+    /// Vidi ServiceCatalogService.Update — ExecutionMode je zaključan samo dok postoji ova (uža) referenca.</summary>
+    public async Task<bool> IsUsedInScheduling(Guid organizationId, Guid id)
+    {
+        await using DatabaseContext context = DatabaseContext.GenerateContext(_databaseSettings.ConnectionString);
+
+        IQueryable<int> appointments = context.Appointments
+            .Where(a => a.OrganizationId == organizationId && a.ServiceId == id)
+            .Select(a => 1);
+
+        IQueryable<int> groups = context.Groups
+            .Where(g => g.OrganizationId == organizationId && g.ServiceId == id)
+            .Select(g => 1);
+
+        return await appointments.Union(groups).AnyAsync();
+    }
+
+    private static string Normalize(string name)
+    {
+        return name?.Trim().ToLowerInvariant() ?? string.Empty;
     }
 }

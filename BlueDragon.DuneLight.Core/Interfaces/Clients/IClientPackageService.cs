@@ -19,4 +19,7 @@ public interface IClientPackageService
 
     /// <summary>Vraća jedan ulazak — eksplicitna akcija, nikad automatska.</summary>
     Task ReturnEntry(Guid organizationId, Guid clientPackageId, Guid serviceId, Guid userId);
+
+    /// <summary>Otkazuje paket — terminalno, sprječava buduće trošenje. Ne briše i ne vraća ulaske.</summary>
+    Task<ClientPackageDto> Cancel(Guid organizationId, Guid clientId, Guid id, Guid userId);
 }

@@ -127,7 +127,7 @@ public class RosterEntryService : IRosterEntryService
             });
 
             if (type.DeductsFromLeaveFund)
-                await AllocateLeaveFund(uow, organizationId, request.EmployeeId, entryId, dateFrom, dateTo!.Value, userId);
+                await AllocateLeaveFund(uow, organizationId, employee, entryId, dateFrom, dateTo!.Value, userId);
 
             await uow.CommitAsync();
         }
@@ -207,7 +207,7 @@ public class RosterEntryService : IRosterEntryService
             });
 
             if (type.DeductsFromLeaveFund)
-                await AllocateLeaveFund(uow, organizationId, request.EmployeeId, id, dateFrom, dateTo!.Value, userId);
+                await AllocateLeaveFund(uow, organizationId, employee, id, dateFrom, dateTo!.Value, userId);
 
             await uow.CommitAsync();
         }
@@ -440,20 +440,24 @@ public class RosterEntryService : IRosterEntryService
                 "Vrsta rostera koja troši fond godišnjeg odmora zahtijeva datum do.");
     }
 
-    /// <summary>Troši fond godišnjeg odmora za [dateFrom,dateTo] (kalendarski dani, uključivo) — lijeno otvara fond(ove)
-    /// relevantne godine ako ne postoje, pa troši stariji-prvo preko LeaveFundAllocator (baca LEAVE_FUND_EXCEEDED
-    /// ako zbroj svih neisteklih fondova ne pokriva traženo). Poziva se unutar iste transakcije kao upis RosterEntry-ja.</summary>
+    /// <summary>Troši fond godišnjeg odmora za [dateFrom,dateTo] (uključivo) — dani se broje kao OČEKIVANI RADNI
+    /// dani (vidi CountExpectedWorkDays), ne kalendarski dani; lijeno otvara fond(ove) relevantne godine ako ne
+    /// postoje, pa troši stariji-prvo preko LeaveFundAllocator (baca LEAVE_FUND_EXCEEDED ako zbroj svih
+    /// neisteklih fondova ne pokriva traženo — Deduct(eligible, 0) je no-op ako u rasponu nema nijednog
+    /// očekivanog radnog dana). Poziva se unutar iste transakcije kao upis RosterEntry-ja.</summary>
     private async Task AllocateLeaveFund(
-        IUnitOfWork uow, Guid organizationId, Guid employeeId, Guid rosterEntryId,
+        IUnitOfWork uow, Guid organizationId, Employee employee, Guid rosterEntryId,
         DateTimeOffset dateFrom, DateTimeOffset dateTo, Guid userId)
     {
+        Guid employeeId = employee.Id!.Value;
+
         EmployeeLeaveSettings settings = await _employeeLeaveSettingsHandler.GetForEmployee(organizationId, employeeId);
         if (settings == null)
             throw new BusinessRuleException(
                 ErrorCodes.LeaveSettingsNotConfigured,
                 "Zaposlenik nema podešen fond godišnjeg odmora — postavite broj dana i datume prije upisa godišnjeg.");
 
-        int requestedDays = (dateTo.Date - dateFrom.Date).Days + 1;
+        int requestedDays = await CountExpectedWorkDays(organizationId, employee, dateFrom, dateTo, excludeRosterEntryId: rosterEntryId);
 
         int fromYear = LeaveFundYearCalculator.ResolveFundYear(settings, dateFrom);
         int toYear = LeaveFundYearCalculator.ResolveFundYear(settings, dateTo);
@@ -478,6 +482,51 @@ public class RosterEntryService : IRosterEntryService
                 CreatedAt = DateTimeOffset.UtcNow
             });
         }
+    }
+
+    /// <summary>Broji na koliko dana u [dateFrom,dateTo] bi zaposlenik PREMA PLANU trebao raditi — jedini kriterij
+    /// za trošenje fonda godišnjeg (vidi AllocateLeaveFund). Prioritet po danu: (1) CompanyHoliday matične
+    /// (Primary) poslovnice — dan se NE broji, bez obzira na override/predložak; (2) eksplicitni work-override
+    /// RosterEntry za taj dan — svaki takav zapis znači radni dan; (3) inače WorkingHoursTemplate za taj
+    /// ciklus/dan; (4) bez override-a i bez predloška — dan se ne broji (fail-closed). ScheduleBreak se namjerno
+    /// ne gleda (pauza ne pretvara radni dan u neradni). Apsencije (uključujući entry koji se upravo
+    /// kreira/uređuje) se namjerno NIKAD ne gledaju ovdje — workEntries niže eksplicitno isključuje IsAbsence,
+    /// da postojeća odsutnost ne "sakrije" činjenicu da bi dan inače bio radni (rekurzija zabranjena).
+    /// excludeRosterEntryId isključuje entry koji se upravo mijenja iz kandidata za "work override" — kod Update-a
+    /// gdje se tip mijenja IZ rada U odsutnost, GetForPeriod ide preko zasebnog konteksta (izvan uow transakcije)
+    /// pa bi inače (prije commita) još uvijek vidio STARI ne-apsencijski tip tog istog retka za isti datum.</summary>
+    private async Task<int> CountExpectedWorkDays(
+        Guid organizationId, Employee employee, DateTimeOffset dateFrom, DateTimeOffset dateTo, Guid? excludeRosterEntryId)
+    {
+        Guid employeeId = employee.Id!.Value;
+
+        WorkingHoursTemplate template = await _workingHoursTemplateHandler.GetForEmployee(organizationId, employeeId);
+
+        List<RosterEntry> workEntries = (await _rosterEntryHandler.GetForPeriod(organizationId, new List<Guid> { employeeId }, dateFrom, dateTo))
+            .Where(e => !e.RosterType.IsAbsence && e.Id != excludeRosterEntryId)
+            .ToList();
+
+        // Nema eksplicitnijeg Company konteksta na RosterEntry (namjerno, vidi domensku napomenu) — matična
+        // (Primary) poslovnica zaposlenika je jedini dostupan izvor za CompanyHoliday provjeru. Bez matične
+        // poslovnice, praznik se ne provjerava (nema što provjeriti), NE tretira se kao "uvijek praznik".
+        // IsActive namjerno nije provjeren — povijesno/planski izračun ne smije ovisiti o trenutnom statusu poslovnice.
+        Guid? primaryCompanyId = employee.Companies.FirstOrDefault(c => c.IsPrimary)?.CompanyId;
+        List<CompanyHoliday> holidays = primaryCompanyId.HasValue
+            ? await _companyHolidayHandler.GetForCompaniesInRange(organizationId, new List<Guid> { primaryCompanyId.Value }, dateFrom, dateTo)
+            : new List<CompanyHoliday>();
+
+        int count = 0;
+        for (DateTime date = dateFrom.Date; date <= dateTo.Date; date = date.AddDays(1))
+        {
+            if (holidays.Any(h => h.Date.Date == date))
+                continue;
+
+            List<RosterEntry> workEntriesForDate = workEntries.Where(e => e.DateFrom.Date == date).ToList();
+            if (WorkingHoursCalculator.IsExpectedWorkDay(template, workEntriesForDate, new DateTimeOffset(date, TimeSpan.Zero)))
+                count++;
+        }
+
+        return count;
     }
 
     /// <summary>Vraća sve dane fonda potrošene za ovaj RosterEntry (no-op ako ih nema) — poziva se bezuvjetno na svaki Update/Delete, prije eventualne nove alokacije.</summary>

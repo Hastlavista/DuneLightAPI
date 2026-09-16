@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Threading.Tasks;
 using BlueDragon.DuneLight.API.Authorization;
 using BlueDragon.DuneLight.API.Extensions;
@@ -15,10 +16,12 @@ namespace BlueDragon.DuneLight.API.Controllers.Catalog;
 public class CompaniesController : ControllerBase
 {
     private readonly ICompanyService _companyService;
+    private readonly IServiceAvailabilityService _serviceAvailabilityService;
 
-    public CompaniesController(ICompanyService companyService)
+    public CompaniesController(ICompanyService companyService, IServiceAvailabilityService serviceAvailabilityService)
     {
         _companyService = companyService;
+        _serviceAvailabilityService = serviceAvailabilityService;
     }
 
     [HttpGet]
@@ -70,5 +73,14 @@ public class CompaniesController : ControllerBase
     {
         await _companyService.Delete(this.CurrentOrganizationId(), id);
         return NoContent();
+    }
+
+    /// <summary>Usluge trenutno dodijeljene ovoj poslovnici (ServiceCompany). Read-only pregled — dodjela se
+    /// upravlja preko PUT /api/catalog/services/{serviceId}/companies.</summary>
+    [HttpGet("{companyId:guid}/services")]
+    [RequireGrant(Grants.CatalogCompaniesView)]
+    public async Task<ActionResult<List<ServiceDto>>> GetAssignedServices(Guid companyId)
+    {
+        return Ok(await _serviceAvailabilityService.GetAssignedServices(this.CurrentOrganizationId(), companyId));
     }
 }

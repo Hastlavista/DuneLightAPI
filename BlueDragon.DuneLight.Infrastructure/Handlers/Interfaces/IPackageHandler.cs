@@ -15,4 +15,5 @@ public interface IPackageHandler
     Task Update(Package package, List<PackageServiceItem> newServiceItems);
     Task Delete(Package package);
     Task<bool> IsReferenced(Guid organizationId, Guid id);
+    Task<bool> NameExistsAmongActive(Guid organizationId, string name, Guid? excludeId);
 }

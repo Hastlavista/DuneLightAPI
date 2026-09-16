@@ -286,4 +286,50 @@ public class EmployeeHandler : IEmployeeHandler
             e.UserId == userId &&
             e.Companies.Any(c => c.CompanyId == companyId));
     }
+
+    public async Task<bool> IsEmployeeAssignedToCompany(Guid organizationId, Guid employeeId, Guid companyId)
+    {
+        await using DatabaseContext context = DatabaseContext.GenerateContext(_databaseSettings.ConnectionString);
+        return await context.EmployeeCompanies.AnyAsync(ec =>
+            ec.EmployeeId == employeeId &&
+            ec.CompanyId == companyId &&
+            ec.Employee.OrganizationId == organizationId);
+    }
+
+    public async Task<bool> CanEmployeePerformService(Guid organizationId, Guid employeeId, Guid serviceId)
+    {
+        await using DatabaseContext context = DatabaseContext.GenerateContext(_databaseSettings.ConnectionString);
+        return await context.EmployeeServiceAssignments.AnyAsync(es =>
+            es.EmployeeId == employeeId &&
+            es.ServiceId == serviceId &&
+            es.Employee.OrganizationId == organizationId);
+    }
+
+    public async Task<bool> HasBusinessReferences(Guid organizationId, Guid employeeId)
+    {
+        await using DatabaseContext context = DatabaseContext.GenerateContext(_databaseSettings.ConnectionString);
+
+        if (await context.Appointments.AnyAsync(a => a.OrganizationId == organizationId && a.EmployeeId == employeeId))
+            return true;
+        if (await context.ScheduleBreaks.AnyAsync(b => b.OrganizationId == organizationId && b.EmployeeId == employeeId))
+            return true;
+        if (await context.RosterEntries.AnyAsync(r => r.OrganizationId == organizationId && r.EmployeeId == employeeId))
+            return true;
+        if (await context.WorkingHoursTemplates.AnyAsync(t => t.OrganizationId == organizationId && t.EmployeeId == employeeId))
+            return true;
+        if (await context.EmployeeLeaveSettings.AnyAsync(s => s.OrganizationId == organizationId && s.EmployeeId == employeeId))
+            return true;
+        if (await context.LeaveFunds.AnyAsync(f => f.OrganizationId == organizationId && f.EmployeeId == employeeId))
+            return true;
+        if (await context.Clients.AnyAsync(c => c.OrganizationId == organizationId && c.HomeTrainerId == employeeId))
+            return true;
+        if (await context.Groups.AnyAsync(g => g.OrganizationId == organizationId && g.DefaultTrainerId == employeeId))
+            return true;
+        if (await context.CommissionRules.AnyAsync(r => r.OrganizationId == organizationId && r.EmployeeId == employeeId))
+            return true;
+        if (await context.CommissionEntries.AnyAsync(e => e.OrganizationId == organizationId && e.EmployeeId == employeeId))
+            return true;
+
+        return false;
+    }
 }

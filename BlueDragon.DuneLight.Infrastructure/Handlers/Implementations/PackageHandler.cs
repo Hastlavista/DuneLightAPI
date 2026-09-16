@@ -121,9 +121,42 @@ public class PackageHandler : IPackageHandler
         await context.SaveChangesAsync();
     }
 
+    /// <summary>PriceListItems i ClientPackages su jedine "prave" reference koje blokiraju trajno brisanje —
+    /// PackageServiceItems su konfiguracijska djeca (kaskadno se brišu) i namjerno se ovdje ne broje, isti
+    /// obrazac kao ServiceHandler.IsReferenced.</summary>
     public async Task<bool> IsReferenced(Guid organizationId, Guid id)
     {
         await using DatabaseContext context = DatabaseContext.GenerateContext(_databaseSettings.ConnectionString);
-        return await context.PriceListItems.AnyAsync(p => p.OrganizationId == organizationId && p.PackageId == id);
+
+        IQueryable<int> priceListItems = context.PriceListItems
+            .Where(p => p.OrganizationId == organizationId && p.PackageId == id)
+            .Select(p => 1);
+
+        IQueryable<int> clientPackages = context.ClientPackages
+            .Where(cp => cp.OrganizationId == organizationId && cp.PackageId == id)
+            .Select(cp => 1);
+
+        IQueryable<int> commissionRules = context.CommissionRules
+            .Where(r => r.OrganizationId == organizationId && r.PackageId == id)
+            .Select(r => 1);
+
+        return await priceListItems.Union(clientPackages).Union(commissionRules).AnyAsync();
+    }
+
+    public async Task<bool> NameExistsAmongActive(Guid organizationId, string name, Guid? excludeId)
+    {
+        string normalized = Normalize(name);
+
+        await using DatabaseContext context = DatabaseContext.GenerateContext(_databaseSettings.ConnectionString);
+        return await context.Packages.AnyAsync(p =>
+            p.OrganizationId == organizationId &&
+            p.IsActive &&
+            p.Name.Trim().ToLower() == normalized &&
+            (excludeId == null || p.Id != excludeId));
+    }
+
+    private static string Normalize(string name)
+    {
+        return name?.Trim().ToLowerInvariant() ?? string.Empty;
     }
 }

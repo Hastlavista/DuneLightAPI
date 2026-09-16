@@ -273,6 +273,16 @@ public class EmployeeService : IEmployeeService
                     throw new BusinessRuleException(ErrorCodes.LastActiveAdmin, "Mora postojati barem jedan aktivan Admin — nije moguće deaktivirati zadnjeg.");
             }
         }
+        else
+        {
+            // Obrana od korumpiranog stanja (npr. ručna izmjena baze) — normalni Create/Update tok kroz
+            // ValidateCompanies/BuildCompanies ne dopušta da zaposlenik ikad ostane bez tvrtke/matične tvrtke.
+            if (employee.Companies.Count == 0)
+                throw new BusinessRuleException(ErrorCodes.EmployeeMissingPrimaryCompany, "Zaposlenik nema dodijeljenu niti jednu tvrtku — nije moguće ponovno aktivirati.");
+
+            if (!employee.Companies.Any(c => c.IsPrimary))
+                throw new BusinessRuleException(ErrorCodes.EmployeeMissingPrimaryCompany, "Zaposlenik nema matičnu tvrtku — nije moguće ponovno aktivirati.");
+        }
 
         DateTimeOffset now = DateTimeOffset.UtcNow;
         await _employeeHandler.SetActiveWithLogin(organizationId, id, employee.UserId, isActive, now, userId);
@@ -306,10 +316,13 @@ public class EmployeeService : IEmployeeService
         if (employee == null)
             throw new NotFoundAppException("Employee", id);
 
+        // EmployeeCompany/EmployeeServiceAssignment su namjerno izostavljeni iz ove provjere — to su
+        // konfiguracijski, ne povijesni zapisi (Cascade u DatabaseContext), pa sami po sebi ne smiju
+        // blokirati brisanje inače nekorištenog zaposlenika (vidi HasBusinessReferences).
         bool hasHistory = await _auditLogHandler.HasEntries(id);
-        bool hasFutureAppointments = await _futureAppointmentsProvider.HasFutureAppointments(organizationId, id);
-        if (hasHistory || hasFutureAppointments)
-            throw new BusinessRuleException(ErrorCodes.ReferencedCannotDelete, "Zaposlenik je referenciran (povijest promjena i/ili budući termini) i ne može se trajno obrisati — deaktivirajte ga umjesto toga.");
+        bool hasBusinessReferences = await _employeeHandler.HasBusinessReferences(organizationId, id);
+        if (hasHistory || hasBusinessReferences)
+            throw new BusinessRuleException(ErrorCodes.ReferencedCannotDelete, "Zaposlenik je referenciran (povijest promjena i/ili poslovni podaci — termini, pauze, roster, radno vrijeme, fond godišnjeg, matični trener) i ne može se trajno obrisati — deaktivirajte ga umjesto toga.");
 
         await _employeeHandler.DeleteWithLoginDeactivation(employee);
     }
@@ -409,7 +422,7 @@ public class EmployeeService : IEmployeeService
 
             bool isGrandfathered = grandfatheredCompanyIds != null && grandfatheredCompanyIds.Contains(companyId);
             if (!company.IsActive && !isGrandfathered)
-                throw new ValidationAppException($"Odabrana tvrtka '{company.Name}' nije aktivna.");
+                throw new BusinessRuleException(ErrorCodes.InactiveCompany, $"Odabrana tvrtka '{company.Name}' nije aktivna.");
         }
     }
 
@@ -420,7 +433,7 @@ public class EmployeeService : IEmployeeService
             throw new NotFoundAppException("EngagementType", engagementTypeId);
 
         if (!engagementType.IsActive)
-            throw new ValidationAppException("Odabrana vrsta angažmana nije aktivna.");
+            throw new BusinessRuleException(ErrorCodes.InactiveType, "Odabrana vrsta angažmana nije aktivna.");
     }
 
     private async Task EnsureServicesUsable(Guid organizationId, List<Guid> serviceIds, HashSet<Guid> grandfatheredServiceIds)
@@ -439,7 +452,7 @@ public class EmployeeService : IEmployeeService
 
             bool isGrandfathered = grandfatheredServiceIds != null && grandfatheredServiceIds.Contains(serviceId);
             if (!service.IsActive && !isGrandfathered)
-                throw new ValidationAppException($"Odabrana usluga '{service.Name}' nije aktivna.");
+                throw new BusinessRuleException(ErrorCodes.InactiveService, $"Odabrana usluga '{service.Name}' nije aktivna.");
         }
     }
 

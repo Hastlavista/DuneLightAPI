@@ -10,7 +10,7 @@ public class PackageServiceItemDto
     public Guid ServiceId { get; set; }
     public string ServiceName { get; set; }
 
-    /// <summary>Relevantno samo kod PerService načina trošenja.</summary>
+    /// <summary>Relevantno samo kod PerService načina trošenja. Null = neograničeno za ovu uslugu.</summary>
     public int? EntryCount { get; set; }
 }
 
@@ -19,6 +19,7 @@ public class PackageServiceItemRequest
     [Required]
     public Guid ServiceId { get; set; }
 
+    /// <summary>Kod PerService: null = neograničeno za ovu uslugu, inače mora biti > 0. Ignorira se kod SharedPool.</summary>
     public int? EntryCount { get; set; }
 }
 

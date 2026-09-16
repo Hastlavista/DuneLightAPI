@@ -72,6 +72,27 @@ public static class Grants
     public const string RosterLeaveFundManage = "roster.leave-fund.manage";
 
     public const string OrganizationBrandingManage = "organization.branding.manage";
+    public const string OrganizationSettingsManage = "organization.settings.manage";
+
+    /// <summary>Namjerno bez own/all podjele — POS/checkout je vezan uz poslovnicu (Company), ne uz "vlastite"
+    /// termine pojedinog trenera (vidi spec section 78).</summary>
+    public const string CheckoutView = "checkout.view";
+    public const string CheckoutManage = "checkout.manage";
+
+    public const string ProductsView = "products.view";
+    public const string ProductsManage = "products.manage";
+    public const string StockView = "stock.view";
+    public const string StockManage = "stock.manage";
+
+    /// <summary>Namjerno bez own/all podjele — provizija je internа staff-compensation evidencija koju vidi
+    /// menadžment, ne "vlastita" provizija pojedinog zaposlenika (vidi spec section 47). View pokriva samo
+    /// čitanje CommissionEntry povijesti/sažetka; konfiguracija pravila (uklj. čitanje pravila) je Manage.</summary>
+    public const string CommissionsView = "commissions.view";
+    public const string CommissionsManage = "commissions.manage";
+
+    /// <summary>Namjerno bez own/all podjele — operativna nadzorna ploča je vezana uz poslovnicu (Company), isto
+    /// obrazloženje kao CheckoutView. Read-only (nema Manage parnjaka) jer dashboard ništa ne mutira.</summary>
+    public const string DashboardView = "dashboard.view";
 
     /// <summary>Puni katalog za GET /api/grants — UI koristi za slaganje GrantGroup-a.</summary>
     public static readonly IReadOnlyList<GrantDefinition> Catalog = new List<GrantDefinition>
@@ -135,6 +156,20 @@ public static class Grants
         new(RosterLeaveFundManage, "roster", "Ručno otvaranje/korekcija fonda godišnjeg odmora za određenu godinu."),
 
         new(OrganizationBrandingManage, "organization", "Uređivanje vizualnog identiteta organizacije (logo, favicon, boje)."),
+        new(OrganizationSettingsManage, "organization", "Uređivanje poslovnih postavki organizacije (npr. rok za otkazivanje termina)."),
+
+        new(CheckoutView, "checkout", "Pregled checkout/POS košarica i njihove povijesti plaćanja."),
+        new(CheckoutManage, "checkout", "Kreiranje/uređivanje checkout košarica, naplata, poništenje plaćanja, dovršetak/otkazivanje."),
+
+        new(ProductsView, "products", "Pregled kataloga proizvoda."),
+        new(ProductsManage, "products", "Kreiranje, uređivanje, aktivacija/deaktivacija, brisanje proizvoda."),
+        new(StockView, "products", "Pregled zaliha po poslovnici i povijesti kretanja zalihe."),
+        new(StockManage, "products", "Ručna korekcija zalihe i transfer zalihe između poslovnica."),
+
+        new(CommissionsView, "commissions", "Pregled zarađene provizije osoblja (povijest i sažetak)."),
+        new(CommissionsManage, "commissions", "Konfiguracija pravila provizije po zaposleniku/predmetu."),
+
+        new(DashboardView, "dashboard", "Pregled operativne nadzorne ploče (raspored, osoblje, financije, upozorenja) po poslovnici."),
     };
 }
 

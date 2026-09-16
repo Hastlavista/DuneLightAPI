@@ -7,7 +7,13 @@ public enum AvailabilitySource
     Override,
     Absence,
     Holiday,
-    None
+    None,
+
+    /// <summary>Employee ili Company IsActive = false — operativna dostupnost je uvijek prazna neovisno o predlošku/rosteru.</summary>
+    Inactive,
+
+    /// <summary>Employee nema EmployeeCompany vezu s traženom Company — ne smije se prikazati kao dostupan na toj poslovnici.</summary>
+    NotAssignedToCompany
 }
 
 /// <summary>RosterDayCellDto/RosterPlannedDayDto (team-monthly/personal pregled) — stvarni zapisi uvijek imaju

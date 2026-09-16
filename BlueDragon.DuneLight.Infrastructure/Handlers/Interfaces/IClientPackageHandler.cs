@@ -26,4 +26,9 @@ public interface IClientPackageHandler
     Task Update(IUnitOfWork uow, ClientPackage clientPackage);
 
     Task<bool> HasAnyForClient(Guid organizationId, Guid clientId);
+
+    /// <summary>Ima li klijent ijedan paket s efektivnim statusom Active (vidi ClientPackageStatusResolver —
+    /// persistirani Status je Active I ExpiryDate još nije prošao). Expired/Depleted/Cancelled ne broje se.
+    /// Koristi ClientService.Anonymize.</summary>
+    Task<bool> HasUsableForClient(Guid organizationId, Guid clientId, DateTimeOffset now);
 }

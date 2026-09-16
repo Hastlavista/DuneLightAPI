@@ -20,4 +20,7 @@ public interface IServiceHandler
     Task Update(Service service);
     Task Delete(Service service);
     Task<bool> IsReferenced(Guid organizationId, Guid id);
+
+    /// <summary>Je li usluga već korištena u zakazivanju/povijesti (Appointment ili Group) — ako da, ExecutionMode se više ne smije mijenjati.</summary>
+    Task<bool> IsUsedInScheduling(Guid organizationId, Guid id);
 }

@@ -12,13 +12,21 @@ using ServiceEntity = BlueDragon.DuneLight.Infrastructure.Domain.Models.Catalog.
 
 namespace BlueDragon.DuneLight.Infrastructure.Services;
 
+/// <summary>
+/// Service == stavka kataloga na razini Organization (npr. "Sportska masaža", "Pilates") — ne pripada
+/// direktno jednoj Company. OrganizationId se nakon kreiranja više ne mijenja. ExecutionMode je zaključan
+/// (vidi EnsureExecutionModeChangeAllowed) čim je usluga referencirana od Appointment ili Group, jer bi
+/// promjena Individual&lt;-&gt;Group iskrivila povijesne/buduće pretpostavke zakazivanja.
+/// </summary>
 public class ServiceCatalogService : IServiceCatalogService
 {
     private readonly IServiceHandler _serviceHandler;
+    private readonly ICommissionRuleHandler _commissionRuleHandler;
 
-    public ServiceCatalogService(IServiceHandler serviceHandler)
+    public ServiceCatalogService(IServiceHandler serviceHandler, ICommissionRuleHandler commissionRuleHandler)
     {
         _serviceHandler = serviceHandler;
+        _commissionRuleHandler = commissionRuleHandler;
     }
 
     public async Task<PagedResult<ServiceDto>> GetPaged(Guid organizationId, PagedRequest request, ServiceExecutionMode? executionMode)
@@ -38,13 +46,14 @@ public class ServiceCatalogService : IServiceCatalogService
 
     public async Task<ServiceDto> Create(Guid organizationId, Guid userId, ServiceCreateRequest request)
     {
-        await EnsureNameIsUnique(organizationId, request.Name, excludeId: null);
+        string name = request.Name?.Trim();
+        await EnsureNameIsUnique(organizationId, name, excludeId: null);
 
         ServiceEntity service = new ServiceEntity
         {
             Id = Guid.NewGuid(),
             OrganizationId = organizationId,
-            Name = request.Name,
+            Name = name,
             ExecutionMode = request.ExecutionMode,
             ColorHex = request.ColorHex,
             DefaultDurationMinutes = request.DefaultDurationMinutes,
@@ -66,9 +75,14 @@ public class ServiceCatalogService : IServiceCatalogService
         if (service == null)
             throw new NotFoundAppException("Service", id);
 
-        await EnsureNameIsUnique(organizationId, request.Name, excludeId: id);
+        string name = request.Name?.Trim();
+        await EnsureNameIsUnique(organizationId, name, excludeId: id);
 
-        service.Name = request.Name;
+        if (request.ExecutionMode != service.ExecutionMode)
+            await EnsureExecutionModeChangeAllowed(organizationId, id, request.ExecutionMode);
+
+        // Id i OrganizationId se namjerno ne diraju — Service nikad ne mijenja vlasničku organizaciju.
+        service.Name = name;
         service.ExecutionMode = request.ExecutionMode;
         service.ColorHex = request.ColorHex;
         service.DefaultDurationMinutes = request.DefaultDurationMinutes;
@@ -107,7 +121,7 @@ public class ServiceCatalogService : IServiceCatalogService
 
         bool isReferenced = await _serviceHandler.IsReferenced(organizationId, id);
         if (isReferenced)
-            throw new BusinessRuleException(ErrorCodes.ReferencedCannotDelete, "Usluga je korištena u cjeniku ili paketu i ne može se trajno obrisati — deaktivirajte je umjesto toga.");
+            throw new BusinessRuleException(ErrorCodes.ReferencedCannotDelete, "Usluga je korištena u poslovnim podacima (termin, grupa, cjenik, paket ili zaposlenik) i ne može se trajno obrisati — deaktivirajte je umjesto toga.");
 
         await _serviceHandler.Delete(service);
     }
@@ -117,6 +131,28 @@ public class ServiceCatalogService : IServiceCatalogService
         bool exists = await _serviceHandler.NameExistsAmongActive(organizationId, name, excludeId);
         if (exists)
             throw new BusinessRuleException(ErrorCodes.DuplicateName, $"Aktivna usluga s nazivom '{name}' već postoji.");
+    }
+
+    private async Task EnsureExecutionModeChangeAllowed(Guid organizationId, Guid id, ServiceExecutionMode targetExecutionMode)
+    {
+        bool isUsedInScheduling = await _serviceHandler.IsUsedInScheduling(organizationId, id);
+        if (isUsedInScheduling)
+            throw new BusinessRuleException(
+                ErrorCodes.ServiceExecutionModeLocked,
+                "Način izvođenja usluge se ne može mijenjati jer je usluga već korištena na terminu ili grupi.");
+
+        // Invarijant: nikad ne smije postojati AKTIVNO Percentage CommissionRule za Group uslugu (nema
+        // nedvosmislene per-occurrence osnovice, vidi CommissionRule.cs/spec section 5/16/54). Reject umjesto
+        // tihog deaktiviranja pravila — administrator eksplicitno odlučuje (deaktivirati pravilo PRIJE promjene
+        // moda, ili odustati od promjene moda), vidi spec section 5 Option A.
+        if (targetExecutionMode == ServiceExecutionMode.Group)
+        {
+            bool hasActivePercentageCommissionRule = await _commissionRuleHandler.HasActivePercentageRuleForService(organizationId, id);
+            if (hasActivePercentageCommissionRule)
+                throw new BusinessRuleException(
+                    ErrorCodes.CommissionGroupPercentageNotSupported,
+                    "Način izvođenja usluge se ne može promijeniti u Group dok postoji aktivno postotno pravilo provizije za ovu uslugu — deaktivirajte pravilo prije promjene.");
+        }
     }
 
     private static ServiceDto ToDto(ServiceEntity service)

@@ -29,7 +29,9 @@ public class ClientPackageServiceEntry
     [Column("total_entries")]
     public int? TotalEntries { get; set; }
 
-    /// <summary>Mutable; null i neiskorišten kad je nadređeni ClientPackage.EntryMode = SharedPool.</summary>
+    /// <summary>Mutable; null kad je nadređeni ClientPackage.EntryMode = SharedPool (brojanje ide preko
+    /// ClientPackage.RemainingSharedEntries) ili kad je ova usluga neograničena unutar PerService paketa —
+    /// u oba slučaja Deduct/Return je preskaču (vidi ClientPackageEntryMutator).</summary>
     [Column("remaining_entries")]
     public int? RemainingEntries { get; set; }
 

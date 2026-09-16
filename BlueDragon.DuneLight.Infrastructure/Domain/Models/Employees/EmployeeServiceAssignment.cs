@@ -5,7 +5,8 @@ using BlueDragon.DuneLight.Infrastructure.Domain.Models.Catalog;
 
 namespace BlueDragon.DuneLight.Infrastructure.Domain.Models.Employees;
 
-/// <summary>Usluga koju zaposlenik smije izvoditi. Prazan popis za zaposlenika = smije sve usluge.</summary>
+/// <summary>Usluga koju zaposlenik smije izvoditi. Prazan popis za zaposlenika = ne smije nijednu uslugu
+/// (isti obrazac kao ServiceCompany — nema implicitnog "prazno = sve").</summary>
 [Table("employee_services")]
 public class EmployeeServiceAssignment
 {

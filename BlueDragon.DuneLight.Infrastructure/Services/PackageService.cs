@@ -40,6 +40,8 @@ public class PackageService : IPackageService
 
     public async Task<PackageDto> Create(Guid organizationId, Guid userId, PackageCreateRequest request)
     {
+        string name = request.Name?.Trim();
+        await EnsureNameIsUnique(organizationId, name, excludeId: null);
         await ValidateServiceItems(organizationId, request.EntryMode, request.Services, grandfatheredServiceIds: null);
         ValidateValidity(request.ValidityType, request.ValidityDays, request.ValidityFixedDate);
 
@@ -47,7 +49,7 @@ public class PackageService : IPackageService
         {
             Id = Guid.NewGuid(),
             OrganizationId = organizationId,
-            Name = request.Name,
+            Name = name,
             Description = request.Description,
             EntryMode = request.EntryMode,
             TotalEntryCount = request.EntryMode == PackageEntryMode.SharedPool ? request.TotalEntryCount : null,
@@ -74,11 +76,14 @@ public class PackageService : IPackageService
         if (package == null)
             throw new NotFoundAppException("Package", id);
 
+        string name = request.Name?.Trim();
+        await EnsureNameIsUnique(organizationId, name, excludeId: id);
+
         HashSet<Guid> grandfatheredServiceIds = package.Services.Select(s => s.ServiceId).ToHashSet();
         await ValidateServiceItems(organizationId, request.EntryMode, request.Services, grandfatheredServiceIds);
         ValidateValidity(request.ValidityType, request.ValidityDays, request.ValidityFixedDate);
 
-        package.Name = request.Name;
+        package.Name = name;
         package.Description = request.Description;
         package.EntryMode = request.EntryMode;
         package.TotalEntryCount = request.EntryMode == PackageEntryMode.SharedPool ? request.TotalEntryCount : null;
@@ -102,6 +107,9 @@ public class PackageService : IPackageService
         if (package == null)
             throw new NotFoundAppException("Package", id);
 
+        if (isActive)
+            await EnsureNameIsUnique(organizationId, package.Name, excludeId: id);
+
         package.IsActive = isActive;
         package.UpdatedAt = DateTimeOffset.UtcNow;
         package.UpdatedBy = userId;
@@ -118,9 +126,16 @@ public class PackageService : IPackageService
 
         bool isReferenced = await _packageHandler.IsReferenced(organizationId, id);
         if (isReferenced)
-            throw new BusinessRuleException(ErrorCodes.ReferencedCannotDelete, "Paket je korišten u cjeniku i ne može se trajno obrisati — deaktivirajte ga umjesto toga.");
+            throw new BusinessRuleException(ErrorCodes.ReferencedCannotDelete, "Paket je korišten u cjeniku ili je već prodan klijentima i ne može se trajno obrisati — deaktivirajte ga umjesto toga.");
 
         await _packageHandler.Delete(package);
+    }
+
+    private async Task EnsureNameIsUnique(Guid organizationId, string name, Guid? excludeId)
+    {
+        bool exists = await _packageHandler.NameExistsAmongActive(organizationId, name, excludeId);
+        if (exists)
+            throw new BusinessRuleException(ErrorCodes.DuplicateName, $"Aktivan paket s nazivom '{name}' već postoji.");
     }
 
     private async Task ValidateServiceItems(Guid organizationId, PackageEntryMode entryMode, List<PackageServiceItemRequest> services, HashSet<Guid> grandfatheredServiceIds)
@@ -131,8 +146,11 @@ public class PackageService : IPackageService
         if (services.Select(s => s.ServiceId).Distinct().Count() != services.Count)
             throw new ValidationAppException("Ista usluga ne smije biti navedena dva puta u istom paketu.");
 
-        if (entryMode == PackageEntryMode.PerService && services.Any(s => !s.EntryCount.HasValue || s.EntryCount <= 0))
-            throw new ValidationAppException("Kod PerService načina svaka stavka paketa mora imati definiran broj ulazaka veći od nule.");
+        // Kod PerService, EntryCount == null znači neograničeno za tu uslugu (isto načelo kao SharedPool
+        // TotalEntryCount == null) — svaka stavka smije neovisno biti neograničena ili konačna, ali ako je
+        // konačna mora biti veća od nule.
+        if (entryMode == PackageEntryMode.PerService && services.Any(s => s.EntryCount.HasValue && s.EntryCount <= 0))
+            throw new ValidationAppException("Kod PerService načina broj ulazaka po stavci, ako je zadan, mora biti veći od nule.");
 
         List<Guid> serviceIds = services.Select(s => s.ServiceId).ToList();
         Dictionary<Guid, Domain.Models.Catalog.Service> servicesById = (await _serviceHandler.GetByIds(organizationId, serviceIds))

@@ -39,7 +39,7 @@ Dodatno: **Organization Branding** (logo/boje/favicon per-tenant) i **Onboarding
 - **`Room`** — `CompanyId` (obavezan), `AllowConcurrentBookings` (default false = tvrdo blokira preklapanja u istoj sobi).
 
 ### 2.4 Zaposlenici
-- **`Employee`** — `FirstName/LastName, Oib, EngagementTypeId, UserId` (1:1 s User, unique) → **`EmployeeCompany`** (M:N, `IsPrimary` — točno jedan primarni per employee, partial unique index), **`EmployeeServiceAssignment`** (M:N; prazno = smije sve usluge).
+- **`Employee`** — `FirstName/LastName, Oib, EngagementTypeId, UserId` (1:1 s User, unique) → **`EmployeeCompany`** (M:N, `IsPrimary` — točno jedan primarni per employee, partial unique index), **`EmployeeServiceAssignment`** (M:N; prazno = ne smije nijednu uslugu — eksplicitna capability, isti obrazac kao ServiceCompany).
 - **`EngagementType`** — codebook tipova angažmana.
 - **`EmployeeAuditLog`** — log promjena statusa/uloge (free-text `ChangeType`).
 
@@ -49,9 +49,9 @@ Dodatno: **Organization Branding** (logo/boje/favicon per-tenant) i **Onboarding
 - **`ClientTag`** + **`ClientTagAssignment`** (M:N).
 
 ### 2.6 Termini
-- **`Appointment`** — centralni entitet. `Form` (`Individual/Group`), `StartsAt, DurationMinutes` (snapshot), `ServiceId, EmployeeId` (nullable za grupne), `CompanyId, RoomId, Amount, PaymentMethod, IsPaid`, **`Status`** (`Scheduled/Completed/Cancelled/NoShow`), `CancellationReason`, `RecurrenceGroupId`.
-- **`AppointmentClient`** — Individual booking (do 2+ klijenta, npr. par), veza na `ClientPackageId` s praćenjem povrata unosa.
-- **`AppointmentAttendance`** — evidencija prisutnosti za Group termine, `CoverageType` (`MonthlyPackage/SessionPackage/SinglePaid`).
+- **`Appointment`** — centralni entitet, samo okvir/resurs (bez naplate). `Form` (`Individual/Group`), `StartsAt, DurationMinutes` (snapshot), `ServiceId, EmployeeId` (nullable za grupne), `CompanyId, RoomId`, **`Status`** (`Scheduled/Completed/Cancelled`), `CancellationReason`, `RecurrenceGroupId`.
+- **`Booking`** — Klijent↔Appointment (zamjenjuje stare `AppointmentClient`/`AppointmentAttendance`), po klijentu: `Amount, SuggestedAmount, IsAmountManuallyOverridden` (komercijalna obveza), `ClientPackageId` s praćenjem povrata unosa, `CoverageType` (`MonthlyPackage/SessionPackage/SinglePaid`, prvenstveno za Group). `PaidAmount/OutstandingAmount/IsPaid` su izvedeni (ne persistirani) iz Payment ledgera — vidi `Payment` ispod.
+- **`Payment`** — monetarni ledger nad Bookingom (od 2026-09-16, zamjenjuje stari `Booking.PaymentMethod/IsPaid`): `Amount, Method` (`Cash/Card/BankTransfer/Other`), `Status` (`Completed/Voided`), `VoidedAt/VoidedBy/VoidReason`. Više Paymenta po Bookingu (partial/split), zbroj aktivnih ≤ `Booking.Amount`. Paket-pokriće (`ClientPackageId`) NIKAD ne stvara Payment — entitlement nije novac.
 - **`AppointmentAuditLog`**, **`ScheduleBreak`** (pauza trenera, bez naplate).
 
 ### 2.7 Grupe
@@ -117,7 +117,7 @@ Sustav ima **tri odvojena, lako pobrkljiva koncepta**:
 
 ### 4.2 Zaposlenici
 - "Zadnji aktivni admin" — deaktivacija ili promjena uloge s Admin na drugo, ako je to jedini aktivni admin → blokirano, `LAST_ACTIVE_ADMIN` (409) (`EmployeeService.SetActive`, `UpdateRole`).
-- Brisanje blokirano ako postoji audit log ili budući termini → `REFERENCED_CANNOT_DELETE`, poruka upućuje na deaktivaciju (`EmployeeService.Delete`).
+- Brisanje blokirano ako postoji audit log ili bilo kakva poslovna referenca (termini — bilo koji, ne samo budući; pauze, roster, radno vrijeme, fond godišnjeg, matični trener klijenta/grupe) → `REFERENCED_CANNOT_DELETE`, poruka upućuje na deaktivaciju (`EmployeeService.Delete`, `IEmployeeHandler.HasBusinessReferences`). `EmployeeCompany`/`EmployeeServiceAssignment` su konfiguracijski (Cascade) i sami po sebi ne blokiraju.
 - Deaktivacija s budućim terminima **ne blokira**, samo vraća `WARNING: EMPLOYEE_HAS_FUTURE_APPOINTMENTS` (`EmployeeService.SetActive`).
 - Neaktivna poslovnica/usluga smije ostati dodijeljena ako je već bila dodijeljena prije izmjene ("grandfathering"), ali se ne smije NOVO dodijeliti neaktivna (`EnsureCompaniesUsable/EnsureServicesUsable`).
 - Kreiranje s loginom: email mora biti slobodan u organizaciji → `EMAIL_ALREADY_IN_USE` (`EmployeeService.CreateWithLogin`).
@@ -158,9 +158,13 @@ Sustav ima **tri odvojena, lako pobrkljiva koncepta**:
 - Duplikat datuma praznika → `DUPLICATE_HOLIDAY_DATE`.
 
 ### 4.7 Katalog / Cjenik
-- Cjenik: raspon `ValidTo >= ValidFrom`; preklapanje istog subjekta+poslovnice unutar aktivnih stavki → `PRICE_OVERLAP`; točno jedno od `ServiceId`/`PackageId` (CHECK constraint na DB razini + validacija u servisu).
-- Brisanje cjenovne stavke blokirano ako postoji povijest promjena cijene → `REFERENCED_CANNOT_DELETE`.
-- Razlučivanje cijene (`PriceResolutionService`): specifična cijena za poslovnicu > cijena "za sve poslovnice" > default cijena subjekta; kod izjednačenja pobjeđuje najnoviji `ValidFrom`.
+- Cjenik: raspon `ValidTo >= ValidFrom` (oba inkluzivna); preklapanje istog subjekta+poslovnice unutar aktivnih stavki → `PRICE_OVERLAP`; točno jedno od `ServiceId`/`PackageId` (CHECK constraint na DB razini + validacija u servisu).
+- `CompanyId == null` = "za sve poslovnice"; preklapanje se provjerava unutar TOČNO iste poslovnice (uklj. null) — org-wide i poslovnica-specifična stavka smiju se preklapati (različiti prioritet u razrješavanju).
+- Kreiranje NOVE stavke cjenika zahtijeva aktivan subjekt (`Service.IsActive`/`Package.IsActive` → `INACTIVE_SERVICE`/`INACTIVE_PACKAGE`) i aktivnu poslovnicu ako je `CompanyId` zadan (`INACTIVE_COMPANY`); postojeće stavke ostaju netaknute kad subjekt/poslovnica kasnije postanu neaktivni.
+- Identitet stavke (`ServiceId`/`PackageId`/`CompanyId`/`OrganizationId`) je nepromjenjiv nakon kreiranja — update DTO dopušta samo `Price`/`ValidFrom`/`ValidTo`.
+- Brisanje cjenovne stavke blokirano ako postoji povijest promjena → `REFERENCED_CANNOT_DELETE`; povijest (`PriceListItemHistory`) bilježi staru/novu vrijednost za `Price`, `ValidFrom` i `ValidTo` zajedno, atomično s updateom (jedan `SaveChanges`).
+- Razlučivanje cijene (`PriceResolutionService`, bez pristupa bazi): specifična cijena za poslovnicu > cijena "za sve poslovnice" > default cijena subjekta; preklapanje bi po pravilu trebalo spriječiti dvoznačnost, `OrderByDescending(ValidFrom)` je samo sigurnosna mreža.
+- Provjera preklapanja je isključivo na razini aplikacije (isti obrazac kao `APPOINTMENT_OVERLAP`) — nema DB exclusion constrainta, pa postoji teoretski race prozor kod dva istovremena zahtjeva (nekonzistentnost/rizik, §7).
 - "Zadnja aktivna poslovnica" — org mora imati ≥1 aktivnu poslovnicu → `LAST_ACTIVE_COMPANY`.
 - Uzorak "jedinstveno ime dok aktivno + zaštita od brisanja ako referencirano" ponavlja se identično kroz Service/Package/Room/EngagementType/ClientTag/RosterType.
 
@@ -212,3 +216,4 @@ Jedinstveni JSON envelope za cijeli API:
 12. **`DefaultRosterTypes` se ne backfilla** — ako se default set (Rad/Godišnji/Bolovanje) promijeni u kodu, postojeće organizacije to ne dobivaju retroaktivno; samo nove registracije.
 13. **Nema rate-limitinga na PIN login** — svjesna odluka za dijeljeni uređaj, ali vrijedi eksplicitno dokumentirati kao sigurnosni kompromis, ne previdjeti ga.
 14. **`GrantGroupGrant.GrantKey`** nije validiran na razini baze protiv kod-katalog `Grants.Catalog` (samo u servisu pri kreiranju) — ako se katalog promijeni/preimenuje ključ, postojeći DB retci mogu ostati "osiročeni" bez upozorenja.
+15. **Preklapanje (`PRICE_OVERLAP`, `APPOINTMENT_OVERLAP`) provjerava se isključivo na razini aplikacije** — provjera "postoji li preklapanje" i `INSERT` nisu u istoj transakciji/DB constraintu (nema exclusion constrainta), pa dva istovremena zahtjeva teoretski mogu oba proći provjeru prije nego ijedan upiše red. Konzistentno kroz cijeli kod, ali nije DB-safe.

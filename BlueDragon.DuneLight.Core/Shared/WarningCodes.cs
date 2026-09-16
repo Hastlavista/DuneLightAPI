@@ -19,6 +19,7 @@ public static class WarningCodes
 
     // Groups
     public const string GroupCapacityExceeded = "GROUP_CAPACITY_EXCEEDED";
+    public const string GroupAppointmentUnresolvedBookings = "GROUP_APPOINTMENT_UNRESOLVED_BOOKINGS";
 
     // Roster
     public const string RosterEntryOverlap = "ROSTER_ENTRY_OVERLAP";

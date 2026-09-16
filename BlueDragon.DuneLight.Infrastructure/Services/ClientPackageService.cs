@@ -24,17 +24,20 @@ public class ClientPackageService : IClientPackageService
     private readonly IClientPackageHandler _clientPackageHandler;
     private readonly IClientHandler _clientHandler;
     private readonly IPackageHandler _packageHandler;
+    private readonly ICompanyHandler _companyHandler;
     private readonly IPricingService _pricingService;
 
     public ClientPackageService(
         IClientPackageHandler clientPackageHandler,
         IClientHandler clientHandler,
         IPackageHandler packageHandler,
+        ICompanyHandler companyHandler,
         IPricingService pricingService)
     {
         _clientPackageHandler = clientPackageHandler;
         _clientHandler = clientHandler;
         _packageHandler = packageHandler;
+        _companyHandler = companyHandler;
         _pricingService = pricingService;
     }
 
@@ -43,10 +46,25 @@ public class ClientPackageService : IClientPackageService
         Client client = await _clientHandler.GetByIdLight(organizationId, clientId);
         if (client == null)
             throw new NotFoundAppException("Client", clientId);
+        if (client.IsAnonymized)
+            throw new BusinessRuleException(ErrorCodes.ClientAnonymized, "Klijent je anonimiziran i ne može mu se izdati novi paket.");
+        if (!client.IsActive)
+            throw new BusinessRuleException(ErrorCodes.InactiveClient, "Klijent nije aktivan i ne može mu se izdati novi paket.");
 
         Package package = await _packageHandler.GetById(organizationId, request.PackageId);
         if (package == null)
             throw new NotFoundAppException("Package", request.PackageId);
+        if (!package.IsActive)
+            throw new BusinessRuleException(ErrorCodes.InactivePackage, $"Paket '{package.Name}' nije aktivan i ne može se prodati.");
+
+        if (request.CompanyId.HasValue)
+        {
+            Company company = await _companyHandler.GetById(organizationId, request.CompanyId.Value);
+            if (company == null)
+                throw new NotFoundAppException("Company", request.CompanyId.Value);
+            if (!company.IsActive)
+                throw new BusinessRuleException(ErrorCodes.InactiveCompany, $"Tvrtka '{company.Name}' nije aktivna.");
+        }
 
         DateTimeOffset purchaseDate = request.PurchaseDate ?? DateTimeOffset.UtcNow;
 
@@ -114,13 +132,30 @@ public class ClientPackageService : IClientPackageService
     public Task DeductEntry(Guid organizationId, Guid clientPackageId, Guid serviceId, Guid userId)
     {
         return MutateWithConcurrencyRetry(organizationId, clientPackageId, userId,
-            clientPackage => ClientPackageEntryMutator.Deduct(clientPackage, serviceId));
+            clientPackage => ClientPackageEntryMutator.Deduct(clientPackage, serviceId, DateTimeOffset.UtcNow));
     }
 
     public Task ReturnEntry(Guid organizationId, Guid clientPackageId, Guid serviceId, Guid userId)
     {
         return MutateWithConcurrencyRetry(organizationId, clientPackageId, userId,
-            clientPackage => ClientPackageEntryMutator.Return(clientPackage, serviceId));
+            clientPackage => ClientPackageEntryMutator.Return(clientPackage, serviceId, DateTimeOffset.UtcNow));
+    }
+
+    /// <summary>Active/Depleted/Expired -> Cancelled. Terminalno (nema "uncancel") — vidi ClientPackageEntryMutator.Return,
+    /// koje namjerno nikad ne mijenja Cancelled natrag u Active.</summary>
+    public async Task<ClientPackageDto> Cancel(Guid organizationId, Guid clientId, Guid id, Guid userId)
+    {
+        await MutateWithConcurrencyRetry(organizationId, id, userId, clientPackage =>
+        {
+            if (clientPackage.ClientId != clientId)
+                throw new NotFoundAppException("ClientPackage", id);
+            if (clientPackage.Status == ClientPackageStatus.Cancelled)
+                throw new ValidationAppException("Paket je već otkazan.");
+
+            clientPackage.Status = ClientPackageStatus.Cancelled;
+        });
+
+        return await GetById(organizationId, clientId, id);
     }
 
     /// <summary>Čita paket, primjenjuje `mutate` i sprema — uz retry na optimistic-concurrency sudar (xmin token,
@@ -185,7 +220,7 @@ public class ClientPackageService : IClientPackageService
             RemainingSharedEntries = cp.RemainingSharedEntries,
             ValidityType = cp.ValidityType,
             ExpiryDate = cp.ExpiryDate,
-            Status = cp.Status,
+            Status = ClientPackageStatusResolver.GetEffectiveStatus(cp, DateTimeOffset.UtcNow),
             ServiceEntries = cp.ServiceEntries.Select(e => new ClientPackageServiceEntryDto
             {
                 ServiceId = e.ServiceId,

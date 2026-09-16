@@ -16,5 +16,9 @@ public interface IRoomHandler
     Task Add(Room room);
     Task Update(Room room);
     Task Delete(Room room);
+
+    /// <summary>Naziv se uspoređuje normalizirano (trim + case-insensitive) unutar iste Company, isto kao
+    /// ux_rooms_org_company_name_active.</summary>
+    Task<bool> NameExistsAmongActive(Guid organizationId, Guid companyId, string name, Guid? excludeId);
     Task<bool> IsReferenced(Guid organizationId, Guid id);
 }

@@ -11,6 +11,13 @@ using BlueDragon.DuneLight.Infrastructure.Handlers.Interfaces;
 
 namespace BlueDragon.DuneLight.Infrastructure.Services;
 
+/// <summary>
+/// Room == fizička bookabilna prostorija unutar točno jedne Company (npr. "Masaža 1", "Pilates studio").
+/// CompanyId se nakon kreiranja više ne mijenja — povijesni termini referenciraju Room, pa bi premještaj
+/// prostorije u drugu poslovnicu iskrivio povijest. Za fizički premještaj: deaktivirati staru, kreirati
+/// novu u ciljnoj Company. Isti obrazac kao CompanyService (immutable ownership, normalizirano ime, active
+/// lifecycle), ali BEZ pravila "barem jedna aktivna" — poslovnica smije imati nula aktivnih prostorija.
+/// </summary>
 public class RoomService : IRoomService
 {
     private readonly IRoomHandler _roomHandler;
@@ -39,14 +46,20 @@ public class RoomService : IRoomService
 
     public async Task<RoomDto> Create(Guid organizationId, Guid userId, RoomCreateRequest request)
     {
-        await EnsureCompanyExists(organizationId, request.CompanyId);
+        string name = request.Name?.Trim();
+
+        Company company = await EnsureCompanyExists(organizationId, request.CompanyId);
+        if (!company.IsActive)
+            throw new ValidationAppException($"Poslovnica '{company.Name}' nije aktivna — nova prostorija se ne može kreirati.");
+
+        await EnsureNameIsUnique(organizationId, request.CompanyId, name, excludeId: null);
 
         Room room = new Room
         {
             Id = Guid.NewGuid(),
             OrganizationId = organizationId,
             CompanyId = request.CompanyId,
-            Name = request.Name,
+            Name = name,
             AllowConcurrentBookings = request.AllowConcurrentBookings,
             Note = request.Note,
             SortOrder = request.SortOrder,
@@ -65,10 +78,12 @@ public class RoomService : IRoomService
         if (room == null)
             throw new NotFoundAppException("Room", id);
 
-        await EnsureCompanyExists(organizationId, request.CompanyId);
+        string name = request.Name?.Trim();
+        await EnsureNameIsUnique(organizationId, room.CompanyId, name, excludeId: id);
 
-        room.CompanyId = request.CompanyId;
-        room.Name = request.Name;
+        // Id, OrganizationId i CompanyId se namjerno ne diraju — Room nikad ne mijenja poslovnicu (vidi
+        // klasnu napomenu). Za fizički premještaj: deaktivirati ovu i kreirati novu u ciljnoj Company.
+        room.Name = name;
         room.AllowConcurrentBookings = request.AllowConcurrentBookings;
         room.Note = request.Note;
         room.SortOrder = request.SortOrder;
@@ -81,15 +96,54 @@ public class RoomService : IRoomService
 
     public async Task<RoomDto> SetActive(Guid organizationId, Guid userId, Guid id, bool isActive)
     {
+        if (isActive)
+            return await Reactivate(organizationId, userId, id);
+
+        return await Deactivate(organizationId, userId, id);
+    }
+
+    private async Task<RoomDto> Reactivate(Guid organizationId, Guid userId, Guid id)
+    {
         Room room = await _roomHandler.GetById(organizationId, id);
         if (room == null)
             throw new NotFoundAppException("Room", id);
 
-        room.IsActive = isActive;
-        room.UpdatedAt = DateTimeOffset.UtcNow;
-        room.UpdatedBy = userId;
+        if (!room.IsActive)
+        {
+            Company company = await _companyHandler.GetById(organizationId, room.CompanyId);
+            if (company == null || !company.IsActive)
+                throw new ValidationAppException($"Poslovnica prostorije '{room.Name}' nije aktivna — prostorija se ne može ponovno aktivirati.");
 
-        await _roomHandler.Update(room);
+            // Naziv je mogao u međuvremenu "procuriti" na drugu aktivnu prostoriju u istoj Company dok je
+            // ova bila neaktivna (djelomični unique indeks vrijedi samo WHERE is_active = true) — provjeri
+            // prije povratka u pogon. Isti obrazac kao CompanyService.Reactivate.
+            await EnsureNameIsUnique(organizationId, room.CompanyId, room.Name, excludeId: id);
+
+            room.IsActive = true;
+            room.UpdatedAt = DateTimeOffset.UtcNow;
+            room.UpdatedBy = userId;
+            await _roomHandler.Update(room);
+        }
+
+        return ToDto(room);
+    }
+
+    private async Task<RoomDto> Deactivate(Guid organizationId, Guid userId, Guid id)
+    {
+        Room room = await _roomHandler.GetById(organizationId, id);
+        if (room == null)
+            throw new NotFoundAppException("Room", id);
+
+        // Za razliku od Company nema pravila "barem jedna aktivna" — poslovnica smije imati nula aktivnih
+        // prostorija, pa nema potrebe za brave-lock/count logikom ovdje.
+        if (room.IsActive)
+        {
+            room.IsActive = false;
+            room.UpdatedAt = DateTimeOffset.UtcNow;
+            room.UpdatedBy = userId;
+            await _roomHandler.Update(room);
+        }
+
         return ToDto(room);
     }
 
@@ -106,11 +160,20 @@ public class RoomService : IRoomService
         await _roomHandler.Delete(room);
     }
 
-    private async Task EnsureCompanyExists(Guid organizationId, Guid companyId)
+    private async Task<Company> EnsureCompanyExists(Guid organizationId, Guid companyId)
     {
         Company company = await _companyHandler.GetById(organizationId, companyId);
         if (company == null)
             throw new NotFoundAppException("Company", companyId);
+
+        return company;
+    }
+
+    private async Task EnsureNameIsUnique(Guid organizationId, Guid companyId, string name, Guid? excludeId)
+    {
+        bool exists = await _roomHandler.NameExistsAmongActive(organizationId, companyId, name, excludeId);
+        if (exists)
+            throw new BusinessRuleException(ErrorCodes.DuplicateName, $"Aktivna prostorija s nazivom '{name}' već postoji u ovoj poslovnici.");
     }
 
     private static RoomDto ToDto(Room room)

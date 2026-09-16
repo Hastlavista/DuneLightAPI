@@ -11,12 +11,16 @@ using BlueDragon.DuneLight.API.Middleware;
 using BlueDragon.DuneLight.Core.Interfaces;
 using BlueDragon.DuneLight.Core.Interfaces.Appointments;
 using BlueDragon.DuneLight.Core.Interfaces.Catalog;
+using BlueDragon.DuneLight.Core.Interfaces.Checkouts;
 using BlueDragon.DuneLight.Core.Interfaces.Clients;
+using BlueDragon.DuneLight.Core.Interfaces.Commissions;
+using BlueDragon.DuneLight.Core.Interfaces.Dashboard;
 using BlueDragon.DuneLight.Core.Interfaces.Employees;
 using BlueDragon.DuneLight.Core.Interfaces.Groups;
 using BlueDragon.DuneLight.Core.Interfaces.Onboarding;
 using BlueDragon.DuneLight.Core.Interfaces.Organization;
 using BlueDragon.DuneLight.Core.Interfaces.Permissions;
+using BlueDragon.DuneLight.Core.Interfaces.Products;
 using BlueDragon.DuneLight.Core.Interfaces.Roster;
 using BlueDragon.DuneLight.Core.Interfaces.ScheduleBreaks;
 using BlueDragon.DuneLight.Core.Shared;
@@ -125,6 +129,7 @@ public class Startup
         services.AddScoped<ICompanyService, CompanyService>();
         services.AddScoped<IRoomService, RoomService>();
         services.AddScoped<IServiceCatalogService, ServiceCatalogService>();
+        services.AddScoped<IServiceAvailabilityService, ServiceAvailabilityService>();
         services.AddScoped<IPricingService, PricingService>();
         services.AddScoped<IPackageService, PackageService>();
         services.AddSingleton<IPriceResolutionService, PriceResolutionService>();
@@ -140,7 +145,30 @@ public class Startup
         services.AddSingleton<IClientFutureActivityProvider, ClientFutureActivityProvider>();
 
         services.AddScoped<IAppointmentService, AppointmentService>();
+        services.AddScoped<IBookingService, BookingService>();
         services.AddScoped<IScheduleBreakService, ScheduleBreakService>();
+
+        // Jedan WaitlistService, dva sučelja (IWaitlistService za kontrolere, IWaitlistPromotionService za
+        // pozive iz tuđe transakcije — BookingService/GroupService/AppointmentService) — vidi IWaitlistPromotionService.
+        services.AddScoped<IWaitlistService, WaitlistService>();
+        services.AddScoped<IWaitlistPromotionService, WaitlistService>();
+
+        // Isti obrazac kao WaitlistService iznad — IPaymentService (read-only) za kontrolere, IPaymentLedgerService za
+        // pozive iz tuđe transakcije (BookingService/AppointmentService check-in/completion) — vidi IPaymentLedgerService.
+        services.AddScoped<IPaymentService, PaymentService>();
+        services.AddScoped<IPaymentLedgerService, PaymentService>();
+
+        services.AddScoped<ICheckoutService, CheckoutService>();
+
+        services.AddScoped<ICommissionRuleService, CommissionService>();
+        services.AddScoped<ICommissionService, CommissionService>();
+        services.AddScoped<ICommissionLedgerService, CommissionService>();
+
+        services.AddScoped<IProductService, ProductService>();
+        // Jedan StockService, dva sučelja (IStockService za kontrolere, IStockLedgerService za pozive iz tuđe
+        // transakcije — CheckoutService.Complete) — isti obrazac kao IPaymentService/IPaymentLedgerService.
+        services.AddScoped<IStockService, StockService>();
+        services.AddScoped<IStockLedgerService, StockService>();
 
         services.AddScoped<IGroupService, GroupService>();
         services.AddScoped<IGroupAttendanceService, GroupAttendanceService>();
@@ -168,6 +196,9 @@ public class Startup
 
         services.AddScoped<IOrganizationBrandingService, OrganizationBrandingService>();
         services.AddScoped<IBrandingFileStorage, BrandingFileStorage>();
+        services.AddScoped<IOrganizationSettingsService, OrganizationSettingsService>();
+
+        services.AddScoped<IOperationalDashboardService, OperationalDashboardService>();
 
         #endregion
 
@@ -178,6 +209,7 @@ public class Startup
         services.AddSingleton<ICompanyHandler, CompanyHandler>();
         services.AddSingleton<IRoomHandler, RoomHandler>();
         services.AddSingleton<IServiceHandler, ServiceHandler>();
+        services.AddSingleton<IServiceCompanyHandler, ServiceCompanyHandler>();
         services.AddSingleton<IPriceListItemHandler, PriceListItemHandler>();
         services.AddSingleton<IPackageHandler, PackageHandler>();
 
@@ -193,9 +225,19 @@ public class Startup
         services.AddSingleton<IAppointmentAuditLogHandler, AppointmentAuditLogHandler>();
         services.AddSingleton<IScheduleBreakHandler, ScheduleBreakHandler>();
 
+        services.AddSingleton<ICheckoutHandler, CheckoutHandler>();
+        services.AddSingleton<ICheckoutAuditLogHandler, CheckoutAuditLogHandler>();
+
+        services.AddSingleton<ICommissionRuleHandler, CommissionRuleHandler>();
+        services.AddSingleton<ICommissionEntryHandler, CommissionEntryHandler>();
+
+        services.AddSingleton<IProductHandler, ProductHandler>();
+        services.AddSingleton<IProductStockHandler, ProductStockHandler>();
+        services.AddSingleton<IStockMovementHandler, StockMovementHandler>();
+
         services.AddSingleton<IGroupHandler, GroupHandler>();
         services.AddSingleton<IGroupAuditLogHandler, GroupAuditLogHandler>();
-        services.AddSingleton<IGroupAttendanceHandler, GroupAttendanceHandler>();
+        services.AddSingleton<IWaitlistHandler, WaitlistHandler>();
 
         services.AddSingleton<IRosterTypeHandler, RosterTypeHandler>();
         services.AddSingleton<IRosterEntryHandler, RosterEntryHandler>();
@@ -212,6 +254,7 @@ public class Startup
 
         services.AddSingleton<IOrganizationBrandingHandler, OrganizationBrandingHandler>();
         services.AddSingleton<IOrganizationBrandingAuditLogHandler, OrganizationBrandingAuditLogHandler>();
+        services.AddSingleton<IOrganizationSettingsHandler, OrganizationSettingsHandler>();
 
         #endregion
 
