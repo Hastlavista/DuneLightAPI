@@ -150,9 +150,11 @@ public class ClientPackageService : IClientPackageService
             if (clientPackage.ClientId != clientId)
                 throw new NotFoundAppException("ClientPackage", id);
             if (clientPackage.Status == ClientPackageStatus.Cancelled)
-                throw new ValidationAppException("Paket je već otkazan.");
+                throw new BusinessRuleException(ErrorCodes.PackageAlreadyCancelled, "Paket je već otkazan.");
 
             clientPackage.Status = ClientPackageStatus.Cancelled;
+            clientPackage.CancelledAt = DateTimeOffset.UtcNow;
+            clientPackage.CancelledBy = userId;
         });
 
         return await GetById(organizationId, clientId, id);
@@ -231,7 +233,9 @@ public class ClientPackageService : IClientPackageService
             CreatedAt = cp.CreatedAt,
             CreatedBy = cp.CreatedBy,
             UpdatedAt = cp.UpdatedAt,
-            UpdatedBy = cp.UpdatedBy
+            UpdatedBy = cp.UpdatedBy,
+            CancelledAt = cp.CancelledAt,
+            CancelledBy = cp.CancelledBy
         };
     }
 }

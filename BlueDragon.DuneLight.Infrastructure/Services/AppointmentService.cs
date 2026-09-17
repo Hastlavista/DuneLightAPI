@@ -186,7 +186,22 @@ public class AppointmentService : IAppointmentService
             await _appointmentHandler.Add(uow, appointment);
 
             foreach (KeyValuePair<Guid, Guid> kvp in packageByClient)
+            {
                 await DeductPackageEntryInTransaction(uow, organizationId, kvp.Value, request.ServiceId, userId);
+
+                Booking packageBooking = appointment.Bookings.First(b => b.ClientId == kvp.Key);
+                await _auditLogHandler.Add(uow, new AppointmentAuditLog
+                {
+                    Id = Guid.NewGuid(),
+                    AppointmentId = appointmentId,
+                    BookingId = packageBooking.Id,
+                    ChangeType = "BookingPackageCoverageApplied",
+                    OldValue = null,
+                    NewValue = kvp.Value.ToString(),
+                    ChangedAt = DateTimeOffset.UtcNow,
+                    ChangedBy = userId
+                });
+            }
 
             // Payment ide TEK nakon _appointmentHandler.Add (FK payments.booking_id) — Booking.Id je već
             // poznat (dodijeljen prije Add), pa je isti in-memory objekt (sad persistiran) siguran za referencu.
@@ -281,7 +296,26 @@ public class AppointmentService : IAppointmentService
                 if (bookingRow.Amount != bookingAmount)
                     await LogAmountChangeInTransaction(uow, id, bookingRow.Id, bookingRow.Amount, bookingAmount, userId);
 
+                BookingStatus bookingOldStatus = bookingRow.Status;
                 BookingStatusVersioning.TrySetStatus(bookingRow, BookingStatus.Completed);
+                if (bookingOldStatus != bookingRow.Status)
+                {
+                    // Isti "BookingStatus" audit obrazac kao BookingService.SetStatus — bez ovoga bi individualni
+                    // Confirmed -> Completed prijelaz kroz complete-existing bio jedini status prijelaz koji ne
+                    // ostavlja trag tko/kada ga je proveo (vidi audit-cleanup spec section 22-24).
+                    await _auditLogHandler.Add(uow, new AppointmentAuditLog
+                    {
+                        Id = Guid.NewGuid(),
+                        AppointmentId = id,
+                        BookingId = bookingRow.Id,
+                        ChangeType = "BookingStatus",
+                        OldValue = bookingOldStatus.ToString(),
+                        NewValue = bookingRow.Status.ToString(),
+                        StatusVersion = bookingRow.StatusVersion,
+                        ChangedAt = DateTimeOffset.UtcNow,
+                        ChangedBy = userId
+                    });
+                }
                 bookingRow.Amount = bookingAmount;
                 bookingRow.SuggestedAmount = suggestedAmount;
                 bookingRow.IsAmountManuallyOverridden = settlement.Amount.HasValue && settlement.Amount.Value != suggestedAmount;
@@ -1036,6 +1070,7 @@ public class AppointmentService : IAppointmentService
                     ChangeType = "BookingStatus",
                     OldValue = oldBookingStatus.ToString(),
                     NewValue = booking.Status.ToString(),
+                    StatusVersion = booking.StatusVersion,
                     ChangedAt = DateTimeOffset.UtcNow,
                     ChangedBy = userId
                 });

@@ -385,6 +385,7 @@ public class ClientService : IClientService
             IsActive = client.IsActive,
             IsAnonymized = client.IsAnonymized,
             AnonymizedAt = client.AnonymizedAt,
+            AnonymizedBy = client.AnonymizedBy,
             Tags = client.Tags.Select(t => new ClientTagRefDto
             {
                 TagId = t.TagId,

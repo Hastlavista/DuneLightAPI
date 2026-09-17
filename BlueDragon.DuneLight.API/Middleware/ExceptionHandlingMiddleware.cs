@@ -45,7 +45,7 @@ public class ExceptionHandlingMiddleware
         }
         catch (ValidationAppException ex)
         {
-            await WriteError(context, HttpStatusCode.BadRequest, ErrorCodes.ValidationError, ex.Message, ex.Details);
+            await WriteError(context, HttpStatusCode.BadRequest, ex.Code ?? ErrorCodes.ValidationError, ex.Message, ex.Details);
         }
         catch (NotFoundAppException ex)
         {

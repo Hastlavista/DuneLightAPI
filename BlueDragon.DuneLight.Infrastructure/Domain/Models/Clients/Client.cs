@@ -76,6 +76,9 @@ public class Client
     [Column("anonymized_at")]
     public DateTimeOffset? AnonymizedAt { get; set; }
 
+    [Column("anonymized_by")]
+    public Guid? AnonymizedBy { get; set; }
+
     [Column("created_at")]
     public DateTimeOffset CreatedAt { get; set; }
 

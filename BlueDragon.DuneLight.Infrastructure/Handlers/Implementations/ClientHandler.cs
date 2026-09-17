@@ -118,6 +118,7 @@ public class ClientHandler : IClientHandler
         trackedClient.IsActive = client.IsActive;
         trackedClient.IsAnonymized = client.IsAnonymized;
         trackedClient.AnonymizedAt = client.AnonymizedAt;
+        trackedClient.AnonymizedBy = client.AnonymizedBy;
         trackedClient.UpdatedAt = client.UpdatedAt;
         trackedClient.UpdatedBy = client.UpdatedBy;
 
@@ -186,6 +187,7 @@ public class ClientHandler : IClientHandler
         client.IsActive = false;
         client.IsAnonymized = true;
         client.AnonymizedAt = anonymizedAt;
+        client.AnonymizedBy = anonymizedBy;
         client.UpdatedAt = anonymizedAt;
         client.UpdatedBy = anonymizedBy;
 

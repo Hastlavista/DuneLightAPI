@@ -64,7 +64,7 @@ public class PaymentService : IPaymentService, IPaymentLedgerService
         string note, bool isCheckInGenerated = false)
     {
         if (amount <= 0m)
-            throw new ValidationAppException("Iznos plaćanja mora biti veći od 0.");
+            throw new ValidationAppException(ErrorCodes.InvalidQuantity, "Iznos plaćanja mora biti veći od 0.");
 
         if (booking.ClientPackageId.HasValue)
             throw new BusinessRuleException(

@@ -79,6 +79,12 @@ public class StockService : IStockService, IStockLedgerService
 
     public async Task<ProductStockDto> Adjust(Guid organizationId, Guid userId, Guid productId, Guid companyId, StockAdjustRequest request)
     {
+        // Ručna korekcija zalihe (uklj. prvi unos/Initial — ide kroz isti endpoint) mora imati razlog — za
+        // razliku od sustavski generiranog Sale movementa (ConsumeForSale), ovdje osoblje svjesno mijenja
+        // istinu o zalihi (vidi audit-cleanup spec section 9-10).
+        if (string.IsNullOrWhiteSpace(request.Reason))
+            throw new ValidationAppException(ErrorCodes.StockAdjustmentReasonRequired, "Razlog ručne korekcije zalihe je obavezan.");
+
         ProductEntity product = await _productHandler.GetById(organizationId, productId);
         if (product == null)
             throw new NotFoundAppException("Product", productId);
@@ -114,7 +120,7 @@ public class StockService : IStockService, IStockLedgerService
                 CompanyId = companyId,
                 Type = hasExistingMovement ? StockMovementType.Adjustment : StockMovementType.Initial,
                 QuantityDelta = delta,
-                Reason = request.Reason,
+                Reason = request.Reason.Trim(),
                 CreatedAt = now,
                 CreatedBy = userId
             });

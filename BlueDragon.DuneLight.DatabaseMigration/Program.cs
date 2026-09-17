@@ -21,7 +21,7 @@ class Program
             return;
         }
 
-        IServiceProvider serviceProvider = ServiceProviderGenerator.GenerateMigrationServiceProvider(dbConfiguration);
+        using ServiceProvider serviceProvider = ServiceProviderGenerator.GenerateMigrationServiceProvider(dbConfiguration);
         UpdateDatabase(serviceProvider);
     }
 
@@ -35,7 +35,14 @@ class Program
     private static void UpdateDatabase(IServiceProvider serviceProvider)
     {
         IMigrationRunner runner = serviceProvider.GetRequiredService<IMigrationRunner>();
+
+        // MigrationRunner.MigrateUp() does not commit on its own — FluentMigrator's transaction is only
+        // committed when the IMigrationScope it runs in is explicitly completed (same pattern as
+        // System.Transactions.TransactionScope: an unmet Complete() means the Dispose() below rolls back).
+        // Without this, every migration logs "X migrated" but the process exit silently discards all of it.
+        using IMigrationScope scope = ((IMigrationScopeStarter)runner).BeginScope();
         runner.MigrateUp();
+        scope.Complete();
     }
 
     private static void ShowHelp()

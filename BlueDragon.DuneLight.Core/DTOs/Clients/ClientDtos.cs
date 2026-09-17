@@ -33,6 +33,7 @@ public class ClientDto
     public bool IsActive { get; set; }
     public bool IsAnonymized { get; set; }
     public DateTimeOffset? AnonymizedAt { get; set; }
+    public Guid? AnonymizedBy { get; set; }
     public List<ClientTagRefDto> Tags { get; set; } = new();
 
     /// <summary>Ukupan broj termina statusa NoShow za ovog klijenta (bez vremenskog ograničenja).</summary>

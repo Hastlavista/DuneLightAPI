@@ -241,7 +241,7 @@ public class CheckoutService : ICheckoutService
     public async Task<CheckoutDto> AddProductItem(Guid organizationId, Guid userId, Guid checkoutId, CheckoutAddProductItemRequest request)
     {
         if (request.Quantity <= 0)
-            throw new ValidationAppException("Količina mora biti veća od nule.");
+            throw new ValidationAppException(ErrorCodes.InvalidQuantity, "Količina mora biti veća od nule.");
 
         await using IUnitOfWork uow = await _unitOfWorkFactory.Begin();
 
@@ -369,7 +369,7 @@ public class CheckoutService : ICheckoutService
     public async Task<CheckoutDto> RecordPayment(Guid organizationId, Guid userId, Guid checkoutId, CheckoutPaymentCreateRequest request)
     {
         if (request.Amount <= 0m)
-            throw new ValidationAppException("Iznos plaćanja mora biti veći od 0.");
+            throw new ValidationAppException(ErrorCodes.InvalidQuantity, "Iznos plaćanja mora biti veći od 0.");
 
         await using IUnitOfWork uow = await _unitOfWorkFactory.Begin();
 
@@ -454,7 +454,7 @@ public class CheckoutService : ICheckoutService
         List<CheckoutItemFinancials> financials, DateTimeOffset now)
     {
         if (request.Allocations.Any(a => a.Amount <= 0m))
-            throw new ValidationAppException("Svaka alokacija mora biti veća od 0.");
+            throw new ValidationAppException(ErrorCodes.InvalidQuantity, "Svaka alokacija mora biti veća od 0.");
 
         if (request.Allocations.Sum(a => a.Amount) != request.Amount)
             throw new BusinessRuleException(
@@ -500,6 +500,12 @@ public class CheckoutService : ICheckoutService
 
     public async Task<CheckoutDto> VoidPayment(Guid organizationId, Guid userId, Guid checkoutId, Guid paymentId, CheckoutPaymentVoidRequest request)
     {
+        // Ručno (administrativno) poništenje plaćanja mora imati razlog — za razliku od sustavskog
+        // VoidCheckInGeneratedPayments (deterministički razlog, ne prolazi kroz ovaj request DTO), ovdje je
+        // uvijek stvarna osoba koja svjesno poništava naplatu (vidi audit-cleanup spec section 6).
+        if (string.IsNullOrWhiteSpace(request.Reason))
+            throw new ValidationAppException(ErrorCodes.PaymentVoidReasonRequired, "Razlog poništenja plaćanja je obavezan.");
+
         await using IUnitOfWork uow = await _unitOfWorkFactory.Begin();
 
         await LockOpenCheckout(uow, organizationId, checkoutId);
@@ -513,7 +519,7 @@ public class CheckoutService : ICheckoutService
         payment.Status = PaymentStatus.Voided;
         payment.VoidedAt = DateTimeOffset.UtcNow;
         payment.VoidedBy = userId;
-        payment.VoidReason = request.Reason;
+        payment.VoidReason = request.Reason.Trim();
 
         await _checkoutHandler.UpdatePayment(uow, payment);
 

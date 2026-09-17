@@ -66,11 +66,13 @@ public static class ErrorCodes
     public const string InactiveRoom = "INACTIVE_ROOM";
     public const string GroupCapacityReached = "GROUP_CAPACITY_REACHED";
     public const string AttendanceBeforeStart = "ATTENDANCE_BEFORE_START";
+    public const string PackageAlreadyCancelled = "PACKAGE_ALREADY_CANCELLED";
 
     // Payment ledger (vidi Payment.cs/IPaymentService)
     public const string PaymentExceedsOutstandingAmount = "PAYMENT_EXCEEDS_OUTSTANDING_AMOUNT";
     public const string PaymentNotAllowed = "PAYMENT_NOT_ALLOWED";
     public const string PaymentAlreadyVoided = "PAYMENT_ALREADY_VOIDED";
+    public const string PaymentVoidReasonRequired = "PAYMENT_VOID_REASON_REQUIRED";
 
     // Checkout / POS temelji (vidi Checkout.cs/ICheckoutService)
     public const string CheckoutNotOpen = "CHECKOUT_NOT_OPEN";
@@ -91,6 +93,7 @@ public static class ErrorCodes
     public const string InsufficientStock = "INSUFFICIENT_STOCK";
     public const string TransferSameCompany = "TRANSFER_SAME_COMPANY";
     public const string InvalidQuantity = "INVALID_QUANTITY";
+    public const string StockAdjustmentReasonRequired = "STOCK_ADJUSTMENT_REASON_REQUIRED";
 
     // Commissions (vidi CommissionRule.cs/CommissionEntry.cs/ICommissionRuleService)
     public const string CommissionRuleAlreadyExists = "COMMISSION_RULE_ALREADY_EXISTS";

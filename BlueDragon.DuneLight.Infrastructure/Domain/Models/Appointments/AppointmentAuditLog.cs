@@ -52,4 +52,11 @@ public class AppointmentAuditLog
 
     [Column("changed_by")]
     public Guid? ChangedBy { get; set; }
+
+    /// <summary>Popunjeno SAMO za ChangeType="BookingStatus" — Booking.StatusVersion NAKON ovog prijelaza (vidi
+    /// BookingStatusVersioning). Veže ovaj audit redak na ISTU pojavu koju referenciraju Outbox idempotency key
+    /// (booking-cancelled/booking-noshow:{id}:{version}) i Notification.SourceVersion, umjesto da se identitet
+    /// pojave oslanja samo na ChangedAt redoslijed (vidi audit-cleanup spec section 51/57).</summary>
+    [Column("status_version")]
+    public int? StatusVersion { get; set; }
 }

@@ -285,6 +285,7 @@ public class BookingService : IBookingService
                     ChangeType = "BookingStatus",
                     OldValue = oldStatus.ToString(),
                     NewValue = booking.Status.ToString(),
+                    StatusVersion = booking.StatusVersion,
                     ChangedAt = DateTimeOffset.UtcNow,
                     ChangedBy = userId
                 });

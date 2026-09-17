@@ -32,6 +32,8 @@ public class ClientPackageDto
     public Guid? CreatedBy { get; set; }
     public DateTimeOffset? UpdatedAt { get; set; }
     public Guid? UpdatedBy { get; set; }
+    public DateTimeOffset? CancelledAt { get; set; }
+    public Guid? CancelledBy { get; set; }
 }
 
 public class ClientPackageCreateRequest

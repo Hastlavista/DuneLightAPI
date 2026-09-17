@@ -31,6 +31,7 @@ public class GroupService : IGroupService
 {
     private readonly IGroupHandler _groupHandler;
     private readonly IGroupAuditLogHandler _auditLogHandler;
+    private readonly IAppointmentAuditLogHandler _appointmentAuditLogHandler;
     private readonly IServiceHandler _serviceHandler;
     private readonly IServiceAvailabilityService _serviceAvailabilityService;
     private readonly IPricingService _pricingService;
@@ -50,6 +51,7 @@ public class GroupService : IGroupService
     public GroupService(
         IGroupHandler groupHandler,
         IGroupAuditLogHandler auditLogHandler,
+        IAppointmentAuditLogHandler appointmentAuditLogHandler,
         IServiceHandler serviceHandler,
         IServiceAvailabilityService serviceAvailabilityService,
         IPricingService pricingService,
@@ -68,6 +70,7 @@ public class GroupService : IGroupService
     {
         _groupHandler = groupHandler;
         _auditLogHandler = auditLogHandler;
+        _appointmentAuditLogHandler = appointmentAuditLogHandler;
         _serviceHandler = serviceHandler;
         _serviceAvailabilityService = serviceAvailabilityService;
         _pricingService = pricingService;
@@ -547,10 +550,28 @@ public class GroupService : IGroupService
                 if (booking == null)
                     continue;
 
+                BookingStatus oldBookingStatus = booking.Status;
                 BookingStatusVersioning.TrySetStatus(booking, BookingStatus.Cancelled);
+                booking.CancellationReason = "Klijent uklonjen iz grupe";
                 booking.UpdatedAt = now;
                 booking.UpdatedBy = userId;
                 await _appointmentHandler.UpdateBooking(uow, booking);
+
+                // Isti obrazac kao BookingService.SetStatus/AppointmentService.ChangeToTerminalStatus — bez ovoga
+                // bi ovaj SUSTAVOM izveden (iz GroupMember odjave) Booking prijelaz ostao bez traga tko/kada/zašto
+                // (vidi audit-cleanup spec section 20/60, "GroupService.RemoveMember bypassing history").
+                await _appointmentAuditLogHandler.Add(uow, new AppointmentAuditLog
+                {
+                    Id = Guid.NewGuid(),
+                    AppointmentId = futureAppointment.Id.GetValueOrDefault(),
+                    BookingId = booking.Id,
+                    ChangeType = "BookingStatus",
+                    OldValue = oldBookingStatus.ToString(),
+                    NewValue = booking.Status.ToString(),
+                    StatusVersion = booking.StatusVersion,
+                    ChangedAt = now,
+                    ChangedBy = userId
+                });
 
                 // Isti booking.cancelled.v1 event kao izravno otkazivanje Bookinga — izvor (GroupMember odjava)
                 // ne mijenja event-tip/handler (vidi spec section 34). Ista uow transakcija kao mutacija iznad.

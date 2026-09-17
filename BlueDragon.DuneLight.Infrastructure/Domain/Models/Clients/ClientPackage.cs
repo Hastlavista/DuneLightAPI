@@ -56,6 +56,15 @@ public class ClientPackage
     [Column("status")]
     public ClientPackageStatus Status { get; set; }
 
+    /// <summary>Popunjeno SAMO za ClientPackageService.Cancel (ručno administrativno otkazivanje) — odvojeno od
+    /// generičkog UpdatedAt/UpdatedBy jer se paket i dalje smije naknadno dirati (npr. ReturnPackageEntryInTransaction
+    /// za nepovezanu prethodnu rezervaciju) bez gubljenja podatka tko/kada ga je stvarno otkazao.</summary>
+    [Column("cancelled_at")]
+    public DateTimeOffset? CancelledAt { get; set; }
+
+    [Column("cancelled_by")]
+    public Guid? CancelledBy { get; set; }
+
     [Column("created_at")]
     public DateTimeOffset CreatedAt { get; set; }
 
