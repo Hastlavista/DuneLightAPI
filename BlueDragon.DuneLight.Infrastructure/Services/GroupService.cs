@@ -6,6 +6,7 @@ using BlueDragon.DuneLight.Core.DTOs.Appointments;
 using BlueDragon.DuneLight.Core.DTOs.Catalog;
 using BlueDragon.DuneLight.Core.DTOs.Groups;
 using BlueDragon.DuneLight.Core.Enums;
+using BlueDragon.DuneLight.Core.Events;
 using BlueDragon.DuneLight.Core.Interfaces.Catalog;
 using BlueDragon.DuneLight.Core.Interfaces.Groups;
 using BlueDragon.DuneLight.Core.Shared;
@@ -17,6 +18,7 @@ using BlueDragon.DuneLight.Infrastructure.Domain.Models.Employees;
 using BlueDragon.DuneLight.Infrastructure.Domain.Models.Groups;
 using BlueDragon.DuneLight.Infrastructure.Domain.Models.Roster;
 using BlueDragon.DuneLight.Infrastructure.Handlers.Interfaces;
+using BlueDragon.DuneLight.Infrastructure.Outbox;
 using BlueDragon.DuneLight.Infrastructure.UnitOfWork;
 using BlueDragon.DuneLight.Infrastructure.Utils;
 using Microsoft.EntityFrameworkCore;
@@ -42,6 +44,7 @@ public class GroupService : IGroupService
     private readonly IWorkingHoursTemplateHandler _workingHoursTemplateHandler;
     private readonly IScheduleBreakHandler _scheduleBreakHandler;
     private readonly IWaitlistPromotionService _waitlistPromotionService;
+    private readonly IOutboxWriter _outboxWriter;
     private readonly IUnitOfWorkFactory _unitOfWorkFactory;
 
     public GroupService(
@@ -60,6 +63,7 @@ public class GroupService : IGroupService
         IWorkingHoursTemplateHandler workingHoursTemplateHandler,
         IScheduleBreakHandler scheduleBreakHandler,
         IWaitlistPromotionService waitlistPromotionService,
+        IOutboxWriter outboxWriter,
         IUnitOfWorkFactory unitOfWorkFactory)
     {
         _groupHandler = groupHandler;
@@ -77,6 +81,7 @@ public class GroupService : IGroupService
         _workingHoursTemplateHandler = workingHoursTemplateHandler;
         _scheduleBreakHandler = scheduleBreakHandler;
         _waitlistPromotionService = waitlistPromotionService;
+        _outboxWriter = outboxWriter;
         _unitOfWorkFactory = unitOfWorkFactory;
     }
 
@@ -542,10 +547,27 @@ public class GroupService : IGroupService
                 if (booking == null)
                     continue;
 
-                booking.Status = BookingStatus.Cancelled;
+                BookingStatusVersioning.TrySetStatus(booking, BookingStatus.Cancelled);
                 booking.UpdatedAt = now;
                 booking.UpdatedBy = userId;
                 await _appointmentHandler.UpdateBooking(uow, booking);
+
+                // Isti booking.cancelled.v1 event kao izravno otkazivanje Bookinga — izvor (GroupMember odjava)
+                // ne mijenja event-tip/handler (vidi spec section 34). Ista uow transakcija kao mutacija iznad.
+                await _outboxWriter.Add(
+                    uow, organizationId, OutboxEventTypes.BookingCancelledV1,
+                    new BookingCancelledEvent
+                    {
+                        OrganizationId = organizationId,
+                        BookingId = booking.Id.GetValueOrDefault(),
+                        AppointmentId = futureAppointment.Id.GetValueOrDefault(),
+                        ClientId = booking.ClientId,
+                        CompanyId = futureAppointment.CompanyId,
+                        StatusVersion = booking.StatusVersion,
+                        OccurredAt = now
+                    },
+                    now,
+                    idempotencyKey: $"booking-cancelled:{booking.Id.GetValueOrDefault()}:{booking.StatusVersion}");
 
                 // Oslobođeno mjesto -> pokušaj promocije liste čekanja za OVAJ occurrence (spec section 39) —
                 // ista promocijska logika kao izravno otkazivanje Bookinga (BookingService), ne duplicirana ovdje.

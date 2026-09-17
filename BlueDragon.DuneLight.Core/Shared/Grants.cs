@@ -94,6 +94,10 @@ public static class Grants
     /// obrazloženje kao CheckoutView. Read-only (nema Manage parnjaka) jer dashboard ništa ne mutira.</summary>
     public const string DashboardView = "dashboard.view";
 
+    /// <summary>Namjerno bez own/all podjele i bez Manage parnjaka — Notification je interna/operativna povijest
+    /// (vidi spec section 30/58), read-only, ništa se ne konfigurira kroz API.</summary>
+    public const string NotificationsView = "notifications.view";
+
     /// <summary>Puni katalog za GET /api/grants — UI koristi za slaganje GrantGroup-a.</summary>
     public static readonly IReadOnlyList<GrantDefinition> Catalog = new List<GrantDefinition>
     {
@@ -170,6 +174,8 @@ public static class Grants
         new(CommissionsManage, "commissions", "Konfiguracija pravila provizije po zaposleniku/predmetu."),
 
         new(DashboardView, "dashboard", "Pregled operativne nadzorne ploče (raspored, osoblje, financije, upozorenja) po poslovnici."),
+
+        new(NotificationsView, "notifications", "Pregled povijesti logičkih obavijesti po klijentu (interno/operativno)."),
     };
 }
 

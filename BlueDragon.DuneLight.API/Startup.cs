@@ -17,6 +17,7 @@ using BlueDragon.DuneLight.Core.Interfaces.Commissions;
 using BlueDragon.DuneLight.Core.Interfaces.Dashboard;
 using BlueDragon.DuneLight.Core.Interfaces.Employees;
 using BlueDragon.DuneLight.Core.Interfaces.Groups;
+using BlueDragon.DuneLight.Core.Interfaces.Notifications;
 using BlueDragon.DuneLight.Core.Interfaces.Onboarding;
 using BlueDragon.DuneLight.Core.Interfaces.Organization;
 using BlueDragon.DuneLight.Core.Interfaces.Permissions;
@@ -28,6 +29,8 @@ using BlueDragon.DuneLight.Infrastructure.Domain.Settings;
 using BlueDragon.DuneLight.Infrastructure.Handlers.Implementations;
 using BlueDragon.DuneLight.Infrastructure.Handlers.Interfaces;
 using BlueDragon.DuneLight.Infrastructure.Integrations;
+using BlueDragon.DuneLight.Infrastructure.Outbox;
+using BlueDragon.DuneLight.Infrastructure.Outbox.Handlers;
 using BlueDragon.DuneLight.Infrastructure.Services;
 using BlueDragon.DuneLight.Infrastructure.UnitOfWork;
 using Microsoft.AspNetCore.Authentication;
@@ -83,6 +86,9 @@ public class Startup
 
         BrandingSettings brandingSettings = Configuration.GetSection("BrandingSettings").Get<BrandingSettings>();
         services.AddSingleton(brandingSettings);
+
+        OutboxSettings outboxSettings = Configuration.GetSection("OutboxSettings").Get<OutboxSettings>() ?? new OutboxSettings();
+        services.AddSingleton(outboxSettings);
 
         #endregion
 
@@ -200,6 +206,23 @@ public class Startup
 
         services.AddScoped<IOperationalDashboardService, OperationalDashboardService>();
 
+        services.AddScoped<INotificationService, NotificationService>();
+
+        #endregion
+
+        #region Outbox
+
+        // Infra-generička Add — poslovni servisi je pozivaju unutar VLASTITOG uow (vidi IOutboxWriter).
+        services.AddSingleton<IOutboxWriter, OutboxWriter>();
+
+        // Business handleri (Type -> handler, vidi spec section 22) — eksplicitna DI registracija, bez
+        // reflection/assembly-scan. Redoslijed nije bitan, OutboxProcessorService gradi dictionary po Type-u.
+        services.AddSingleton<IOutboxMessageHandler, BookingCancelledNotificationHandler>();
+        services.AddSingleton<IOutboxMessageHandler, BookingNoShowNotificationHandler>();
+        services.AddSingleton<IOutboxMessageHandler, WaitlistPromotedNotificationHandler>();
+
+        services.AddHostedService<OutboxProcessorService>();
+
         #endregion
 
         #region Handlers
@@ -255,6 +278,9 @@ public class Startup
         services.AddSingleton<IOrganizationBrandingHandler, OrganizationBrandingHandler>();
         services.AddSingleton<IOrganizationBrandingAuditLogHandler, OrganizationBrandingAuditLogHandler>();
         services.AddSingleton<IOrganizationSettingsHandler, OrganizationSettingsHandler>();
+
+        services.AddSingleton<IOutboxHandler, OutboxHandler>();
+        services.AddSingleton<INotificationHandler, NotificationHandler>();
 
         #endregion
 

@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
 using BlueDragon.DuneLight.Core.DTOs.Appointments;
 using BlueDragon.DuneLight.Core.Enums;
@@ -110,6 +111,13 @@ public class AppointmentHandler : IAppointmentHandler
         return uow.Context.Bookings
             .Include(b => b.Appointment).ThenInclude(a => a.Service)
             .SingleOrDefaultAsync(b => b.OrganizationId == organizationId && b.Id == id);
+    }
+
+    public Task<Booking> GetBookingForUpdate(IUnitOfWork uow, Guid organizationId, Guid bookingId, CancellationToken cancellationToken = default)
+    {
+        return uow.Context.Bookings
+            .FromSqlInterpolated($"SELECT * FROM dunelight.bookings WHERE organization_id = {organizationId} AND id = {bookingId} FOR UPDATE")
+            .SingleOrDefaultAsync(cancellationToken);
     }
 
     public Task<List<Booking>> GetBookings(IUnitOfWork uow, Guid organizationId, Guid appointmentId, List<Guid> clientIds)

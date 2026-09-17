@@ -54,6 +54,17 @@ public class Booking
     [Column("status")]
     public BookingStatus Status { get; set; }
 
+    /// <summary>Monotono raste SAMO kad se Status stvarno promijeni (nikad za idempotentan poziv sa istim
+    /// statusom) — vidi BookingStatusVersioning.TrySetStatus, jedina dozvoljena mutacijska putanja za Status.
+    /// Daje stabilan identitet JEDNOJ konkretnoj pojavi prijelaza (npr. Confirmed-&gt;NoShow #5 naspram sljedećeg
+    /// Confirmed-&gt;NoShow #7 nakon međuvremenog #6 povratka na Confirmed), potrebno jer grupni Booking status
+    /// legitimno ciklira (Confirmed/NoShow/Cancelled naprijed-natrag) — bez ovoga Outbox idempotencija po samom
+    /// BookingId bi trajno "zaključala" prvu pojavu i tiho progutala svaku narednu (vidi BookingCancelledEvent/
+    /// BookingNoShowEvent.StatusVersion, Notification.SourceVersion). Počinje od 0 za sve retke (i postojeće i
+    /// nove) — povijesne pojave prije uvođenja ovog polja se ne rekonstruiraju.</summary>
+    [Column("status_version")]
+    public int StatusVersion { get; set; }
+
     /// <summary>Cijena OVOG klijenta za ovaj booking (uvijek popunjeno od trenutka kreiranja, prije bilo kakve
     /// naplate) — vrijednost usluge bez obzira na način podmirenja: kod paket-pokrića (ClientPackageId) ovo i
     /// dalje nosi redovnu/predloženu cijenu (ne 0), OutstandingAmount=0 samo znači da je obveza podmirena

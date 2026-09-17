@@ -7,6 +7,7 @@ using BlueDragon.DuneLight.Core.DTOs.Appointments;
 using BlueDragon.DuneLight.Core.DTOs.Catalog;
 using BlueDragon.DuneLight.Core.DTOs.Clients;
 using BlueDragon.DuneLight.Core.Enums;
+using BlueDragon.DuneLight.Core.Events;
 using BlueDragon.DuneLight.Core.Interfaces.Appointments;
 using BlueDragon.DuneLight.Core.Interfaces.Catalog;
 using BlueDragon.DuneLight.Core.Interfaces.Clients;
@@ -19,6 +20,7 @@ using BlueDragon.DuneLight.Infrastructure.Domain.Models.Clients;
 using BlueDragon.DuneLight.Infrastructure.Domain.Models.Employees;
 using BlueDragon.DuneLight.Infrastructure.Domain.Models.Roster;
 using BlueDragon.DuneLight.Infrastructure.Handlers.Interfaces;
+using BlueDragon.DuneLight.Infrastructure.Outbox;
 using BlueDragon.DuneLight.Infrastructure.UnitOfWork;
 using BlueDragon.DuneLight.Infrastructure.Utils;
 using Microsoft.EntityFrameworkCore;
@@ -47,6 +49,7 @@ public class AppointmentService : IAppointmentService
     private readonly IPaymentLedgerService _paymentLedgerService;
     private readonly ICheckoutHandler _checkoutHandler;
     private readonly ICommissionLedgerService _commissionLedgerService;
+    private readonly IOutboxWriter _outboxWriter;
     private readonly IUnitOfWorkFactory _unitOfWorkFactory;
 
     public AppointmentService(
@@ -69,6 +72,7 @@ public class AppointmentService : IAppointmentService
         IPaymentLedgerService paymentLedgerService,
         ICheckoutHandler checkoutHandler,
         ICommissionLedgerService commissionLedgerService,
+        IOutboxWriter outboxWriter,
         IUnitOfWorkFactory unitOfWorkFactory)
     {
         _appointmentHandler = appointmentHandler;
@@ -90,6 +94,7 @@ public class AppointmentService : IAppointmentService
         _paymentLedgerService = paymentLedgerService;
         _checkoutHandler = checkoutHandler;
         _commissionLedgerService = commissionLedgerService;
+        _outboxWriter = outboxWriter;
         _unitOfWorkFactory = unitOfWorkFactory;
     }
 
@@ -276,7 +281,7 @@ public class AppointmentService : IAppointmentService
                 if (bookingRow.Amount != bookingAmount)
                     await LogAmountChangeInTransaction(uow, id, bookingRow.Id, bookingRow.Amount, bookingAmount, userId);
 
-                bookingRow.Status = BookingStatus.Completed;
+                BookingStatusVersioning.TrySetStatus(bookingRow, BookingStatus.Completed);
                 bookingRow.Amount = bookingAmount;
                 bookingRow.SuggestedAmount = suggestedAmount;
                 bookingRow.IsAmountManuallyOverridden = settlement.Amount.HasValue && settlement.Amount.Value != suggestedAmount;
@@ -1003,7 +1008,7 @@ public class AppointmentService : IAppointmentService
             foreach (Booking booking in appointment.Bookings.Where(b => b.Status == BookingStatus.Confirmed))
             {
                 BookingStatus oldBookingStatus = booking.Status;
-                booking.Status = targetBookingStatus;
+                BookingStatusVersioning.TrySetStatus(booking, targetBookingStatus);
                 booking.CancellationReason = request.CancellationReason;
                 booking.UpdatedAt = DateTimeOffset.UtcNow;
                 booking.UpdatedBy = userId;
@@ -1034,6 +1039,43 @@ public class AppointmentService : IAppointmentService
                     ChangedAt = DateTimeOffset.UtcNow,
                     ChangedBy = userId
                 });
+
+                // Jedan booking.cancelled.v1/booking.no-show.v1 po STVARNO otkazanom/izostalom Bookingu (ne jedan
+                // generički Appointment event) — vidi spec section 33. Ista uow transakcija kao mutacija iznad.
+                if (targetBookingStatus == BookingStatus.Cancelled)
+                {
+                    await _outboxWriter.Add(
+                        uow, organizationId, OutboxEventTypes.BookingCancelledV1,
+                        new BookingCancelledEvent
+                        {
+                            OrganizationId = organizationId,
+                            BookingId = booking.Id.GetValueOrDefault(),
+                            AppointmentId = id,
+                            ClientId = booking.ClientId,
+                            CompanyId = appointment.CompanyId,
+                            StatusVersion = booking.StatusVersion,
+                            OccurredAt = DateTimeOffset.UtcNow
+                        },
+                        DateTimeOffset.UtcNow,
+                        idempotencyKey: $"booking-cancelled:{booking.Id.GetValueOrDefault()}:{booking.StatusVersion}");
+                }
+                else if (targetBookingStatus == BookingStatus.NoShow)
+                {
+                    await _outboxWriter.Add(
+                        uow, organizationId, OutboxEventTypes.BookingNoShowV1,
+                        new BookingNoShowEvent
+                        {
+                            OrganizationId = organizationId,
+                            BookingId = booking.Id.GetValueOrDefault(),
+                            AppointmentId = id,
+                            ClientId = booking.ClientId,
+                            CompanyId = appointment.CompanyId,
+                            StatusVersion = booking.StatusVersion,
+                            OccurredAt = DateTimeOffset.UtcNow
+                        },
+                        DateTimeOffset.UtcNow,
+                        idempotencyKey: $"booking-noshow:{booking.Id.GetValueOrDefault()}:{booking.StatusVersion}");
+                }
 
                 if (shouldReturn)
                 {

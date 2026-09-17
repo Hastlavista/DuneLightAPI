@@ -8,7 +8,9 @@ using BlueDragon.DuneLight.Infrastructure.Domain.Models.Clients;
 using BlueDragon.DuneLight.Infrastructure.Domain.Models.Commissions;
 using BlueDragon.DuneLight.Infrastructure.Domain.Models.Employees;
 using BlueDragon.DuneLight.Infrastructure.Domain.Models.Groups;
+using BlueDragon.DuneLight.Infrastructure.Domain.Models.Notifications;
 using BlueDragon.DuneLight.Infrastructure.Domain.Models.Organizations;
+using BlueDragon.DuneLight.Infrastructure.Domain.Models.Outbox;
 using BlueDragon.DuneLight.Infrastructure.Domain.Models.Permissions;
 using BlueDragon.DuneLight.Infrastructure.Domain.Models.Products;
 using BlueDragon.DuneLight.Infrastructure.Domain.Models.Roster;
@@ -79,6 +81,9 @@ public class DatabaseContext : DbContext
     public DbSet<OrganizationBrandingAuditLog> OrganizationBrandingAuditLog { get; set; }
     public DbSet<OrganizationSettings> OrganizationSettings { get; set; }
 
+    public DbSet<OutboxMessage> OutboxMessages { get; set; }
+    public DbSet<Notification> Notifications { get; set; }
+
     public DbSet<GrantGroup> GrantGroups { get; set; }
     public DbSet<GrantGroupGrant> GrantGroupGrants { get; set; }
     public DbSet<UserGrantGroup> UserGrantGroups { get; set; }
@@ -122,6 +127,7 @@ public class DatabaseContext : DbContext
         ConfigureGroups(modelBuilder);
         ConfigureRoster(modelBuilder);
         ConfigurePermissions(modelBuilder);
+        ConfigureOutboxAndNotifications(modelBuilder);
 
         base.OnModelCreating(modelBuilder);
     }
@@ -942,6 +948,42 @@ public class DatabaseContext : DbContext
             .WithMany()
             .HasForeignKey(u => u.RoleId)
             .OnDelete(DeleteBehavior.Cascade);
+    }
+
+    private static void ConfigureOutboxAndNotifications(ModelBuilder modelBuilder)
+    {
+        // Idempotency partial unique indeks (organization_id, type, idempotency_key WHERE idempotency_key IS
+        // NOT NULL) je raw SQL u migraciji (isti obrazac kao ostali "djelomični unique preko EF-neizraziva
+        // uvjeta" slučajevi u ovoj bazi) — ovdje samo standardni indeksi za poll upit.
+        modelBuilder.Entity<OutboxMessage>().HasKey(m => m.Id);
+        modelBuilder.Entity<OutboxMessage>().HasIndex(m => new { m.Status, m.AvailableAt });
+        modelBuilder.Entity<OutboxMessage>()
+            .Property(m => m.Status)
+            .HasConversion(v => v.ToString(), v => Enum.Parse<OutboxMessageStatus>(v));
+        modelBuilder.Entity<OutboxMessage>().Property(m => m.Payload).HasColumnType("jsonb");
+
+        modelBuilder.Entity<Notification>().HasKey(n => n.Id);
+        modelBuilder.Entity<Notification>().HasIndex(n => new { n.OrganizationId, n.ClientId, n.CreatedAt });
+        // Idempotencija — najviše jedan Notification po KONKRETNOJ poslovnoj pojavi, uključujući SourceVersion
+        // (vidi spec section 28/5-18, Notification.cs).
+        modelBuilder.Entity<Notification>()
+            .HasIndex(n => new { n.OrganizationId, n.Type, n.SourceType, n.SourceId, n.SourceVersion })
+            .IsUnique();
+        modelBuilder.Entity<Notification>()
+            .Property(n => n.Type)
+            .HasConversion(v => v.ToString(), v => Enum.Parse<NotificationType>(v));
+        modelBuilder.Entity<Notification>()
+            .Property(n => n.SourceType)
+            .HasConversion(v => v.ToString(), v => Enum.Parse<NotificationSourceType>(v));
+        modelBuilder.Entity<Notification>()
+            .Property(n => n.Status)
+            .HasConversion(v => v.ToString(), v => Enum.Parse<NotificationStatus>(v));
+        modelBuilder.Entity<Notification>().Property(n => n.Data).HasColumnType("jsonb");
+        modelBuilder.Entity<Notification>()
+            .HasOne(n => n.Client)
+            .WithMany()
+            .HasForeignKey(n => n.ClientId)
+            .OnDelete(DeleteBehavior.Restrict);
     }
 
     public static DatabaseContext GenerateContext(string connectionString)

@@ -5,6 +5,7 @@ using System.Threading.Tasks;
 using BlueDragon.DuneLight.Core.DTOs.Appointments;
 using BlueDragon.DuneLight.Core.DTOs.Catalog;
 using BlueDragon.DuneLight.Core.Enums;
+using BlueDragon.DuneLight.Core.Events;
 using BlueDragon.DuneLight.Core.Interfaces.Appointments;
 using BlueDragon.DuneLight.Core.Interfaces.Catalog;
 using BlueDragon.DuneLight.Core.Shared;
@@ -14,6 +15,7 @@ using BlueDragon.DuneLight.Infrastructure.Domain.Models.Clients;
 using BlueDragon.DuneLight.Infrastructure.Domain.Models.Employees;
 using BlueDragon.DuneLight.Infrastructure.Domain.Models.Groups;
 using BlueDragon.DuneLight.Infrastructure.Handlers.Interfaces;
+using BlueDragon.DuneLight.Infrastructure.Outbox;
 using BlueDragon.DuneLight.Infrastructure.UnitOfWork;
 using Microsoft.EntityFrameworkCore;
 
@@ -32,6 +34,7 @@ public class WaitlistService : IWaitlistService, IWaitlistPromotionService
     private readonly IGroupHandler _groupHandler;
     private readonly IEmployeeHandler _employeeHandler;
     private readonly IPricingService _pricingService;
+    private readonly IOutboxWriter _outboxWriter;
     private readonly IUnitOfWorkFactory _unitOfWorkFactory;
 
     public WaitlistService(
@@ -42,6 +45,7 @@ public class WaitlistService : IWaitlistService, IWaitlistPromotionService
         IGroupHandler groupHandler,
         IEmployeeHandler employeeHandler,
         IPricingService pricingService,
+        IOutboxWriter outboxWriter,
         IUnitOfWorkFactory unitOfWorkFactory)
     {
         _waitlistHandler = waitlistHandler;
@@ -51,6 +55,7 @@ public class WaitlistService : IWaitlistService, IWaitlistPromotionService
         _groupHandler = groupHandler;
         _employeeHandler = employeeHandler;
         _pricingService = pricingService;
+        _outboxWriter = outboxWriter;
         _unitOfWorkFactory = unitOfWorkFactory;
     }
 
@@ -299,6 +304,23 @@ public class WaitlistService : IWaitlistService, IWaitlistPromotionService
                 ChangedAt = now,
                 ChangedBy = userId
             });
+
+            // Ista transakcija kao promocija + stvaranje Bookinga (vidi spec section 35) — rollback (npr.
+            // konkurentna revalidacija koja baci iznimku niže u petlji) briše i ovaj redak zajedno s promocijom.
+            await _outboxWriter.Add(
+                uow, organizationId, OutboxEventTypes.WaitlistPromotedV1,
+                new WaitlistPromotedEvent
+                {
+                    OrganizationId = organizationId,
+                    WaitlistEntryId = entry.Id.GetValueOrDefault(),
+                    BookingId = booking.Id.GetValueOrDefault(),
+                    AppointmentId = appointmentId,
+                    ClientId = entry.ClientId,
+                    CompanyId = appointment.CompanyId,
+                    OccurredAt = now
+                },
+                now,
+                idempotencyKey: $"waitlist-promoted:{entry.Id.GetValueOrDefault()}");
 
             freeSeats--;
         }

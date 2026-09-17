@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Threading;
 using System.Threading.Tasks;
 using BlueDragon.DuneLight.Core.DTOs.Appointments;
 using BlueDragon.DuneLight.Core.Shared;
@@ -38,6 +39,13 @@ public interface IAppointmentHandler
 
     /// <summary>Kao <see cref="GetBooking(Guid, Guid, Guid)"/>, ali unutar zajedničke transakcije — vidi IUnitOfWork.</summary>
     Task<Booking> GetBooking(IUnitOfWork uow, Guid organizationId, Guid appointmentId, Guid clientId);
+
+    /// <summary>Zaključava JEDAN Booking redak (SELECT ... FOR UPDATE) po vlastitom Id-u, unutar zajedničke
+    /// transakcije — koristi BookingService.SetStatus (korekcija NoShow/Cancelled -&gt; Confirmed) i
+    /// BookingNoShowNotificationHandler/BookingCancelledNotificationHandler da PostgreSQL serijalizira
+    /// konkurentnu Outbox obradu s administrativnom korekcijom ISTOG Bookinga (vidi spec section 2-4/39). Null
+    /// ako redak ne postoji. Namjerno bez ikakvih navigacija/Include — najuži lock, ne dira Appointment/Client.</summary>
+    Task<Booking> GetBookingForUpdate(IUnitOfWork uow, Guid organizationId, Guid bookingId, CancellationToken cancellationToken = default);
 
     /// <summary>Batch verzija za listu klijenata u jednom upitu (izbjegava N+1) — unutar zajedničke transakcije.</summary>
     Task<List<Booking>> GetBookings(IUnitOfWork uow, Guid organizationId, Guid appointmentId, List<Guid> clientIds);

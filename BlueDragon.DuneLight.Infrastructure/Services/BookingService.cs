@@ -10,6 +10,7 @@ using BlueDragon.DuneLight.Core.Interfaces.Appointments;
 using BlueDragon.DuneLight.Core.Interfaces.Catalog;
 using BlueDragon.DuneLight.Core.Interfaces.Clients;
 using BlueDragon.DuneLight.Core.Interfaces.Organization;
+using BlueDragon.DuneLight.Core.Events;
 using BlueDragon.DuneLight.Core.Shared;
 using BlueDragon.DuneLight.Core.Shared.Exceptions;
 using BlueDragon.DuneLight.Infrastructure.Domain.Models.Appointments;
@@ -17,6 +18,7 @@ using BlueDragon.DuneLight.Infrastructure.Domain.Models.Checkouts;
 using BlueDragon.DuneLight.Infrastructure.Domain.Models.Clients;
 using BlueDragon.DuneLight.Infrastructure.Domain.Models.Employees;
 using BlueDragon.DuneLight.Infrastructure.Handlers.Interfaces;
+using BlueDragon.DuneLight.Infrastructure.Outbox;
 using BlueDragon.DuneLight.Infrastructure.UnitOfWork;
 using BlueDragon.DuneLight.Infrastructure.Utils;
 using Microsoft.EntityFrameworkCore;
@@ -41,6 +43,8 @@ public class BookingService : IBookingService
     private readonly IWaitlistPromotionService _waitlistPromotionService;
     private readonly IPaymentLedgerService _paymentLedgerService;
     private readonly ICheckoutHandler _checkoutHandler;
+    private readonly IOutboxWriter _outboxWriter;
+    private readonly INotificationHandler _notificationHandler;
     private readonly IUnitOfWorkFactory _unitOfWorkFactory;
 
     public BookingService(
@@ -55,6 +59,8 @@ public class BookingService : IBookingService
         IWaitlistPromotionService waitlistPromotionService,
         IPaymentLedgerService paymentLedgerService,
         ICheckoutHandler checkoutHandler,
+        IOutboxWriter outboxWriter,
+        INotificationHandler notificationHandler,
         IUnitOfWorkFactory unitOfWorkFactory)
     {
         _appointmentHandler = appointmentHandler;
@@ -68,6 +74,8 @@ public class BookingService : IBookingService
         _waitlistPromotionService = waitlistPromotionService;
         _paymentLedgerService = paymentLedgerService;
         _checkoutHandler = checkoutHandler;
+        _outboxWriter = outboxWriter;
+        _notificationHandler = notificationHandler;
         _unitOfWorkFactory = unitOfWorkFactory;
     }
 
@@ -215,11 +223,27 @@ public class BookingService : IBookingService
             };
         }
 
-        BookingStatus oldStatus = booking.Status;
-
         try
         {
             await using IUnitOfWork uow = await _unitOfWorkFactory.Begin();
+
+            if (!isNewGuestBooking)
+            {
+                // Zaključava OVAJ Booking redak (FOR UPDATE) i od ovog trenutka koristi njegovo stanje POD
+                // LOCKOM kao ishodišnu točku za prijelaz — serijalizira ovu (eventualnu) administrativnu
+                // korekciju s konkurentnim BookingNoShowNotificationHandler/BookingCancelledNotificationHandler
+                // koji zaključavaju ISTI redak prije donošenja Notification odluke (vidi spec section 2-4/39).
+                // PostgreSQL garantira JEDAN od dva ishoda bez obzira koji konkurent prvi stigne do lock-a —
+                // bez ovoga je moguće da Outbox worker stvori Pending Notification ZA STARU pojavu nakon što je
+                // korekcija već commitala (i obrnuto), ostavljajući nekonzistentnu kombinaciju Booking.Status +
+                // Notification.Status (vidi spec section 1).
+                booking = await _appointmentHandler.GetBookingForUpdate(uow, organizationId, booking.Id.GetValueOrDefault());
+                if (booking == null)
+                    throw new NotFoundAppException("Booking", clientId);
+            }
+
+            BookingStatus oldStatus = booking.Status;
+            int oldStatusVersion = booking.StatusVersion;
 
             // Kapacitet se provjerava SAMO kad ovaj poziv stvarno persistira NOVI Confirmed (mjesto-zauzimajući)
             // Booking — gost-čekiranje kroz GroupAttendanceService uvijek šalje Completed/NoShow (nikad Confirmed),
@@ -264,6 +288,66 @@ public class BookingService : IBookingService
                     ChangedAt = DateTimeOffset.UtcNow,
                     ChangedBy = userId
                 });
+            }
+
+            // Notification-producing Outbox event — samo za STVARAN prijelaz Confirmed -> Cancelled/NoShow (ne
+            // za idempotentne ponovljene pokušaje niti za Completed/poništenje), ista provjera pokriva i
+            // individualni i grupni put jer oboje ovdje završavaju istim booking.Status = request.Status (vidi
+            // spec section 32/36). Ista uow transakcija kao domenska mutacija — rollback briše i ovaj redak.
+            if (oldStatus == BookingStatus.Confirmed && booking.Status == BookingStatus.Cancelled)
+            {
+                await _outboxWriter.Add(
+                    uow, organizationId, OutboxEventTypes.BookingCancelledV1,
+                    new BookingCancelledEvent
+                    {
+                        OrganizationId = organizationId,
+                        BookingId = booking.Id.GetValueOrDefault(),
+                        AppointmentId = appointmentId,
+                        ClientId = booking.ClientId,
+                        CompanyId = appointment.CompanyId,
+                        StatusVersion = booking.StatusVersion,
+                        OccurredAt = DateTimeOffset.UtcNow
+                    },
+                    DateTimeOffset.UtcNow,
+                    idempotencyKey: $"booking-cancelled:{booking.Id.GetValueOrDefault()}:{booking.StatusVersion}");
+            }
+            else if (oldStatus == BookingStatus.Confirmed && booking.Status == BookingStatus.NoShow)
+            {
+                await _outboxWriter.Add(
+                    uow, organizationId, OutboxEventTypes.BookingNoShowV1,
+                    new BookingNoShowEvent
+                    {
+                        OrganizationId = organizationId,
+                        BookingId = booking.Id.GetValueOrDefault(),
+                        AppointmentId = appointmentId,
+                        ClientId = booking.ClientId,
+                        CompanyId = appointment.CompanyId,
+                        StatusVersion = booking.StatusVersion,
+                        OccurredAt = DateTimeOffset.UtcNow
+                    },
+                    DateTimeOffset.UtcNow,
+                    idempotencyKey: $"booking-noshow:{booking.Id.GetValueOrDefault()}:{booking.StatusVersion}");
+            }
+            else if (oldStatus == BookingStatus.NoShow && booking.Status == BookingStatus.Confirmed)
+            {
+                // Uska administrativna korekcija (vidi spec section 2/11-12/37) — cilja TOČNO onu NoShow pojavu
+                // koja se ovime korigira (oldStatusVersion, pročitan PRIJE inkrementa na Confirmed gore), NIKAD
+                // neku buduću NoShow pojavu istog Bookinga (vidi spec section 11). Ako je odgovarajući
+                // booking.no-show.v1 Notification VEĆ obrađen kao Pending prije ove korekcije, markira ga
+                // Cancelled u ISTOJ transakciji. Ako Outbox još nije stigao obraditi izvorni event, ovo je no-op
+                // — tu race pokriva occurrence-svjesna re-provjera unutar BookingNoShowNotificationHandler, koji
+                // zaključava ISTI Booking redak prije donošenja svoje odluke (vidi FOR UPDATE lock iznad).
+                await _notificationHandler.CancelIfPending(
+                    uow, organizationId, NotificationType.BookingNoShow, NotificationSourceType.Booking,
+                    booking.Id.GetValueOrDefault(), oldStatusVersion);
+            }
+            else if (oldStatus == BookingStatus.Cancelled && booking.Status == BookingStatus.Confirmed)
+            {
+                // Isti obrazac kao NoShow korekcija iznad, za Cancelled -> Confirmed (vidi spec section 13) —
+                // zatvara asimetriju gdje je do sada samo NoShow imao ovo čišćenje.
+                await _notificationHandler.CancelIfPending(
+                    uow, organizationId, NotificationType.BookingCancelled, NotificationSourceType.Booking,
+                    booking.Id.GetValueOrDefault(), oldStatusVersion);
             }
 
             // Oslobođeno mjesto na grupnom terminu -> pokušaj promocije liste čekanja (spec section 12/40) — samo
@@ -378,7 +462,7 @@ public class BookingService : IBookingService
             booking.IsLateCancellation = BookingCancellationPolicy.IsLateCancellation(appointment.StartsAt, DateTimeOffset.UtcNow, cutoffMinutes);
         }
 
-        booking.Status = request.Status;
+        BookingStatusVersioning.TrySetStatus(booking, request.Status);
         if (request.Status == BookingStatus.Cancelled || request.Status == BookingStatus.NoShow)
             booking.CancellationReason = request.CancellationReason;
 
@@ -421,7 +505,7 @@ public class BookingService : IBookingService
             booking.IsLateCancellation = BookingCancellationPolicy.IsLateCancellation(appointment.StartsAt, DateTimeOffset.UtcNow, cutoffMinutes);
         }
 
-        booking.Status = request.Status;
+        BookingStatusVersioning.TrySetStatus(booking, request.Status);
         booking.CancellationReason = request.CancellationReason;
     }
 

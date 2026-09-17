@@ -73,6 +73,9 @@ public static class Tables
     public const string CommissionRules = "commission_rules";
     public const string CommissionEntries = "commission_entries";
 
+    public const string OutboxMessages = "outbox_messages";
+    public const string Notifications = "notifications";
+
     public const string GrantGroups = "grant_groups";
     public const string GrantGroupGrants = "grant_group_grants";
     public const string UserGrantGroups = "user_grant_groups";
