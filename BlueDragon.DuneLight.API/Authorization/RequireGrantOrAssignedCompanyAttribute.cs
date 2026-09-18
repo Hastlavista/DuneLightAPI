@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
 using System.Threading.Tasks;
@@ -28,6 +29,10 @@ public class RequireGrantOrAssignedCompanyAttribute : Attribute, IAsyncAuthoriza
 
         _grants = grants;
     }
+
+    /// <summary>Read-only pristup navedenim grantovima za reflection-based diagnostiku (vidi
+    /// EndpointGrantMetadataProvider) — ne utječe na OnAuthorizationAsync ponašanje ispod.</summary>
+    public IReadOnlyList<string> Grants => _grants;
 
     public async Task OnAuthorizationAsync(AuthorizationFilterContext context)
     {

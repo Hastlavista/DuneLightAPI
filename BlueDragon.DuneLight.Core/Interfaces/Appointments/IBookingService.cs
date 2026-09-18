@@ -24,9 +24,10 @@ public interface IBookingService
     /// dopušteni ciljni statusi su Cancelled/NoShow (Completed ide isključivo kroz
     /// IAppointmentService.CompleteNew/CompleteExisting, koji naplatu razrješavaju po klijentu preko
     /// AppointmentCompleteRequest.Settlements — mješovito plaćanje na istom terminu je podržano) i Confirmed KAO
-    /// USKA administrativna korekcija ISKLJUČIVO iz Completed (poništenje pogrešnog check-ina — Cancelled/NoShow
-    /// nemaju povratnu putanju za Individual, vidi BookingService.ApplyIndividualCompletionCorrection) — za
-    /// Form=Group dopušteni su svi prijelazi uklj. povratak na Confirmed s bilo kojeg terminalnog statusa
-    /// (poništenje check-ina/otkazivanja).</summary>
+    /// USKA administrativna korekcija IZ Completed (poništenje pogrešnog check-ina, vidi
+    /// BookingService.ApplyIndividualCompletionCorrection) ILI IZ NoShow (poništenje pogrešno evidentiranog
+    /// izostanka, vidi BookingService.ApplyIndividualNoShowCorrection) — Cancelled nema povratnu putanju za
+    /// Individual — za Form=Group dopušteni su svi prijelazi uklj. povratak na Confirmed s bilo kojeg terminalnog
+    /// statusa (poništenje check-ina/otkazivanja).</summary>
     Task<BookingDto> SetStatus(Guid organizationId, Guid userId, bool hasFullScope, Guid appointmentId, Guid clientId, BookingSetStatusRequest request);
 }

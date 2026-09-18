@@ -179,21 +179,26 @@ public class BookingService : IBookingService
         Booking booking = appointment.Bookings.FirstOrDefault(b => b.ClientId == clientId);
         bool isNewGuestBooking = booking == null;
 
-        // Individual: Confirmed je dopušten ISKLJUČIVO kao korekcija odrađenog check-ina (Completed -> Confirmed,
-        // vidi ApplyIndividualCompletionCorrection) ili kao idempotentan retry (Confirmed -> Confirmed no-op, vidi
-        // BookingStatusVersioning.TrySetStatus) — Cancelled/NoShow -> Confirmed NISU podržani prijelazi za
-        // Individual (namjerno uže od Group, koji dopušta povratak s BILO KOJEG terminalnog statusa — vidi spec
-        // section 5). Individualni Booking uvijek postoji od kreiranja termina (nikad ad-hoc gost kao Group), pa
-        // isNewGuestBooking ovdje znači nepostojeći Booking — NotFound, ne validacijska greška.
+        // Individual: Confirmed je dopušten kao korekcija odrađenog check-ina (Completed -> Confirmed, vidi
+        // ApplyIndividualCompletionCorrection), korekcija pogrešno evidentiranog izostanka (NoShow -> Confirmed,
+        // vidi ApplyIndividualNoShowCorrection — P1 operativna korekcija, live E2E pokazao da izostanak bez ove
+        // putanje trajno "zaglavi" i booking i pripadnu Notification pojavu) ili kao idempotentan retry
+        // (Confirmed -> Confirmed no-op, vidi BookingStatusVersioning.TrySetStatus) — Cancelled -> Confirmed I
+        // DALJE NIJE podržan prijelaz za Individual (namjerno uže od Group, koji dopušta povratak s BILO KOJEG
+        // terminalnog statusa — vidi spec section 5; nema poznatog operativnog scenarija gdje bi pogrešno
+        // otkazivanje individualnog bookinga trebalo istu administrativnu korekciju kao completion/no-show
+        // greška, za razliku od njih dvoje ovo NIJE zatraženo). Individualni Booking uvijek postoji od kreiranja
+        // termina (nikad ad-hoc gost kao Group), pa isNewGuestBooking ovdje znači nepostojeći Booking — NotFound,
+        // ne validacijska greška.
         if (!isGroup && request.Status == BookingStatus.Confirmed)
         {
             if (isNewGuestBooking)
                 throw new NotFoundAppException("Booking", clientId);
 
-            if (booking.Status != BookingStatus.Completed && booking.Status != BookingStatus.Confirmed)
+            if (booking.Status != BookingStatus.Completed && booking.Status != BookingStatus.NoShow && booking.Status != BookingStatus.Confirmed)
                 throw new ValidationAppException(
                     "Povratak na Confirmed za individualni booking dopušten je samo korekcijom odrađenog check-ina " +
-                    "(Completed -> Confirmed) — Cancelled/NoShow nemaju povratnu putanju.");
+                    "(Completed -> Confirmed) ili pogrešno evidentiranog izostanka (NoShow -> Confirmed) — Cancelled nema povratnu putanju.");
         }
 
         if (booking == null)
@@ -289,6 +294,8 @@ public class BookingService : IBookingService
             (PaymentMethod Method, decimal Amount)? pendingPayment = null;
             if (isGroup)
                 pendingPayment = await ApplyGroupTransition(uow, organizationId, userId, appointment, booking, request);
+            else if (request.Status == BookingStatus.Confirmed && booking.Status == BookingStatus.NoShow)
+                await ApplyIndividualNoShowCorrection(uow, organizationId, userId, appointment, booking);
             else if (request.Status == BookingStatus.Confirmed)
                 await ApplyIndividualCompletionCorrection(uow, organizationId, userId, appointment, booking);
             else
@@ -631,13 +638,46 @@ public class BookingService : IBookingService
             await TryRevertAppointmentCompletion(uow, organizationId, userId, appointment);
     }
 
-    /// <summary>Vraća Appointment.Status Completed -&gt; Scheduled — pozivatelj (ApplyIndividualCompletionCorrection)
-    /// već je utvrdio da je OVAJ poziv stvaran Completed-&gt;Confirmed prijelaz (ne idempotentan retry). Namjerno
-    /// BEZUVJETNO, bez obzira ostaje li neki SESTRINSKI Booking na istom terminu (duo/multi-klijent Individual,
-    /// vidi Booking.cs "mješovito plaćanje na istom terminu") i dalje Completed — vidi Appointment.Status
-    /// napomenu na ApplyIndividualCompletionCorrection za obrazloženje invarijante ("Completed = nema
-    /// nerazriješenih Confirmed Bookinga"). Bez ovoga bi AppointmentService.CompleteExisting trajno odbijao
-    /// ponovan completion istog termina s ALREADY_COMPLETED nakon korekcije (vidi spec section 6/45).
+    /// <summary>Form=Individual, NoShow -&gt; Confirmed: uska administrativna korekcija pogrešno evidentiranog
+    /// izostanka (P1 operativna korekcija, live E2E pokazao da individualni Booking nije imao povratnu putanju s
+    /// NoShow-a — vidi Booking.cs/IBookingService.SetStatus). Namjerno NE dijeli tijelo s
+    /// ApplyIndividualCompletionCorrection iako je pozivatelj (SetStatus) isti ulaz (Status=Confirmed): Confirmed
+    /// -&gt; NoShow (ApplyIndividualTransition) NIKAD ne stvara Payment/CommissionEntry/paket-pokriće za
+    /// Individual (ta se stanja postavljaju isključivo u completion toku — ResolveCoverage/CompleteNew/
+    /// CompleteExisting, koji je individualni NoShow po definiciji nikad prošao, booking mora biti Confirmed da bi
+    /// uopće postao NoShow, vidi ApplyIndividualTransition), pa nema što reverzirati i poziv na
+    /// VoidCheckInGeneratedPayments/ReverseForIndividualServiceCorrection/hasNonReversiblePayment-provjeru bio bi
+    /// mrtav kod u najboljem slučaju, a u najgorem bi hasNonReversiblePayment-provjera odbila ovu korekciju zbog
+    /// POTPUNO NEPOVEZANE ručne uplate na istom Bookingu koju NoShow nikad nije dirao (vidi spec section 7 — "no
+    /// unrelated financial/package/commission mutation").
+    ///
+    /// 1) BookingStatusVersioning.TrySetStatus na kraju — jedina dozvoljena mutacijska putanja za Status, no-op
+    ///    (bez inkrementa) ako je booking već Confirmed (idempotentan retry).
+    /// 2) Appointment.Status Completed -&gt; Scheduled, SAMO ako je korekcija stvaran prijelaz (ne no-op) I ako je
+    ///    Appointment stvarno Completed — isti TryRevertAppointmentCompletion poziv kao
+    ///    ApplyIndividualCompletionCorrection, potreban za multi-klijent rub-slučaj: ApplyIndividualTransition
+    ///    (Confirmed -&gt; NoShow) NIKAD ne dira Appointment.Status, pa Appointment ostaje Scheduled dok se izostanak
+    ///    evidentira — ALI ako je u međuvremenu SESTRINSKI Booking na istom terminu odradio cijeli termin kroz
+    ///    CompleteExisting (koji Appointment.Status postavlja na Completed bezuvjetno, neovisno o statusu bookinga
+    ///    izvan poslanog ClientIds popisa), Appointment može biti Completed dok je OVAJ Booking i dalje NoShow.
+    ///    Vraćanje na Confirmed tad mora ponovno probiti isti "Completed = nema nerazriješenih Confirmed
+    ///    Bookinga" invarijant kao i Completed-&gt;Confirmed korekcija.</summary>
+    private async Task ApplyIndividualNoShowCorrection(
+        IUnitOfWork uow, Guid organizationId, Guid userId, Appointment appointment, Booking booking)
+    {
+        bool wasRealTransition = BookingStatusVersioning.TrySetStatus(booking, BookingStatus.Confirmed);
+        if (wasRealTransition)
+            await TryRevertAppointmentCompletion(uow, organizationId, userId, appointment);
+    }
+
+    /// <summary>Vraća Appointment.Status Completed -&gt; Scheduled — oba pozivatelja (ApplyIndividualCompletionCorrection
+    /// za Completed-&gt;Confirmed, ApplyIndividualNoShowCorrection za NoShow-&gt;Confirmed) već su utvrdila da je OVAJ
+    /// poziv stvaran prijelaz na Confirmed (ne idempotentan retry) prije poziva. Namjerno BEZUVJETNO, bez obzira
+    /// ostaje li neki SESTRINSKI Booking na istom terminu (duo/multi-klijent Individual, vidi Booking.cs
+    /// "mješovito plaćanje na istom terminu") i dalje Completed — vidi Appointment.Status napomenu na
+    /// ApplyIndividualCompletionCorrection za obrazloženje invarijante ("Completed = nema nerazriješenih Confirmed
+    /// Bookinga"). Bez ovoga bi AppointmentService.CompleteExisting trajno odbijao ponovan completion istog
+    /// termina s ALREADY_COMPLETED nakon korekcije (vidi spec section 6/45).
     ///
     /// Zaključava Appointment redak (FOR UPDATE) — SetStatus je već zaključao Appointment PRIJE Bookinga na
     /// ulazu u ovu transakciju (vidi tamo za puni opis redoslijeda), pa je ovo besplatan re-lock ISTOG retka

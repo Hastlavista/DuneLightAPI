@@ -7,6 +7,7 @@ using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using BlueDragon.DuneLight.API.Authentication;
+using BlueDragon.DuneLight.API.Diagnostics;
 using BlueDragon.DuneLight.API.Middleware;
 using BlueDragon.DuneLight.Core.Interfaces;
 using BlueDragon.DuneLight.Core.Interfaces.Appointments;
@@ -15,6 +16,7 @@ using BlueDragon.DuneLight.Core.Interfaces.Checkouts;
 using BlueDragon.DuneLight.Core.Interfaces.Clients;
 using BlueDragon.DuneLight.Core.Interfaces.Commissions;
 using BlueDragon.DuneLight.Core.Interfaces.Dashboard;
+using BlueDragon.DuneLight.Core.Interfaces.Diagnostics;
 using BlueDragon.DuneLight.Core.Interfaces.Employees;
 using BlueDragon.DuneLight.Core.Interfaces.Groups;
 using BlueDragon.DuneLight.Core.Interfaces.Notifications;
@@ -197,6 +199,11 @@ public class Startup
         services.AddScoped<IGrantResolver, GrantResolver>();
         services.AddScoped<IGrantGroupService, GrantGroupService>();
         services.AddScoped<IRoleService, RoleService>();
+
+        // FAZA 1 Part F/G — read-only platform dijagnostika, ne tenant runtime autorizacija (vidi
+        // GrantDiagnosticsController, Owner-only + Development-only izloženost).
+        services.AddSingleton<IEndpointGrantMetadataProvider, EndpointGrantMetadataProvider>();
+        services.AddScoped<IGrantDiagnosticsService, GrantDiagnosticsService>();
 
         services.AddScoped<IOnboardingService, OnboardingService>();
 

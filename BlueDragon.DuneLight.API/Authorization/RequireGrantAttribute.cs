@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Threading.Tasks;
 using BlueDragon.DuneLight.Core.Shared;
 using Microsoft.AspNetCore.Mvc;
@@ -23,6 +24,10 @@ public class RequireGrantAttribute : Attribute, IAsyncAuthorizationFilter
 
         _grants = grants;
     }
+
+    /// <summary>Read-only pristup navedenim grantovima za reflection-based diagnostiku (vidi
+    /// EndpointGrantMetadataProvider) — ne utječe na OnAuthorizationAsync ponašanje ispod.</summary>
+    public IReadOnlyList<string> Grants => _grants;
 
     public async Task OnAuthorizationAsync(AuthorizationFilterContext context)
     {

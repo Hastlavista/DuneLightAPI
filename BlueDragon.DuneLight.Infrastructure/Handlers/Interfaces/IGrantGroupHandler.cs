@@ -2,12 +2,24 @@ using System;
 using System.Collections.Generic;
 using System.Threading.Tasks;
 using BlueDragon.DuneLight.Infrastructure.Domain.Models.Permissions;
+using BlueDragon.DuneLight.Infrastructure.UnitOfWork;
 
 namespace BlueDragon.DuneLight.Infrastructure.Handlers.Interfaces;
 
 public interface IGrantGroupHandler
 {
     Task<List<GrantGroup>> GetAll(Guid organizationId);
+
+    /// <summary>Kreira default GrantGroup-e (Admin/Trener/Recepcija, vidi DefaultGrantGroups) za organizaciju,
+    /// unutar iste transakcije kao AuthService.Register. Idempotentno po Name — preskače predloške čija grupa
+    /// (po DisplayName) već postoji, ne dira/ne sinkronizira postojeće grupe (vidi FAZA 1 Part D — postojeće
+    /// organizacije se namjerno ne mijenjaju).</summary>
+    Task EnsureDefaultGrantGroups(IUnitOfWork uow, Guid organizationId);
+
+    /// <summary>Dijagnostika-only, presijeca sve organizacije (namjerno bez organizationId filtera) — koristi ga
+    /// SAMO IGrantDiagnosticsService za otkrivanje default-role drifta kod postojećih organizacija. NIKAD ne
+    /// koristiti u tenant-facing kodu (vidi FAZA 1 Part H — diagnostika je platform-only).</summary>
+    Task<List<GrantGroup>> GetAllAcrossOrganizationsForDiagnostics();
     Task<GrantGroup> GetById(Guid organizationId, Guid id);
     Task<bool> NameExists(Guid organizationId, string name, Guid? excludeId);
     Task Add(GrantGroup grantGroup);

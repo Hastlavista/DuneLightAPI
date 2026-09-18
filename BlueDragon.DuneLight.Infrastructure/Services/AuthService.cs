@@ -19,14 +19,16 @@ public class AuthService : IAuthService
 {
     private readonly IAuthHandler _authHandler;
     private readonly IRosterTypeHandler _rosterTypeHandler;
+    private readonly IGrantGroupHandler _grantGroupHandler;
     private readonly IJwtService _jwtService;
     private readonly JwtSettings _jwtSettings;
     private readonly IUnitOfWorkFactory _unitOfWorkFactory;
 
-    public AuthService(IAuthHandler authHandler, IRosterTypeHandler rosterTypeHandler, IJwtService jwtService, JwtSettings jwtSettings, IUnitOfWorkFactory unitOfWorkFactory)
+    public AuthService(IAuthHandler authHandler, IRosterTypeHandler rosterTypeHandler, IGrantGroupHandler grantGroupHandler, IJwtService jwtService, JwtSettings jwtSettings, IUnitOfWorkFactory unitOfWorkFactory)
     {
         _authHandler = authHandler;
         _rosterTypeHandler = rosterTypeHandler;
+        _grantGroupHandler = grantGroupHandler;
         _jwtService = jwtService;
         _jwtSettings = jwtSettings;
         _unitOfWorkFactory = unitOfWorkFactory;
@@ -66,6 +68,8 @@ public class AuthService : IAuthService
             await _authHandler.AddOrganization(uow, organization);
             await _authHandler.AddUser(uow, user);
             await _rosterTypeHandler.SeedDefaultTypes(uow, organization.Id.GetValueOrDefault());
+            // Owner (gore) ostaje trajno IsOwner=true i namjerno se NE dodjeljuje Admin grupi — vidi FAZA 1 Part C.
+            await _grantGroupHandler.EnsureDefaultGrantGroups(uow, organization.Id.GetValueOrDefault());
 
             await uow.CommitAsync();
         }

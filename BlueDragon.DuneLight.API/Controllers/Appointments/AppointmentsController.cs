@@ -221,14 +221,16 @@ public class AppointmentsController : ControllerBase
             }));
     }
 
-    /// <summary>Poništava check-in/otkazivanje JEDNOG Bookinga natrag na Confirmed — administrativna korekcija.
-    /// Za Form=Group dostupno s bilo kojeg terminalnog statusa (Completed/NoShow/Cancelled -&gt; Confirmed). Za
-    /// Form=Individual namjerno UŽE — dostupno ISKLJUČIVO iz Completed (poništenje pogrešnog check-ina;
-    /// Cancelled/NoShow nemaju povratnu putanju, vidi BookingService.ApplyIndividualCompletionCorrection), uklj.
-    /// void check-in-generated Paymenta, povrat paket-ulaska, reverziju CommissionEntry i povratak
-    /// Appointment.Status na Scheduled (bezuvjetno, i na multi-klijent terminu gdje sestrinski Booking ostaje
-    /// Completed — vidi tamo). Vraćanje paket-ulaska, storniranje pripadajuće Notification pojave i poništenje
-    /// naplate check-ina rješava isključivo BookingService.SetStatus.</summary>
+    /// <summary>Poništava check-in/otkazivanje/izostanak JEDNOG Bookinga natrag na Confirmed — administrativna
+    /// korekcija. Za Form=Group dostupno s bilo kojeg terminalnog statusa (Completed/NoShow/Cancelled -&gt;
+    /// Confirmed). Za Form=Individual namjerno UŽE — dostupno iz Completed (poništenje pogrešnog check-ina, uklj.
+    /// void check-in-generated Paymenta, povrat paket-ulaska, reverziju CommissionEntry, vidi
+    /// BookingService.ApplyIndividualCompletionCorrection) ILI iz NoShow (poništenje pogrešno evidentiranog
+    /// izostanka — bez financijskih/paket/provizija nuspojava jer ih NoShow nikad ne stvara za Individual, vidi
+    /// BookingService.ApplyIndividualNoShowCorrection); Cancelled nema povratnu putanju. Oba puta uklj. povratak
+    /// Appointment.Status na Scheduled ako je Appointment u međuvremenu postao Completed preko sestrinskog
+    /// Bookinga na multi-klijent terminu (vidi TryRevertAppointmentCompletion). Storniranje pripadajuće
+    /// Notification pojave rješava isključivo BookingService.SetStatus.</summary>
     [HttpPatch("{appointmentId:guid}/bookings/{clientId:guid}/confirm")]
     [RequireGrant(Grants.AppointmentsWriteOwn, Grants.AppointmentsWriteAll)]
     public async Task<ActionResult<BookingDto>> ConfirmBooking(Guid appointmentId, Guid clientId)

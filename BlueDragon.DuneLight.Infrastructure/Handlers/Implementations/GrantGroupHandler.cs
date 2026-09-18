@@ -2,11 +2,13 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
+using BlueDragon.DuneLight.Core.Shared;
 using BlueDragon.DuneLight.Infrastructure.Domain.Contexts;
 using BlueDragon.DuneLight.Infrastructure.Domain.Models;
 using BlueDragon.DuneLight.Infrastructure.Domain.Models.Permissions;
 using BlueDragon.DuneLight.Infrastructure.Domain.Settings;
 using BlueDragon.DuneLight.Infrastructure.Handlers.Interfaces;
+using BlueDragon.DuneLight.Infrastructure.UnitOfWork;
 using Microsoft.EntityFrameworkCore;
 
 namespace BlueDragon.DuneLight.Infrastructure.Handlers.Implementations;
@@ -38,6 +40,43 @@ public class GrantGroupHandler : IGrantGroupHandler
             .Include(g => g.Grants)
             .Include(g => g.UserGrantGroups)
             .SingleOrDefaultAsync(g => g.OrganizationId == organizationId && g.Id == id);
+    }
+
+    public async Task EnsureDefaultGrantGroups(IUnitOfWork uow, Guid organizationId)
+    {
+        HashSet<string> existingNames = (await uow.Context.GrantGroups
+                .Where(g => g.OrganizationId == organizationId)
+                .Select(g => g.Name)
+                .ToListAsync())
+            .ToHashSet();
+
+        foreach (DefaultGrantGroupDefinition definition in DefaultGrantGroups.All)
+        {
+            if (existingNames.Contains(definition.DisplayName))
+                continue;
+
+            GrantGroup group = new GrantGroup
+            {
+                Id = Guid.NewGuid(),
+                OrganizationId = organizationId,
+                Name = definition.DisplayName,
+                CreatedAt = DateTimeOffset.UtcNow,
+                Grants = definition.Grants.Select(key => new GrantGroupGrant { GrantKey = key }).ToList()
+            };
+
+            uow.Context.GrantGroups.Add(group);
+        }
+
+        await uow.Context.SaveChangesAsync();
+    }
+
+    public async Task<List<GrantGroup>> GetAllAcrossOrganizationsForDiagnostics()
+    {
+        await using DatabaseContext context = DatabaseContext.GenerateContext(_databaseSettings.ConnectionString);
+        return await context.GrantGroups
+            .Include(g => g.Grants)
+            .OrderBy(g => g.OrganizationId).ThenBy(g => g.Name)
+            .ToListAsync();
     }
 
     public async Task<bool> NameExists(Guid organizationId, string name, Guid? excludeId)
