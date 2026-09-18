@@ -32,14 +32,21 @@ namespace BlueDragon.DuneLight.Infrastructure.Services;
 /// nedvosmislenu osnovicu koja ovdje ne postoji (Group Appointment nema svoju cijenu, samo Booking.Amount po
 /// klijentu preko istog IPricingService poziva kao Individual). Ova odluka ujedno znači da grupna provizija
 /// NEMA reverzijsku putanju: BookingService.ApplyGroupTransition (Completed/NoShow -> Confirmed poništenje
-/// check-ina PO SUDIONIKU) ne dira Appointment.Status i stoga ne dira komisijski izvor — vidi
-/// CommissionEntryStatus za širu analizu zašto Reversed trenutno nema pozivatelja.
+/// check-ina PO SUDIONIKU) ne dira Appointment.Status i stoga ne dira komisijski izvor.
 ///
 /// ISPRAVLJENO (bilo "poznata postojeća praznina"): AppointmentService.Cancel/MarkNoShow (ChangeToTerminalStatus)
 /// sada odbija Completed -> Cancelled/NoShow (ErrorCodes.AlreadyCompleted) umjesto da tiho ostavi Earned
-/// CommissionEntry uz Appointment koji više ne izgleda odrađen — vidi ChangeToTerminalStatus. I dalje NEMA
-/// reverzijske putanje jer domena i dalje ne nudi legitiman "undo" za jednom odrađen termin (vidi spec section
-/// 39) — fix zatvara nevaljan prijelaz umjesto da izmišlja reverziju za njega.
+/// CommissionEntry uz Appointment koji više ne izgleda odrađen — vidi ChangeToTerminalStatus. Grupna provizija i
+/// dalje NEMA reverzijsku putanju jer Appointment-razina completion nema legitiman "undo" u trenutnom lifecycleu
+/// — fix zatvara nevaljan prijelaz umjesto da izmišlja reverziju za njega.
+///
+/// INDIVIDUAL BOOKING REVERZIJA (ReverseForIndividualServiceCorrection, dodano uz P1 korekcijski tok): za razliku
+/// od Group, individualni Booking-completion IMA legitiman "undo" — BookingService.ApplyIndividualCompletionCorrection
+/// (Individual Booking Completed -> Confirmed, administrativna korekcija pogrešnog check-ina). Reverzija identificira
+/// izvor deterministički preko BookingId (ICommissionEntryHandler.GetActiveForBooking, Status=Earned), NE po
+/// iznosu/datumu/zaposleniku. CommissionEntry.SourceVersion (Booking.StatusVersion u trenutku zarade, vidi
+/// CommissionEntry.cs) daje svakoj completion-pojavi zasebni identitet, tako da ponovni completion istog Bookinga
+/// nakon korekcije zaradi NOVI Earned zapis bez sudara s (sad Reversed) starim — vidi Migration_2026_09_25.
 /// </summary>
 public class CommissionService : ICommissionRuleService, ICommissionService, ICommissionLedgerService
 {
@@ -351,6 +358,10 @@ public class CommissionService : ICommissionRuleService, ICommissionService, ICo
             RuleValue = rule.Value,
             CommissionAmount = commissionAmount,
             Status = CommissionEntryStatus.Earned,
+            // Booking.StatusVersion NAKON prijelaza u Completed (pozivatelj TrySetStatus prije ovog poziva, vidi
+            // FK zahtjev u domenskoj napomeni) — daje ovoj completion-pojavi zaseban identitet naspram eventualnog
+            // narednog completiona nakon korekcije (vidi CommissionEntry.cs SourceVersion napomenu).
+            SourceVersion = booking.StatusVersion,
             EarnedAt = DateTimeOffset.UtcNow,
             CreatedAt = DateTimeOffset.UtcNow
         });
@@ -455,6 +466,22 @@ public class CommissionService : ICommissionRuleService, ICommissionService, ICo
                 CreatedAt = DateTimeOffset.UtcNow
             });
         }
+    }
+
+    /// <summary>Vidi ICommissionLedgerService za puni ugovor. Namjerno BEZ catch/throw na "nema što reverzirati" —
+    /// no-op je ispravan odgovor i za "nikad nije bilo primjenjivog pravila" i za "već reverzirano" (idempotentan
+    /// retry), pozivatelj (BookingService) ne treba razlikovati ta dva slučaja.</summary>
+    public async Task ReverseForIndividualServiceCorrection(IUnitOfWork uow, Guid organizationId, Guid userId, Booking booking)
+    {
+        CommissionEntry entry = await _entryHandler.GetActiveForBooking(uow, organizationId, booking.Id.GetValueOrDefault());
+        if (entry == null)
+            return;
+
+        entry.Status = CommissionEntryStatus.Reversed;
+        entry.ReversedAt = DateTimeOffset.UtcNow;
+        entry.ReversedBy = userId;
+
+        await _entryHandler.Update(uow, entry);
     }
 
     /// <summary>Namjerno BEZ catch(DbUpdateException) ovdje — Postgres transakcija se prekida (aborted) nakon

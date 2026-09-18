@@ -13,6 +13,16 @@ public interface ICommissionEntryHandler
     /// jednog od unique indeksa (vidi CommissionEntry.cs), koju CommissionService hvata i tiho preskače.</summary>
     Task Add(IUnitOfWork uow, CommissionEntry entry);
 
+    /// <summary>Trenutno AKTIVAN (Status=Earned) zapis za ovaj Booking, ili null — deterministična identifikacija
+    /// izvora za reverziju (ApplyIndividualCompletionCorrection), nikad po iznosu/datumu/zaposleniku (vidi spec
+    /// section 14). Najviše jedan takav redak može postojati u danom trenutku (svaki Earned zapis se reverzira
+    /// PRIJE nego Booking uopće može ponovno zaraditi novi, vidi CommissionEntry.cs SourceVersion napomenu).</summary>
+    Task<CommissionEntry> GetActiveForBooking(IUnitOfWork uow, Guid organizationId, Guid bookingId);
+
+    /// <summary>Sprema promjene na postojećem zapisu (isključivo Status/ReversedAt/ReversedBy — sve ostalo je
+    /// nepromjenjiv snapshot, vidi CommissionEntry.cs) unutar pozivateljeve transakcije.</summary>
+    Task Update(IUnitOfWork uow, CommissionEntry entry);
+
     Task<(List<CommissionEntry> Items, int TotalCount)> GetPaged(Guid organizationId, CommissionEntryQuery query);
 
     /// <summary>Agregat po Employeeu (Sum CommissionAmount po Status) unutar raspona — jedan SQL upit (GROUP BY),

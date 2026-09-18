@@ -489,6 +489,21 @@ public class GroupService : IGroupService
                 if (futureAppointment.Bookings.Any(b => b.ClientId == request.ClientId))
                     continue;
 
+                // Roster-provjera iznad (activeMembersBefore >= group.Capacity) NE vidi Confirmed Bookinge gostiju
+                // koji nisu (više) aktivni članovi — npr. klijent promoviran s liste čekanja ili dodan izravno
+                // preko AddBooking (spec section 3/4 P1 hardening). Bez ove per-occurrence provjere AddMember bi
+                // mogao stvoriti Confirmed Booking na terminu koji je za TAJ occurrence već pun, oversubscribing
+                // ga bez obzira na rosterski broj. Isti dijeljeni guard (GroupCapacityGuard) i isti Appointment
+                // FOR UPDATE lock kao BookingService/WaitlistService.PromoteEligibleWaiters — jedan izvor istine za
+                // "confirmedCount < capacity" umjesto duplicirane aritmetike. GetFutureScheduledForGroup vraća
+                // occurrencee determinističkim redoslijedom (StartsAt, Id) baš zato da dva konkurentna
+                // AddMember/RemoveMember poziva preko istog skupa termina zaključavaju istim redoslijedom (nema
+                // obrnutog Appointment<->Appointment lock ordera koji bi mogao deadlockati). Baca PRIJE ijednog
+                // Bookinga za ovaj occurrence — iznimka izlazi iz uow bloka bez CommitAsync pa cijela operacija
+                // (članstvo + audit + sve dosad dodane Bookinge) rollback-a atomično (sve-ili-ništa, isto kao
+                // postojeći RecurringConflict abort iznad).
+                await GroupCapacityGuard.EnsureAvailable(_appointmentHandler, uow, organizationId, futureAppointment.Id.GetValueOrDefault());
+
                 decimal suggestedAmount = await ResolveSuggestedAmount(
                     organizationId, futureAppointment.ServiceId, futureAppointment.CompanyId, futureAppointment.StartsAt);
 

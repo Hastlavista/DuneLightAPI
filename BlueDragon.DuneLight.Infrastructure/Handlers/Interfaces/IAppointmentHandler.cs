@@ -64,11 +64,16 @@ public interface IAppointmentHandler
     Task UpdateScalar(IUnitOfWork uow, Appointment appointment);
 
     /// <summary>Puna izmjena uklj. popis klijenata (samo Form=Individual) — spaja postojeće Booking retke, uklanja
-    /// izbačene (hard delete — nikad nisu bili odrađeni), dodaje nove kao Confirmed. Amount/suggestedAmount/
-    /// overridden se primjenjuju na SVE preživjele Booking retke (postojeće I nove) čiji status NIJE terminalan
-    /// (Completed/Cancelled/NoShow) — re-cijenjenje termina prije naplate (vidi spec section 18/20); već
-    /// naplaćeni/otkazani/izostali retci se ne diraju. Izostavi (0/0/false) kad pozivatelj svejedno odmah nakon
-    /// prepisuje sve retke (npr. CompleteExisting).</summary>
+    /// izbačene, dodaje nove kao Confirmed. Fizičko brisanje (hard delete) izostavljenog retka pogađa ISKLJUČIVO
+    /// Booking čiji je status Confirmed (buduća, još neodržana rezervacija bez ikakve poslovne povijesti) —
+    /// terminalan redak (Completed/Cancelled/NoShow, uz svoj Payment/CommissionEntry/package-pokriće preko FK-a)
+    /// izostavljen iz `clientIds` NIKAD se ne briše, ostaje netaknut na terminu bez obzira spominje li ga pozivatelj
+    /// (kritično za CompleteExisting koji zna reconcilirati samo PODSKUP klijenata nakon P1 korekcije, vidi
+    /// BookingService.ApplyIndividualCompletionCorrection — pozivatelj koji šalje samo klijente koje trenutno
+    /// uređuje/odrađuje ne izražava "obriši sve ostale"). Amount/suggestedAmount/overridden se primjenjuju na SVE
+    /// preživjele Booking retke (postojeće I nove) čiji status NIJE terminalan (Completed/Cancelled/NoShow) —
+    /// re-cijenjenje termina prije naplate (vidi spec section 18/20); već naplaćeni/otkazani/izostali retci se ne
+    /// diraju. Izostavi (0/0/false) kad pozivatelj svejedno odmah nakon prepisuje sve retke (npr. CompleteExisting).</summary>
     Task UpdateWithBookings(
         Appointment appointment, List<Guid> clientIds, decimal amount = 0, decimal suggestedAmount = 0, bool overridden = false);
 

@@ -233,10 +233,11 @@ public class AppointmentService : IAppointmentService
         if (appointment == null)
             throw new NotFoundAppException("Appointment", id);
 
-        // Ovaj put (ClientIds/Settlements popis koji reconcilea Booking retke, uklj. hard-delete izbačenih)
-        // pretpostavlja Form=Individual — za Form=Group to bi netočno restrukturiralo Bookinge koji već
-        // postoje po GroupMemberima (vidi GroupService.GenerateAppointments/AddMember). Grupni termin se
-        // zatvara kroz IAppointmentService.CompleteGroupAppointment, koji ne dira Booking retke.
+        // Ovaj put (ClientIds/Settlements popis koji reconcilea Booking retke preko UpdateWithBookings — hard-delete
+        // izbačenih, ali SAMO ako su još Confirmed bez povijesti, vidi tamo) pretpostavlja Form=Individual — za
+        // Form=Group to bi netočno restrukturiralo Bookinge koji već postoje po GroupMemberima (vidi
+        // GroupService.GenerateAppointments/AddMember). Grupni termin se zatvara kroz
+        // IAppointmentService.CompleteGroupAppointment, koji ne dira Booking retke.
         if (appointment.Form != AppointmentForm.Individual)
             throw new ValidationAppException(
                 "Grupni termin se odrađuje kroz complete-group, ne kroz complete-existing (naplata je po klijentu/Bookingu, ne po popisu klijenata termina).");
@@ -297,8 +298,8 @@ public class AppointmentService : IAppointmentService
                     await LogAmountChangeInTransaction(uow, id, bookingRow.Id, bookingRow.Amount, bookingAmount, userId);
 
                 BookingStatus bookingOldStatus = bookingRow.Status;
-                BookingStatusVersioning.TrySetStatus(bookingRow, BookingStatus.Completed);
-                if (bookingOldStatus != bookingRow.Status)
+                bool bookingStatusChanged = BookingStatusVersioning.TrySetStatus(bookingRow, BookingStatus.Completed);
+                if (bookingStatusChanged)
                 {
                     // Isti "BookingStatus" audit obrazac kao BookingService.SetStatus — bez ovoga bi individualni
                     // Confirmed -> Completed prijelaz kroz complete-existing bio jedini status prijelaz koji ne
@@ -343,14 +344,29 @@ public class AppointmentService : IAppointmentService
 
                 await _appointmentHandler.UpdateBooking(uow, bookingRow);
 
-                // Booking je već persistiran (postojeći redak, samo ažuriran) — Payment sigurno može odmah nakon.
-                if (!hasPackage && settlement.PaymentMethod.HasValue && settlement.IsPaid && bookingAmount > 0m)
-                    await _paymentLedgerService.RecordPayment(
-                        uow, organizationId, userId, appointment.CompanyId, bookingRow, settlement.PaymentMethod.Value, bookingAmount,
-                        note: null, isCheckInGenerated: true);
+                // Payment/provizija se generiraju SAMO za booking koji je OVIM pozivom STVARNO tek prešao u
+                // Completed (bookingStatusChanged) — bez ovog uvjeta bi ponovni CompleteExisting poziv koji u
+                // request.ClientIds ponovno šalje VEĆ Completed sestrinski Booking (npr. nekorigirani klijent B
+                // na multi-klijent terminu, dok se korigirani klijent A re-completa nakon P1 korekcije — vidi
+                // BookingService.ApplyIndividualCompletionCorrection) pokušao stvoriti DRUGI Payment za B i pao
+                // na ux_commission_entries_booking_id_source_version (B.StatusVersion se ovdje ne mijenja jer
+                // TrySetStatus no-opira, pa bi SourceVersion bio identičan već postojećem Earned zapisu, vidi
+                // CommissionEntry.cs). Prije P1 korekcije ovaj put je bio nedostižan — appointment.Status==Completed
+                // je uvijek blokirao ponovni ulaz na vrhu ove metode (ALREADY_COMPLETED) dok god je bilo koji
+                // Booking na terminu ostajao Completed, pa je ovaj uvjet čisto zatvaranje NOVO dosegnute putanje,
+                // bez promjene ponašanja za prvi/jedini completion (gdje je bookingStatusChanged uvijek true za
+                // svaki redak u bookingRows).
+                if (bookingStatusChanged)
+                {
+                    // Booking je već persistiran (postojeći redak, samo ažuriran) — Payment sigurno može odmah nakon.
+                    if (!hasPackage && settlement.PaymentMethod.HasValue && settlement.IsPaid && bookingAmount > 0m)
+                        await _paymentLedgerService.RecordPayment(
+                            uow, organizationId, userId, appointment.CompanyId, bookingRow, settlement.PaymentMethod.Value, bookingAmount,
+                            note: null, isCheckInGenerated: true);
 
-                // Provizija se zarađuje ISTOM transakcijom kao completion — vidi CompleteNew.
-                await _commissionLedgerService.GenerateForIndividualServiceCompletion(uow, organizationId, appointment, bookingRow);
+                    // Provizija se zarađuje ISTOM transakcijom kao completion — vidi CompleteNew.
+                    await _commissionLedgerService.GenerateForIndividualServiceCompletion(uow, organizationId, appointment, bookingRow);
+                }
             }
 
             await uow.CommitAsync();

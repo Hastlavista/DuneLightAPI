@@ -86,6 +86,7 @@ public static class ErrorCodes
     public const string AllocationExceedsItemOutstanding = "ALLOCATION_EXCEEDS_ITEM_OUTSTANDING";
     public const string AllocationAmountMismatch = "ALLOCATION_AMOUNT_MISMATCH";
     public const string BookingAlreadyHasMonetaryPayment = "BOOKING_ALREADY_HAS_MONETARY_PAYMENT";
+    public const string BookingHasNonReversiblePayment = "BOOKING_HAS_NON_REVERSIBLE_PAYMENT";
 
     // Products & Stock (vidi Product.cs/ProductStock.cs/StockMovement.cs/IStockService)
     public const string DuplicateSku = "DUPLICATE_SKU";

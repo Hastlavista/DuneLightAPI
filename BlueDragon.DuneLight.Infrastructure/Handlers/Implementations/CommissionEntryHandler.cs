@@ -29,6 +29,18 @@ public class CommissionEntryHandler : ICommissionEntryHandler
         await uow.Context.SaveChangesAsync();
     }
 
+    public Task<CommissionEntry> GetActiveForBooking(IUnitOfWork uow, Guid organizationId, Guid bookingId)
+    {
+        return uow.Context.CommissionEntries.FirstOrDefaultAsync(e =>
+            e.OrganizationId == organizationId && e.BookingId == bookingId && e.Status == CommissionEntryStatus.Earned);
+    }
+
+    public async Task Update(IUnitOfWork uow, CommissionEntry entry)
+    {
+        uow.Context.CommissionEntries.Update(entry);
+        await uow.Context.SaveChangesAsync();
+    }
+
     public async Task<(List<CommissionEntry> Items, int TotalCount)> GetPaged(Guid organizationId, CommissionEntryQuery query)
     {
         await using DatabaseContext context = DatabaseContext.GenerateContext(_databaseSettings.ConnectionString);

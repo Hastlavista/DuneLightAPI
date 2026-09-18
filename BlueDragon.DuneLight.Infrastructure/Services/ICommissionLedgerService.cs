@@ -41,4 +41,16 @@ public interface ICommissionLedgerService
     /// User→Employee veze (Employee.UserId, jedinstveno) — no-op za CIJELI checkout ako se ne razriješi na
     /// aktivnog Employeea (vidi spec section 19/55, ne nagađa se preko imena/emaila).</summary>
     Task GenerateForCheckoutCompletion(IUnitOfWork uow, Guid organizationId, Guid completedByUserId, Checkout checkout);
+
+    /// <summary>Reverzira (Earned -&gt; Reversed) CommissionEntry zarađen TOČNO OVIM completionom individualnog
+    /// Bookinga, kao dio BookingService.ApplyIndividualCompletionCorrection (Individual Booking Completed -&gt;
+    /// Confirmed administrativna korekcija) — poziva se PRIJE nego booking.Status stvarno prijeđe na Confirmed
+    /// (pozivatelj još drži Booking pod FOR UPDATE lockom iz iste transakcije). No-op ako aktivan (Earned) zapis
+    /// ne postoji (nikad nije bilo primjenjivog CommissionRule kod completiona, ili je već reverziran — idempotentan
+    /// retry, vidi spec section 15/41). Identificira izvor isključivo preko BookingId + Status=Earned
+    /// (ICommissionEntryHandler.GetActiveForBooking), nikad po iznosu/datumu/zaposleniku. NE dira BaseAmount/
+    /// CalculationType/RuleValue/CommissionAmount (povijesni snapshot ostaje netaknut, vidi spec section 33) — samo
+    /// Status/ReversedAt/ReversedBy. Sljedeći completion istog Bookinga (nakon korekcije) zarađuje NOVI Earned
+    /// zapis s NOVIM SourceVersion (vidi CommissionEntry.cs), bez sudara sa ovim (sad Reversed) zapisom.</summary>
+    Task ReverseForIndividualServiceCorrection(IUnitOfWork uow, Guid organizationId, Guid userId, Booking booking);
 }

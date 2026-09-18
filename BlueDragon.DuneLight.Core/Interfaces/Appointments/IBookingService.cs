@@ -21,9 +21,12 @@ public interface IBookingService
 
     /// <summary>Prijelaz statusa jednog Bookinga. Vlasništvo: trener smije samo na terminima gdje je on
     /// Appointment.EmployeeId (isto pravilo kao IAppointmentService), osim uz hasFullScope. Za Form=Individual
-    /// dopušteni ciljni statusi su samo Cancelled/NoShow (Completed ide isključivo kroz
+    /// dopušteni ciljni statusi su Cancelled/NoShow (Completed ide isključivo kroz
     /// IAppointmentService.CompleteNew/CompleteExisting, koji naplatu razrješavaju po klijentu preko
-    /// AppointmentCompleteRequest.Settlements — mješovito plaćanje na istom terminu je podržano) — za
-    /// Form=Group dopušteni su svi prijelazi uklj. povratak na Confirmed (poništenje check-ina).</summary>
+    /// AppointmentCompleteRequest.Settlements — mješovito plaćanje na istom terminu je podržano) i Confirmed KAO
+    /// USKA administrativna korekcija ISKLJUČIVO iz Completed (poništenje pogrešnog check-ina — Cancelled/NoShow
+    /// nemaju povratnu putanju za Individual, vidi BookingService.ApplyIndividualCompletionCorrection) — za
+    /// Form=Group dopušteni su svi prijelazi uklj. povratak na Confirmed s bilo kojeg terminalnog statusa
+    /// (poništenje check-ina/otkazivanja).</summary>
     Task<BookingDto> SetStatus(Guid organizationId, Guid userId, bool hasFullScope, Guid appointmentId, Guid clientId, BookingSetStatusRequest request);
 }

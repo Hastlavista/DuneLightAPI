@@ -1,11 +1,12 @@
 namespace BlueDragon.DuneLight.Core.Enums;
 
 /// <summary>
-/// Earned je jedini status koji ovaj MVP trenutno proizvodi — nijedan postojeći poslovni prijelaz (individualni
-/// Booking completion, grupni Appointment completion, Checkout completion) nema legitiman put natrag na
-/// ne-odrađeno/ne-prodano stanje (vidi CommissionService domensku napomenu), pa Reversed ostaje rezerviran za
-/// buduću korekcijsku putanju umjesto da se izmišlja jedna koja danas ne postoji (vidi spec section 39).
-/// CommissionEntry retke NIKAD se ne briše — reverzija (kad zaživi) mijenja Status, ne uklanja redak.
+/// Individualni Booking completion IMA reverzijsku putanju: BookingService.ApplyIndividualCompletionCorrection
+/// (Individual Booking Completed -&gt; Confirmed korekcija) prebacuje odgovarajući Earned zapis u Reversed u istoj
+/// transakciji (vidi CommissionEntry.cs SourceVersion domensku napomenu). Grupni Appointment completion i
+/// Checkout (Product/Package sale) completion i dalje NEMAJU legitiman put natrag (vidi CommissionService
+/// domensku napomenu) — Reversed za te izvore ostaje bez pozivatelja. CommissionEntry retke NIKAD se ne briše —
+/// reverzija mijenja Status (+ReversedAt/ReversedBy), ne uklanja redak.
 /// </summary>
 public enum CommissionEntryStatus
 {

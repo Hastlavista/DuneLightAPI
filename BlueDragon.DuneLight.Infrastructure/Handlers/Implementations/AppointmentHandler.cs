@@ -182,11 +182,33 @@ public class AppointmentHandler : IAppointmentHandler
         DatabaseContext context, Appointment appointment, List<Guid> clientIds,
         decimal amount, decimal suggestedAmount, bool overridden)
     {
+        // Pozivatelj (AppointmentService.Update) ovamo prosljeđuje appointment učitan preko
+        // GetWithBookingsForMutation — TAJ poziv već uključuje appointment.Bookings (druga, RANIJA DatabaseContext
+        // instanca). Bez ovog čišćenja, context.Appointments.Update(appointment) niže radi graph-attach cijelog
+        // stabla (uklj. appointment.Bookings) i sudara se s Booking retcima koje OVA metoda zasebno učitava/prati
+        // niže (existing) — EF baca "cannot be tracked because another instance with the same key is already being
+        // tracked" (InvalidOperationException) za svaki preživjeli redak. Booking mutacije se ionako rade
+        // isključivo preko existing/toRemove/novih Add poziva ispod, appointment.Bookings navigacija ovdje nije
+        // potrebna — sigurno se prazni prije Update() poziva.
+        appointment.Bookings.Clear();
+
         List<Booking> existing = await context.Bookings
             .Where(b => b.AppointmentId == appointment.Id)
             .ToListAsync();
 
-        List<Booking> toRemove = existing.Where(b => !clientIds.Contains(b.ClientId)).ToList();
+        // Fizičko brisanje (hard delete) smije pogoditi SAMO Booking retke koji su i dalje Confirmed — terminalan
+        // (Completed/Cancelled/NoShow) redak JE povijesna činjenica (odrađeno/otkazano/izostalo, uz svoj Payment/
+        // CommissionEntry/package-pokriće/audit trag preko FK-a na booking_id), pa izostanak iz `clientIds` u
+        // KASNIJEM zahtjevu (Update ili CompleteExisting koji rekoncilira samo PODSKUP klijenata, npr. nakon P1
+        // korekcije Completed->Confirmed na multi-klijent terminu, vidi BookingService.ApplyIndividualCompletionCorrection)
+        // NIKAD ne smije obrisati tu povijest — pozivatelj koji šalje samo klijente koje TRENUTNO uređuje/odrađuje
+        // ne izražava "obriši sve ostale", isto ponašanje kao "Re-cijenjenje se primjenjuje samo na Bookinge koji
+        // NISU terminalni" pravilo niže (Update) i CompleteExisting koji svejedno individualno postavlja Amount
+        // samo za retke iz request.ClientIds — terminalan redak izostavljen iz zahtjeva ostaje NETAKNUT (ne
+        // repriciran, ne obrisan), ne "izbačen". Fizički obrisan smije biti SAMO Confirmed redak bez ikakve
+        // poslovne povijesti (buduća, još neodržana rezervacija) — isto ponašanje kao prije ove izmjene za taj
+        // slučaj (vidi spec section 2/6, AppointmentService.Update komentar o TerminalBookingStatuses).
+        List<Booking> toRemove = existing.Where(b => !clientIds.Contains(b.ClientId) && !IsTerminalBookingStatus(b.Status)).ToList();
         context.Bookings.RemoveRange(toRemove);
 
         // Re-cijenjenje se primjenjuje samo na preživjele retke koji NISU terminalni — već naplaćen/otkazan/
@@ -423,6 +445,10 @@ public class AppointmentHandler : IAppointmentHandler
         return (items, totalCount);
     }
 
+    /// <summary>Determinističan poredak (StartsAt pa Id) — GroupService.AddMember/RemoveMember zaključavaju
+    /// Appointment redak po occurrence-u dok iteriraju ovaj rezultat (kapacitet/promocija), pa dva konkurentna
+    /// poziva preko istog skupa budućih termina MORAJU zaključavati istim redoslijedom da se izbjegne deadlock
+    /// (vidi GroupCapacityGuard/WaitlistService.PromoteEligibleWaiters).</summary>
     public Task<List<Appointment>> GetFutureScheduledForGroup(IUnitOfWork uow, Guid organizationId, Guid groupId)
     {
         DateTimeOffset now = DateTimeOffset.UtcNow;
@@ -433,6 +459,7 @@ public class AppointmentHandler : IAppointmentHandler
                 a.GroupId == groupId &&
                 a.Status == AppointmentStatus.Scheduled &&
                 a.StartsAt >= now)
+            .OrderBy(a => a.StartsAt).ThenBy(a => a.Id)
             .ToListAsync();
     }
 

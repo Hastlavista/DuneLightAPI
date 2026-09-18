@@ -43,6 +43,7 @@ public class BookingService : IBookingService
     private readonly IWaitlistPromotionService _waitlistPromotionService;
     private readonly IPaymentLedgerService _paymentLedgerService;
     private readonly ICheckoutHandler _checkoutHandler;
+    private readonly ICommissionLedgerService _commissionLedgerService;
     private readonly IOutboxWriter _outboxWriter;
     private readonly INotificationHandler _notificationHandler;
     private readonly IUnitOfWorkFactory _unitOfWorkFactory;
@@ -59,6 +60,7 @@ public class BookingService : IBookingService
         IWaitlistPromotionService waitlistPromotionService,
         IPaymentLedgerService paymentLedgerService,
         ICheckoutHandler checkoutHandler,
+        ICommissionLedgerService commissionLedgerService,
         IOutboxWriter outboxWriter,
         INotificationHandler notificationHandler,
         IUnitOfWorkFactory unitOfWorkFactory)
@@ -74,6 +76,7 @@ public class BookingService : IBookingService
         _waitlistPromotionService = waitlistPromotionService;
         _paymentLedgerService = paymentLedgerService;
         _checkoutHandler = checkoutHandler;
+        _commissionLedgerService = commissionLedgerService;
         _outboxWriter = outboxWriter;
         _notificationHandler = notificationHandler;
         _unitOfWorkFactory = unitOfWorkFactory;
@@ -148,22 +151,14 @@ public class BookingService : IBookingService
         return ToDto(booking);
     }
 
-    /// <summary>Zaključava Appointment redak (FOR UPDATE) i ponovno broji Confirmed Bookinge prije stvaranja novog
-    /// aktivnog (Confirmed) Bookinga na grupnom terminu — isti izvor istine (IAppointmentHandler.CountConfirmedBookings)
-    /// i isti lock kao WaitlistService.PromoteEligibleWaiters (GetForUpdateWithGroup), tako da dva konkurentna
-    /// zahtjeva za posljednje slobodno mjesto ne mogu oba proći (drugi poziv čeka na lock pa svježe broji nakon
-    /// commita prvog — vidi AppointmentHandler.GetForUpdateWithGroup). No-op za termine koji nisu Form=Group.</summary>
-    private async Task EnsureGroupCapacityAvailable(IUnitOfWork uow, Guid organizationId, Guid appointmentId)
+    /// <summary>Tanki wrapper preko GroupCapacityGuard (dijeljen s GroupService.AddMember — vidi ondje za puni
+    /// opis count semantike). Zaključava Appointment redak (FOR UPDATE) — SetStatus (jedini pozivatelj za
+    /// postojeći Booking) već zaključava Appointment PRIJE Bookinga (vidi tamo za redoslijed zaključavanja), pa
+    /// ovaj (redundantan, besplatan unutar iste transakcije) re-lock ovdje ne uvodi obrnut poredak. AddBooking
+    /// (drugi pozivatelj) zove ovo PRIJE ikakvog Booking retka jer se on tek stvara u istoj transakciji.</summary>
+    private Task EnsureGroupCapacityAvailable(IUnitOfWork uow, Guid organizationId, Guid appointmentId)
     {
-        Appointment locked = await _appointmentHandler.GetForUpdateWithGroup(uow, organizationId, appointmentId);
-        if (locked == null || locked.Form != AppointmentForm.Group || locked.Group == null)
-            return;
-
-        int confirmedCount = await _appointmentHandler.CountConfirmedBookings(uow, organizationId, appointmentId);
-        if (confirmedCount >= locked.Group.Capacity)
-            throw new BusinessRuleException(
-                ErrorCodes.GroupCapacityReached, "Grupa je popunjena — kapacitet je dosegnut.",
-                new { capacity = locked.Group.Capacity, confirmedCount });
+        return GroupCapacityGuard.EnsureAvailable(_appointmentHandler, uow, organizationId, appointmentId);
     }
 
     public async Task<BookingDto> SetStatus(
@@ -181,11 +176,25 @@ public class BookingService : IBookingService
             throw new ValidationAppException(
                 "Individualni termin se odrađuje kroz complete/complete-existing (naplata je zajednička za cijeli termin), ne po pojedinom bookingu.");
 
-        if (!isGroup && request.Status == BookingStatus.Confirmed)
-            throw new ValidationAppException("Povratak na Confirmed dostupan je samo za grupne bookinge (poništenje check-ina).");
-
         Booking booking = appointment.Bookings.FirstOrDefault(b => b.ClientId == clientId);
         bool isNewGuestBooking = booking == null;
+
+        // Individual: Confirmed je dopušten ISKLJUČIVO kao korekcija odrađenog check-ina (Completed -> Confirmed,
+        // vidi ApplyIndividualCompletionCorrection) ili kao idempotentan retry (Confirmed -> Confirmed no-op, vidi
+        // BookingStatusVersioning.TrySetStatus) — Cancelled/NoShow -> Confirmed NISU podržani prijelazi za
+        // Individual (namjerno uže od Group, koji dopušta povratak s BILO KOJEG terminalnog statusa — vidi spec
+        // section 5). Individualni Booking uvijek postoji od kreiranja termina (nikad ad-hoc gost kao Group), pa
+        // isNewGuestBooking ovdje znači nepostojeći Booking — NotFound, ne validacijska greška.
+        if (!isGroup && request.Status == BookingStatus.Confirmed)
+        {
+            if (isNewGuestBooking)
+                throw new NotFoundAppException("Booking", clientId);
+
+            if (booking.Status != BookingStatus.Completed && booking.Status != BookingStatus.Confirmed)
+                throw new ValidationAppException(
+                    "Povratak na Confirmed za individualni booking dopušten je samo korekcijom odrađenog check-ina " +
+                    "(Completed -> Confirmed) — Cancelled/NoShow nemaju povratnu putanju.");
+        }
 
         if (booking == null)
         {
@@ -229,14 +238,28 @@ public class BookingService : IBookingService
 
             if (!isNewGuestBooking)
             {
-                // Zaključava OVAJ Booking redak (FOR UPDATE) i od ovog trenutka koristi njegovo stanje POD
-                // LOCKOM kao ishodišnu točku za prijelaz — serijalizira ovu (eventualnu) administrativnu
-                // korekciju s konkurentnim BookingNoShowNotificationHandler/BookingCancelledNotificationHandler
-                // koji zaključavaju ISTI redak prije donošenja Notification odluke (vidi spec section 2-4/39).
-                // PostgreSQL garantira JEDAN od dva ishoda bez obzira koji konkurent prvi stigne do lock-a —
-                // bez ovoga je moguće da Outbox worker stvori Pending Notification ZA STARU pojavu nakon što je
-                // korekcija već commitala (i obrnuto), ostavljajući nekonzistentnu kombinaciju Booking.Status +
-                // Notification.Status (vidi spec section 1).
+                // Appointment-PA-Booking redoslijed zaključavanja — USKLAĐENO s dominantnim redoslijedom u
+                // agregatu (AppointmentService.CompleteExisting/ChangeToTerminalStatus/CompleteGroupAppointment,
+                // GroupService.AddMember, WaitlistPromotionService.PromoteEligibleWaiters SVI zaključavaju
+                // Appointment PRIJE bilo kakve Booking mutacije/implicitnog UPDATE-a). Bez ovoga bi ova metoda
+                // (Booking-pa-Appointment, kroz TryRevertAppointmentCompletion/EnsureGroupCapacityAvailable koji
+                // niže po potrebi ponovno zaključavaju Appointment) zaključavala OBRNUTIM redoslijedom od
+                // AppointmentService — klasičan deadlock ciklus (Transakcija A ovdje: Booking -> čeka Appointment;
+                // Transakcija B u CompleteExisting: Appointment -> čeka isti Booking redak kroz implicitni UPDATE).
+                // Bare fetch (bez Include) je dovoljan — samo nam treba SAM LOCK, ne polja; svaki daljnji poziv
+                // niže koji treba ViŠE od golog Appointment retka (GroupCapacityGuard treba Group navigaciju) radi
+                // vlastiti fetch, što je unutar ISTE transakcije besplatan re-lock (Postgres ne čeka na sebe).
+                if (await _appointmentHandler.GetForUpdate(uow, organizationId, appointmentId) == null)
+                    throw new NotFoundAppException("Appointment", appointmentId);
+
+                // Zaključava OVAJ Booking redak (FOR UPDATE), NAKON Appointment lock-a iznad, i od ovog trenutka
+                // koristi njegovo stanje POD LOCKOM kao ishodišnu točku za prijelaz — serijalizira ovu (eventualnu)
+                // administrativnu korekciju s konkurentnim BookingNoShowNotificationHandler/
+                // BookingCancelledNotificationHandler koji zaključavaju ISTI redak prije donošenja Notification
+                // odluke (vidi spec section 2-4/39). PostgreSQL garantira JEDAN od dva ishoda bez obzira koji
+                // konkurent prvi stigne do lock-a — bez ovoga je moguće da Outbox worker stvori Pending
+                // Notification ZA STARU pojavu nakon što je korekcija već commitala (i obrnuto), ostavljajući
+                // nekonzistentnu kombinaciju Booking.Status + Notification.Status (vidi spec section 1).
                 booking = await _appointmentHandler.GetBookingForUpdate(uow, organizationId, booking.Id.GetValueOrDefault());
                 if (booking == null)
                     throw new NotFoundAppException("Booking", clientId);
@@ -245,17 +268,29 @@ public class BookingService : IBookingService
             BookingStatus oldStatus = booking.Status;
             int oldStatusVersion = booking.StatusVersion;
 
-            // Kapacitet se provjerava SAMO kad ovaj poziv stvarno persistira NOVI Confirmed (mjesto-zauzimajući)
-            // Booking — gost-čekiranje kroz GroupAttendanceService uvijek šalje Completed/NoShow (nikad Confirmed),
-            // pa ovo namjerno ne dira postojeći check-in tok (vidi ApplyGroupTransition, booking.Status na kraju =
-            // request.Status). Zatvara direktno Confirmed-kreiranje kroz SetStatus kao dodatni obilazni put mimo
-            // AddBooking (vidi EnsureGroupCapacityAvailable).
-            if (isNewGuestBooking && isGroup && request.Status == BookingStatus.Confirmed)
+            // Kapacitet se provjerava kad ovaj poziv stvarno persistira NOVI Confirmed (mjesto-zauzimajući) status —
+            // bilo za posve novi gost-Booking (isNewGuestBooking), bilo za POSTOJEĆI Booking koji se administrativno
+            // vraća na Confirmed (Completed/NoShow/Cancelled -> Confirmed kroz PATCH .../confirm). Prije ovoga je
+            // korekcija zaobilazila EnsureGroupCapacityAvailable u potpunosti jer je provjera gledala samo
+            // isNewGuestBooking — dopuštalo je da Cancelled->Confirmed korekcija nakon FIFO promocije proizvede
+            // ConfirmedCount > Capacity (poznat defekt). Idempotentan Confirmed -> Confirmed nikad ne ulazi ovamo
+            // (booking.Status != BookingStatus.Confirmed to isključuje) — ne zauzima novo mjesto pa ostaje no-op čak
+            // i kad je grupa puna. Za POSTOJEĆI Booking provjera je namjerno future-only (appointment.StartsAt u
+            // budućnosti) — nakon početka termina nominalni kapacitet više ne ograničava korekciju povijesne
+            // prisutnosti (isto pravilo kao postojeće dopuštenje da Completed/NoShow premaše kapacitet nakon
+            // početka); gost-čekiranje kroz GroupAttendanceService uvijek šalje Completed/NoShow (nikad Confirmed)
+            // pa ta grana i dalje ne dira postojeći check-in tok.
+            bool isExistingBookingReturningToConfirmed =
+                !isNewGuestBooking && booking.Status != BookingStatus.Confirmed && appointment.StartsAt > DateTimeOffset.UtcNow;
+
+            if (isGroup && request.Status == BookingStatus.Confirmed && (isNewGuestBooking || isExistingBookingReturningToConfirmed))
                 await EnsureGroupCapacityAvailable(uow, organizationId, appointmentId);
 
             (PaymentMethod Method, decimal Amount)? pendingPayment = null;
             if (isGroup)
                 pendingPayment = await ApplyGroupTransition(uow, organizationId, userId, appointment, booking, request);
+            else if (request.Status == BookingStatus.Confirmed)
+                await ApplyIndividualCompletionCorrection(uow, organizationId, userId, appointment, booking);
             else
                 await ApplyIndividualTransition(uow, organizationId, userId, appointment, booking, request);
 
@@ -508,6 +543,129 @@ public class BookingService : IBookingService
 
         BookingStatusVersioning.TrySetStatus(booking, request.Status);
         booking.CancellationReason = request.CancellationReason;
+    }
+
+    /// <summary>Form=Individual, Completed -&gt; Confirmed: uska administrativna korekcija pogrešno odrađenog
+    /// check-ina (P1 korekcijski tok, vidi Booking.cs/IBookingService.SetStatus) — pozivatelj (SetStatus) je već
+    /// validirao da je ovo dopušteno (booking.Status je Completed, ili već Confirmed za idempotentan retry) prije
+    /// poziva. Za razliku od ApplyGroupTransition (ista vrsta korekcije, ali implicitna za "bilo koji prijelaz
+    /// DALJE OD Completed" i BEZ komisijske reverzije jer Group nema komisijski izvor po Bookingu), ovo je
+    /// eksplicitna, samostalna putanja:
+    ///
+    /// 1) KRITIČNO (spec section 10/30): ako Booking ima AKTIVAN novčani Payment koji NIJE check-in-generated
+    ///    (ručno dodan preko redovnog POS Checkouta), korekcija se ODBIJA (409) umjesto da tiho ostavi taj novac
+    ///    "osirotjelim" — Group ovo ne provjerava jer taj zahtjev nikad nije postavljen za Group.
+    /// 2) Check-in-generated Payment(i) se voidaju (isti mehanizam kao Group — IPaymentLedgerService.
+    ///    VoidCheckInGeneratedPayments, koji uz njih voida i njihov jednostavačni auto-Checkout, vidi
+    ///    PaymentService.TryVoidSoleAutoCheckout).
+    /// 3) Paket-ulazak se vraća ako je primijenjen i još nije vraćen (isti ReturnPackageEntryInTransaction poziv
+    ///    kao Group/ApplyIndividualTransition).
+    /// 4) booking.Amount/SuggestedAmount se NAMJERNO NE resetiraju na 0 (za razliku od Group!) — Individual Booking
+    ///    ima svoju cijenu popunjenu OD TRENUTKA KREIRANJA termina (ne tek od check-ina kao Group, vidi Booking.cs
+    ///    domensku napomenu), pa bi brisanje na 0 privremeno prikazalo stvaran zakazan/naplativ termin kao
+    ///    besplatan. Booking financials (PaidAmount/OutstandingAmount) se ispravno PREPRAVLJAJU BookingFinancialsCalculator
+    ///    izvedbom iz aktivnog (non-voided) stanja nakon Payment voida — Amount ostaje isti, OutstandingAmount se
+    ///    vraća na puni iznos automatski (vidi "Do NOT simply copy Group behavior blindly", spec section 4).
+    /// 5) CommissionEntry zarađen OVIM completionom prelazi Earned -&gt; Reversed (ICommissionLedgerService.
+    ///    ReverseForIndividualServiceCorrection) — jedini dio ove korekcije bez Group ekvivalenta.
+    /// 6) BookingStatusVersioning.TrySetStatus na kraju — jedina dozvoljena mutacijska putanja za Status, no-op
+    ///    (bez inkrementa) ako je booking već Confirmed (idempotentan retry, vidi spec section 15/41).
+    /// 7) Appointment.Status Completed -&gt; Scheduled, SAMO ako je korekcija stvaran prijelaz (ne no-op) —
+    ///    BEZOVJETNO na sestrinske Booking statuse (vidi TryRevertAppointmentCompletion): Appointment=Completed
+    ///    znači "nema nerazriješenih Confirmed Bookinga", pa čim JEDAN Booking na terminu ponovno postane
+    ///    Confirmed, termin više nije potpuno odrađen bez obzira odrađuje li se neki SESTRINSKI Booking na istom
+    ///    terminu (duo/multi-klijent Individual) i dalje Completed — isto ponašanje kao GroupCapacityGuard koji
+    ///    dopušta Appointment=Scheduled uz sestrinski Booking bilo kojeg statusa. CompleteExisting je učinjen
+    ///    idempotentnim po retku (generira Payment/CommissionEntry SAMO za redak koji STVARNO mijenja status u
+    ///    OVOM pozivu) upravo da bi ponovni completion nakon ovoga (npr. ponovno slanje CIJELOG originalnog
+    ///    ClientIds popisa da se izbjegne UpdateWithBookingsCore hard-delete sestrinskih redaka izostavljenih iz
+    ///    popisa) mogao sigurno preskočiti već-Completed sestrinski redak bez duplog Paymenta/CommissionEntry.
+    ///
+    /// Sve gornje pod-operacije su same po sebi idempotentne (guard po postojećem stanju, ne po ulaznom statusu),
+    /// pa se ova metoda namjerno poziva BEZOVJETNO i za pravu korekciju (Completed-&gt;Confirmed) i za idempotentan
+    /// retry (Confirmed-&gt;Confirmed) — isti obrazac kao ApplyGroupTransition.</summary>
+    private async Task ApplyIndividualCompletionCorrection(
+        IUnitOfWork uow, Guid organizationId, Guid userId, Appointment appointment, Booking booking)
+    {
+        List<CheckoutItem> items = await _checkoutHandler.GetItemsForBooking(uow, organizationId, booking.Id.GetValueOrDefault());
+
+        bool hasNonReversiblePayment = items
+            .SelectMany(i => i.Allocations)
+            .Any(a => a.Payment != null && a.Payment.Status == PaymentStatus.Completed && !a.Payment.IsCheckInGenerated);
+
+        if (hasNonReversiblePayment)
+            throw new BusinessRuleException(
+                ErrorCodes.BookingHasNonReversiblePayment,
+                "Booking ima aktivnu ručno dodanu novčanu uplatu (izvan check-in toka) — korekcija check-ina nije " +
+                "moguća dok se ta uplata ne riješi kroz Checkout (poništenje bi tiho osirotjelo primljen novac).",
+                new { bookingId = booking.Id });
+
+        await _paymentLedgerService.VoidCheckInGeneratedPayments(
+            uow, organizationId, userId, booking, "Poništen check-in (korekcija Completed -> Confirmed)");
+
+        if (booking.PackageCoverageApplied && !booking.PackageCoverageReturned && booking.ClientPackageId.HasValue)
+        {
+            await ReturnPackageEntryInTransaction(uow, organizationId, booking.ClientPackageId.Value, appointment.ServiceId, userId);
+
+            booking.PackageCoverageReturned = true;
+            booking.PackageCoverageReturnedAt = DateTimeOffset.UtcNow;
+            booking.PackageCoverageReturnedBy = userId;
+
+            await _auditLogHandler.Add(uow, new AppointmentAuditLog
+            {
+                Id = Guid.NewGuid(),
+                AppointmentId = appointment.Id.GetValueOrDefault(),
+                BookingId = booking.Id,
+                ChangeType = "BookingPackageCoverageReturned",
+                OldValue = "Applied",
+                NewValue = "Returned",
+                ChangedAt = DateTimeOffset.UtcNow,
+                ChangedBy = userId
+            });
+        }
+
+        await _commissionLedgerService.ReverseForIndividualServiceCorrection(uow, organizationId, userId, booking);
+
+        bool wasRealTransition = BookingStatusVersioning.TrySetStatus(booking, BookingStatus.Confirmed);
+        if (wasRealTransition)
+            await TryRevertAppointmentCompletion(uow, organizationId, userId, appointment);
+    }
+
+    /// <summary>Vraća Appointment.Status Completed -&gt; Scheduled — pozivatelj (ApplyIndividualCompletionCorrection)
+    /// već je utvrdio da je OVAJ poziv stvaran Completed-&gt;Confirmed prijelaz (ne idempotentan retry). Namjerno
+    /// BEZUVJETNO, bez obzira ostaje li neki SESTRINSKI Booking na istom terminu (duo/multi-klijent Individual,
+    /// vidi Booking.cs "mješovito plaćanje na istom terminu") i dalje Completed — vidi Appointment.Status
+    /// napomenu na ApplyIndividualCompletionCorrection za obrazloženje invarijante ("Completed = nema
+    /// nerazriješenih Confirmed Bookinga"). Bez ovoga bi AppointmentService.CompleteExisting trajno odbijao
+    /// ponovan completion istog termina s ALREADY_COMPLETED nakon korekcije (vidi spec section 6/45).
+    ///
+    /// Zaključava Appointment redak (FOR UPDATE) — SetStatus je već zaključao Appointment PRIJE Bookinga na
+    /// ulazu u ovu transakciju (vidi tamo za puni opis redoslijeda), pa je ovo besplatan re-lock ISTOG retka
+    /// unutar iste transakcije, ne novo zaključavanje. Bare fetch (bez Include) je dovoljan jer više ne čitamo
+    /// sestrinske Bookinge ovdje.</summary>
+    private async Task TryRevertAppointmentCompletion(IUnitOfWork uow, Guid organizationId, Guid userId, Appointment appointment)
+    {
+        Appointment locked = await _appointmentHandler.GetForUpdate(uow, organizationId, appointment.Id.GetValueOrDefault());
+        if (locked == null || locked.Status != AppointmentStatus.Completed)
+            return;
+
+        AppointmentStatus oldStatus = locked.Status;
+        locked.Status = AppointmentStatus.Scheduled;
+        locked.UpdatedAt = DateTimeOffset.UtcNow;
+        locked.UpdatedBy = userId;
+
+        await _appointmentHandler.UpdateScalar(uow, locked);
+
+        await _auditLogHandler.Add(uow, new AppointmentAuditLog
+        {
+            Id = Guid.NewGuid(),
+            AppointmentId = appointment.Id.GetValueOrDefault(),
+            ChangeType = "Status",
+            OldValue = oldStatus.ToString(),
+            NewValue = locked.Status.ToString(),
+            ChangedAt = DateTimeOffset.UtcNow,
+            ChangedBy = userId
+        });
     }
 
     /// <summary>Razrješava CoverageType/ClientPackageId za prvi (ili ponovljeni nakon vraćanja) check-in — skida

@@ -221,6 +221,26 @@ public class AppointmentsController : ControllerBase
             }));
     }
 
+    /// <summary>Poništava check-in/otkazivanje JEDNOG Bookinga natrag na Confirmed — administrativna korekcija.
+    /// Za Form=Group dostupno s bilo kojeg terminalnog statusa (Completed/NoShow/Cancelled -&gt; Confirmed). Za
+    /// Form=Individual namjerno UŽE — dostupno ISKLJUČIVO iz Completed (poništenje pogrešnog check-ina;
+    /// Cancelled/NoShow nemaju povratnu putanju, vidi BookingService.ApplyIndividualCompletionCorrection), uklj.
+    /// void check-in-generated Paymenta, povrat paket-ulaska, reverziju CommissionEntry i povratak
+    /// Appointment.Status na Scheduled (bezuvjetno, i na multi-klijent terminu gdje sestrinski Booking ostaje
+    /// Completed — vidi tamo). Vraćanje paket-ulaska, storniranje pripadajuće Notification pojave i poništenje
+    /// naplate check-ina rješava isključivo BookingService.SetStatus.</summary>
+    [HttpPatch("{appointmentId:guid}/bookings/{clientId:guid}/confirm")]
+    [RequireGrant(Grants.AppointmentsWriteOwn, Grants.AppointmentsWriteAll)]
+    public async Task<ActionResult<BookingDto>> ConfirmBooking(Guid appointmentId, Guid clientId)
+    {
+        return Ok(await _bookingService.SetStatus(
+            this.CurrentOrganizationId(), this.CurrentUserId(), this.HasGrant(Grants.AppointmentsWriteAll), appointmentId, clientId,
+            new BookingSetStatusRequest
+            {
+                Status = BookingStatus.Confirmed
+            }));
+    }
+
     /// <summary>Povijest Paymenta (monetarnih naplata) jednog Bookinga, uklj. voidane, preko svih njegovih
     /// povijesnih Checkout stavki — vidi IPaymentService. Kreiranje/void Paymenta ide kroz ICheckoutService
     /// (vidi CheckoutsController) jer Payment pripada Checkoutu, ne izravno Bookingu.</summary>

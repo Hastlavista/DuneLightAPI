@@ -17,16 +17,24 @@ namespace BlueDragon.DuneLight.Infrastructure.Domain.Models.Commissions;
 ///
 /// Izvor je točno JEDAN od BookingId (IndividualService)/AppointmentId (GroupService, po CIJELOM terminu, ne po
 /// sudioniku — vidi CommissionSourceType)/CheckoutItemId (ProductSale/PackageSale), prema SourceType. Idempotencija
-/// je DB-garantirana (ne "if not exists"): unique indeks na BookingId (nullable, nenul samo za IndividualService),
-/// unique indeks na CheckoutItemId (nullable, nenul samo za Product/PackageSale), i djelomični unique indeks na
-/// AppointmentId WHERE source_type='GroupService' (vidi migraciju) — svaka od ove tri poslovne pojave može
+/// je DB-garantirana (ne "if not exists"): unique indeks na (BookingId, SourceVersion) (nullable, nenul samo za
+/// IndividualService — vidi Migration_2026_09_25), unique indeks na CheckoutItemId (nullable, nenul samo za
+/// Product/PackageSale), i djelomični unique indeks na AppointmentId WHERE source_type='GroupService' (vidi
+/// migraciju) — svaka poslovna pojava (COMPLETION-OCCURRENCE za IndividualService, ne samo booking) može
 /// proizvesti najviše jedan CommissionEntry, čak i pod konkurentnim/ponovljenim zahtjevima.
 ///
-/// Status=Earned je jedina vrijednost koju ovaj MVP trenutno proizvodi (vidi CommissionEntryStatus) — nijedan
-/// postojeći poslovni prijelaz nema legitiman put natrag koji bi trebao reverzirati OVE izvore (individualni
-/// Booking-completion i grupni Appointment-completion nemaju "undo" u trenutnom lifecycleu, Checkout Voided
-/// vrijedi samo za jednostavačne check-in-generirane Checkoute koji nikad ne sadrže Product/Package stavke —
-/// vidi CommissionService domensku napomenu za punu analizu). Retke se NIKAD ne briše niti cascade-briše kad se
+/// SourceVersion (samo za SourceType=IndividualService, inače uvijek 0) je Booking.StatusVersion snapshotan u
+/// TRENUTKU zarade — daje stabilan identitet JEDNOJ konkretnoj completion-pojavi istog Bookinga (isti obrazac kao
+/// Booking.StatusVersion/Notification.SourceVersion), jer se Individual Booking legitimno može vratiti na
+/// Confirmed nakon Completed (BookingService.ApplyIndividualCompletionCorrection — poništenje pogrešnog
+/// check-ina) i kasnije ponovno odraditi, što mora zaraditi NOVI Earned zapis bez sudara sa starim
+/// (sad Reversed) zapisom iste geneze.
+///
+/// Status=Earned je jedina vrijednost koju je ovaj MVP prvotno proizvodio (vidi CommissionEntryStatus) —
+/// individualni Booking-completion sada IMA reverzijsku putanju (ApplyIndividualCompletionCorrection, vidi gore),
+/// grupni Appointment-completion i dalje NEMA (vidi CommissionService domensku napomenu za punu analizu zašto).
+/// ReversedAt/ReversedBy (vidi ispod) bilježe tko/kada je zapis reverziran — isti obrazac kao
+/// checkouts.cancelled_at/cancelled_by. Retke se NIKAD ne briše niti cascade-briše kad se
 /// CommissionRule obriše (CommissionRuleId je Restrict FK, referencirano pravilo se ne može trajno obrisati —
 /// vidi CommissionRuleHandler.IsReferenced) — jedina cascade veza je na Appointment/Booking (isto ponašanje kao
 /// AppointmentAuditLog: "isti dan" hard-delete termina briše i njegov povijesni trag, vidi
@@ -83,6 +91,11 @@ public class CommissionEntry
     [Column("status")]
     public CommissionEntryStatus Status { get; set; }
 
+    /// <summary>Booking.StatusVersion u trenutku zarade (samo SourceType=IndividualService, inače uvijek 0) —
+    /// vidi klasnu napomenu za puno obrazloženje. Dio unique indeksa uz BookingId (Migration_2026_09_25).</summary>
+    [Column("source_version")]
+    public int SourceVersion { get; set; }
+
     /// <summary>Poslovni trenutak zarade (kad je izvor stvarno odrađen/prodan) — koristi se za date-range upite,
     /// ne nužno identično CreatedAt (iako u ovom MVP-u uvijek jest, jer se zapis stvara unutar iste transakcije
     /// kao prijelaz koji ga zarađuje).</summary>
@@ -91,6 +104,13 @@ public class CommissionEntry
 
     [Column("created_at")]
     public DateTimeOffset CreatedAt { get; set; }
+
+    /// <summary>Popunjeno SAMO kad je Status=Reversed — vidi ApplyIndividualCompletionCorrection.</summary>
+    [Column("reversed_at")]
+    public DateTimeOffset? ReversedAt { get; set; }
+
+    [Column("reversed_by")]
+    public Guid? ReversedBy { get; set; }
 
     public Employee Employee { get; set; }
     public Company Company { get; set; }
