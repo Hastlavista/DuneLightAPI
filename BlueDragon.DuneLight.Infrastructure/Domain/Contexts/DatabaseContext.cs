@@ -2,6 +2,7 @@ using System;
 using BlueDragon.DuneLight.Core.Enums;
 using BlueDragon.DuneLight.Infrastructure.Domain.Models;
 using BlueDragon.DuneLight.Infrastructure.Domain.Models.Appointments;
+using BlueDragon.DuneLight.Infrastructure.Domain.Models.Capabilities;
 using BlueDragon.DuneLight.Infrastructure.Domain.Models.Catalog;
 using BlueDragon.DuneLight.Infrastructure.Domain.Models.Checkouts;
 using BlueDragon.DuneLight.Infrastructure.Domain.Models.Clients;
@@ -90,6 +91,14 @@ public class DatabaseContext : DbContext
     public DbSet<Role> Roles { get; set; }
     public DbSet<UserRoleAssignment> UserRoleAssignments { get; set; }
 
+    public DbSet<CapabilityDefinition> CapabilityDefinitions { get; set; }
+    public DbSet<CapabilityDefinitionGrant> CapabilityDefinitionGrants { get; set; }
+    public DbSet<DefaultRoleTemplate> DefaultRoleTemplates { get; set; }
+    public DbSet<DefaultRoleTemplateCapability> DefaultRoleTemplateCapabilities { get; set; }
+    public DbSet<DefaultRoleTemplateGrant> DefaultRoleTemplateGrants { get; set; }
+    public DbSet<GrantGroupCapabilitySnapshot> GrantGroupCapabilitySnapshots { get; set; }
+    public DbSet<GrantGroupTemplateGrant> GrantGroupTemplateGrants { get; set; }
+
     public DatabaseContext(DbContextOptions options) : base(options)
     {
     }
@@ -127,6 +136,7 @@ public class DatabaseContext : DbContext
         ConfigureGroups(modelBuilder);
         ConfigureRoster(modelBuilder);
         ConfigurePermissions(modelBuilder);
+        ConfigureCapabilities(modelBuilder);
         ConfigureOutboxAndNotifications(modelBuilder);
 
         base.OnModelCreating(modelBuilder);
@@ -947,6 +957,108 @@ public class DatabaseContext : DbContext
             .HasOne(u => u.Role)
             .WithMany()
             .HasForeignKey(u => u.RoleId)
+            .OnDelete(DeleteBehavior.Cascade);
+    }
+
+    private static void ConfigureCapabilities(ModelBuilder modelBuilder)
+    {
+        // Autorsko-vrijeme metapodatak (FAZA 1 kapabiliteti/predlošci) — NE runtime autorizacija, ta i dalje čita
+        // isključivo GrantGroup/GrantGroupGrant (ConfigurePermissions gore). Vidi CapabilityDefinition klasnu
+        // napomenu. unique(key, version) + is_active/deprecated_at žive ovdje; hard-delete guard za već
+        // referencirane verzije je servisni/migracijski RESTRICT (vidi migraciju), ne EF cascade.
+        modelBuilder.Entity<CapabilityDefinition>().HasKey(c => c.Id);
+        modelBuilder.Entity<CapabilityDefinition>()
+            .HasIndex(c => new { c.Key, c.Version })
+            .IsUnique();
+        modelBuilder.Entity<CapabilityDefinition>()
+            .Property(c => c.ScopeModel)
+            .HasConversion(v => v.ToString(), v => Enum.Parse<CapabilityScopeModel>(v));
+        modelBuilder.Entity<CapabilityDefinition>()
+            .Property(c => c.Sensitivity)
+            .HasConversion(v => v.ToString(), v => Enum.Parse<CapabilitySensitivity>(v));
+
+        modelBuilder.Entity<CapabilityDefinitionGrant>().HasKey(g => g.Id);
+        modelBuilder.Entity<CapabilityDefinitionGrant>()
+            .HasIndex(g => new { g.CapabilityDefinitionId, g.GrantKey })
+            .IsUnique();
+        modelBuilder.Entity<CapabilityDefinitionGrant>()
+            .Property(g => g.Role)
+            .HasConversion(v => v.ToString(), v => Enum.Parse<CapabilityGrantRole>(v));
+        // Cascade — kad se briše NEISKORIŠTENA CapabilityDefinition verzija (guard u servisnom sloju sprječava
+        // brisanje već referenciranih verzija, vidi CapabilityVersionGuard), njeni grant-retci padaju s njom.
+        modelBuilder.Entity<CapabilityDefinitionGrant>()
+            .HasOne(g => g.CapabilityDefinition)
+            .WithMany(c => c.Grants)
+            .HasForeignKey(g => g.CapabilityDefinitionId)
+            .OnDelete(DeleteBehavior.Cascade);
+
+        modelBuilder.Entity<DefaultRoleTemplate>().HasKey(t => t.Id);
+        modelBuilder.Entity<DefaultRoleTemplate>()
+            .HasIndex(t => new { t.Key, t.Version })
+            .IsUnique();
+
+        modelBuilder.Entity<DefaultRoleTemplateCapability>().HasKey(c => c.Id);
+        modelBuilder.Entity<DefaultRoleTemplateCapability>()
+            .HasIndex(c => new { c.DefaultRoleTemplateId, c.CapabilityDefinitionId })
+            .IsUnique();
+        modelBuilder.Entity<DefaultRoleTemplateCapability>()
+            .Property(c => c.SelectedScope)
+            .HasConversion(v => v.ToString(), v => Enum.Parse<CapabilitySelectedScope>(v));
+        // Cascade prema vlastitom (neiskorištenom) DefaultRoleTemplate retku — isto obrazloženje kao
+        // CapabilityDefinitionGrant gore. Restrict prema CapabilityDefinition — referencirana verzija se
+        // NIKAD ne smije hard-obrisati dok je predložak koristi (vidi FAZA 1 Part D/Q).
+        modelBuilder.Entity<DefaultRoleTemplateCapability>()
+            .HasOne(c => c.DefaultRoleTemplate)
+            .WithMany(t => t.Capabilities)
+            .HasForeignKey(c => c.DefaultRoleTemplateId)
+            .OnDelete(DeleteBehavior.Cascade);
+        modelBuilder.Entity<DefaultRoleTemplateCapability>()
+            .HasOne(c => c.CapabilityDefinition)
+            .WithMany()
+            .HasForeignKey(c => c.CapabilityDefinitionId)
+            .OnDelete(DeleteBehavior.Restrict);
+
+        modelBuilder.Entity<DefaultRoleTemplateGrant>().HasKey(g => g.Id);
+        modelBuilder.Entity<DefaultRoleTemplateGrant>()
+            .HasIndex(g => new { g.DefaultRoleTemplateId, g.GrantKey })
+            .IsUnique();
+        modelBuilder.Entity<DefaultRoleTemplateGrant>()
+            .Property(g => g.Reason)
+            .HasConversion(v => v.ToString(), v => Enum.Parse<DefaultRoleTemplateGrantReason>(v));
+        modelBuilder.Entity<DefaultRoleTemplateGrant>()
+            .HasOne(g => g.DefaultRoleTemplate)
+            .WithMany(t => t.CompatibilityGrants)
+            .HasForeignKey(g => g.DefaultRoleTemplateId)
+            .OnDelete(DeleteBehavior.Cascade);
+
+        // GrantGroup -> Cascade (provenance umire s vlasnikom); CapabilityDefinition -> Restrict (referencirana
+        // verzija se ne smije hard-obrisati ispod postojeće snapshot povijesti, vidi CapabilityVersionGuard).
+        modelBuilder.Entity<GrantGroupCapabilitySnapshot>().HasKey(s => s.Id);
+        modelBuilder.Entity<GrantGroupCapabilitySnapshot>()
+            .HasIndex(s => new { s.GrantGroupId, s.CapabilityDefinitionId })
+            .IsUnique();
+        modelBuilder.Entity<GrantGroupCapabilitySnapshot>()
+            .Property(s => s.SelectedScope)
+            .HasConversion(v => v.ToString(), v => Enum.Parse<CapabilitySelectedScope>(v));
+        modelBuilder.Entity<GrantGroupCapabilitySnapshot>()
+            .HasOne(s => s.GrantGroup)
+            .WithMany()
+            .HasForeignKey(s => s.GrantGroupId)
+            .OnDelete(DeleteBehavior.Cascade);
+        modelBuilder.Entity<GrantGroupCapabilitySnapshot>()
+            .HasOne(s => s.CapabilityDefinition)
+            .WithMany()
+            .HasForeignKey(s => s.CapabilityDefinitionId)
+            .OnDelete(DeleteBehavior.Restrict);
+
+        modelBuilder.Entity<GrantGroupTemplateGrant>().HasKey(g => g.Id);
+        modelBuilder.Entity<GrantGroupTemplateGrant>()
+            .HasIndex(g => new { g.GrantGroupId, g.GrantKey })
+            .IsUnique();
+        modelBuilder.Entity<GrantGroupTemplateGrant>()
+            .HasOne(g => g.GrantGroup)
+            .WithMany()
+            .HasForeignKey(g => g.GrantGroupId)
             .OnDelete(DeleteBehavior.Cascade);
     }
 

@@ -42,7 +42,27 @@ public enum DiagnosticCategory
 
     /// <summary>Default-role drift kod postojeće organizacije — vidi DefaultGrantGroupDriftChecker. Postojeće
     /// organizacije se NE mijenjaju automatski (FAZA 1 Part D), ovo je samo izvještaj.</summary>
-    DefaultRoleDrift
+    DefaultRoleDrift,
+
+    /// <summary>FAZA 1 Part S — raw grant iz Grants.Catalog kojeg NIJEDNA aktivna CapabilityDefinition ne
+    /// pokriva (ni kao Primary* ni kao MandatorySupporting). Nije nužno greška (neki grantovi su namjerno
+    /// Owner/Advanced-only), ali vrijedi periodično pregledati.</summary>
+    RawGrantNotCoveredByCapability,
+
+    /// <summary>CapabilityDefinitionGrant referencira grant-ključ koji ne postoji u Grants.Catalog.</summary>
+    CapabilityReferencesUnknownGrant,
+
+    /// <summary>DefaultRoleTemplateCapability referencira CapabilityDefinition verziju koja je deprecated
+    /// (DeprecatedAt != null) dok je predložak i dalje aktivan — signal da predložak treba migrirati na noviju verziju.</summary>
+    TemplateReferencesInvalidCapabilityVersion,
+
+    /// <summary>DefaultRoleTemplateGrant referencira grant-ključ koji ne postoji u Grants.Catalog.</summary>
+    TemplateGrantReferencesUnknownGrant,
+
+    /// <summary>Drift između GrantGroupGrant i onoga što bi njeni GrantGroupCapabilitySnapshot+GrantGroupTemplateGrant
+    /// zapisi trebali materijalizirati — precizniji od DefaultRoleDrift jer koristi stabilnu snapshot poveznicu
+    /// umjesto Name-only podudaranja (vidi FAZA 1 Part S).</summary>
+    SnapshotBasedTemplateDrift
 }
 
 /// <summary>Jedan diagnostic nalaz. Details nosi dodatne stringove (npr. popis pogođenih grant-ključeva ili ruta)
@@ -80,6 +100,17 @@ public record DefaultRoleDriftEntry(
     IReadOnlyList<string> ExtraGrants,
     bool IsExactMatch);
 
+/// <summary>Rezultat usporedbe jedne GrantGroup-e naspram onoga što njeni snapshot/provenance zapisi trebaju
+/// materijalizirati — vidi DiagnosticCategory.SnapshotBasedTemplateDrift.</summary>
+public record SnapshotBasedDriftEntry(
+    Guid OrganizationId,
+    Guid GrantGroupId,
+    string SourceTemplateKey,
+    int? SourceTemplateVersion,
+    IReadOnlyList<string> MissingGrants,
+    IReadOnlyList<string> ExtraGrants,
+    bool IsExactMatch);
+
 /// <summary>Puni izvještaj generiran od IGrantDiagnosticsService.GenerateReport() — read-only snapshot, ništa
 /// ne mijenja u bazi niti u runtime autorizaciji (vidi FAZA 1 Part F/H).</summary>
 public record GrantDiagnosticsReport(
@@ -88,4 +119,5 @@ public record GrantDiagnosticsReport(
     IReadOnlyList<GrantDiagnosticFinding> Findings,
     IReadOnlyList<OwnAllGrantPair> OwnAllPairs,
     IReadOnlyList<DefaultRoleDriftEntry> DefaultRoleDrift,
+    IReadOnlyList<SnapshotBasedDriftEntry> SnapshotDrift,
     IReadOnlyList<string> KnownLimitations);

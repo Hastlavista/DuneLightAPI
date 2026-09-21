@@ -122,4 +122,13 @@ public static class ErrorCodes
     public const string RecurringConflictReasonRoom = "ROOM_OCCUPIED";
     public const string RecurringConflictReasonMemberConflict = "MEMBER_CONFLICT";
     public const string RecurringConflictReasonDuplicateOccurrence = "DUPLICATE_OCCURRENCE";
+
+    // Capability-aware GrantGroup authoring (FAZA 2 — vidi GrantGroupCapabilityAuthoringService)
+    public const string CapabilityUnknown = "CAPABILITY_UNKNOWN";
+    public const string CapabilityVersionNotFound = "CAPABILITY_VERSION_NOT_FOUND";
+    public const string CapabilityVersionNotAvailable = "CAPABILITY_VERSION_NOT_AVAILABLE";
+    public const string CapabilityScopeIllegal = "CAPABILITY_SCOPE_ILLEGAL";
+    public const string DuplicateCapabilitySelection = "DUPLICATE_CAPABILITY_SELECTION";
+    public const string GrantKeyUnknown = "GRANT_KEY_UNKNOWN";
+    public const string GrantAlreadyCapabilityDerived = "GRANT_ALREADY_CAPABILITY_DERIVED";
 }

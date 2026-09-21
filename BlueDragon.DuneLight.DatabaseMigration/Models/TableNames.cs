@@ -82,6 +82,14 @@ public static class Tables
     public const string Roles = "roles";
     public const string UserRoleAssignments = "user_role_assignments";
 
+    public const string CapabilityDefinitions = "capability_definitions";
+    public const string CapabilityDefinitionGrants = "capability_definition_grants";
+    public const string DefaultRoleTemplates = "default_role_templates";
+    public const string DefaultRoleTemplateCapabilities = "default_role_template_capabilities";
+    public const string DefaultRoleTemplateGrants = "default_role_template_grants";
+    public const string GrantGroupCapabilitySnapshots = "grant_group_capability_snapshots";
+    public const string GrantGroupTemplateGrants = "grant_group_template_grants";
+
     /// <summary>
     /// Stari nazivi (prije preimenovanja Location -> Company u RenameLocationToCompany). Ne dirati i ne brisati:
     /// koriste ih već odrađene migracije (redoslijed 3-41) da na praznoj bazi vjerno reproduciraju shemu kakva je

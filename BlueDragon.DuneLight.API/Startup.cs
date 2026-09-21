@@ -11,6 +11,7 @@ using BlueDragon.DuneLight.API.Diagnostics;
 using BlueDragon.DuneLight.API.Middleware;
 using BlueDragon.DuneLight.Core.Interfaces;
 using BlueDragon.DuneLight.Core.Interfaces.Appointments;
+using BlueDragon.DuneLight.Core.Interfaces.Capabilities;
 using BlueDragon.DuneLight.Core.Interfaces.Catalog;
 using BlueDragon.DuneLight.Core.Interfaces.Checkouts;
 using BlueDragon.DuneLight.Core.Interfaces.Clients;
@@ -200,6 +201,15 @@ public class Startup
         services.AddScoped<IGrantGroupService, GrantGroupService>();
         services.AddScoped<IRoleService, RoleService>();
 
+        // FAZA 1 Part I/R — autorsko-vrijeme capability/predložak metapodaci, ne runtime autorizacija (ta ostaje
+        // isključivo GrantResolver/GrantGroupHandler.ResolveEffective iznad).
+        services.AddSingleton<ICapabilityMaterializationService, CapabilityMaterializationService>();
+        services.AddScoped<ICapabilityReadService, CapabilityReadService>();
+
+        // FAZA 2 — capability-aware GrantGroup autorstvo (create/update/authoring-state); backend materijalizira
+        // raw grantove, frontend nikad ne šalje gotov skup (vidi IGrantGroupCapabilityAuthoringService).
+        services.AddScoped<IGrantGroupCapabilityAuthoringService, GrantGroupCapabilityAuthoringService>();
+
         // FAZA 1 Part F/G — read-only platform dijagnostika, ne tenant runtime autorizacija (vidi
         // GrantDiagnosticsController, Owner-only + Development-only izloženost).
         services.AddSingleton<IEndpointGrantMetadataProvider, EndpointGrantMetadataProvider>();
@@ -277,6 +287,8 @@ public class Startup
         services.AddSingleton<IEmployeeLeaveSettingsHandler, EmployeeLeaveSettingsHandler>();
         services.AddSingleton<ILeaveFundHandler, LeaveFundHandler>();
 
+        services.AddSingleton<ICapabilityDefinitionHandler, CapabilityDefinitionHandler>();
+        services.AddSingleton<IDefaultRoleTemplateHandler, DefaultRoleTemplateHandler>();
         services.AddSingleton<IGrantGroupHandler, GrantGroupHandler>();
         services.AddSingleton<IRoleHandler, RoleHandler>();
 
