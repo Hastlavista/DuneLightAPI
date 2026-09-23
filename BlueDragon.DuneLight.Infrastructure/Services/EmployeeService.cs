@@ -368,15 +368,51 @@ public class EmployeeService : IEmployeeService
 
     public async Task<EmployeeMeDto> GetMe(Guid organizationId, Guid userId)
     {
+        // Grants belong to the User (UserGrantGroup), never to the Employee - resolve them
+        // unconditionally so a User without an Employee profile yet (always the organization's
+        // founder right after Register, see AuthService.Register's Admin starter GrantGroup
+        // assignment) still gets their real grants back, not a 404. See EmployeeMeDto's own doc.
+        HashSet<string> grants = await _grantGroupHandler.ResolveEffective(organizationId, userId);
         Employee employee = await _employeeHandler.GetByUserId(organizationId, userId);
+
         if (employee == null)
-            throw new NotFoundAppException("Employee", userId);
+        {
+            User user = await _authHandler.GetUserById(userId);
+            return ToNoProfileMeDto(user, grants);
+        }
 
         Employee full = await _employeeHandler.GetById(organizationId, employee.Id.GetValueOrDefault());
-        HashSet<string> grants = await _grantGroupHandler.ResolveEffective(organizationId, userId);
+        return ToProfileMeDto(full, grants);
+    }
 
+    /// <summary>Pure mapping, split out from GetMe so both branches are unit-testable without mocking
+    /// every handler GetMe depends on (see ActiveUserGuardTests/ServiceAvailabilityService's ToXDto for the
+    /// same pattern elsewhere) - covers the "authenticated User, no Employee profile yet" contract (always
+    /// the organization's founder right after Register, see EmployeeMeDto's own doc). `user` may itself be
+    /// null only if the User row is gone entirely, which the JWT layer already rejects before this is
+    /// reachable in practice (see Startup.cs's OnTokenValidated) - handled defensively regardless.</summary>
+    internal static EmployeeMeDto ToNoProfileMeDto(User user, HashSet<string> grants)
+    {
         return new EmployeeMeDto
         {
+            HasProfile = false,
+            EmployeeId = null,
+            FirstName = null,
+            LastName = null,
+            Role = user != null ? UserRoleClaims.ToClaimValue(user.Role) : null,
+            Grants = grants.ToList(),
+            HasPinSet = user != null && !string.IsNullOrEmpty(user.PinHash),
+            ColorHex = null,
+            Companies = new List<EmployeeCompanyDto>()
+        };
+    }
+
+    /// <summary>Pure mapping for the "has an Employee profile" branch - see ToNoProfileMeDto's own doc.</summary>
+    internal static EmployeeMeDto ToProfileMeDto(Employee full, HashSet<string> grants)
+    {
+        return new EmployeeMeDto
+        {
+            HasProfile = true,
             EmployeeId = full.Id.GetValueOrDefault(),
             FirstName = full.FirstName,
             LastName = full.LastName,

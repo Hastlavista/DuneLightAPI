@@ -4,10 +4,12 @@ using System.Threading.Tasks;
 using BlueDragon.DuneLight.API.Authorization;
 using BlueDragon.DuneLight.API.Extensions;
 using BlueDragon.DuneLight.Core.DTOs.Appointments;
+using BlueDragon.DuneLight.Core.DTOs.Catalog;
 using BlueDragon.DuneLight.Core.DTOs.Schedule;
 using BlueDragon.DuneLight.Core.DTOs.ScheduleBreaks;
 using BlueDragon.DuneLight.Core.Enums;
 using BlueDragon.DuneLight.Core.Interfaces.Appointments;
+using BlueDragon.DuneLight.Core.Interfaces.Catalog;
 using BlueDragon.DuneLight.Core.Interfaces.ScheduleBreaks;
 using BlueDragon.DuneLight.Core.Shared;
 using Microsoft.AspNetCore.Mvc;
@@ -24,16 +26,29 @@ public class AppointmentsController : ControllerBase
     private readonly IWaitlistService _waitlistService;
     private readonly IScheduleBreakService _scheduleBreakService;
     private readonly IPaymentService _paymentService;
+    private readonly IServiceAvailabilityService _serviceAvailabilityService;
 
     public AppointmentsController(
         IAppointmentService appointmentService, IBookingService bookingService, IWaitlistService waitlistService,
-        IScheduleBreakService scheduleBreakService, IPaymentService paymentService)
+        IScheduleBreakService scheduleBreakService, IPaymentService paymentService,
+        IServiceAvailabilityService serviceAvailabilityService)
     {
         _appointmentService = appointmentService;
         _bookingService = bookingService;
         _waitlistService = waitlistService;
         _scheduleBreakService = scheduleBreakService;
         _paymentService = paymentService;
+        _serviceAvailabilityService = serviceAvailabilityService;
+    }
+
+    /// <summary>Usluge bookabilne u poslovnici za formu novog termina — namjerno gated iza appointments.write.own/all,
+    /// ne catalog.services.view (vidi IServiceAvailabilityService.GetBookableServices), da zakazivanje termina ne
+    /// ovisi o pristupu administraciji kataloga usluga. Vraća lagani DTO, ne puni ServiceDto.</summary>
+    [HttpGet("services")]
+    [RequireGrant(Grants.AppointmentsWriteOwn, Grants.AppointmentsWriteAll)]
+    public async Task<ActionResult<List<AppointmentServiceOptionDto>>> GetBookableServices([FromQuery] Guid companyId)
+    {
+        return Ok(await _serviceAvailabilityService.GetBookableServices(this.CurrentOrganizationId(), companyId));
     }
 
     /// <summary>Raspored za razdoblje — filtri: tvrtka (zadano sve), trener, usluga/kategorija, status. Uključuje

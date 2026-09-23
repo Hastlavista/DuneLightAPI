@@ -256,23 +256,37 @@ public class EmployeeWithLoginCreateResponse
     public List<Guid> GrantGroupIds { get; set; } = new();
 }
 
-/// <summary>Odgovor za "tko sam ja" (`GET /api/employees/me`) — dovoljno da frontend zna svoj identitet zaposlenika.</summary>
+/// <summary>Odgovor za "tko sam ja" (`GET /api/employees/me`) — dovoljno da frontend zna svoj identitet
+/// autorizacijskog principala (User), neovisno o tome ima li Employee profil. AUTORIZACIJA PRIPADA USERU, NE
+/// EMPLOYEEU: User -> UserGrantGroup -> GrantGroup -> GrantGroupGrant daje efektivne grantove uvijek, čak i kad
+/// HasProfile je false (organizacijski osnivač odmah nakon Register — vidi AuthService.Register's Admin starter
+/// GrantGroup dodjelu). Employee profil je opcionalan poslovni/radni profil, ne preduvjet za autorizaciju — zato
+/// GetMe više NE baca 404 kad Employee ne postoji (vidi EmployeeService.GetMe). Nema Owner/founder bypass-a bilo
+/// gdje u sustavu.</summary>
 public class EmployeeMeDto
 {
-    public Guid EmployeeId { get; set; }
+    /// <summary>False dok User nema Employee profil - u praksi gotovo uvijek samo organizacijski osnivač,
+    /// odmah nakon Register, prije dovršetka vlastitog profila (vidi CompleteEmployeeProfileCtaComponent na
+    /// frontendu). Employee-specifična polja ispod (EmployeeId/FirstName/LastName/ColorHex/Companies) su
+    /// null/prazna dok je ovo false - ne postoje fiktivne/placeholder vrijednosti.</summary>
+    public bool HasProfile { get; set; }
+
+    public Guid? EmployeeId { get; set; }
     public string FirstName { get; set; }
     public string LastName { get; set; }
     public string Role { get; set; }
 
     /// <summary>Efektivna, agregirana unija grant-key-eva iz svih GrantGroup dodjela ovog
     /// korisnika — isti izvor kao GrantResolver koristi za autorizaciju (GrantGroupHandler.ResolveEffective),
-    /// samo izložen frontendu za UI-level provjere (canPage/can). Organizacijski osnivač ovdje dobiva svoje
-    /// STVARNE grantove kroz Admin starter GrantGroup dodjelu (vidi AuthService.Register) — nema Owner
-    /// bypass-a nigdje u sustavu (Residual IsOwner Removal — User.IsOwner je potpuno uklonjen).</summary>
+    /// samo izložen frontendu za UI-level provjere (canPage/can). NIKAD null/prazno samo zato što HasProfile
+    /// je false - to je upravo scenarij (organizacijski osnivač) koji ovo polje mora ispravno pokriti, inače
+    /// osnivač ne može ni otvoriti stranice za kreiranje prve Company/EngagementType. Nema Owner bypass-a
+    /// nigdje u sustavu (Residual IsOwner Removal — User.IsOwner je potpuno uklonjen).</summary>
     public List<string> Grants { get; set; } = new();
 
     /// <summary>Ima li korisnik trenutno postavljen PIN (za brzo prebacivanje na dijeljenom uređaju) — frontend
-    /// ovime bira prikaz "Postavi PIN" ili "Promijeni PIN".</summary>
+    /// ovime bira prikaz "Postavi PIN" ili "Promijeni PIN". Ovo je User-razine podatak (PinHash živi na Useru),
+    /// pa je dostupno i kad HasProfile je false.</summary>
     public bool HasPinSet { get; set; }
 
     public string ColorHex { get; set; }

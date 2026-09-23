@@ -21,6 +21,19 @@ public class ServiceDto
     public Guid? UpdatedBy { get; set; }
 }
 
+/// <summary>Lightweight service option for the appointment-booking form (AppointmentsController.GetBookableServices) -
+/// deliberately not the full admin ServiceDto (no audit fields/IsActive/SortOrder), since this is exposed to any
+/// appointments.write.own/all holder, not just catalog.services.view.</summary>
+public class AppointmentServiceOptionDto
+{
+    public Guid Id { get; set; }
+    public string Name { get; set; }
+    public ServiceExecutionMode ExecutionMode { get; set; }
+    public string ColorHex { get; set; }
+    public int DefaultDurationMinutes { get; set; }
+    public decimal DefaultPrice { get; set; }
+}
+
 public class ServiceCreateRequest
 {
     [Required]

@@ -106,6 +106,21 @@ public class ServiceAvailabilityService : IServiceAvailabilityService
         return await _serviceCompanyHandler.IsAvailable(organizationId, serviceId, companyId);
     }
 
+    public async Task<List<AppointmentServiceOptionDto>> GetBookableServices(Guid organizationId, Guid companyId)
+    {
+        Company company = await _companyHandler.GetById(organizationId, companyId);
+        if (company == null)
+            throw new NotFoundAppException("Company", companyId);
+
+        List<ServiceCompany> assignments = await _serviceCompanyHandler.GetForCompany(organizationId, companyId);
+        return assignments
+            .Where(sc => sc.Service.IsActive)
+            .OrderBy(sc => sc.Service.SortOrder)
+            .ThenBy(sc => sc.Service.Name)
+            .Select(sc => ToServiceOptionDto(sc.Service))
+            .ToList();
+    }
+
     private async Task<ServiceEntity> EnsureServiceExists(Guid organizationId, Guid serviceId)
     {
         ServiceEntity service = await _serviceHandler.GetById(organizationId, serviceId);
@@ -152,6 +167,19 @@ public class ServiceAvailabilityService : IServiceAvailabilityService
             CreatedBy = service.CreatedBy,
             UpdatedAt = service.UpdatedAt,
             UpdatedBy = service.UpdatedBy
+        };
+    }
+
+    private static AppointmentServiceOptionDto ToServiceOptionDto(ServiceEntity service)
+    {
+        return new AppointmentServiceOptionDto
+        {
+            Id = service.Id.GetValueOrDefault(),
+            Name = service.Name,
+            ExecutionMode = service.ExecutionMode,
+            ColorHex = service.ColorHex,
+            DefaultDurationMinutes = service.DefaultDurationMinutes,
+            DefaultPrice = service.DefaultPrice
         };
     }
 }

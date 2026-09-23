@@ -19,4 +19,11 @@ public interface IServiceAvailabilityService
     /// modulima (Appointment/Group) za provjeru je li usluga stvarno bookabilna u poslovnici — ne koristi se
     /// još nigdje u ovom zahvatu.</summary>
     Task<bool> IsServiceAvailableAtCompany(Guid organizationId, Guid serviceId, Guid companyId);
+
+    /// <summary>Aktivne usluge dostupne u poslovnici, kao lagani DTO za formu novog termina (AppointmentsController) —
+    /// namjerno NE puni ServiceDto (nema audit polja/IsActive/SortOrder), i namjerno gated iza appointments.write.own/all
+    /// umjesto catalog.services.view: zakazivanje termina nije "pregled kataloga usluga", pa korisnik bez tog granta
+    /// ne smije zbog toga vidjeti prazan padajući izbornik za obavezno polje. Isključuje neaktivne usluge, za razliku
+    /// od GetAssignedServices (koji čuva grandfathered/neaktivne dodjele za admin ekran usluga).</summary>
+    Task<List<AppointmentServiceOptionDto>> GetBookableServices(Guid organizationId, Guid companyId);
 }

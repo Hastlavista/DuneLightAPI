@@ -20,4 +20,11 @@
       <Folder Include="Domain\" />
     </ItemGroup>
 
+    <ItemGroup>
+      <!-- Lets BlueDragon.DuneLight.UnitTests unit-test small `internal static` pure mapping
+           helpers (e.g. EmployeeService.ToNoProfileMeDto/ToProfileMeDto) without exposing them
+           on the public API surface. -->
+      <InternalsVisibleTo Include="BlueDragon.DuneLight.UnitTests" />
+    </ItemGroup>
+
 </Project>

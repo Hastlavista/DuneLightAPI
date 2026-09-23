@@ -3,9 +3,11 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Reflection;
+using System.Security.Claims;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using System.IdentityModel.Tokens.Jwt;
 using BlueDragon.DuneLight.API.Authentication;
 using BlueDragon.DuneLight.API.Diagnostics;
 using BlueDragon.DuneLight.API.Middleware;
@@ -115,6 +117,34 @@ public class Startup
                     ValidIssuer = jwtSettings.Issuer,
                     ValidAudience = jwtSettings.Audience,
                     IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtSettings.SecretKey))
+                };
+                // Central enforcement: an already-issued JWT for a User deactivated since
+                // it was signed (e.g. Employee hard-delete, see IEmployeeHandler.Delete)
+                // must stop working immediately, not just once the frontend logs out or the
+                // token expires - mirrors ApiKeyAuthenticationHandler's own IsActive check,
+                // and runs once per request here so every [Authorize]/[RequireGrant]
+                // endpoint (including [Authorize]-only ones like GET /employees/me) is
+                // covered without a per-controller check. context.Fail() makes this a 401
+                // (authentication failure), the same convention ApiKeyAuthenticationHandler
+                // already uses for "Account disabled" - not a 403, so the two schemes agree.
+                options.Events = new JwtBearerEvents
+                {
+                    OnTokenValidated = async context =>
+                    {
+                        string userIdValue = context.Principal?.FindFirstValue(ClaimTypes.NameIdentifier)
+                            ?? context.Principal?.FindFirstValue(JwtRegisteredClaimNames.Sub);
+                        if (!Guid.TryParse(userIdValue, out Guid userId))
+                        {
+                            context.Fail("Invalid token");
+                            return;
+                        }
+
+                        IActiveUserGuard activeUserGuard = context.HttpContext.RequestServices.GetRequiredService<IActiveUserGuard>();
+                        if (!await activeUserGuard.IsUserActive(userId))
+                        {
+                            context.Fail("Account disabled");
+                        }
+                    }
                 };
             })
             .AddScheme<AuthenticationSchemeOptions, ApiKeyAuthenticationHandler>("ApiKey", _ => { });
@@ -255,6 +285,7 @@ public class Startup
         #region Handlers
 
         services.AddSingleton<IAuthHandler, AuthHandler>();
+        services.AddScoped<IActiveUserGuard, ActiveUserGuard>();
 
         services.AddSingleton<ICompanyHandler, CompanyHandler>();
         services.AddSingleton<IRoomHandler, RoomHandler>();
