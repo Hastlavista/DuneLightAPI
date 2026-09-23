@@ -49,7 +49,7 @@ public class ExceptionHandlingMiddleware
         }
         catch (NotFoundAppException ex)
         {
-            await WriteError(context, HttpStatusCode.NotFound, ErrorCodes.NotFound, ex.Message);
+            await WriteError(context, HttpStatusCode.NotFound, ex.Code ?? ErrorCodes.NotFound, ex.Message);
         }
         catch (UnauthorizedAppException ex)
         {

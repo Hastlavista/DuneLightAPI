@@ -52,7 +52,6 @@ public class GrantDiagnosticsService : IGrantDiagnosticsService
         AddUndefinedGrantReferencedFindings(findings, catalogKeys, referencedGrants);
         AddGrantMissingFromDefaultRolesFindings(findings, catalogKeys, defaultRoleGrants);
         AddDefaultRoleGrantMissingFromCatalogFindings(findings, catalogKeys);
-        AddOwnerOnlySurfaceFindings(findings, endpoints);
 
         List<OwnAllGrantPair> ownAllPairs = DetectOwnAllPairs();
         List<DefaultRoleDriftEntry> defaultRoleDrift = await DetectDefaultRoleDrift(findings);
@@ -263,22 +262,6 @@ public class GrantDiagnosticsService : IGrantDiagnosticsService
                     $"Default predložak '{definition.DisplayName}' referencira grant-ključ(eve) koji ne postoje u Grants.Catalog.",
                     unknown));
         }
-    }
-
-    private static void AddOwnerOnlySurfaceFindings(List<GrantDiagnosticFinding> findings, List<EndpointGrantMetadata> endpoints)
-    {
-        List<string> ownerOnlyRoutes = endpoints
-            .Where(e => e.RequireOwner)
-            .Select(e => $"{e.HttpMethod} /{e.Route} ({e.Controller}.{e.Action})")
-            .OrderBy(r => r)
-            .ToList();
-
-        if (ownerOnlyRoutes.Count > 0)
-            findings.Add(new GrantDiagnosticFinding(
-                DiagnosticCategory.OwnerOnlySurface,
-                DiagnosticSeverity.Info,
-                "Endpointi zaštićeni isključivo s [RequireOwner] — potpuno zaobilaze grant sustav, vrijedi periodično provjeriti da se opseg ne širi bez razloga.",
-                ownerOnlyRoutes));
     }
 
     private static List<OwnAllGrantPair> DetectOwnAllPairs()

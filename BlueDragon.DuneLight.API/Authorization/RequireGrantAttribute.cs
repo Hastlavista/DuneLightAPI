@@ -9,8 +9,8 @@ namespace BlueDragon.DuneLight.API.Authorization;
 
 /// <summary>
 /// Zamjena za [Authorize(Roles=...)]. Kad je navedeno više grantova, dovoljan je BILO KOJI (OR logika) —
-/// npr. [RequireGrant("roster.entries.write.own", "roster.entries.write.all")]. Owner korisnik (User.IsOwner)
-/// uvijek prolazi, bez obzira na navedene grantove — vidi GrantContext.HasAny.
+/// npr. [RequireGrant("roster.entries.write.own", "roster.entries.write.all")]. Grant-only Tenant Authorization
+/// Refactor — nema više Owner bypass-a, GrantContext.HasAny provjerava isključivo efektivne raw grantove.
 /// </summary>
 [AttributeUsage(AttributeTargets.Method | AttributeTargets.Class, AllowMultiple = false)]
 public class RequireGrantAttribute : Attribute, IAsyncAuthorizationFilter

@@ -26,7 +26,7 @@ public static class ErrorCodes
     public const string DuplicateMemberNumber = "DUPLICATE_MEMBER_NUMBER";
     public const string EmailAlreadyInUse = "EMAIL_ALREADY_IN_USE";
     public const string UserAlreadyLinked = "USER_ALREADY_LINKED";
-    public const string LastActiveAdmin = "LAST_ACTIVE_ADMIN";
+    public const string LastPermissionAdminRequired = "LAST_PERMISSION_ADMIN_REQUIRED";
     public const string LastActiveCompany = "LAST_ACTIVE_COMPANY";
     public const string LastActiveSlot = "LAST_ACTIVE_SLOT";
     public const string AlreadyMember = "ALREADY_MEMBER";
@@ -131,4 +131,10 @@ public static class ErrorCodes
     public const string DuplicateCapabilitySelection = "DUPLICATE_CAPABILITY_SELECTION";
     public const string GrantKeyUnknown = "GRANT_KEY_UNKNOWN";
     public const string GrantAlreadyCapabilityDerived = "GRANT_ALREADY_CAPABILITY_DERIVED";
+
+    // Template-version-upgrade tok (FAZA 3 — vidi GrantGroupTemplateUpgradeService)
+    public const string GrantGroupUpgradeStateChanged = "GRANT_GROUP_UPGRADE_STATE_CHANGED"; // 409
+    public const string TargetTemplateVersionNotFound = "TARGET_TEMPLATE_VERSION_NOT_FOUND"; // 404
+    public const string GrantGroupHasNoTemplateProvenance = "GRANT_GROUP_HAS_NO_TEMPLATE_PROVENANCE"; // 409
+    public const string GrantGroupUpgradeConflictResolutionRequired = "GRANT_GROUP_UPGRADE_CONFLICT_RESOLUTION_REQUIRED"; // 409 — Preview/Apply pozvan s nerazriješenim konfliktom; backend to provjerava neovisno o frontend gatingu
 }

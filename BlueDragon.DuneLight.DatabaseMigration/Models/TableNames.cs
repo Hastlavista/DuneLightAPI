@@ -89,6 +89,7 @@ public static class Tables
     public const string DefaultRoleTemplateGrants = "default_role_template_grants";
     public const string GrantGroupCapabilitySnapshots = "grant_group_capability_snapshots";
     public const string GrantGroupTemplateGrants = "grant_group_template_grants";
+    public const string GrantGroupTemplateUpgradeAuditLog = "grant_group_template_upgrade_audit_log";
 
     /// <summary>
     /// Stari nazivi (prije preimenovanja Location -> Company u RenameLocationToCompany). Ne dirati i ne brisati:

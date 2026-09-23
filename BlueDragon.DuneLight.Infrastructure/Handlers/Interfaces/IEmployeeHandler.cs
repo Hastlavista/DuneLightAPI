@@ -35,7 +35,6 @@ public interface IEmployeeHandler
     Task DeleteWithLoginDeactivation(Employee employee);
 
     Task<bool> IsUserAlreadyLinked(Guid organizationId, Guid userId, Guid? excludeEmployeeId);
-    Task<int> CountActiveAdmins(Guid organizationId);
 
     /// <summary>Razrješava Employee zapis za trenutno prijavljenog korisnika (npr. za "moji klijenti prvo" sortiranje). Bare row, bez includes.</summary>
     Task<Employee> GetByUserId(Guid organizationId, Guid userId);

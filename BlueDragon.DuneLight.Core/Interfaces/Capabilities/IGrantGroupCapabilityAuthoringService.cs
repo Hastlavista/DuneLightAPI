@@ -6,7 +6,7 @@ namespace BlueDragon.DuneLight.Core.Interfaces.Capabilities;
 
 /// <summary>FAZA 2 — capability-aware autorstvo GrantGroup-a (create/update/read-back). Backend je jedini
 /// autoritativan izvor konačnog raw grant skupa; klijent deklarira NAMJERU (capabilities + scope-ovi + legitimni
-/// ručni grantovi), nikad gotov materijalizirani skup. Owner-only (vidi GrantGroupsController [RequireOwner]).
+/// ručni grantovi), nikad gotov materijalizirani skup. Zaštićeno permissions.manage grantom (vidi GrantGroupsController RequireGrant).
 /// Runtime autorizacija ostaje isključivo GrantGroupGrant/GrantResolver — ovaj servis samo piše u tu tablicu preko
 /// IGrantGroupHandler.ApplyCapabilitySelections.</summary>
 public interface IGrantGroupCapabilityAuthoringService

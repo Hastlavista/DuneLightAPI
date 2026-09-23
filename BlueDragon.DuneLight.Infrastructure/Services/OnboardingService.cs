@@ -15,8 +15,8 @@ public class OnboardingService : IOnboardingService
         _onboardingHandler = onboardingHandler;
     }
 
-    public Task<OnboardingStatusDto> GetStatus(Guid organizationId)
+    public Task<OnboardingStatusDto> GetStatus(Guid organizationId, Guid userId)
     {
-        return _onboardingHandler.GetStatus(organizationId);
+        return _onboardingHandler.GetStatus(organizationId, userId);
     }
 }

@@ -11,11 +11,10 @@ public interface IGrantGroupHandler
 {
     Task<List<GrantGroup>> GetAll(Guid organizationId);
 
-    /// <summary>Kreira default GrantGroup-e (Admin/Trener/Recepcija, vidi DefaultGrantGroups) za organizaciju,
-    /// unutar iste transakcije kao AuthService.Register. Idempotentno po Name — preskače predloške čija grupa
-    /// (po DisplayName) već postoji, ne dira/ne sinkronizira postojeće grupe (vidi FAZA 1 Part D — postojeće
-    /// organizacije se namjerno ne mijenjaju).</summary>
-    Task EnsureDefaultGrantGroups(IUnitOfWork uow, Guid organizationId);
+    /// <summary>Kreira ISKLJUČIVO Admin starter GrantGroup za novu organizaciju (Grant-only Tenant Authorization
+    /// Refactor — Trener/Recepcija više nisu automatski bootstrap), unutar iste transakcije kao
+    /// AuthService.Register. Idempotentno po Name. Vraća Id Admin grupe za trenutnu dodjelu osnivača.</summary>
+    Task<Guid?> EnsureDefaultGrantGroups(IUnitOfWork uow, Guid organizationId);
 
     /// <summary>Dijagnostika-only, presijeca sve organizacije (namjerno bez organizationId filtera) — koristi ga
     /// SAMO IGrantDiagnosticsService za otkrivanje default-role drifta kod postojećih organizacija. NIKAD ne
@@ -45,8 +44,9 @@ public interface IGrantGroupHandler
     /// <summary>Zamjenjuje CIJELI skup GrantGroup dodjela za korisnika.</summary>
     Task SetUserGrantGroups(Guid organizationId, Guid userId, List<Guid> grantGroupIds);
 
-    /// <summary>Za RequireGrant provjeru po zahtjevu — vraća je li korisnik Owner i uniju grantova svih njegovih grupa.</summary>
-    Task<(bool IsOwner, HashSet<string> Grants)> ResolveEffective(Guid organizationId, Guid userId);
+    /// <summary>Za RequireGrant provjeru po zahtjevu — vraća uniju efektivnih raw grantova svih GrantGroup-a
+    /// dodijeljenih korisniku. Nema Owner bypass-a (Grant-only Tenant Authorization Refactor).</summary>
+    Task<HashSet<string>> ResolveEffective(Guid organizationId, Guid userId);
 
     /// <summary>Bulk lookup GrantGroup naziva po userId — jedan upit za cijelu stranicu/listu korisnika,
     /// izbjegava N+1 (vidi EmployeeService.GetPaged/GetById). Korisnik bez ijedne dodjele izostaje iz rezultata.</summary>
@@ -63,6 +63,22 @@ public interface IGrantGroupHandler
     /// novu (praznu, bez stare provenance) i za postojeću GrantGroup (koristi ga i EnsureDefaultGrantGroups i
     /// budući role-editor).</summary>
     Task ApplyTemplate(IUnitOfWork uow, Guid grantGroupId, Core.Interfaces.Capabilities.ResolvedDefaultRoleTemplate template, Guid? appliedBy);
+
+    /// <summary>FAZA 3 (v2 template-upgrade) — dijeljena jezgra izvučena iz ApplyTemplate (vidi tamošnju napomenu).
+    /// Pozivatelj (ApplyTemplate ILI GrantGroupTemplateUpgradeService.Apply) mora unaprijed izračunati
+    /// <paramref name="manualAdvancedSet"/> iz STARE (trenutne) provenance — ova metoda ga NE izvodi sama.
+    /// Zamjenjuje SVE GrantGroupCapabilitySnapshot/GrantGroupTemplateGrant retke novima i diff-a GrantGroupGrant
+    /// prema FinalGrantSet = materialize(resolvedSelections) UNION resultingTemplateCompatibilityGrantKeys UNION
+    /// manualAdvancedSet — sve unutar uow.Context, jedan SaveChangesAsync.</summary>
+    Task ApplyResolvedSelections(
+        IUnitOfWork uow,
+        Guid grantGroupId,
+        IReadOnlyList<Core.Interfaces.Capabilities.TemplateCapabilitySelection> resolvedSelections,
+        HashSet<string> resultingTemplateCompatibilityGrantKeys,
+        string targetTemplateKey,
+        int targetTemplateVersion,
+        HashSet<string> manualAdvancedSet,
+        Guid? appliedBy);
 
     /// <summary>FAZA 2 Part E/F/G — capability-aware autorstvo za create ILI ordinary edit (razlikuje se od
     /// ApplyTemplate: <paramref name="manualGrantKeys"/> je Ownerov EKSPLICITNI zahtijevani skup iz editora, ne
@@ -82,4 +98,35 @@ public interface IGrantGroupHandler
     /// <summary>Dijagnostika-only, presijeca sve organizacije — vidi GetAllAcrossOrganizationsForDiagnostics.</summary>
     Task<List<GrantGroupCapabilitySnapshot>> GetAllCapabilitySnapshotsForDiagnostics();
     Task<List<GrantGroupTemplateGrant>> GetAllTemplateGrantProvenanceForDiagnostics();
+
+    /// <summary>
+    /// Grant-only Tenant Authorization Refactor — last-permission-admin lockout provjera. Vraća true ako BAREM
+    /// JEDAN aktivan (User.IsActive) korisnik organizacije efektivno ima <paramref name="grantKey"/>, RAČUNAJUĆI
+    /// zamišljenu (još nespremljenu) promjenu opisanu override parametrima, umjesto stvarnog trenutnog stanja iz
+    /// baze:
+    /// - <paramref name="overrideGrantGroupId"/>/<paramref name="overrideGrantGroupGrants"/>: ta GrantGroup se
+    ///   tretira kao da ima TOČNO ovaj grant-skup (prazan skup = grupa je obrisana/nema grantova), umjesto
+    ///   stvarnih GrantGroupGrant redaka.
+    /// - <paramref name="overrideUserId"/>/<paramref name="overrideUserGrantGroupIds"/>: taj korisnik se tretira
+    ///   kao da je dodijeljen TOČNO ovim GrantGroup-ama (prazna lista = bez dodjela, uključujući simulaciju
+    ///   deaktivacije — korisnik bez efektivnih grantova jednako ne štiti invarijantu bez obzira je li razlog
+    ///   "deaktiviran" ili "bez dodjela"), umjesto stvarnih UserGrantGroup redaka.
+    /// Koristi se PRIJE mutacije (Delete/raw Update/SetUserGrantGroups/Employee deaktivacija) — za mutacije koje
+    /// idu kroz IUnitOfWork i već pišu novi grant skup unutar transakcije (capability-based Update, template
+    /// upgrade Apply), vidi <see cref="HasActiveUserWithGrantInTransaction"/> umjesto ovoga.
+    /// </summary>
+    Task<bool> HasActiveUserWithGrant(
+        Guid organizationId,
+        string grantKey,
+        Guid? overrideGrantGroupId = null,
+        HashSet<string> overrideGrantGroupGrants = null,
+        Guid? overrideUserId = null,
+        List<Guid> overrideUserGrantGroupIds = null);
+
+    /// <summary>Isto kao <see cref="HasActiveUserWithGrant"/>, ali čita iz VEĆ OTVORENE transakcije
+    /// (<paramref name="uow"/>.Context) umjesto novog DbContext-a — vidi ApplyCapabilitySelections/
+    /// ApplyResolvedSelections koji unutar iste transakcije već upisuju novi GrantGroupGrant skup (uz
+    /// SaveChangesAsync, ali PRIJE uow.CommitAsync), pa ovaj poziv ODMAH NAKON njih vidi stvarno novo stanje bez
+    /// potrebe za override parametrima.</summary>
+    Task<bool> HasActiveUserWithGrantInTransaction(IUnitOfWork uow, Guid organizationId, string grantKey);
 }

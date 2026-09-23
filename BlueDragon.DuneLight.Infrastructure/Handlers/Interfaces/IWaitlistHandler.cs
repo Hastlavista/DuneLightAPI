@@ -26,6 +26,12 @@ public interface IWaitlistHandler
     /// ClientService.Anonymize (vidi spec section 57).</summary>
     Task<bool> HasActiveWaitingForClient(Guid organizationId, Guid clientId);
 
+    /// <summary>Ima li klijent BILO KOJI waitlist redak (bilo kojeg statusa — Waiting/Promoted/Cancelled/Expired,
+    /// povijesni uklj.) — waitlist_entries.client_id FK nema ON DELETE pravilo (isti obrazac kao
+    /// group_members.client_id), pa bez ove provjere ClientService.Delete može propasti sirovom Postgres FK
+    /// greškom umjesto čistom REFERENCED_CANNOT_DELETE porukom (vidi ClientFutureActivityProvider).</summary>
+    Task<bool> HasAnyForClient(Guid organizationId, Guid clientId);
+
     /// <summary>Svi TRENUTNO aktivni (Waiting) redci preko zadanih Appointment ID-eva u jednom upitu — za
     /// OperationalDashboardService (grupira se u memoriji po AppointmentId, izbjegava upit po terminu u petlji).</summary>
     Task<List<WaitlistEntry>> GetWaitingForAppointments(Guid organizationId, List<Guid> appointmentIds);

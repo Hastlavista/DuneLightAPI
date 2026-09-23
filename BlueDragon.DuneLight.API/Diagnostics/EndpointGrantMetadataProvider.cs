@@ -12,10 +12,12 @@ namespace BlueDragon.DuneLight.API.Diagnostics;
 
 /// <summary>
 /// Reflection/action-descriptor inspekcija svih kontroler akcija radi izvlačenja RequireGrant/
-/// RequireGrantOrAssignedCompany/RequireOwner metapodataka (FAZA 1 Part G) — koristi ASP.NET Core
+/// RequireGrantOrAssignedCompany metapodataka (FAZA 1 Part G) — koristi ASP.NET Core
 /// IActionDescriptorCollectionProvider (već izgrađen routing model, ne ručni Assembly.GetTypes scan), pa Route
 /// dolazi točno onakav kakav MVC stvarno koristi za attribute-routed kontrolere. Isključivo diagnostika —
-/// NE mijenja rutiranje/autorizaciju, samo čita već postojeće ControllerActionDescriptor podatke.
+/// NE mijenja rutiranje/autorizaciju, samo čita već postojeće ControllerActionDescriptor podatke. Grant-only
+/// Tenant Authorization Refactor — RequireOwnerAttribute je uklonjen, svi tenant endpointi sada nose
+/// RequireGrant/RequireGrantOrAssignedCompany.
 /// </summary>
 public class EndpointGrantMetadataProvider : IEndpointGrantMetadataProvider
 {
@@ -42,8 +44,6 @@ public class EndpointGrantMetadataProvider : IEndpointGrantMetadataProvider
                                                   ?? controllerType.GetCustomAttribute<RequireGrantAttribute>();
             RequireGrantOrAssignedCompanyAttribute requireGrantOrCompany = methodInfo.GetCustomAttribute<RequireGrantOrAssignedCompanyAttribute>()
                                                                             ?? controllerType.GetCustomAttribute<RequireGrantOrAssignedCompanyAttribute>();
-            bool requireOwner = methodInfo.GetCustomAttribute<RequireOwnerAttribute>() != null
-                                 || controllerType.GetCustomAttribute<RequireOwnerAttribute>() != null;
 
             List<string> requiredGrants = new();
             if (requireGrant != null)
@@ -64,7 +64,6 @@ public class EndpointGrantMetadataProvider : IEndpointGrantMetadataProvider
                 HttpMethod: httpMethod,
                 Route: route,
                 RequiredGrants: requiredGrants.Distinct().OrderBy(g => g).ToList(),
-                RequireOwner: requireOwner,
                 RequireGrantOrAssignedCompany: requireGrantOrCompany != null));
         }
 

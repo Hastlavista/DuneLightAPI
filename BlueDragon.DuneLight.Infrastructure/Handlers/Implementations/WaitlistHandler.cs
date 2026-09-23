@@ -69,6 +69,12 @@ public class WaitlistHandler : IWaitlistHandler
             w.OrganizationId == organizationId && w.ClientId == clientId && w.Status == WaitlistEntryStatus.Waiting);
     }
 
+    public async Task<bool> HasAnyForClient(Guid organizationId, Guid clientId)
+    {
+        await using DatabaseContext context = DatabaseContext.GenerateContext(_databaseSettings.ConnectionString);
+        return await context.WaitlistEntries.AnyAsync(w => w.OrganizationId == organizationId && w.ClientId == clientId);
+    }
+
     public async Task<List<WaitlistEntry>> GetWaitingForAppointments(Guid organizationId, List<Guid> appointmentIds)
     {
         if (appointmentIds.Count == 0)

@@ -1,0 +1,34 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="coverlet.collector" Version="6.0.4" />
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.14.1" />
+    <PackageReference Include="xunit" Version="2.9.3" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="3.1.4" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Using Include="Xunit" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- TemplateUpgradePlanner/TemplateUpgradeStateToken (Layer 1 testovi) žive u Core i nemaju EF ovisnost.
+         Infrastructure referenca je potrebna SAMO da testovi mogu izravno instancirati konkretni
+         CapabilityMaterializationService (pure/bez-stanja, vidi njegovu klasnu napomenu) umjesto da dupliciraju
+         materijalizacijski algoritam — sam planner ostaje EF-free, testovi ne dotiču DbContext/Postgres. -->
+    <ProjectReference Include="..\BlueDragon.DuneLight.Core\BlueDragon.DuneLight.Core.csproj" />
+    <ProjectReference Include="..\BlueDragon.DuneLight.Infrastructure\BlueDragon.DuneLight.Infrastructure.csproj" />
+    <!-- CapabilityV1SeedData/CapabilityV2SeedData su čisti static podaci (bez DB poziva dok se Up() ne pokrene) —
+         referenciramo ih izravno da Admin/Trener/Recepcija v1->v2 testovi koriste TOČNO stvarni seed, ne ručno
+         prepisane fixture koje bi mogle drift-ati od stvarne migracije. -->
+    <ProjectReference Include="..\BlueDragon.DuneLight.DatabaseMigration\BlueDragon.DuneLight.DatabaseMigration.csproj" />
+  </ItemGroup>
+
+</Project>

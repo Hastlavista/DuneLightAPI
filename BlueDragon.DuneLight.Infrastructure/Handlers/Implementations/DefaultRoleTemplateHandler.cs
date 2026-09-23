@@ -57,8 +57,11 @@ public class DefaultRoleTemplateHandler : IDefaultRoleTemplateHandler
     {
         await using DatabaseContext context = DatabaseContext.GenerateContext(_databaseSettings.ConnectionString);
 
+        // ThenInclude(Grants) — potrebno i za FAZA 3 TemplateUpgradePlanner materijalizaciju (BASE/TARGET
+        // predložak-selekcije), ne samo za CapabilityReadService.GetTemplateDetails prikaz (isti obrazac kao
+        // GetLatestActiveByKey iznad).
         IQueryable<DefaultRoleTemplate> query = context.DefaultRoleTemplates
-            .Include(t => t.Capabilities).ThenInclude(c => c.CapabilityDefinition)
+            .Include(t => t.Capabilities).ThenInclude(c => c.CapabilityDefinition).ThenInclude(c => c.Grants)
             .Include(t => t.CompatibilityGrants)
             .Where(t => t.Key == key);
 

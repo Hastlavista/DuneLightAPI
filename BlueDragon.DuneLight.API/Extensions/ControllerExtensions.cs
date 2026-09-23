@@ -27,21 +27,14 @@ public static class ControllerExtensions
     }
 
     /// <summary>
-    /// Čita GrantContext koji je [RequireGrant]/[RequireOwner] već razriješio za ovaj zahtjev (vidi
-    /// GrantAuthorization) — bez dodatnog DB upita. Koristi se za own/all razlikovanje unutar akcije
-    /// (npr. treba li servisu proslijediti puni opseg ili samo vlastiti employeeId).
+    /// Čita GrantContext koji je [RequireGrant] već razriješio za ovaj zahtjev (vidi GrantAuthorization) — bez
+    /// dodatnog DB upita. Koristi se za own/all razlikovanje unutar akcije (npr. treba li servisu proslijediti
+    /// puni opseg ili samo vlastiti employeeId).
     /// </summary>
     public static bool HasGrant(this ControllerBase controller, string grant)
     {
         return controller.HttpContext.Items.TryGetValue(GrantAuthorization.HttpContextItemsKey, out object cached)
                && cached is GrantContext grantContext
                && grantContext.Has(grant);
-    }
-
-    public static bool CurrentIsOwner(this ControllerBase controller)
-    {
-        return controller.HttpContext.Items.TryGetValue(GrantAuthorization.HttpContextItemsKey, out object cached)
-               && cached is GrantContext grantContext
-               && grantContext.IsOwner;
     }
 }

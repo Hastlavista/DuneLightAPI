@@ -31,10 +31,6 @@ public class User
     [Column("is_active")]
     public bool IsActive { get; set; }
 
-    /// <summary>Točno jedan po organizaciji — trajno zaobilazi cijeli grant sustav (vidi RequireGrantAttribute). Postavlja se pri Register-u, ne kroz UI.</summary>
-    [Column("is_owner")]
-    public bool IsOwner { get; set; }
-
     [Column("must_change_credentials_on_first_login")]
     public bool MustChangeCredentialsOnFirstLogin { get; set; }
 

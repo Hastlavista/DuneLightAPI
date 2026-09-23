@@ -9,6 +9,9 @@ public class GrantGroupDto
     public Guid Id { get; set; }
     public string Name { get; set; }
     public List<string> Grants { get; set; } = new();
+
+    /// <summary>Broj TRENUTNO AKTIVNIH korisnika dodijeljenih ovoj grupi (User.IsActive == true) — deaktivirani
+    /// korisnici se ne broje, ali njihov UserGrantGroup redak (povijest dodjele) ostaje netaknut.</summary>
     public int AssignedUserCount { get; set; }
     public DateTimeOffset? CreatedAt { get; set; }
     public DateTimeOffset? UpdatedAt { get; set; }

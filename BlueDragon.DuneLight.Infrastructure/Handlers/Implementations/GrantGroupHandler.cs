@@ -34,7 +34,10 @@ public class GrantGroupHandler : IGrantGroupHandler
         await using DatabaseContext context = DatabaseContext.GenerateContext(_databaseSettings.ConnectionString);
         return await context.GrantGroups
             .Include(g => g.Grants)
-            .Include(g => g.UserGrantGroups)
+            // AssignedUserCount mora odražavati SAMO trenutno aktivne korisnike (vidi GrantGroupDto.AssignedUserCount
+            // napomenu) — filtrirani Include ovdje je namjerno umjesto učitavanja svih UserGrantGroup redaka, jer
+            // deaktivacija zaposlenika NE briše UserGrantGroup redak (povijest dodjele se čuva), samo gasi User.IsActive.
+            .Include(g => g.UserGrantGroups.Where(ugg => ugg.User.IsActive))
             .Where(g => g.OrganizationId == organizationId)
             .OrderBy(g => g.Name)
             .ToListAsync();
@@ -45,47 +48,48 @@ public class GrantGroupHandler : IGrantGroupHandler
         await using DatabaseContext context = DatabaseContext.GenerateContext(_databaseSettings.ConnectionString);
         return await context.GrantGroups
             .Include(g => g.Grants)
-            .Include(g => g.UserGrantGroups)
+            // vidi napomenu u GetAll o filtriranom Include-u za AssignedUserCount
+            .Include(g => g.UserGrantGroups.Where(ugg => ugg.User.IsActive))
             .SingleOrDefaultAsync(g => g.OrganizationId == organizationId && g.Id == id);
     }
 
-    /// <summary>FAZA 1 Part P — nove organizacije se od uvođenja capability sustava kreiraju MATERIJALIZACIJOM
-    /// DefaultRoleTemplate v1 (admin/trener/recepcija), ne više duplicirane hardkodirane liste u DefaultGrantGroups
-    /// (koja i dalje postoji kao oracle za dijagnostiku/migracijski backfill — vidi DefaultGrantGroups klasnu
-    /// napomenu). Rezultat mora biti byte-for-byte identičan starom ponašanju — vidi migraciju koja seedа v1
-    /// predloške da vjerno reproduciraju DefaultGrantGroups.AdminGrants/TrenerGrants/RecepcijaGrants.</summary>
-    public async Task EnsureDefaultGrantGroups(IUnitOfWork uow, Guid organizationId)
+    /// <summary>
+    /// Grant-only Tenant Authorization Refactor — nove organizacije dobivaju ISKLJUČIVO Admin starter GrantGroup
+    /// (materijaliziran preko najnovije aktivne "admin" DefaultRoleTemplate verzije, koja od ove faze uključuje i
+    /// permissions.view/manage/assignments.manage). Trener/Recepcija se VIŠE NE kreiraju automatski pri
+    /// registraciji — to su bili razvojni/demo starter podaci, ne dio proizvoda (organizacija sama gradi svoju
+    /// strukturu preko role-editora nakon registracije). Postojeće organizacije koje već imaju Trener/Recepcija
+    /// grupe NISU dirane ovom promjenom (ova metoda se poziva SAMO pri Register, nikad naknadno za postojeći
+    /// tenant). Vraća Id Admin grupe (nova ili već postojeća — idempotentno po Name, isto kao prije) da
+    /// AuthService.Register može odmah dodijeliti organizacijskog osnivača na nju.
+    /// </summary>
+    public async Task<Guid?> EnsureDefaultGrantGroups(IUnitOfWork uow, Guid organizationId)
     {
-        HashSet<string> existingNames = (await uow.Context.GrantGroups
-                .Where(g => g.OrganizationId == organizationId)
-                .Select(g => g.Name)
-                .ToListAsync())
-            .ToHashSet();
+        ResolvedDefaultRoleTemplate template = await _defaultRoleTemplateHandler.GetLatestActiveByKey("admin");
+        if (template == null)
+            return null;
 
-        foreach (string templateKey in new[] { "admin", "trener", "recepcija" })
+        GrantGroup existing = await uow.Context.GrantGroups
+            .FirstOrDefaultAsync(g => g.OrganizationId == organizationId && g.Name == template.DisplayNameHr);
+        if (existing != null)
+            return existing.Id;
+
+        GrantGroup group = new GrantGroup
         {
-            ResolvedDefaultRoleTemplate template = await _defaultRoleTemplateHandler.GetLatestActiveByKey(templateKey);
-            if (template == null)
-                continue;
+            Id = Guid.NewGuid(),
+            OrganizationId = organizationId,
+            Name = template.DisplayNameHr,
+            CreatedAt = DateTimeOffset.UtcNow
+        };
 
-            if (existingNames.Contains(template.DisplayNameHr))
-                continue;
+        uow.Context.GrantGroups.Add(group);
+        // Grupa mora postojati u bazi PRIJE ApplyTemplate upiše djecu preko sirovog FK scalara (ne preko
+        // navigacije) — isto ponašanje unutar iste otvorene transakcije (vidi IUnitOfWork), ne zaseban commit.
+        await uow.Context.SaveChangesAsync();
 
-            GrantGroup group = new GrantGroup
-            {
-                Id = Guid.NewGuid(),
-                OrganizationId = organizationId,
-                Name = template.DisplayNameHr,
-                CreatedAt = DateTimeOffset.UtcNow
-            };
+        await ApplyTemplate(uow, group.Id.GetValueOrDefault(), template, appliedBy: null);
 
-            uow.Context.GrantGroups.Add(group);
-            // Grupa mora postojati u bazi PRIJE ApplyTemplate upiše djecu preko sirovog FK scalara (ne preko
-            // navigacije) — isto ponašanje unutar iste otvorene transakcije (vidi IUnitOfWork), ne zaseban commit.
-            await uow.Context.SaveChangesAsync();
-
-            await ApplyTemplate(uow, group.Id.GetValueOrDefault(), template, appliedBy: null);
-        }
+        return group.Id;
     }
 
     public async Task ApplyTemplate(IUnitOfWork uow, Guid grantGroupId, ResolvedDefaultRoleTemplate template, Guid? appliedBy)
@@ -128,14 +132,57 @@ public class GrantGroupHandler : IGrantGroupHandler
         manualAdvancedSet.ExceptWith(oldCapabilityDerivedSet);
         manualAdvancedSet.ExceptWith(oldTemplateCompatibilitySet);
 
+        await ApplyResolvedSelections(
+            uow,
+            grantGroupId,
+            template.Selections,
+            template.CompatibilityGrants.Select(g => g.GrantKey).ToHashSet(),
+            template.TemplateKey,
+            template.TemplateVersion,
+            manualAdvancedSet,
+            appliedBy);
+    }
+
+    /// <summary>FAZA 3 (v2 template-upgrade) — dijeljena "zamijeni snapshots/provenance/raw-grants" jezgra koju
+    /// koriste i ApplyTemplate (EnsureDefaultGrantGroups za nove organizacije) i novi upgrade-apply put
+    /// (GrantGroupTemplateUpgradeService.Apply, nakon što je TemplateUpgradePlanner već izračunao i validirao
+    /// razrješene selekcije). Izvučeno iz starog ApplyTemplate tijela BEZ promjene ponašanja — pozivatelj je
+    /// odgovoran za izračun manualAdvancedSet iz STARE provenance (vidi ApplyTemplate napomenu zašto to mora biti
+    /// prije, ne poslije). FinalGrantSet = materialize(<paramref name="resolvedSelections"/>) UNION
+    /// <paramref name="resultingTemplateCompatibilityGrantKeys"/> UNION <paramref name="manualAdvancedSet"/>;
+    /// zamjenjuje SVE GrantGroupCapabilitySnapshot i GrantGroupTemplateGrant retke novima, sve unutar
+    /// uow.Context, jedan SaveChangesAsync.</summary>
+    public async Task ApplyResolvedSelections(
+        IUnitOfWork uow,
+        Guid grantGroupId,
+        IReadOnlyList<TemplateCapabilitySelection> resolvedSelections,
+        HashSet<string> resultingTemplateCompatibilityGrantKeys,
+        string targetTemplateKey,
+        int targetTemplateVersion,
+        HashSet<string> manualAdvancedSet,
+        Guid? appliedBy)
+    {
+        DatabaseContext context = uow.Context;
+
+        List<GrantGroupCapabilitySnapshot> oldSnapshots = await context.GrantGroupCapabilitySnapshots
+            .Where(s => s.GrantGroupId == grantGroupId)
+            .ToListAsync();
+
+        List<GrantGroupTemplateGrant> oldProvenance = await context.GrantGroupTemplateGrants
+            .Where(g => g.GrantGroupId == grantGroupId)
+            .ToListAsync();
+
+        List<GrantGroupGrant> existingGrants = await context.GrantGroupGrants
+            .Where(g => g.GrantGroupId == grantGroupId)
+            .ToListAsync();
+        HashSet<string> existingKeys = existingGrants.Select(g => g.GrantKey).ToHashSet();
+
         HashSet<string> newCapabilityDerivedSet = new();
-        foreach (TemplateCapabilitySelection selection in template.Selections)
+        foreach (TemplateCapabilitySelection selection in resolvedSelections)
             newCapabilityDerivedSet.UnionWith(_capabilityMaterializationService.Materialize(selection.ScopeModel, selection.SelectedScope, selection.Grants));
 
-        HashSet<string> newTemplateCompatibilitySet = template.CompatibilityGrants.Select(g => g.GrantKey).ToHashSet();
-
         HashSet<string> finalGrantSet = new(newCapabilityDerivedSet);
-        finalGrantSet.UnionWith(newTemplateCompatibilitySet);
+        finalGrantSet.UnionWith(resultingTemplateCompatibilityGrantKeys);
         finalGrantSet.UnionWith(manualAdvancedSet);
 
         foreach (string key in finalGrantSet.Except(existingKeys))
@@ -150,7 +197,7 @@ public class GrantGroupHandler : IGrantGroupHandler
 
         DateTimeOffset now = DateTimeOffset.UtcNow;
 
-        foreach (TemplateCapabilitySelection selection in template.Selections)
+        foreach (TemplateCapabilitySelection selection in resolvedSelections)
         {
             if (selection.SelectedScope == CapabilitySelectedScope.None)
                 continue;
@@ -160,21 +207,21 @@ public class GrantGroupHandler : IGrantGroupHandler
                 GrantGroupId = grantGroupId,
                 CapabilityDefinitionId = selection.CapabilityDefinitionId,
                 SelectedScope = selection.SelectedScope,
-                SourceTemplateKey = template.TemplateKey,
-                SourceTemplateVersion = template.TemplateVersion,
+                SourceTemplateKey = targetTemplateKey,
+                SourceTemplateVersion = targetTemplateVersion,
                 AppliedAt = now,
                 AppliedBy = appliedBy
             });
         }
 
-        foreach (TemplateCompatibilityGrant compat in template.CompatibilityGrants)
+        foreach (string compatGrantKey in resultingTemplateCompatibilityGrantKeys)
         {
             context.GrantGroupTemplateGrants.Add(new GrantGroupTemplateGrant
             {
                 GrantGroupId = grantGroupId,
-                GrantKey = compat.GrantKey,
-                SourceTemplateKey = template.TemplateKey,
-                SourceTemplateVersion = template.TemplateVersion,
+                GrantKey = compatGrantKey,
+                SourceTemplateKey = targetTemplateKey,
+                SourceTemplateVersion = targetTemplateVersion,
                 AppliedAt = now,
                 AppliedBy = appliedBy
             });
@@ -393,24 +440,21 @@ public class GrantGroupHandler : IGrantGroupHandler
         await context.SaveChangesAsync();
     }
 
-    public async Task<(bool IsOwner, HashSet<string> Grants)> ResolveEffective(Guid organizationId, Guid userId)
+    public async Task<HashSet<string>> ResolveEffective(Guid organizationId, Guid userId)
     {
         await using DatabaseContext context = DatabaseContext.GenerateContext(_databaseSettings.ConnectionString);
 
-        User user = await context.Users.SingleOrDefaultAsync(u => u.Id == userId && u.OrganizationId == organizationId);
-        if (user == null)
-            return (false, new HashSet<string>());
-
-        if (user.IsOwner)
-            return (true, new HashSet<string>());
-
+        // Grant-only Tenant Authorization Refactor — nema Owner bypass-a. Organizacijski osnivač dobiva pun
+        // pristup isključivo kroz dodjelu Admin starter GrantGroup-e pri registraciji (vidi AuthService.Register),
+        // pa se ovdje uvijek računa isključivo iz UserGrantGroup -> GrantGroup -> GrantGroupGrant, bez posebnog
+        // slučaja za bilo kojeg korisnika.
         List<string> keys = await context.UserGrantGroups
-            .Where(ugg => ugg.UserId == userId)
+            .Where(ugg => ugg.UserId == userId && ugg.GrantGroup.OrganizationId == organizationId)
             .SelectMany(ugg => ugg.GrantGroup.Grants.Select(g => g.GrantKey))
             .Distinct()
             .ToListAsync();
 
-        return (false, keys.ToHashSet());
+        return keys.ToHashSet();
     }
 
     public async Task<Dictionary<Guid, List<string>>> GetGrantGroupNamesByUserIds(Guid organizationId, List<Guid> userIds)
@@ -425,5 +469,75 @@ public class GrantGroupHandler : IGrantGroupHandler
         return rows
             .GroupBy(r => r.UserId)
             .ToDictionary(g => g.Key, g => g.Select(r => r.Name).ToList());
+    }
+
+    public async Task<bool> HasActiveUserWithGrant(
+        Guid organizationId,
+        string grantKey,
+        Guid? overrideGrantGroupId = null,
+        HashSet<string> overrideGrantGroupGrants = null,
+        Guid? overrideUserId = null,
+        List<Guid> overrideUserGrantGroupIds = null)
+    {
+        await using DatabaseContext context = DatabaseContext.GenerateContext(_databaseSettings.ConnectionString);
+        return await HasActiveUserWithGrant(context, organizationId, grantKey, overrideGrantGroupId, overrideGrantGroupGrants, overrideUserId, overrideUserGrantGroupIds);
+    }
+
+    public async Task<bool> HasActiveUserWithGrantInTransaction(IUnitOfWork uow, Guid organizationId, string grantKey)
+    {
+        return await HasActiveUserWithGrant(uow.Context, organizationId, grantKey, null, null, null, null);
+    }
+
+    private static async Task<bool> HasActiveUserWithGrant(
+        DatabaseContext context,
+        Guid organizationId,
+        string grantKey,
+        Guid? overrideGrantGroupId,
+        HashSet<string> overrideGrantGroupGrants,
+        Guid? overrideUserId,
+        List<Guid> overrideUserGrantGroupIds)
+    {
+        List<Guid> activeUserIds = await context.Users
+            .Where(u => u.OrganizationId == organizationId && u.IsActive)
+            .Select(u => u.Id.GetValueOrDefault())
+            .ToListAsync();
+
+        var assignmentRows = await context.UserGrantGroups
+            .Where(ugg => ugg.GrantGroup.OrganizationId == organizationId)
+            .Select(ugg => new { ugg.UserId, ugg.GrantGroupId })
+            .ToListAsync();
+        List<(Guid UserId, Guid GrantGroupId)> assignments = assignmentRows.Select(r => (r.UserId, r.GrantGroupId)).ToList();
+
+        if (overrideUserId.HasValue)
+        {
+            assignments = assignments.Where(a => a.UserId != overrideUserId.Value).ToList();
+            assignments.AddRange((overrideUserGrantGroupIds ?? new List<Guid>()).Select(gid => (overrideUserId.Value, gid)));
+        }
+
+        HashSet<Guid> activeUserIdSet = activeUserIds.ToHashSet();
+        List<(Guid UserId, Guid GrantGroupId)> activeAssignments = assignments.Where(a => activeUserIdSet.Contains(a.UserId)).ToList();
+        if (activeAssignments.Count == 0)
+            return false;
+
+        HashSet<Guid> referencedGroupIds = activeAssignments.Select(a => a.GrantGroupId).ToHashSet();
+
+        var grantGroupGrantRows = await context.GrantGroupGrants
+            .Where(g => referencedGroupIds.Contains(g.GrantGroupId))
+            .Select(g => new { g.GrantGroupId, g.GrantKey })
+            .ToListAsync();
+        List<(Guid GrantGroupId, string GrantKey)> grantRows = grantGroupGrantRows.Select(r => (r.GrantGroupId, r.GrantKey)).ToList();
+
+        if (overrideGrantGroupId.HasValue)
+        {
+            grantRows = grantRows.Where(g => g.GrantGroupId != overrideGrantGroupId.Value).ToList();
+            grantRows.AddRange((overrideGrantGroupGrants ?? new HashSet<string>()).Select(key => (overrideGrantGroupId.Value, key)));
+        }
+
+        Dictionary<Guid, HashSet<string>> grantsByGroup = grantRows
+            .GroupBy(g => g.GrantGroupId)
+            .ToDictionary(g => g.Key, g => g.Select(r => r.GrantKey).ToHashSet());
+
+        return activeAssignments.Any(a =>
+            grantsByGroup.TryGetValue(a.GrantGroupId, out HashSet<string> grants) && grants.Contains(grantKey));
     }
 }

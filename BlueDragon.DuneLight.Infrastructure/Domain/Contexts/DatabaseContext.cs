@@ -99,6 +99,11 @@ public class DatabaseContext : DbContext
     public DbSet<GrantGroupCapabilitySnapshot> GrantGroupCapabilitySnapshots { get; set; }
     public DbSet<GrantGroupTemplateGrant> GrantGroupTemplateGrants { get; set; }
 
+    // FAZA 3 (v2 template-upgrade) — vidi GrantGroupTemplateUpgradeAuditLog klasnu napomenu. Apply put piše OVDJE
+    // izravno (uow.Context.GrantGroupTemplateUpgradeAuditLogs.Add) da upis bude atomski s ostatkom transakcije,
+    // isto kao OrganizationBrandingAuditLog DbSet ispod — ne preko posebnog handler-context obrasca.
+    public DbSet<GrantGroupTemplateUpgradeAuditLog> GrantGroupTemplateUpgradeAuditLogs { get; set; }
+
     public DatabaseContext(DbContextOptions options) : base(options)
     {
     }
@@ -1060,6 +1065,14 @@ public class DatabaseContext : DbContext
             .WithMany()
             .HasForeignKey(g => g.GrantGroupId)
             .OnDelete(DeleteBehavior.Cascade);
+
+        // FAZA 3 (v2 template-upgrade) / Data-Lifecycle Consistency Audit — namjerno BEZ FK/navigacije na
+        // GrantGroup, isti obrazac kao RosterAuditLog gore: audit mora preživjeti brisanje retka na koji se
+        // odnosi. GrantGroupId ostaje čista povijesna (scalar) referenca — handler/DTO-i je nikad ne razrješavaju
+        // kroz live GrantGroup navigaciju. Vidi Migration_2026_09_28_GrantGroupTemplateUpgradeAuditLogSurvivesDelete
+        // koja miče izvorni (pogrešan) Cascade FK iz Migration_2026_09_27_CapabilityV2Templates.
+        modelBuilder.Entity<GrantGroupTemplateUpgradeAuditLog>().HasKey(a => a.Id);
+        modelBuilder.Entity<GrantGroupTemplateUpgradeAuditLog>().HasIndex(a => a.GrantGroupId);
     }
 
     private static void ConfigureOutboxAndNotifications(ModelBuilder modelBuilder)

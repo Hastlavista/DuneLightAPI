@@ -263,12 +263,12 @@ public class EmployeeMeDto
     public string FirstName { get; set; }
     public string LastName { get; set; }
     public string Role { get; set; }
-    public bool IsOwner { get; set; }
 
     /// <summary>Efektivna, agregirana unija grant-key-eva iz svih GrantGroup dodjela ovog
     /// korisnika — isti izvor kao GrantResolver koristi za autorizaciju (GrantGroupHandler.ResolveEffective),
-    /// samo izložen frontendu za UI-level provjere (npr. adminGuard, prikaz/sakrivanje akcija).
-    /// Prazna za Ownera (on zaobilazi grant sustav u potpunosti — IsOwner ionako uvijek propušta provjere).</summary>
+    /// samo izložen frontendu za UI-level provjere (canPage/can). Organizacijski osnivač ovdje dobiva svoje
+    /// STVARNE grantove kroz Admin starter GrantGroup dodjelu (vidi AuthService.Register) — nema Owner
+    /// bypass-a nigdje u sustavu (Residual IsOwner Removal — User.IsOwner je potpuno uklonjen).</summary>
     public List<string> Grants { get; set; } = new();
 
     /// <summary>Ima li korisnik trenutno postavljen PIN (za brzo prebacivanje na dijeljenom uređaju) — frontend

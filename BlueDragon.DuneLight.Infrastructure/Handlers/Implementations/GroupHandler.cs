@@ -121,7 +121,15 @@ public class GroupHandler : IGroupHandler
     public async Task<int> CountActiveMembers(Guid groupId)
     {
         await using DatabaseContext context = DatabaseContext.GenerateContext(_databaseSettings.ConnectionString);
-        return await context.GroupMembers.CountAsync(m => m.GroupId == groupId && m.IsActive);
+        // GroupMember.IsActive == true samo znači da članstvo nije uklonjeno (povijest se čuva) — ne znači i
+        // da klijent i dalje smije zauzimati aktivni kapacitet. Isti obrazac kao ispravak
+        // GrantGroupHandler.AssignedUserCount: deaktivacija/anonimizacija klijenta ne briše GroupMember red,
+        // pa se ovdje mora eksplicitno provjeriti stanje samog klijenta da član ne bi trajno "zauzimao mjesto".
+        return await context.GroupMembers.CountAsync(m =>
+            m.GroupId == groupId &&
+            m.IsActive &&
+            m.Client.IsActive &&
+            !m.Client.IsAnonymized);
     }
 
     public async Task AddMember(GroupMember member)

@@ -35,11 +35,6 @@ public enum DiagnosticCategory
     /// <summary>Isti grant-ključ pojavljuje se više puta u Grants.Catalog listi.</summary>
     DuplicateGrantKey,
 
-    /// <summary>Endpoint zaštićen isključivo s [RequireOwner] — informativno, jer takvi endpointi potpuno
-    /// zaobilaze grant sustav (namjerno za permission-management, vidi RequireOwnerAttribute), vrijedi ih
-    /// povremeno pregledati da se ne širi bez razloga.</summary>
-    OwnerOnlySurface,
-
     /// <summary>Default-role drift kod postojeće organizacije — vidi DefaultGrantGroupDriftChecker. Postojeće
     /// organizacije se NE mijenjaju automatski (FAZA 1 Part D), ovo je samo izvještaj.</summary>
     DefaultRoleDrift,
@@ -81,7 +76,6 @@ public record EndpointGrantMetadata(
     string HttpMethod,
     string Route,
     IReadOnlyList<string> RequiredGrants,
-    bool RequireOwner,
     bool RequireGrantOrAssignedCompany);
 
 /// <summary>Par own/all grantova unutar istog modula, otkriven po konvenciji imenovanja u Grants.Catalog

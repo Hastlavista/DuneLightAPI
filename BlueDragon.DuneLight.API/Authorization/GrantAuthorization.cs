@@ -11,9 +11,10 @@ using Microsoft.Extensions.DependencyInjection;
 namespace BlueDragon.DuneLight.API.Authorization;
 
 /// <summary>
-/// Zajednička logika za RequireGrantAttribute i RequireOwnerAttribute: provjerava autentikaciju, razrješava
-/// GrantContext (jednom po zahtjevu, keširano u HttpContext.Items) da ga ControllerExtensions.HasGrant/
-/// CurrentIsOwner mogu ponovno iskoristiti unutar akcije bez dodatnog DB upita.
+/// Zajednička logika za RequireGrantAttribute: provjerava autentikaciju, razrješava GrantContext (jednom po
+/// zahtjevu, keširano u HttpContext.Items) da ga ControllerExtensions.HasGrant može ponovno iskoristiti unutar
+/// akcije bez dodatnog DB upita. Grant-only Tenant Authorization Refactor — ne postoji više Owner bypass;
+/// efektivne ovlasti dolaze isključivo iz UserGrantGroup -&gt; GrantGroup -&gt; GrantGroupGrant.
 /// </summary>
 internal static class GrantAuthorization
 {

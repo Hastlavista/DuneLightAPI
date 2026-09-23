@@ -32,8 +32,8 @@ public class GrantResolver : IGrantResolver
         if (_cache.TryGetValue(cacheKey, out GrantContext cached))
             return cached;
 
-        (bool isOwner, HashSet<string> grants) = await _grantGroupHandler.ResolveEffective(organizationId, userId);
-        GrantContext context = new GrantContext(isOwner, grants);
+        HashSet<string> grants = await _grantGroupHandler.ResolveEffective(organizationId, userId);
+        GrantContext context = new GrantContext(grants);
         _cache.Set(cacheKey, context, CacheDuration);
         return context;
     }

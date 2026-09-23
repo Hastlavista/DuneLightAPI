@@ -200,6 +200,9 @@ public class Startup
         services.AddScoped<IGrantResolver, GrantResolver>();
         services.AddScoped<IGrantGroupService, GrantGroupService>();
         services.AddScoped<IRoleService, RoleService>();
+        // Grant-only Tenant Authorization Refactor Part F/G — last-permission-admin lockout provjera,
+        // centralizirana umjesto raspršena po GrantGroup/Employee mutacijama.
+        services.AddScoped<IPermissionAdministrationSafetyService, PermissionAdministrationSafetyService>();
 
         // FAZA 1 Part I/R — autorsko-vrijeme capability/predložak metapodaci, ne runtime autorizacija (ta ostaje
         // isključivo GrantResolver/GrantGroupHandler.ResolveEffective iznad).
@@ -208,10 +211,17 @@ public class Startup
 
         // FAZA 2 — capability-aware GrantGroup autorstvo (create/update/authoring-state); backend materijalizira
         // raw grantove, frontend nikad ne šalje gotov skup (vidi IGrantGroupCapabilityAuthoringService).
-        services.AddScoped<IGrantGroupCapabilityAuthoringService, GrantGroupCapabilityAuthoringService>();
+        // Konkretna klasa je DODATNO registrirana (uz sučelje) da je GrantGroupTemplateUpgradeService (FAZA 3)
+        // može izravno injektirati radi ponovne uporabe internal ComputeIsCustomized/GetAuthoringState — vidi
+        // tamošnju klasnu napomenu zašto nije duplicirano.
+        services.AddScoped<GrantGroupCapabilityAuthoringService>();
+        services.AddScoped<IGrantGroupCapabilityAuthoringService>(sp => sp.GetRequiredService<GrantGroupCapabilityAuthoringService>());
+
+        // FAZA 3 — template-version-upgrade review/apply tok (vidi IGrantGroupTemplateUpgradeService).
+        services.AddScoped<IGrantGroupTemplateUpgradeService, GrantGroupTemplateUpgradeService>();
 
         // FAZA 1 Part F/G — read-only platform dijagnostika, ne tenant runtime autorizacija (vidi
-        // GrantDiagnosticsController, Owner-only + Development-only izloženost).
+        // GrantDiagnosticsController, permissions.manage + Development-only izloženost).
         services.AddSingleton<IEndpointGrantMetadataProvider, EndpointGrantMetadataProvider>();
         services.AddScoped<IGrantDiagnosticsService, GrantDiagnosticsService>();
 
@@ -290,6 +300,7 @@ public class Startup
         services.AddSingleton<ICapabilityDefinitionHandler, CapabilityDefinitionHandler>();
         services.AddSingleton<IDefaultRoleTemplateHandler, DefaultRoleTemplateHandler>();
         services.AddSingleton<IGrantGroupHandler, GrantGroupHandler>();
+        services.AddSingleton<IGrantGroupTemplateUpgradeAuditLogHandler, GrantGroupTemplateUpgradeAuditLogHandler>();
         services.AddSingleton<IRoleHandler, RoleHandler>();
 
         services.AddSingleton<IOnboardingHandler, OnboardingHandler>();

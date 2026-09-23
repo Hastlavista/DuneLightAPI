@@ -74,6 +74,13 @@ public static class Grants
     public const string OrganizationBrandingManage = "organization.branding.manage";
     public const string OrganizationSettingsManage = "organization.settings.manage";
 
+    /// <summary>Grant-only Tenant Authorization Refactor — zamjenjuju stari [RequireOwner] Owner bypass na
+    /// GrantGroups/Grants/Capabilities/Roles/GrantDiagnostics kontrolerima. Nema veze s GrantGroup imenom ni
+    /// legacy UserRole — bilo koja GrantGroup s ovim ključevima smije upravljati dozvolama.</summary>
+    public const string PermissionsView = "permissions.view";
+    public const string PermissionsManage = "permissions.manage";
+    public const string PermissionsAssignmentsManage = "permissions.assignments.manage";
+
     /// <summary>Namjerno bez own/all podjele — POS/checkout je vezan uz poslovnicu (Company), ne uz "vlastite"
     /// termine pojedinog trenera (vidi spec section 78).</summary>
     public const string CheckoutView = "checkout.view";
@@ -161,6 +168,10 @@ public static class Grants
 
         new(OrganizationBrandingManage, "organization", "Uređivanje vizualnog identiteta organizacije (logo, favicon, boje)."),
         new(OrganizationSettingsManage, "organization", "Uređivanje poslovnih postavki organizacije (npr. rok za otkazivanje termina)."),
+
+        new(PermissionsView, "organization", "Pregled GrantGroup-a i konfiguracije dozvola."),
+        new(PermissionsManage, "organization", "Kreiranje/uređivanje/brisanje GrantGroup-a, autoriranje uloga preko capability sustava, pregled/primjena template-upgrade odluka."),
+        new(PermissionsAssignmentsManage, "organization", "Dodjela GrantGroup-a korisnicima."),
 
         new(CheckoutView, "checkout", "Pregled checkout/POS košarica i njihove povijesti plaćanja."),
         new(CheckoutManage, "checkout", "Kreiranje/uređivanje checkout košarica, naplata, poništenje plaćanja, dovršetak/otkazivanje."),

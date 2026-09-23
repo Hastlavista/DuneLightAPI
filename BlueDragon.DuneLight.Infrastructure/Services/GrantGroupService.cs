@@ -16,10 +16,12 @@ public class GrantGroupService : IGrantGroupService
     private static readonly HashSet<string> ValidGrantKeys = Grants.Catalog.Select(g => g.Key).ToHashSet();
 
     private readonly IGrantGroupHandler _grantGroupHandler;
+    private readonly IPermissionAdministrationSafetyService _permissionAdministrationSafetyService;
 
-    public GrantGroupService(IGrantGroupHandler grantGroupHandler)
+    public GrantGroupService(IGrantGroupHandler grantGroupHandler, IPermissionAdministrationSafetyService permissionAdministrationSafetyService)
     {
         _grantGroupHandler = grantGroupHandler;
+        _permissionAdministrationSafetyService = permissionAdministrationSafetyService;
     }
 
     public async Task<List<GrantGroupDto>> GetAll(Guid organizationId)
@@ -75,7 +77,13 @@ public class GrantGroupService : IGrantGroupService
         existing.UpdatedAt = DateTimeOffset.UtcNow;
         existing.UpdatedBy = userId;
 
-        await _grantGroupHandler.Update(existing, request.Grants.Distinct().ToList());
+        List<string> newGrantKeys = request.Grants.Distinct().ToList();
+        // Part F — Update može ukloniti permissions.manage s ove grupe; provjeri PRIJE upisa da bar jedan aktivan
+        // korisnik organizacije zadrži tu ovlast (kroz OVU ili neku DRUGU grupu).
+        await _permissionAdministrationSafetyService.EnsureRetainsPermissionAdmin(
+            organizationId, overrideGrantGroupId: id, overrideGrantGroupGrants: newGrantKeys.ToHashSet());
+
+        await _grantGroupHandler.Update(existing, newGrantKeys);
         return await GetById(organizationId, id);
     }
 
@@ -88,6 +96,12 @@ public class GrantGroupService : IGrantGroupService
         bool hasAssignedUsers = await _grantGroupHandler.HasAssignedUsers(organizationId, id);
         if (hasAssignedUsers)
             throw new BusinessRuleException(ErrorCodes.ReferencedCannotDelete, "Grant-grupa je dodijeljena korisnicima i ne može se obrisati — prvo im dodijelite drugu grupu.");
+
+        // HasAssignedUsers gore već blokira brisanje dok god postoji IJEDNA dodjela (aktivnog ili neaktivnog
+        // korisnika), pa ova grupa u praksi nikad ne doprinosi trenutnom permissions.manage skupu u trenutku
+        // brisanja — provjera ostaje kao eksplicitna zaštita, ne oslanja se samo na taj raniji guard.
+        await _permissionAdministrationSafetyService.EnsureRetainsPermissionAdmin(
+            organizationId, overrideGrantGroupId: id, overrideGrantGroupGrants: new HashSet<string>());
 
         await _grantGroupHandler.Delete(organizationId, id);
     }
@@ -106,6 +120,11 @@ public class GrantGroupService : IGrantGroupService
         foreach (Guid grantGroupId in distinctIds)
             if (!validIds.Contains(grantGroupId))
                 throw new NotFoundAppException("GrantGroup", grantGroupId);
+
+        // Part F — zamjena CIJELOG skupa dodjela za korisnika može mu ukloniti permissions.manage; provjeri
+        // PRIJE upisa da bar jedan aktivan korisnik organizacije (ovaj ili neki drugi) zadrži tu ovlast.
+        await _permissionAdministrationSafetyService.EnsureRetainsPermissionAdmin(
+            organizationId, overrideUserId: userId, overrideUserGrantGroupIds: distinctIds);
 
         await _grantGroupHandler.SetUserGrantGroups(organizationId, userId, distinctIds);
     }

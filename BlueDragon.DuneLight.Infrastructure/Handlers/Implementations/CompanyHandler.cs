@@ -179,6 +179,14 @@ public class CompanyHandler : ICompanyHandler
             .Where(e => e.OrganizationId == organizationId && e.CompanyId == id)
             .Select(e => 1);
 
+        // Data/Lifecycle Consistency Cleanup — Checkout.CompanyId je Restrict FK (vidi DatabaseContext), ali do
+        // sada nije bio ovdje uključen, pa bi hard-delete pokušaj na Company referenciranoj SAMO preko Checkouta
+        // (bez ijedne od gornjih tablica) propao sirovom Postgres FK greškom umjesto čistom domenskom porukom.
+        // CommissionRule nema CompanyId (samo Employee+Subject) — nije relevantan ovdje, CommissionEntry već jest.
+        IQueryable<int> checkouts = context.Checkouts
+            .Where(c => c.OrganizationId == organizationId && c.CompanyId == id)
+            .Select(c => 1);
+
         IQueryable<int> anyReference = priceListItems
             .Union(rooms)
             .Union(employeeCompanies)
@@ -188,7 +196,8 @@ public class CompanyHandler : ICompanyHandler
             .Union(groups)
             .Union(workingHoursTemplates)
             .Union(companyHolidays)
-            .Union(commissionEntries);
+            .Union(commissionEntries)
+            .Union(checkouts);
 
         return await anyReference.AnyAsync();
     }

@@ -217,14 +217,6 @@ public class EmployeeHandler : IEmployeeHandler
             (excludeEmployeeId == null || e.Id != excludeEmployeeId));
     }
 
-    public async Task<int> CountActiveAdmins(Guid organizationId)
-    {
-        await using DatabaseContext context = DatabaseContext.GenerateContext(_databaseSettings.ConnectionString);
-        return await context.Employees.CountAsync(e =>
-            e.OrganizationId == organizationId &&
-            e.IsActive &&
-            e.User.Role == UserRole.Admin);
-    }
 
     public async Task<(List<EmployeeDirectoryDto> Items, int TotalCount)> GetDirectoryPaged(Guid organizationId, PagedRequest request)
     {

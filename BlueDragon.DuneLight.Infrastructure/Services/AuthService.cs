@@ -6,6 +6,7 @@ using BlueDragon.DuneLight.Core.Interfaces;
 using BlueDragon.DuneLight.Core.Shared;
 using BlueDragon.DuneLight.Core.Shared.Exceptions;
 using BlueDragon.DuneLight.Infrastructure.Domain.Models;
+using BlueDragon.DuneLight.Infrastructure.Domain.Models.Permissions;
 using BlueDragon.DuneLight.Infrastructure.Domain.Settings;
 using BlueDragon.DuneLight.Infrastructure.Handlers.Interfaces;
 using BlueDragon.DuneLight.Infrastructure.UnitOfWork;
@@ -55,9 +56,6 @@ public class AuthService : IAuthService
         user.PasswordHash = PasswordHasher.Hash(request.Password);
         user.ApiKey = Guid.NewGuid().ToString("N");
         user.Role = UserRole.Admin;
-        // Onaj tko odradi Register je trajno Owner ove organizacije — jedini koji zaobilazi grant sustav
-        // (vidi RequireOwnerAttribute), pa ima sva prava bez GrantGroup-e.
-        user.IsOwner = true;
         user.IsActive = true;
         user.CreatedAt = DateTimeOffset.UtcNow;
 
@@ -68,8 +66,21 @@ public class AuthService : IAuthService
             await _authHandler.AddOrganization(uow, organization);
             await _authHandler.AddUser(uow, user);
             await _rosterTypeHandler.SeedDefaultTypes(uow, organization.Id.GetValueOrDefault());
-            // Owner (gore) ostaje trajno IsOwner=true i namjerno se NE dodjeljuje Admin grupi — vidi FAZA 1 Part C.
-            await _grantGroupHandler.EnsureDefaultGrantGroups(uow, organization.Id.GetValueOrDefault());
+
+            // Jedini automatski GrantGroup bootstrap je Admin (vidi EnsureDefaultGrantGroups) — organizacijski
+            // osnivač se odmah dodjeljuje na nju, jer to je (nakon uklanjanja Owner bypass-a) JEDINI način na
+            // koji dobiva bilo kakav pristup, uključujući dovršavanje vlastitog Employee profila.
+            Guid? adminGrantGroupId = await _grantGroupHandler.EnsureDefaultGrantGroups(uow, organization.Id.GetValueOrDefault());
+            if (adminGrantGroupId.HasValue)
+            {
+                uow.Context.UserGrantGroups.Add(new UserGrantGroup
+                {
+                    Id = Guid.NewGuid(),
+                    UserId = user.Id.GetValueOrDefault(),
+                    GrantGroupId = adminGrantGroupId.Value
+                });
+                await uow.Context.SaveChangesAsync();
+            }
 
             await uow.CommitAsync();
         }

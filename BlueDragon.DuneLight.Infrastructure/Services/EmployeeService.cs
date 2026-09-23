@@ -27,6 +27,7 @@ public class EmployeeService : IEmployeeService
     private readonly IFutureAppointmentsProvider _futureAppointmentsProvider;
     private readonly IGrantGroupHandler _grantGroupHandler;
     private readonly IRoleHandler _roleHandler;
+    private readonly IPermissionAdministrationSafetyService _permissionAdministrationSafetyService;
 
     public EmployeeService(
         IEmployeeHandler employeeHandler,
@@ -37,7 +38,8 @@ public class EmployeeService : IEmployeeService
         IEmployeeAuditLogHandler auditLogHandler,
         IFutureAppointmentsProvider futureAppointmentsProvider,
         IGrantGroupHandler grantGroupHandler,
-        IRoleHandler roleHandler)
+        IRoleHandler roleHandler,
+        IPermissionAdministrationSafetyService permissionAdministrationSafetyService)
     {
         _employeeHandler = employeeHandler;
         _engagementTypeHandler = engagementTypeHandler;
@@ -48,6 +50,7 @@ public class EmployeeService : IEmployeeService
         _futureAppointmentsProvider = futureAppointmentsProvider;
         _grantGroupHandler = grantGroupHandler;
         _roleHandler = roleHandler;
+        _permissionAdministrationSafetyService = permissionAdministrationSafetyService;
     }
 
     public async Task<PagedResult<EmployeeDto>> GetPaged(
@@ -83,7 +86,7 @@ public class EmployeeService : IEmployeeService
         ValidateCompanies(request.CompanyIds, request.PrimaryCompanyId);
         ValidateEmploymentDates(request.EmploymentStartDate, request.EmploymentEndDate);
         await EnsureCompaniesUsable(organizationId, request.CompanyIds, grandfatheredCompanyIds: null);
-        await EnsureEngagementTypeIsUsable(organizationId, request.EngagementTypeId);
+        await EnsureEngagementTypeIsUsable(organizationId, request.EngagementTypeId, grandfatheredEngagementTypeId: null);
         await EnsureServicesUsable(organizationId, request.ServiceIds, grandfatheredServiceIds: null);
         await EnsureUserIsLinkable(organizationId, request.UserId, excludeEmployeeId: null);
 
@@ -123,7 +126,7 @@ public class EmployeeService : IEmployeeService
         ValidateCompanies(request.CompanyIds, request.PrimaryCompanyId);
         ValidateEmploymentDates(request.EmploymentStartDate, request.EmploymentEndDate);
         await EnsureCompaniesUsable(organizationId, request.CompanyIds, grandfatheredCompanyIds: null);
-        await EnsureEngagementTypeIsUsable(organizationId, request.EngagementTypeId);
+        await EnsureEngagementTypeIsUsable(organizationId, request.EngagementTypeId, grandfatheredEngagementTypeId: null);
         await EnsureServicesUsable(organizationId, request.ServiceIds, grandfatheredServiceIds: null);
 
         bool emailExists = await _authHandler.EmailExists(organizationId, request.Email);
@@ -228,7 +231,7 @@ public class EmployeeService : IEmployeeService
         HashSet<Guid> grandfatheredServiceIds = existing.Services.Select(es => es.ServiceId).ToHashSet();
 
         await EnsureCompaniesUsable(organizationId, request.CompanyIds, grandfatheredCompanyIds);
-        await EnsureEngagementTypeIsUsable(organizationId, request.EngagementTypeId);
+        await EnsureEngagementTypeIsUsable(organizationId, request.EngagementTypeId, grandfatheredEngagementTypeId: existing.EngagementTypeId);
         await EnsureServicesUsable(organizationId, request.ServiceIds, grandfatheredServiceIds);
 
         existing.FirstName = request.FirstName;
@@ -266,12 +269,12 @@ public class EmployeeService : IEmployeeService
 
         if (!isActive)
         {
-            if (employee.User.Role == UserRole.Admin)
-            {
-                int activeAdmins = await _employeeHandler.CountActiveAdmins(organizationId);
-                if (activeAdmins <= 1)
-                    throw new BusinessRuleException(ErrorCodes.LastActiveAdmin, "Mora postojati barem jedan aktivan Admin — nije moguće deaktivirati zadnjeg.");
-            }
+            // Last-admin lockout zaštita ide preko IPermissionAdministrationSafetyService (effective
+            // permissions.manage, ne legacy UserRole/GrantGroup ime) — vidi Grant-only Tenant Authorization
+            // Refactor Part F. Deaktivacija se simulira kao "korisnik bez dodjela", ne kroz stvarno brisanje
+            // UserGrantGroup redaka (povijest dodjela ostaje netaknuta).
+            await _permissionAdministrationSafetyService.EnsureRetainsPermissionAdmin(
+                organizationId, overrideUserId: employee.UserId, overrideUserGrantGroupIds: new List<Guid>());
         }
         else
         {
@@ -337,13 +340,10 @@ public class EmployeeService : IEmployeeService
         if (oldRole == newRole)
             return await ToDtoSingle(organizationId, employee);
 
-        if (oldRole == UserRole.Admin && newRole != UserRole.Admin)
-        {
-            int activeAdmins = await _employeeHandler.CountActiveAdmins(organizationId);
-            if (activeAdmins <= 1)
-                throw new BusinessRuleException(ErrorCodes.LastActiveAdmin, "Mora postojati barem jedan aktivan Admin — nije moguće promijeniti ulogu zadnjeg.");
-        }
-
+        // Legacy UserRole više nije autorizacijski model (vidi komentar u CreateWithLogin) — mijenjanje ove
+        // kozmetičke vrijednosti se namjerno više NE štiti "last admin" pravilom. Jedina stvarna zaštita
+        // (zadnji aktivan korisnik s permissions.manage) živi u SetActive, preko
+        // IPermissionAdministrationSafetyService, ne preko ovog stupca.
         await _authHandler.UpdateRole(organizationId, employee.UserId, newRole);
 
         await _auditLogHandler.Add(new EmployeeAuditLog
@@ -373,7 +373,7 @@ public class EmployeeService : IEmployeeService
             throw new NotFoundAppException("Employee", userId);
 
         Employee full = await _employeeHandler.GetById(organizationId, employee.Id.GetValueOrDefault());
-        (bool isOwner, HashSet<string> grants) = await _grantGroupHandler.ResolveEffective(organizationId, userId);
+        HashSet<string> grants = await _grantGroupHandler.ResolveEffective(organizationId, userId);
 
         return new EmployeeMeDto
         {
@@ -381,7 +381,6 @@ public class EmployeeService : IEmployeeService
             FirstName = full.FirstName,
             LastName = full.LastName,
             Role = full.User != null ? UserRoleClaims.ToClaimValue(full.User.Role) : null,
-            IsOwner = isOwner,
             Grants = grants.ToList(),
             HasPinSet = full.User != null && !string.IsNullOrEmpty(full.User.PinHash),
             ColorHex = full.ColorHex,
@@ -426,13 +425,17 @@ public class EmployeeService : IEmployeeService
         }
     }
 
-    private async Task EnsureEngagementTypeIsUsable(Guid organizationId, Guid engagementTypeId)
+    private async Task EnsureEngagementTypeIsUsable(Guid organizationId, Guid engagementTypeId, Guid? grandfatheredEngagementTypeId)
     {
         EngagementType engagementType = await _engagementTypeHandler.GetById(organizationId, engagementTypeId);
         if (engagementType == null)
             throw new NotFoundAppException("EngagementType", engagementTypeId);
 
-        if (!engagementType.IsActive)
+        // Isti obrazac kao EnsureCompaniesUsable/EnsureServicesUsable: zaposlenik koji je već imao ovu vrstu
+        // angažmana prije nego što je deaktivirana smije je zadržati (i mijenjati ostala polja bez blokade),
+        // ali NE smije se prebaciti na neku DRUGU neaktivnu vrstu, niti novi zaposlenik smije dobiti neaktivnu.
+        bool isGrandfathered = grandfatheredEngagementTypeId.HasValue && grandfatheredEngagementTypeId.Value == engagementTypeId;
+        if (!engagementType.IsActive && !isGrandfathered)
             throw new BusinessRuleException(ErrorCodes.InactiveType, "Odabrana vrsta angažmana nije aktivna.");
     }
 

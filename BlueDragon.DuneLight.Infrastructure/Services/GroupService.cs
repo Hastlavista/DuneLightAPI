@@ -416,6 +416,13 @@ public class GroupService : IGroupService
         if (client == null)
             throw new NotFoundAppException("Client", request.ClientId);
 
+        // Isti obrazac kao BookingService/CheckoutService/ClientPackageService/WaitlistService — anonimizirani
+        // ili neaktivni klijent ne smije ući u novu aktivnu poslovnu relaciju (ovdje: grupno članstvo).
+        if (!client.IsActive)
+            throw new BusinessRuleException(ErrorCodes.InactiveClient, "Klijent nije aktivan.");
+        if (client.IsAnonymized)
+            throw new BusinessRuleException(ErrorCodes.ClientAnonymized, "Klijent je anonimiziran.");
+
         GroupMember existingActive = await _groupHandler.GetActiveMember(organizationId, groupId, request.ClientId);
         if (existingActive != null)
             throw new BusinessRuleException(ErrorCodes.AlreadyMember, "Klijent je već aktivan član ove grupe.");

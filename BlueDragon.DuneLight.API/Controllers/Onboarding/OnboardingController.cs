@@ -24,6 +24,6 @@ public class OnboardingController : ControllerBase
     [Authorize]
     public async Task<ActionResult<OnboardingStatusDto>> GetStatus()
     {
-        return Ok(await _onboardingService.GetStatus(this.CurrentOrganizationId()));
+        return Ok(await _onboardingService.GetStatus(this.CurrentOrganizationId(), this.CurrentUserId()));
     }
 }

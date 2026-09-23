@@ -28,19 +28,22 @@ public class GrantGroupCapabilityAuthoringService : IGrantGroupCapabilityAuthori
     private readonly IDefaultRoleTemplateHandler _defaultRoleTemplateHandler;
     private readonly ICapabilityMaterializationService _capabilityMaterializationService;
     private readonly IUnitOfWorkFactory _unitOfWorkFactory;
+    private readonly IPermissionAdministrationSafetyService _permissionAdministrationSafetyService;
 
     public GrantGroupCapabilityAuthoringService(
         IGrantGroupHandler grantGroupHandler,
         ICapabilityDefinitionHandler capabilityDefinitionHandler,
         IDefaultRoleTemplateHandler defaultRoleTemplateHandler,
         ICapabilityMaterializationService capabilityMaterializationService,
-        IUnitOfWorkFactory unitOfWorkFactory)
+        IUnitOfWorkFactory unitOfWorkFactory,
+        IPermissionAdministrationSafetyService permissionAdministrationSafetyService)
     {
         _grantGroupHandler = grantGroupHandler;
         _capabilityDefinitionHandler = capabilityDefinitionHandler;
         _defaultRoleTemplateHandler = defaultRoleTemplateHandler;
         _capabilityMaterializationService = capabilityMaterializationService;
         _unitOfWorkFactory = unitOfWorkFactory;
+        _permissionAdministrationSafetyService = permissionAdministrationSafetyService;
     }
 
     public async Task<GrantGroupAuthoringDto> Create(Guid organizationId, Guid userId, GrantGroupCapabilityWriteRequest request)
@@ -105,6 +108,12 @@ public class GrantGroupCapabilityAuthoringService : IGrantGroupCapabilityAuthori
 
         await _grantGroupHandler.UpdateMetadata(uow, id, request.Name, userId);
         await _grantGroupHandler.ApplyCapabilitySelections(uow, id, selections, manualGrantKeys, userId);
+
+        // Part F — ovaj edit može ukloniti permissions.manage s grupe preko capability odabira/ručnih grantova;
+        // ApplyCapabilitySelections je gore VEĆ upisao novi grant skup (svoj interni SaveChangesAsync), pa
+        // provjera ovdje vidi stvarno novo stanje. Baca PRIJE uow.CommitAsync() — DisposeAsync bez commita radi
+        // rollback, ništa se ne sprema ako bi organizacija ostala bez aktivnog permission-admina.
+        await _permissionAdministrationSafetyService.EnsureRetainsPermissionAdminInTransaction(uow, organizationId);
 
         await uow.CommitAsync();
 
@@ -173,8 +182,12 @@ public class GrantGroupCapabilityAuthoringService : IGrantGroupCapabilityAuthori
 
     /// <summary>FAZA 2 Part F — "customized" znači: grupa nema stabilnu template provenance, ima Manual Advanced
     /// grantove, ILI njeni trenutni capability odabiri/compatibility grantovi ODSTUPAJU od TOČNO ONE verzije
-    /// predloška zabilježene u provenance-u (ne najnovije — usporedba je uvijek prema zabilježenoj verziji).</summary>
-    private async Task<bool> ComputeIsCustomized(string templateKey, int? templateVersion, List<GrantGroupCapabilitySnapshot> snapshots, HashSet<string> currentTemplateCompatibilitySet, List<string> manualGrantKeys)
+    /// predloška zabilježene u provenance-u (ne najnovije — usporedba je uvijek prema zabilježenoj verziji).
+    /// FAZA 3 (v2 template-upgrade) — promovirano iz private u internal da GrantGroupTemplateUpgradeService (isti
+    /// Infrastructure assembly) ponovno iskoristi identičnu drift-logiku umjesto duplikacije (vidi
+    /// GetUpgradeStatus.isCustomized) — Core ne smije referencirati GrantGroupCapabilitySnapshot (EF entitet), zato
+    /// nije izloženo preko IGrantGroupCapabilityAuthoringService sučelja.</summary>
+    internal async Task<bool> ComputeIsCustomized(string templateKey, int? templateVersion, List<GrantGroupCapabilitySnapshot> snapshots, HashSet<string> currentTemplateCompatibilitySet, List<string> manualGrantKeys)
     {
         if (templateKey == null || !templateVersion.HasValue)
             return true;

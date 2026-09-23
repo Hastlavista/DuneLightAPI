@@ -3,17 +3,19 @@ using System.Threading.Tasks;
 using BlueDragon.DuneLight.API.Authorization;
 using BlueDragon.DuneLight.Core.DTOs.Capabilities;
 using BlueDragon.DuneLight.Core.Interfaces.Capabilities;
+using BlueDragon.DuneLight.Core.Shared;
 using Microsoft.AspNetCore.Mvc;
 
 namespace BlueDragon.DuneLight.API.Controllers.Permissions;
 
-/// <summary>FAZA 1 Part R — read-only capability/predložak metapodaci za budući role-editor UI. Owner-only (isti
-/// obrazac kao GrantGroupsController); NEMA mutacijskih endpointa u ovoj fazi (vidi CapabilityVersionGuard —
-/// autoritativna izmjena capability-ja/predloška je platform-only, ne izlaže se tenant Owneru).</summary>
+/// <summary>FAZA 1 Part R — read-only capability/predložak metapodaci za role-editor UI. Zaštićeno
+/// permissions.view/permissions.manage (bilo koji); NEMA mutacijskih endpointa u ovoj fazi (vidi
+/// CapabilityVersionGuard — autoritativna izmjena capability-ja/predloška je platform-only, ne izlaže se
+/// tenant korisniku).</summary>
 [ApiController]
 [Route("api/permissions/capabilities")]
 [Produces("application/json")]
-[RequireOwner]
+[RequireGrant(Grants.PermissionsView, Grants.PermissionsManage)]
 public class CapabilitiesController : ControllerBase
 {
     private readonly ICapabilityReadService _capabilityReadService;
