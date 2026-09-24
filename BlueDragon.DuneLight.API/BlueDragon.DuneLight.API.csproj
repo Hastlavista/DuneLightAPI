@@ -21,6 +21,8 @@
         <PackageReference Include="Serilog.Enrichers.Environment" Version="3.0.0" />
         <PackageReference Include="Serilog.Sinks.Seq" Version="9.0.0" />
         <PackageReference Include="Swashbuckle.AspNetCore" Version="10.1.6" />
+        <!-- Pin: tranzitivna Microsoft.OpenApi 2.4.1 (preko Swashbucklea) ima poznatu ranjivost GHSA-v5pm-xwqc-g5wc -->
+        <PackageReference Include="Microsoft.OpenApi" Version="2.12.2" />
     </ItemGroup>
 
     <ItemGroup>
