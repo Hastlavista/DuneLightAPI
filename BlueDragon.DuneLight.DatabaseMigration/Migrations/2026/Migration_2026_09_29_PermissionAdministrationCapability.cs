@@ -59,13 +59,8 @@ public class SeedOrganizationPermissionsCapability : DuneLightMigration
             key = PermissionAdministrationCapabilitySeedData.CapabilityKey,
             version = PermissionAdministrationCapabilitySeedData.CapabilityVersion,
             category_key = "organization",
-            // display_name_hr/description_hr i dalje postoje kao NOT NULL stupci u stvarnoj shemi (dev baza nije
-            // dobila naknadnu migraciju koja bi ih uklonila unatoč FAZA 1 Part L2 napomeni u CapabilityV1SeedData —
-            // vidi taj klasni komentar), pa se popunjavaju ovdje da INSERT prođe; backend/frontend ih više NIGDJE
-            // ne čita (Core.Interfaces.Capabilities.CapabilityDefinitionDto nema ta polja), samo Key se koristi za
-            // lokalizaciju na frontendu.
-            display_name_hr = "Upravljanje dozvolama",
-            description_hr = "Upravljanje GrantGroup-ama, dodjelama i predlošcima uloga.",
+            // display_name_hr/description_hr ne postoje u shemi (CreateCapabilityDefinitionsTable ih ne stvara);
+            // frontend lokalizira preko Key-a.
             scope_model = "ViewManage",
             sensitivity = "HighRisk",
             is_active = true,
