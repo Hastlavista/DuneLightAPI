@@ -9,6 +9,7 @@ using BlueDragon.DuneLight.Infrastructure.Domain.Models.Clients;
 using BlueDragon.DuneLight.Infrastructure.Domain.Models.Commissions;
 using BlueDragon.DuneLight.Infrastructure.Domain.Models.Employees;
 using BlueDragon.DuneLight.Infrastructure.Domain.Models.Groups;
+using BlueDragon.DuneLight.Infrastructure.Domain.Models.Management;
 using BlueDragon.DuneLight.Infrastructure.Domain.Models.Notifications;
 using BlueDragon.DuneLight.Infrastructure.Domain.Models.Organizations;
 using BlueDragon.DuneLight.Infrastructure.Domain.Models.Outbox;
@@ -103,6 +104,8 @@ public class DatabaseContext : DbContext
     // izravno (uow.Context.GrantGroupTemplateUpgradeAuditLogs.Add) da upis bude atomski s ostatkom transakcije,
     // isto kao OrganizationBrandingAuditLog DbSet ispod — ne preko posebnog handler-context obrasca.
     public DbSet<GrantGroupTemplateUpgradeAuditLog> GrantGroupTemplateUpgradeAuditLogs { get; set; }
+
+    public DbSet<PlatformAccount> PlatformAccounts { get; set; }
 
     public DatabaseContext(DbContextOptions options) : base(options)
     {
@@ -1109,6 +1112,9 @@ public class DatabaseContext : DbContext
             .WithMany()
             .HasForeignKey(n => n.ClientId)
             .OnDelete(DeleteBehavior.Restrict);
+
+        modelBuilder.Entity<PlatformAccount>().HasKey(a => a.Id);
+        modelBuilder.Entity<PlatformAccount>().HasIndex(a => a.Email).IsUnique();
     }
 
     public static DatabaseContext GenerateContext(string connectionString)

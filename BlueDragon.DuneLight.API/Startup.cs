@@ -22,6 +22,7 @@ using BlueDragon.DuneLight.Core.Interfaces.Dashboard;
 using BlueDragon.DuneLight.Core.Interfaces.Diagnostics;
 using BlueDragon.DuneLight.Core.Interfaces.Employees;
 using BlueDragon.DuneLight.Core.Interfaces.Groups;
+using BlueDragon.DuneLight.Core.Interfaces.Management;
 using BlueDragon.DuneLight.Core.Interfaces.Notifications;
 using BlueDragon.DuneLight.Core.Interfaces.Onboarding;
 using BlueDragon.DuneLight.Core.Interfaces.Organization;
@@ -37,6 +38,7 @@ using BlueDragon.DuneLight.Infrastructure.Integrations;
 using BlueDragon.DuneLight.Infrastructure.Outbox;
 using BlueDragon.DuneLight.Infrastructure.Outbox.Handlers;
 using BlueDragon.DuneLight.Infrastructure.Services;
+using BlueDragon.DuneLight.Infrastructure.Services.Management;
 using BlueDragon.DuneLight.Infrastructure.UnitOfWork;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
@@ -89,11 +91,17 @@ public class Startup
         JwtSettings jwtSettings = Configuration.GetSection("JwtSettings").Get<JwtSettings>();
         services.AddSingleton(jwtSettings);
 
+        PlatformJwtSettings platformJwtSettings = Configuration.GetSection("PlatformJwtSettings").Get<PlatformJwtSettings>();
+        services.AddSingleton(platformJwtSettings);
+
         BrandingSettings brandingSettings = Configuration.GetSection("BrandingSettings").Get<BrandingSettings>();
         services.AddSingleton(brandingSettings);
 
         OutboxSettings outboxSettings = Configuration.GetSection("OutboxSettings").Get<OutboxSettings>() ?? new OutboxSettings();
         services.AddSingleton(outboxSettings);
+
+        PlatformSettings platformSettings = Configuration.GetSection("PlatformSettings").Get<PlatformSettings>() ?? new PlatformSettings();
+        services.AddSingleton(platformSettings);
 
         #endregion
 
@@ -147,7 +155,46 @@ public class Startup
                     }
                 };
             })
-            .AddScheme<AuthenticationSchemeOptions, ApiKeyAuthenticationHandler>("ApiKey", _ => { });
+            .AddScheme<AuthenticationSchemeOptions, ApiKeyAuthenticationHandler>("ApiKey", _ => { })
+            // PlatformAccount identity - a genuinely separate JWT bearer scheme, own signing key
+            // (PlatformJwtSettings), own OnTokenValidated. Deliberately NOT part of the DefaultPolicy below, so a
+            // tenant-authenticated request can never satisfy [Authorize(AuthenticationSchemes = "PlatformBearer")]
+            // and a platform-authenticated request can never satisfy the tenant DefaultPolicy - two structurally
+            // non-overlapping identity universes, not just an ID-lookup distinction.
+            .AddJwtBearer(PlatformAuthenticationDefaults.Scheme, options =>
+            {
+                options.TokenValidationParameters = new TokenValidationParameters
+                {
+                    ValidateIssuer = true,
+                    ValidateAudience = true,
+                    ValidateLifetime = true,
+                    ValidateIssuerSigningKey = true,
+                    ValidIssuer = platformJwtSettings.Issuer,
+                    ValidAudience = platformJwtSettings.Audience,
+                    IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(platformJwtSettings.SecretKey))
+                };
+                // Mirrors the tenant scheme's OnTokenValidated above exactly, but resolves
+                // IActivePlatformAccountGuard against platform_accounts - never touches Users.
+                options.Events = new JwtBearerEvents
+                {
+                    OnTokenValidated = async context =>
+                    {
+                        string accountIdValue = context.Principal?.FindFirstValue(ClaimTypes.NameIdentifier)
+                            ?? context.Principal?.FindFirstValue(JwtRegisteredClaimNames.Sub);
+                        if (!Guid.TryParse(accountIdValue, out Guid platformAccountId))
+                        {
+                            context.Fail("Invalid token");
+                            return;
+                        }
+
+                        IActivePlatformAccountGuard activePlatformAccountGuard = context.HttpContext.RequestServices.GetRequiredService<IActivePlatformAccountGuard>();
+                        if (!await activePlatformAccountGuard.IsActive(platformAccountId))
+                        {
+                            context.Fail("Account disabled");
+                        }
+                    }
+                };
+            });
 
         services.AddAuthorization(options =>
         {
@@ -265,6 +312,13 @@ public class Startup
 
         services.AddScoped<INotificationService, NotificationService>();
 
+        // DuneLight Platform Management — potpuno odvojeno od tenant Auth/GrantGroup registracija iznad (vidi
+        // PlatformAccount klasnu napomenu i PlatformAuthenticationDefaults).
+        services.AddScoped<IPlatformJwtService, PlatformJwtService>();
+        services.AddScoped<IPlatformAuthService, PlatformAuthService>();
+        services.AddScoped<IActivePlatformAccountGuard, ActivePlatformAccountGuard>();
+        services.AddScoped<IManagementReadService, ManagementReadService>();
+
         #endregion
 
         #region Outbox
@@ -282,10 +336,22 @@ public class Startup
 
         #endregion
 
+        #region Platform Management
+
+        // Dev/production bootstrap za prvi PlatformAccount — vidi PlatformAccountBootstrapper klasnu napomenu
+        // za idempotentnu "nikad ne resetiraj lozinku niti reaktiviraj" semantiku. Izvršava se JEDNOM pri startu
+        // (IHostedService, ne BackgroundService — nema petlje).
+        services.AddHostedService<PlatformAccountBootstrapper>();
+
+        #endregion
+
         #region Handlers
 
         services.AddSingleton<IAuthHandler, AuthHandler>();
         services.AddScoped<IActiveUserGuard, ActiveUserGuard>();
+
+        services.AddSingleton<IPlatformAccountHandler, PlatformAccountHandler>();
+        services.AddSingleton<IManagementHandler, ManagementHandler>();
 
         services.AddSingleton<ICompanyHandler, CompanyHandler>();
         services.AddSingleton<IRoomHandler, RoomHandler>();

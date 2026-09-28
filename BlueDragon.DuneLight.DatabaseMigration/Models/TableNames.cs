@@ -99,6 +99,9 @@ public static class Tables
     public const string Locations = "locations";
     public const string EmployeeLocations = "employee_locations";
 
+    public const string PlatformOperators = "platform_operators";
+    public const string PlatformAccounts = "platform_accounts";
+
     public static class Schemas
     {
         public const string DuneLight = "dunelight";
