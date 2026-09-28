@@ -42,18 +42,7 @@ public class PlatformAccountBootstrapper : IHostedService
         if (existing != null)
             return;
 
-        // TEMP: production diagnostic - remove immediately after testing.
-        _logger.LogWarning(
-            "TEMP PLATFORM BOOTSTRAP: password received from PlatformSettings='{Password}', length={PasswordLength}",
-            password,
-            password.Length);
-
         string passwordHash = PlatformPasswordHasher.Hash(password);
-
-        _logger.LogWarning(
-            "TEMP PLATFORM BOOTSTRAP: password='{Password}' generated hash='{PasswordHash}'",
-            password,
-            passwordHash);
 
         await _platformAccountHandler.Create(new PlatformAccount
         {
