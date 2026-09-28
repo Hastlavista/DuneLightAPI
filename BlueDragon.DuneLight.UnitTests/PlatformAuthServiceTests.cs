@@ -8,6 +8,7 @@ using BlueDragon.DuneLight.Infrastructure.Domain.Models.Management;
 using BlueDragon.DuneLight.Infrastructure.Handlers.Interfaces;
 using BlueDragon.DuneLight.Infrastructure.Services.Management;
 using BlueDragon.DuneLight.Infrastructure.Utils;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace BlueDragon.DuneLight.UnitTests;
 
@@ -50,7 +51,7 @@ public class PlatformAuthServiceTests
     public async Task Correct_credentials_for_an_active_account_succeed()
     {
         PlatformAccount account = ActiveAccount("operator@platform.test", "correct-password");
-        IPlatformAuthService service = new PlatformAuthService(new FakePlatformAccountHandler(account), new FakePlatformJwtService());
+        IPlatformAuthService service = new PlatformAuthService(new FakePlatformAccountHandler(account), new FakePlatformJwtService(), NullLogger<PlatformAuthService>.Instance);
 
         PlatformAuthResponse response = await service.Login(new PlatformLoginRequest { Email = "operator@platform.test", Password = "correct-password" });
 
@@ -62,7 +63,7 @@ public class PlatformAuthServiceTests
     public async Task Wrong_password_is_rejected()
     {
         PlatformAccount account = ActiveAccount("operator@platform.test", "correct-password");
-        IPlatformAuthService service = new PlatformAuthService(new FakePlatformAccountHandler(account), new FakePlatformJwtService());
+        IPlatformAuthService service = new PlatformAuthService(new FakePlatformAccountHandler(account), new FakePlatformJwtService(), NullLogger<PlatformAuthService>.Instance);
 
         UnauthorizedAppException ex = await Assert.ThrowsAsync<UnauthorizedAppException>(() =>
             service.Login(new PlatformLoginRequest { Email = "operator@platform.test", Password = "wrong-password" }));
@@ -72,7 +73,7 @@ public class PlatformAuthServiceTests
     [Fact]
     public async Task Unknown_email_is_rejected()
     {
-        IPlatformAuthService service = new PlatformAuthService(new FakePlatformAccountHandler(null), new FakePlatformJwtService());
+        IPlatformAuthService service = new PlatformAuthService(new FakePlatformAccountHandler(null), new FakePlatformJwtService(), NullLogger<PlatformAuthService>.Instance);
 
         await Assert.ThrowsAsync<UnauthorizedAppException>(() =>
             service.Login(new PlatformLoginRequest { Email = "nobody@platform.test", Password = "anything" }));
@@ -83,7 +84,7 @@ public class PlatformAuthServiceTests
     {
         PlatformAccount account = ActiveAccount("operator@platform.test", "correct-password");
         account.IsActive = false;
-        IPlatformAuthService service = new PlatformAuthService(new FakePlatformAccountHandler(account), new FakePlatformJwtService());
+        IPlatformAuthService service = new PlatformAuthService(new FakePlatformAccountHandler(account), new FakePlatformJwtService(), NullLogger<PlatformAuthService>.Instance);
 
         await Assert.ThrowsAsync<UnauthorizedAppException>(() =>
             service.Login(new PlatformLoginRequest { Email = "operator@platform.test", Password = "correct-password" }));
