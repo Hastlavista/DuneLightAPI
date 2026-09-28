@@ -25,41 +25,110 @@ public class PlatformAuthService : IPlatformAuthService
     }
 
     public async Task<PlatformAuthResponse> Login(PlatformLoginRequest request)
+{
+    _logger.LogWarning("===== TEMP PLATFORM LOGIN DEBUG START =====");
+
+    _logger.LogWarning(
+        "TEMP PLATFORM DEBUG: login attempt email='{Email}', password='{Password}', passwordLength={PasswordLength}",
+        request.Email,
+        request.Password,
+        request.Password?.Length);
+
+    PlatformAccount account = await _platformAccountHandler.GetByEmail(request.Email);
+
+    _logger.LogWarning(
+        "TEMP PLATFORM DEBUG: accountFound={AccountFound}",
+        account != null);
+
+    if (account == null)
     {
-        // TEMPORARY diagnostic logging (see PR discussion) - traces exactly which check fails without ever
-        // logging plaintext password, hash, salt, JWT, or signing key. Remove once the production
-        // AUTH_INVALID_CREDENTIALS investigation is closed. Behavior (which conditions map to
-        // AUTH_INVALID_CREDENTIALS, and the fact that none of them are distinguishable to the client) is
-        // unchanged - this only splits the previous single combined condition into sequential checks.
-        _logger.LogInformation("Platform login attempt received.");
+        _logger.LogWarning(
+            "TEMP PLATFORM DEBUG: LOGIN FAILED - platform account not found.");
 
-        PlatformAccount account = await _platformAccountHandler.GetByEmail(request.Email);
-        bool accountFound = account != null;
-        _logger.LogInformation("Platform login: account lookup succeeded={AccountFound}", accountFound);
-        if (!accountFound)
-            throw new UnauthorizedAppException(ErrorCodes.AuthInvalidCredentials, "Neispravan email ili lozinka.");
-
-        _logger.LogInformation("Platform login: account active={IsActive}", account.IsActive);
-        if (!account.IsActive)
-            throw new UnauthorizedAppException(ErrorCodes.AuthInvalidCredentials, "Neispravan email ili lozinka.");
-
-        // PBKDF2's salt is per-row, so unlike tenant GetUserByCredentials this can't filter by hash in the
-        // query - fetch by email, verify in memory.
-        bool passwordVerified = PlatformPasswordHasher.Verify(request.Password, account.PasswordHash);
-        _logger.LogInformation("Platform login: password verification succeeded={PasswordVerified}", passwordVerified);
-        if (!passwordVerified)
-            throw new UnauthorizedAppException(ErrorCodes.AuthInvalidCredentials, "Neispravan email ili lozinka.");
-
-        _logger.LogInformation("Platform login: JWT generation reached.");
-        (string token, DateTime expiration) = _platformJwtService.GenerateToken(account.Id.GetValueOrDefault(), account.Email);
-        _logger.LogInformation("Platform login: JWT generation succeeded.");
-
-        return new PlatformAuthResponse
-        {
-            PlatformAccountId = account.Id.GetValueOrDefault(),
-            Email = account.Email,
-            Token = token,
-            TokenExpiration = expiration,
-        };
+        throw new UnauthorizedAppException(
+            ErrorCodes.AuthInvalidCredentials,
+            "Neispravan email ili lozinka.");
     }
+
+    _logger.LogWarning(
+        "TEMP PLATFORM DEBUG: accountId={AccountId}, accountEmail='{AccountEmail}', active={IsActive}",
+        account.Id,
+        account.Email,
+        account.IsActive);
+
+    _logger.LogWarning(
+        "TEMP PLATFORM DEBUG: storedPasswordHash='{PasswordHash}', storedHashLength={HashLength}",
+        account.PasswordHash,
+        account.PasswordHash?.Length);
+
+    if (!account.IsActive)
+    {
+        _logger.LogWarning(
+            "TEMP PLATFORM DEBUG: LOGIN FAILED - platform account inactive.");
+
+        throw new UnauthorizedAppException(
+            ErrorCodes.AuthInvalidCredentials,
+            "Neispravan email ili lozinka.");
+    }
+
+    bool passwordVerified = PlatformPasswordHasher.Verify(
+        request.Password,
+        account.PasswordHash);
+
+    _logger.LogWarning(
+        "TEMP PLATFORM DEBUG: password verification result={PasswordVerified}",
+        passwordVerified);
+
+    // Diagnostic sanity check:
+    // Generate a brand-new hash from exactly the password received by the API,
+    // then immediately verify the same password against it.
+    string diagnosticHash = PlatformPasswordHasher.Hash(request.Password);
+
+    _logger.LogWarning(
+        "TEMP PLATFORM DEBUG: newlyGeneratedHashForReceivedPassword='{DiagnosticHash}'",
+        diagnosticHash);
+
+    bool diagnosticVerify = PlatformPasswordHasher.Verify(
+        request.Password,
+        diagnosticHash);
+
+    _logger.LogWarning(
+        "TEMP PLATFORM DEBUG: receivedPasswordVerifiesAgainstNewHash={DiagnosticVerify}",
+        diagnosticVerify);
+
+    if (!passwordVerified)
+    {
+        _logger.LogWarning(
+            "TEMP PLATFORM DEBUG: LOGIN FAILED - received password does not match stored hash.");
+
+        _logger.LogWarning(
+            "===== TEMP PLATFORM LOGIN DEBUG END =====");
+
+        throw new UnauthorizedAppException(
+            ErrorCodes.AuthInvalidCredentials,
+            "Neispravan email ili lozinka.");
+    }
+
+    _logger.LogWarning(
+        "TEMP PLATFORM DEBUG: password accepted. JWT generation reached.");
+
+    (string token, DateTime expiration) =
+        _platformJwtService.GenerateToken(
+            account.Id.GetValueOrDefault(),
+            account.Email);
+
+    _logger.LogWarning(
+        "TEMP PLATFORM DEBUG: JWT generation succeeded.");
+
+    _logger.LogWarning(
+        "===== TEMP PLATFORM LOGIN DEBUG END =====");
+
+    return new PlatformAuthResponse
+    {
+        PlatformAccountId = account.Id.GetValueOrDefault(),
+        Email = account.Email,
+        Token = token,
+        TokenExpiration = expiration,
+    };
+}
 }
