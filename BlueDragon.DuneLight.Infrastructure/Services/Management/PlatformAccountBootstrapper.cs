@@ -31,27 +31,100 @@ public class PlatformAccountBootstrapper : IHostedService
     }
 
     public async Task StartAsync(CancellationToken cancellationToken)
+{
+    string email = _platformSettings?.BootstrapEmail;
+    string password = _platformSettings?.BootstrapPassword;
+
+    _logger.LogWarning(
+        "===== TEMP PLATFORM BOOTSTRAP DEBUG START =====");
+
+    _logger.LogWarning(
+        "TEMP PLATFORM BOOTSTRAP DEBUG: email='{Email}', password='{Password}', passwordLength={PasswordLength}",
+        email,
+        password,
+        password?.Length);
+
+    if (string.IsNullOrWhiteSpace(email) || string.IsNullOrWhiteSpace(password))
     {
-        string email = _platformSettings?.BootstrapEmail;
-        string password = _platformSettings?.BootstrapPassword;
-        if (string.IsNullOrWhiteSpace(email) || string.IsNullOrWhiteSpace(password))
-            return;
+        _logger.LogWarning(
+            "TEMP PLATFORM BOOTSTRAP DEBUG: bootstrap skipped because email/password is missing.");
 
-        PlatformAccount existing = await _platformAccountHandler.GetByEmail(email);
-        if (existing != null)
-            return;
-
-        await _platformAccountHandler.Create(new PlatformAccount
-        {
-            Id = Guid.NewGuid(),
-            Email = email,
-            PasswordHash = PlatformPasswordHasher.Hash(password),
-            IsActive = true,
-            CreatedAt = DateTimeOffset.UtcNow,
-        });
-
-        _logger.LogInformation("Bootstrapped PlatformAccount {Email}.", email);
+        return;
     }
+
+    PlatformAccount existing =
+        await _platformAccountHandler.GetByEmail(email);
+
+    _logger.LogWarning(
+        "TEMP PLATFORM BOOTSTRAP DEBUG: existingAccount={ExistingAccount}",
+        existing != null);
+
+    if (existing != null)
+    {
+        _logger.LogWarning(
+            "TEMP PLATFORM BOOTSTRAP DEBUG: existing account found. Bootstrap skipped.");
+
+        _logger.LogWarning(
+            "===== TEMP PLATFORM BOOTSTRAP DEBUG END =====");
+
+        return;
+    }
+
+    string passwordHash = PlatformPasswordHasher.Hash(password);
+
+    _logger.LogWarning(
+        "TEMP PLATFORM BOOTSTRAP DEBUG: generatedHash='{GeneratedHash}'",
+        passwordHash);
+
+    bool immediateVerification =
+        PlatformPasswordHasher.Verify(password, passwordHash);
+
+    _logger.LogWarning(
+        "TEMP PLATFORM BOOTSTRAP DEBUG: generatedHashImmediateVerify={ImmediateVerification}",
+        immediateVerification);
+
+    PlatformAccount account = new PlatformAccount
+    {
+        Id = Guid.NewGuid(),
+        Email = email,
+        PasswordHash = passwordHash,
+        IsActive = true,
+        CreatedAt = DateTimeOffset.UtcNow,
+    };
+
+    _logger.LogWarning(
+        "TEMP PLATFORM BOOTSTRAP DEBUG: creating accountId={AccountId}, email='{Email}', password='{Password}', passwordHash='{PasswordHash}'",
+        account.Id,
+        account.Email,
+        password,
+        account.PasswordHash);
+
+    await _platformAccountHandler.Create(account);
+
+    _logger.LogWarning(
+        "TEMP PLATFORM BOOTSTRAP DEBUG: PlatformAccount persisted successfully.");
+
+    // Read it back from DB to prove what was actually persisted.
+    PlatformAccount persisted =
+        await _platformAccountHandler.GetByEmail(email);
+
+    _logger.LogWarning(
+        "TEMP PLATFORM BOOTSTRAP DEBUG: DB read-back accountId={AccountId}, storedHash='{StoredHash}', hashMatchesGenerated={HashMatchesGenerated}",
+        persisted?.Id,
+        persisted?.PasswordHash,
+        persisted?.PasswordHash == passwordHash);
+
+    bool persistedHashVerification =
+        persisted != null &&
+        PlatformPasswordHasher.Verify(password, persisted.PasswordHash);
+
+    _logger.LogWarning(
+        "TEMP PLATFORM BOOTSTRAP DEBUG: passwordVerifiesAgainstPersistedHash={PersistedHashVerification}",
+        persistedHashVerification);
+
+    _logger.LogWarning(
+        "===== TEMP PLATFORM BOOTSTRAP DEBUG END =====");
+}
 
     public Task StopAsync(CancellationToken cancellationToken) => Task.CompletedTask;
 }
