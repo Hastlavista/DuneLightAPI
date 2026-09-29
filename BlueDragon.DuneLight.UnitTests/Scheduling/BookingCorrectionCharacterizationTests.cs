@@ -1,5 +1,6 @@
 #nullable disable
 using System;
+using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
 using BlueDragon.DuneLight.Core.DTOs.Appointments;
@@ -145,6 +146,44 @@ public class BookingCorrectionCharacterizationTests
         Assert.Equal(AppointmentStatus.Completed, (await w.LoadAppointment(completed.Id)).Status);
         Assert.Equal(CommissionEntryStatus.Earned, Assert.Single(await w.LoadCommissionEntries()).Status);
         Assert.Equal(PaymentStatus.Completed, Assert.Single(await w.LoadPayments(bookingId)).Status);
+    }
+
+    [Fact]
+    public async Task Individual_CompletedToConfirmed_WithBothAManualAndACheckInPayment_IsRefusedAtomically_NothingIsVoided()
+    {
+        await using SchedulingWorld w = await SchedulingWorld.Create(nameof(Individual_CompletedToConfirmed_WithBothAManualAndACheckInPayment_IsRefusedAtomically_NothingIsVoided));
+        await w.AddCommissionRule(w.Employee, w.Service, CommissionCalculationType.Percentage, 10m);
+        ClientPackage untouchedPackage = await w.AddClientPackage(w.Client, w.Service, 5, LongValid); // must stay at 5: no package is applied here
+        AppointmentDto created = await w.CreateAppointment(SchedulingWorld.Future(10));
+        Guid bookingId = created.Bookings.Single().Id;
+        await w.PayBookingViaCheckout(bookingId, w.Client, 20m); // manual POS payment (IsCheckInGenerated = false)
+        // Completing with a cash settlement records a check-in payment for the FULL amount; it does not look at the manual one.
+        AppointmentDto completed = await w.CompleteExisting(created.Id, w.CompleteRequest(SchedulingWorld.Future(10), paymentMethod: PaymentMethod.Cash));
+        List<Payment> before = await w.LoadPayments(bookingId);
+        Assert.Equal(2, before.Count);
+        Assert.Equal(1, before.Count(p => p.IsCheckInGenerated));
+        Assert.Equal(1, before.Count(p => !p.IsCheckInGenerated));
+        BookingDto overpaid = (await w.Appointments.GetById(w.OrganizationId, completed.Id)).Bookings.Single();
+        Assert.Equal(70m, overpaid.PaidAmount);      // FINDING: 20 manual + 50 check-in against a 50 obligation
+        Assert.Equal(0m, overpaid.OutstandingAmount);
+
+        // The manual payment makes the correction non-reversible. The refusal happens BEFORE any void, so the reversible
+        // check-in payment is not voided either: the correction is all-or-nothing.
+        await SchedulingAssert.BusinessRule(ErrorCodes.BookingHasNonReversiblePayment,
+            () => w.SetBookingStatus(completed.Id, w.Client, BookingStatus.Confirmed));
+
+        Booking b = await w.LoadBooking(completed.Id, w.Client);
+        Assert.Equal(BookingStatus.Completed, b.Status);
+        Assert.Equal(1, b.StatusVersion);
+        Assert.Equal(50m, b.Amount);
+        Assert.Equal(AppointmentStatus.Completed, (await w.LoadAppointment(completed.Id)).Status);
+        List<Payment> after = await w.LoadPayments(bookingId);
+        Assert.Equal(2, after.Count);
+        Assert.All(after, p => Assert.Equal(PaymentStatus.Completed, p.Status)); // neither payment was voided
+        Assert.Equal(CommissionEntryStatus.Earned, Assert.Single(await w.LoadCommissionEntries()).Status);
+        Assert.Equal(5, (await w.LoadClientPackage(untouchedPackage.Id.Value)).ServiceEntries.Single().RemainingEntries);
+        Assert.DoesNotContain(await w.LoadAuditLog(completed.Id), l => l.ChangeType == "PaymentVoided");
+        Assert.DoesNotContain(await w.LoadAuditLog(completed.Id), l => l.ChangeType == "Status" && l.NewValue == "Scheduled");
     }
 
     [Fact]
