@@ -40,6 +40,8 @@ Dostupne nazvane konfiguracije: `Local`, `Development`, `Production` (`DatabaseM
 
 Migracije se pokreću redom po `[DeveloperMigration(godina, mjesec, dan, autor, redni_broj)]` atributu (`DatabaseMigration/Extensions/DeveloperMigrationAttribute.cs`) — nema `dotnet ef migrations add/update`.
 
+Povijest migracija je **squashana u baseline** (`DatabaseMigration/Migrations/Baseline/`, 9 migracija `Baseline001…009`, koje odmah kreiraju konačnu strukturu; referentni capability/template podaci su u `CapabilityReferenceData.cs`). Baseline se NE može primijeniti povrh baze izgrađene starim lancem (`dunelight.version_info` sa 148 starih verzija) — takvu razvojnu bazu treba izbaciti (`DROP SCHEMA dunelight CASCADE`) i ponovno migrirati.
+
 ## Auth
 
 Prijava: `POST /api/public/Auth/Register` (kreira Organizaciju + prvog Admin korisnika, `409 AUTH_ORGANIZATION_SLUG_TAKEN` ako naziv organizacije već postoji), `POST /api/public/Auth/Login` (`401 AUTH_INVALID_CREDENTIALS` ako podaci ne odgovaraju aktivnom korisniku). JWT ili `X-Api-Key` header nose `organizationId` i `role` claim. Auth rute vraćaju greške u istom obliku kao svi ostali moduli — vidi [Jedinstveni format greške](#jedinstveni-format-greške).
