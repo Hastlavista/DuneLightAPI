@@ -56,4 +56,5 @@ public class AppointmentSegment
     public Room Room { get; set; }
     public List<AppointmentSegmentEmployee> Employees { get; set; } = new();
     public List<AppointmentSegmentResource> Resources { get; set; } = new();
+    public List<BookingSegmentParticipation> Participations { get; set; } = new();
 }

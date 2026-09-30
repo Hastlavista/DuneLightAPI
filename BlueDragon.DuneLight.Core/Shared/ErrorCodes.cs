@@ -57,6 +57,10 @@ public static class ErrorCodes
     public const string DuplicateHolidayDate = "DUPLICATE_HOLIDAY_DATE";
     public const string HolidayCatalogNotDefinedForCountry = "HOLIDAY_CATALOG_NOT_DEFINED_FOR_COUNTRY";
     public const string RoomCompanyMismatch = "ROOM_COMPANY_MISMATCH";
+    /// <summary>Phase D2: Booking i segment sudjelovanja pripadaju različitim terminima.</summary>
+    public const string ParticipationAppointmentMismatch = "PARTICIPATION_APPOINTMENT_MISMATCH";
+    /// <summary>Phase D2: Booking već sudjeluje u tom segmentu.</summary>
+    public const string DuplicateParticipation = "DUPLICATE_PARTICIPATION";
     public const string EmployeeMissingPrimaryCompany = "EMPLOYEE_MISSING_PRIMARY_COMPANY";
     public const string EmployeeNotAssignedToCompany = "EMPLOYEE_NOT_ASSIGNED_TO_COMPANY";
     public const string EmployeeNotAssignedToService = "EMPLOYEE_NOT_ASSIGNED_TO_SERVICE";

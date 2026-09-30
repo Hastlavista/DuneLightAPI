@@ -56,6 +56,7 @@ public class AppointmentService : IAppointmentService
     private readonly IUnitOfWorkFactory _unitOfWorkFactory;
 
     private readonly IOrganizationCalendarService _organizationCalendarService;
+    private readonly IBookingSegmentParticipationHandler _participationHandler;
 
     public AppointmentService(
         IAppointmentHandler appointmentHandler,
@@ -80,9 +81,11 @@ public class AppointmentService : IAppointmentService
         ICommissionLedgerService commissionLedgerService,
         IOutboxWriter outboxWriter,
         IUnitOfWorkFactory unitOfWorkFactory,
-        IOrganizationCalendarService organizationCalendarService)
+        IOrganizationCalendarService organizationCalendarService,
+        IBookingSegmentParticipationHandler participationHandler)
     {
         _organizationCalendarService = organizationCalendarService;
+        _participationHandler = participationHandler;
         _appointmentHandler = appointmentHandler;
         _schedulingOccupancyHandler = schedulingOccupancyHandler;
         _auditLogHandler = auditLogHandler;
@@ -590,6 +593,11 @@ public class AppointmentService : IAppointmentService
         OrganizationCalendar calendar = await _organizationCalendarService.GetCompanyCalendar(organizationId, appointment.CompanyId);
         if (calendar.LocalDate(appointment.CreatedAt) != calendar.LocalDate(DateTimeOffset.UtcNow))
             throw new BusinessRuleException(ErrorCodes.SameDayOnly, "Termin se može trajno obrisati samo istog dana kad je unesen — u suprotnom ga otkažite.");
+
+        // Phase D2: povijest sudjelovanja (booking_segment_participations, RESTRICT FK) se nikad ne briše kaskadom —
+        // termin koji je ima se ne može trajno obrisati. Bez sudjelovanja (svi današnji termini) ponašanje je isto.
+        if (await _participationHandler.ExistsForAppointment(organizationId, id))
+            throw new BusinessRuleException(ErrorCodes.ReferencedCannotDelete, "Termin ima povijest sudjelovanja i ne može se trajno obrisati — otkažite ga umjesto toga.");
 
         await _appointmentHandler.Delete(appointment);
     }

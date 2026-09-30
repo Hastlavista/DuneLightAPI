@@ -151,4 +151,8 @@ public class Booking
     /// vidi spec section 29). Zbroj aktivnih (Payment.Status=Completed) PaymentAllocation redaka preko svih ovih
     /// stavki je izvor istine za "koliko je plaćeno", ne persistirani boolean (vidi BookingFinancialsCalculator).</summary>
     public List<CheckoutItem> CheckoutItems { get; set; } = new();
+
+    /// <summary>Phase D2 ciljni model: sudjelovanja ovog Bookinga u segmentima termina. NIJE autoritativno — status,
+    /// cijena, paket, otkazivanje i dolazak i dalje žive na Bookingu; nijedan tok ne kreira ove retke.</summary>
+    public List<BookingSegmentParticipation> Participations { get; set; } = new();
 }

@@ -6,6 +6,7 @@ using System.Threading.Tasks;
 using BlueDragon.DuneLight.Core.DTOs.Appointments;
 using BlueDragon.DuneLight.Core.Enums;
 using BlueDragon.DuneLight.Core.Shared;
+using BlueDragon.DuneLight.Core.Shared.Exceptions;
 using BlueDragon.DuneLight.Infrastructure.Domain.Contexts;
 using BlueDragon.DuneLight.Infrastructure.Domain.Models.Appointments;
 using BlueDragon.DuneLight.Infrastructure.Domain.Settings;
@@ -210,6 +211,15 @@ public class AppointmentHandler : IAppointmentHandler
         // poslovne povijesti (buduća, još neodržana rezervacija) — isto ponašanje kao prije ove izmjene za taj
         // slučaj (vidi spec section 2/6, AppointmentService.Update komentar o TerminalBookingStatuses).
         List<Booking> toRemove = existing.Where(b => !clientIds.Contains(b.ClientId) && !IsTerminalBookingStatus(b.Status)).ToList();
+
+        // Phase D2: Booking sa sudjelovanjem (booking_segment_participations, RESTRICT FK) nosi povijest i ne smije se
+        // fizički obrisati — jasna domenska greška umjesto FK greške baze. Bez sudjelovanja (svi današnji Bookinzi)
+        // ponašanje je isto kao prije.
+        List<Guid> toRemoveIds = toRemove.Select(b => b.Id.GetValueOrDefault()).ToList();
+        if (toRemoveIds.Count > 0 && await context.BookingSegmentParticipations.AnyAsync(p => toRemoveIds.Contains(p.BookingId)))
+            throw new BusinessRuleException(ErrorCodes.ReferencedCannotDelete,
+                "Klijent ima povijest sudjelovanja na ovom terminu i ne može se ukloniti — otkažite njegov booking umjesto toga.");
+
         context.Bookings.RemoveRange(toRemove);
 
         // Re-cijenjenje se primjenjuje samo na preživjele retke koji NISU terminalni — već naplaćen/otkazan/

@@ -359,6 +359,7 @@ public class Startup
         services.AddSingleton<IRoomHandler, RoomHandler>();
         services.AddSingleton<IResourceHandler, ResourceHandler>();
         services.AddSingleton<IAppointmentSegmentHandler, AppointmentSegmentHandler>();
+        services.AddSingleton<IBookingSegmentParticipationHandler, BookingSegmentParticipationHandler>();
         services.AddSingleton<IServiceHandler, ServiceHandler>();
         services.AddSingleton<IServiceCompanyHandler, ServiceCompanyHandler>();
         services.AddSingleton<IPriceListItemHandler, PriceListItemHandler>();

@@ -1,4 +1,5 @@
 using System;
+using BlueDragon.DuneLight.Core.DTOs.Catalog;
 using BlueDragon.DuneLight.Core.Enums;
 using BlueDragon.DuneLight.Infrastructure.Domain.Models;
 using BlueDragon.DuneLight.Infrastructure.Domain.Models.Appointments;
@@ -52,6 +53,7 @@ public class DatabaseContext : DbContext
     public DbSet<AppointmentSegment> AppointmentSegments { get; set; }
     public DbSet<AppointmentSegmentEmployee> AppointmentSegmentEmployees { get; set; }
     public DbSet<AppointmentSegmentResource> AppointmentSegmentResources { get; set; }
+    public DbSet<BookingSegmentParticipation> BookingSegmentParticipations { get; set; }
     public DbSet<Payment> Payments { get; set; }
     public DbSet<AppointmentAuditLog> AppointmentAuditLog { get; set; }
     public DbSet<ScheduleBreak> ScheduleBreaks { get; set; }
@@ -496,6 +498,29 @@ public class DatabaseContext : DbContext
             .HasOne(r => r.Resource)
             .WithMany()
             .HasForeignKey(r => r.ResourceId)
+            .OnDelete(DeleteBehavior.Restrict);
+
+        // Phase D2 — sudjelovanja (additivno, nije autoritativno). Restrict prema Bookingu i segmentu: povijest
+        // sudjelovanja se nikad tiho ne briše kaskadom (brisanje termina/bookinga/segmenta s njom je blokirano).
+        modelBuilder.Entity<BookingSegmentParticipation>().HasKey(p => p.Id);
+        modelBuilder.Entity<BookingSegmentParticipation>()
+            .HasIndex(p => new { p.BookingId, p.AppointmentSegmentId })
+            .IsUnique();
+        modelBuilder.Entity<BookingSegmentParticipation>()
+            .Property(p => p.Status)
+            .HasConversion(v => v.ToString(), v => Enum.Parse<ParticipationStatus>(v));
+        modelBuilder.Entity<BookingSegmentParticipation>()
+            .Property(p => p.BaseAmountSource)
+            .HasConversion(v => v.ToString(), v => Enum.Parse<PriceSource>(v));
+        modelBuilder.Entity<BookingSegmentParticipation>()
+            .HasOne(p => p.Booking)
+            .WithMany(b => b.Participations)
+            .HasForeignKey(p => p.BookingId)
+            .OnDelete(DeleteBehavior.Restrict);
+        modelBuilder.Entity<BookingSegmentParticipation>()
+            .HasOne(p => p.Segment)
+            .WithMany(s => s.Participations)
+            .HasForeignKey(p => p.AppointmentSegmentId)
             .OnDelete(DeleteBehavior.Restrict);
 
         modelBuilder.Entity<Booking>().HasKey(b => b.Id);
