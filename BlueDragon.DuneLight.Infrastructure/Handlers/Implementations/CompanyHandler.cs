@@ -155,6 +155,11 @@ public class CompanyHandler : ICompanyHandler
             .Where(r => r.OrganizationId == organizationId && r.CompanyId == id)
             .Select(r => 1);
 
+        // resources.company_id je Restrict FK — bez ovog kraka brisanje poslovnice s resursom bi palo sirovom FK greškom.
+        IQueryable<int> resources = context.Resources
+            .Where(r => r.OrganizationId == organizationId && r.CompanyId == id)
+            .Select(r => 1);
+
         IQueryable<int> employeeCompanies = context.EmployeeCompanies
             .Where(ec => ec.CompanyId == id)
             .Select(ec => 1);
@@ -197,6 +202,7 @@ public class CompanyHandler : ICompanyHandler
 
         IQueryable<int> anyReference = priceListItems
             .Union(rooms)
+            .Union(resources)
             .Union(employeeCompanies)
             .Union(clientsWithHomeCompany)
             .Union(appointments)

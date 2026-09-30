@@ -47,6 +47,7 @@ public class RoomService : IRoomService
     public async Task<RoomDto> Create(Guid organizationId, Guid userId, RoomCreateRequest request)
     {
         string name = request.Name?.Trim();
+        EnsureCapacityIsValid(request.Capacity);
 
         Company company = await EnsureCompanyExists(organizationId, request.CompanyId);
         if (!company.IsActive)
@@ -60,6 +61,7 @@ public class RoomService : IRoomService
             OrganizationId = organizationId,
             CompanyId = request.CompanyId,
             Name = name,
+            Capacity = request.Capacity,
             AllowConcurrentBookings = request.AllowConcurrentBookings,
             Note = request.Note,
             SortOrder = request.SortOrder,
@@ -79,11 +81,13 @@ public class RoomService : IRoomService
             throw new NotFoundAppException("Room", id);
 
         string name = request.Name?.Trim();
+        EnsureCapacityIsValid(request.Capacity);
         await EnsureNameIsUnique(organizationId, room.CompanyId, name, excludeId: id);
 
         // Id, OrganizationId i CompanyId se namjerno ne diraju — Room nikad ne mijenja poslovnicu (vidi
         // klasnu napomenu). Za fizički premještaj: deaktivirati ovu i kreirati novu u ciljnoj Company.
         room.Name = name;
+        room.Capacity = request.Capacity;
         room.AllowConcurrentBookings = request.AllowConcurrentBookings;
         room.Note = request.Note;
         room.SortOrder = request.SortOrder;
@@ -169,6 +173,14 @@ public class RoomService : IRoomService
         return company;
     }
 
+    /// <summary>Capacity = broj osoba istovremeno u prostoriji, ≥ 1 (isto kao CHECK u bazi). Namjerno se NE izvodi iz
+    /// AllowConcurrentBookings — to su neovisni podaci (vidi Room.Capacity).</summary>
+    private static void EnsureCapacityIsValid(int capacity)
+    {
+        if (!CatalogCapacity.IsValid(capacity))
+            throw new ValidationAppException("Kapacitet prostorije mora biti najmanje 1 osoba.");
+    }
+
     private async Task EnsureNameIsUnique(Guid organizationId, Guid companyId, string name, Guid? excludeId)
     {
         bool exists = await _roomHandler.NameExistsAmongActive(organizationId, companyId, name, excludeId);
@@ -184,6 +196,7 @@ public class RoomService : IRoomService
             CompanyId = room.CompanyId,
             CompanyName = room.Company?.Name,
             Name = room.Name,
+            Capacity = room.Capacity,
             AllowConcurrentBookings = room.AllowConcurrentBookings,
             IsActive = room.IsActive,
             Note = room.Note,

@@ -214,6 +214,7 @@ public class Startup
 
         services.AddScoped<ICompanyService, CompanyService>();
         services.AddScoped<IRoomService, RoomService>();
+        services.AddScoped<IResourceService, ResourceService>();
         services.AddScoped<IServiceCatalogService, ServiceCatalogService>();
         services.AddScoped<IServiceAvailabilityService, ServiceAvailabilityService>();
         services.AddScoped<IPricingService, PricingService>();
@@ -356,6 +357,7 @@ public class Startup
 
         services.AddSingleton<ICompanyHandler, CompanyHandler>();
         services.AddSingleton<IRoomHandler, RoomHandler>();
+        services.AddSingleton<IResourceHandler, ResourceHandler>();
         services.AddSingleton<IServiceHandler, ServiceHandler>();
         services.AddSingleton<IServiceCompanyHandler, ServiceCompanyHandler>();
         services.AddSingleton<IPriceListItemHandler, PriceListItemHandler>();

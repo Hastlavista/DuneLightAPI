@@ -1,5 +1,6 @@
 using System;
 using System.ComponentModel.DataAnnotations;
+using BlueDragon.DuneLight.Core.Shared;
 
 namespace BlueDragon.DuneLight.Core.DTOs.Catalog;
 
@@ -9,6 +10,11 @@ public class RoomDto
     public Guid CompanyId { get; set; }
     public string CompanyName { get; set; }
     public string Name { get; set; }
+
+    /// <summary>Maksimalan broj osoba istovremeno u prostoriji (≥ 1) — ne broj termina.</summary>
+    public int Capacity { get; set; }
+
+    /// <summary>Legacy zastavica preklapanja termina — neovisna o Capacity.</summary>
     public bool AllowConcurrentBookings { get; set; }
     public bool IsActive { get; set; }
     public string Note { get; set; }
@@ -28,6 +34,10 @@ public class RoomCreateRequest
     [MaxLength(255)]
     public string Name { get; set; }
 
+    /// <summary>Maksimalan broj OSOBA istovremeno u prostoriji — obavezno, ≥ 1. Ne izvodi se iz AllowConcurrentBookings.</summary>
+    [Range(CatalogCapacity.Min, int.MaxValue, ErrorMessage = "Kapacitet prostorije mora biti najmanje 1.")]
+    public int Capacity { get; set; }
+
     public bool AllowConcurrentBookings { get; set; }
 
     public string Note { get; set; }
@@ -43,6 +53,10 @@ public class RoomUpdateRequest
     [Required]
     [MaxLength(255)]
     public string Name { get; set; }
+
+    /// <summary>Maksimalan broj OSOBA istovremeno u prostoriji — obavezno, ≥ 1. Ne izvodi se iz AllowConcurrentBookings.</summary>
+    [Range(CatalogCapacity.Min, int.MaxValue, ErrorMessage = "Kapacitet prostorije mora biti najmanje 1.")]
+    public int Capacity { get; set; }
 
     public bool AllowConcurrentBookings { get; set; }
 

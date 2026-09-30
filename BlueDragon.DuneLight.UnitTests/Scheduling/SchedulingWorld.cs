@@ -456,7 +456,7 @@ public sealed class SchedulingWorld : IAsyncDisposable
         return client;
     }
 
-    public async Task<Room> AddRoom(Company company = null, bool allowConcurrent = false, bool isActive = true)
+    public async Task<Room> AddRoom(Company company = null, bool allowConcurrent = false, bool isActive = true, int capacity = 1)
     {
         await using DatabaseContext db = NewDb();
         Room room = new()
@@ -465,6 +465,7 @@ public sealed class SchedulingWorld : IAsyncDisposable
             OrganizationId = OrganizationId,
             CompanyId = (company ?? Company).Id.Value,
             Name = $"Room-{Guid.NewGuid():N}",
+            Capacity = capacity,
             AllowConcurrentBookings = allowConcurrent,
             IsActive = isActive,
             SortOrder = 0,

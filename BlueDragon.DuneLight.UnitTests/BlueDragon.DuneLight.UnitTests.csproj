@@ -29,6 +29,9 @@
          referenciramo ih izravno da Admin/Trener/Recepcija v1->v2 testovi koriste TOČNO stvarni seed, ne ručno
          prepisane fixture koje bi mogle drift-ati od stvarne migracije. -->
     <ProjectReference Include="..\BlueDragon.DuneLight.DatabaseMigration\BlueDragon.DuneLight.DatabaseMigration.csproj" />
+    <!-- API referenca SAMO za reflection provjere autorizacije kontrolera ([RequireGrant] na svakoj akciji) — testovi
+         ne pokreću HTTP host. -->
+    <ProjectReference Include="..\BlueDragon.DuneLight.API\BlueDragon.DuneLight.API.csproj" />
   </ItemGroup>
 
 </Project>

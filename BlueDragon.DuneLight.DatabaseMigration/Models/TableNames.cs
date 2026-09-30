@@ -7,6 +7,7 @@ public static class Tables
 
     public const string Companies = "companies";
     public const string Rooms = "rooms";
+    public const string Resources = "resources";
     public const string ServiceCategories = "service_categories";
     public const string Services = "services";
     public const string ServiceCompanies = "service_companies";

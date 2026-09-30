@@ -39,7 +39,7 @@ public interface ICompanyHandler
     /// </summary>
     Task<CompanyDeactivationOutcome> Deactivate(Guid organizationId, Guid id, Guid userId);
 
-    /// <summary>Provjerava SVE poznate FK reference na tvrtku (cjenik, prostorije, zaposlenici, klijenti,
+    /// <summary>Provjerava SVE poznate FK reference na tvrtku (cjenik, prostorije, resursi, zaposlenici, klijenti,
     /// termini, pauze, grupe, predlošci radnog vremena, praznici) — ne samo cjenik.</summary>
     Task<bool> IsReferenced(Guid organizationId, Guid id);
 }

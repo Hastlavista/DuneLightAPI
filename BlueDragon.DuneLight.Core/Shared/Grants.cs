@@ -26,6 +26,8 @@ public static class Grants
     public const string CatalogPriceListManage = "catalog.price-list.manage";
     public const string CatalogRoomsView = "catalog.rooms.view";
     public const string CatalogRoomsManage = "catalog.rooms.manage";
+    public const string CatalogResourcesView = "catalog.resources.view";
+    public const string CatalogResourcesManage = "catalog.resources.manage";
 
     public const string ClientsView = "clients.view";
     public const string ClientsManage = "clients.manage";
@@ -125,6 +127,8 @@ public static class Grants
         new(CatalogPriceListManage, "catalog", "Uređivanje cjenika."),
         new(CatalogRoomsView, "catalog", "Pregled prostorija po poslovnici."),
         new(CatalogRoomsManage, "catalog", "Uređivanje prostorija po poslovnici."),
+        new(CatalogResourcesView, "catalog", "Pregled resursa (oprema/mjesta s kapacitetom) po poslovnici."),
+        new(CatalogResourcesManage, "catalog", "Uređivanje resursa (oprema/mjesta s kapacitetom) po poslovnici."),
 
         new(ClientsView, "clients", "Pregled klijenata (potpuno transparentno, bez own/all podjele)."),
         new(ClientsManage, "clients", "Kreiranje i uređivanje klijenata."),

@@ -5,11 +5,13 @@ using System.ComponentModel.DataAnnotations.Schema;
 namespace BlueDragon.DuneLight.Infrastructure.Domain.Models.Catalog;
 
 /// <summary>
-/// Prostorija poslovnice (npr. "Masaža", "Vježbanje 1") — dodjeljuje se na Appointment.RoomId i/ili
-/// Group.DefaultRoomId (isti obrazac kao DefaultTrainerId, snapshotira se na generirani termin).
+/// Resurs poslovnice — konačan, višekratno upotrebljiv kapacitet (npr. masažni stolovi, reformeri, bicikli, mjesta u
+/// sauni). Generički model bez tipa resursa. Pripada točno jednoj Company (CompanyId se nakon kreiranja ne mijenja) i
+/// njezinoj Organization; nema vlastitu vremensku zonu — buduće zakazivanje nasljeđuje efektivnu zonu poslovnice.
+/// Za sada samo katalog: zakazivanje ga još ne koristi (rezervacije količina dolaze s segmentima termina).
 /// </summary>
-[Table("rooms")]
-public class Room
+[Table("resources")]
+public class Resource
 {
     [Key]
     [DatabaseGenerated(DatabaseGeneratedOption.Identity)]
@@ -25,17 +27,9 @@ public class Room
     [Column("name")]
     public string Name { get; set; }
 
-    /// <summary>Maksimalan broj OSOBA (klijenti + zaposlenici) koje istovremeno smiju boraviti u prostoriji (≥ 1).
-    /// NIJE broj termina/rezervacija i NIJE ekvivalent AllowConcurrentBookings. Za sada samo podatak — zakazivanje ga
-    /// još ne koristi; postat će autoritativan tek s validacijom kapaciteta po segmentima termina.</summary>
+    /// <summary>Broj raspoloživih jedinica resursa (≥ 1).</summary>
     [Column("capacity")]
     public int Capacity { get; set; }
-
-    /// <summary>LEGACY (privremeno): ako je false (zadano), sustav tvrdo blokira preklapajuće termine u istoj prostoriji;
-    /// ako je true, više termina smije dijeliti istu prostoriju istovremeno. Ostaje dok validacija kapaciteta po
-    /// segmentima ne postane autoritativna — ne izvodi se iz Capacity niti obrnuto.</summary>
-    [Column("allow_concurrent_bookings")]
-    public bool AllowConcurrentBookings { get; set; }
 
     [Column("is_active")]
     public bool IsActive { get; set; }

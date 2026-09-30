@@ -27,6 +27,7 @@ public class DatabaseContext : DbContext
 
     public DbSet<Company> Companies { get; set; }
     public DbSet<Room> Rooms { get; set; }
+    public DbSet<Resource> Resources { get; set; }
     public DbSet<Service> Services { get; set; }
     public DbSet<ServiceCompany> ServiceCompanies { get; set; }
     public DbSet<PriceListItem> PriceListItems { get; set; }
@@ -163,6 +164,16 @@ public class DatabaseContext : DbContext
         modelBuilder.Entity<Room>().HasKey(r => r.Id);
         modelBuilder.Entity<Room>().HasIndex(r => new { r.OrganizationId, r.CompanyId });
         modelBuilder.Entity<Room>()
+            .HasOne(r => r.Company)
+            .WithMany()
+            .HasForeignKey(r => r.CompanyId)
+            .OnDelete(DeleteBehavior.Restrict);
+
+        // Isti obrazac kao Room: aktivni normalizirani unique naziv po (Organization, Company) je raw SQL indeks
+        // (ux_resources_org_company_name_active) u migraciji, a capacity >= 1 je CHECK (ck_resources_capacity_positive).
+        modelBuilder.Entity<Resource>().HasKey(r => r.Id);
+        modelBuilder.Entity<Resource>().HasIndex(r => new { r.OrganizationId, r.CompanyId });
+        modelBuilder.Entity<Resource>()
             .HasOne(r => r.Company)
             .WithMany()
             .HasForeignKey(r => r.CompanyId)
