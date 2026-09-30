@@ -41,6 +41,7 @@ public class GroupService : IGroupService
     private readonly IClientHandler _clientHandler;
     private readonly ICompanyHolidayHandler _companyHolidayHandler;
     private readonly IAppointmentHandler _appointmentHandler;
+    private readonly ISchedulingOccupancyHandler _schedulingOccupancyHandler;
     private readonly IRosterEntryHandler _rosterEntryHandler;
     private readonly IWorkingHoursTemplateHandler _workingHoursTemplateHandler;
     private readonly IScheduleBreakHandler _scheduleBreakHandler;
@@ -61,6 +62,7 @@ public class GroupService : IGroupService
         IClientHandler clientHandler,
         ICompanyHolidayHandler companyHolidayHandler,
         IAppointmentHandler appointmentHandler,
+        ISchedulingOccupancyHandler schedulingOccupancyHandler,
         IRosterEntryHandler rosterEntryHandler,
         IWorkingHoursTemplateHandler workingHoursTemplateHandler,
         IScheduleBreakHandler scheduleBreakHandler,
@@ -80,6 +82,7 @@ public class GroupService : IGroupService
         _clientHandler = clientHandler;
         _companyHolidayHandler = companyHolidayHandler;
         _appointmentHandler = appointmentHandler;
+        _schedulingOccupancyHandler = schedulingOccupancyHandler;
         _rosterEntryHandler = rosterEntryHandler;
         _workingHoursTemplateHandler = workingHoursTemplateHandler;
         _scheduleBreakHandler = scheduleBreakHandler;
@@ -473,7 +476,7 @@ public class GroupService : IGroupService
                 if (futureAppointment.Bookings.Any(b => b.ClientId == request.ClientId))
                     continue;
 
-                List<Appointment> overlapping = await _appointmentHandler.GetOverlappingForClients(
+                List<OccupancySlot> overlapping = await _schedulingOccupancyHandler.GetOverlappingForClients(
                     organizationId, new List<Guid> { request.ClientId },
                     futureAppointment.StartsAt, futureAppointment.DurationMinutes, excludeId: futureAppointment.Id);
 
@@ -880,7 +883,7 @@ public class GroupService : IGroupService
             DateTimeOffset rangeFrom = ordered[0].StartsAt.AddDays(-1);
             DateTimeOffset rangeTo = ordered[^1].StartsAt.AddDays(1);
 
-            List<Appointment> candidateAppointments = await _appointmentHandler.GetForEmployeeInRange(
+            List<OccupancySlot> candidateAppointments = await _schedulingOccupancyHandler.GetForEmployeeInRange(
                 organizationId, employeeId, rangeFrom, rangeTo);
 
             List<ScheduleBreak> candidateBreaks = await _scheduleBreakHandler.GetForEmployeeInRange(
@@ -905,8 +908,7 @@ public class GroupService : IGroupService
                 DateTimeOffset occurrenceEnd = startsAt.AddMinutes(durationMinutes);
                 (Guid, DateTimeOffset) key = (candidate.Slot.Id.GetValueOrDefault(), startsAt);
 
-                bool appointmentHit = candidateAppointments.Any(a =>
-                    a.StartsAt < occurrenceEnd && startsAt < a.StartsAt.AddMinutes(a.DurationMinutes));
+                bool appointmentHit = candidateAppointments.Any(a => a.Overlaps(startsAt, occurrenceEnd));
 
                 // Candidate vs candidate u istom batchu (spec zahtjev #2) — isti trener predložen za dvije
                 // različite grupe/slotove čiji generirani occurrenceи se preklapaju, iako nijedan još ne postoji
@@ -980,7 +982,7 @@ public class GroupService : IGroupService
             DateTimeOffset rangeFrom = ordered[0].StartsAt.AddDays(-1);
             DateTimeOffset rangeTo = ordered[^1].StartsAt.AddDays(1);
 
-            List<Appointment> candidateAppointments = await _appointmentHandler.GetForRoomInRange(
+            List<OccupancySlot> candidateAppointments = await _schedulingOccupancyHandler.GetForRoomInRange(
                 organizationId, roomId, rangeFrom, rangeTo);
 
             for (int i = 0; i < ordered.Count; i++)
@@ -990,8 +992,7 @@ public class GroupService : IGroupService
                 DateTimeOffset startsAt = candidate.StartsAt;
                 DateTimeOffset occurrenceEnd = startsAt.AddMinutes(durationMinutes);
 
-                bool roomHit = candidateAppointments.Any(a =>
-                    a.StartsAt < occurrenceEnd && startsAt < a.StartsAt.AddMinutes(a.DurationMinutes));
+                bool roomHit = candidateAppointments.Any(a => a.Overlaps(startsAt, occurrenceEnd));
 
                 // Candidate vs candidate u istom batchu (spec zahtjev #2) — ista soba predložena za dvije
                 // različite grupe/slotove čiji generirani occurrenceи se preklapaju. AllowConcurrentBookings=true
@@ -1096,7 +1097,7 @@ public class GroupService : IGroupService
         DateTimeOffset rangeFrom = candidates.Min(c => c.StartsAt).AddDays(-1);
         DateTimeOffset rangeTo = candidates.Max(c => c.StartsAt).AddDays(1);
 
-        List<Appointment> candidateAppointments = await _appointmentHandler.GetForClientsInRange(
+        List<OccupancySlot> candidateAppointments = await _schedulingOccupancyHandler.GetForClientsInRange(
             organizationId, allMemberClientIds, rangeFrom, rangeTo);
 
         List<RecurringConflictDetail> conflicts = new List<RecurringConflictDetail>();
@@ -1113,9 +1114,7 @@ public class GroupService : IGroupService
             DateTimeOffset occurrenceEnd = startsAt.AddMinutes(durationMinutes);
 
             bool memberConflict = candidateAppointments.Any(a =>
-                a.StartsAt < occurrenceEnd && startsAt < a.StartsAt.AddMinutes(a.DurationMinutes) &&
-                a.Bookings.Any(b => memberClientIds.Contains(b.ClientId) &&
-                    b.Status != BookingStatus.Cancelled && b.Status != BookingStatus.NoShow));
+                a.Overlaps(startsAt, occurrenceEnd) && a.ActiveClientIds.Any(memberClientIds.Contains));
 
             // Candidate vs candidate u istom batchu (spec zahtjev #2) — isti aktivni član pripada dvjema
             // različitim grupama/slotovima čiji generirani occurrenceи se preklapaju, iako nijedan Booking još

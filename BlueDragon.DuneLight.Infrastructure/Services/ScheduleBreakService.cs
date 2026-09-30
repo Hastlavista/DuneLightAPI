@@ -19,17 +19,20 @@ public class ScheduleBreakService : IScheduleBreakService
 {
     private readonly IScheduleBreakHandler _scheduleBreakHandler;
     private readonly IAppointmentHandler _appointmentHandler;
+    private readonly ISchedulingOccupancyHandler _schedulingOccupancyHandler;
     private readonly IEmployeeHandler _employeeHandler;
     private readonly ICompanyHandler _companyHandler;
 
     public ScheduleBreakService(
         IScheduleBreakHandler scheduleBreakHandler,
         IAppointmentHandler appointmentHandler,
+        ISchedulingOccupancyHandler schedulingOccupancyHandler,
         IEmployeeHandler employeeHandler,
         ICompanyHandler companyHandler)
     {
         _scheduleBreakHandler = scheduleBreakHandler;
         _appointmentHandler = appointmentHandler;
+        _schedulingOccupancyHandler = schedulingOccupancyHandler;
         _employeeHandler = employeeHandler;
         _companyHandler = companyHandler;
     }
@@ -184,7 +187,7 @@ public class ScheduleBreakService : IScheduleBreakService
         DateTimeOffset rangeFrom = occurrences[0].AddDays(-1);
         DateTimeOffset rangeTo = occurrences[^1].AddDays(1);
 
-        List<Appointment> candidateAppointments = await _appointmentHandler.GetForEmployeeInRange(organizationId, employeeId, rangeFrom, rangeTo);
+        List<OccupancySlot> candidateAppointments = await _schedulingOccupancyHandler.GetForEmployeeInRange(organizationId, employeeId, rangeFrom, rangeTo);
         List<ScheduleBreak> candidateBreaks = await _scheduleBreakHandler.GetForEmployeeInRange(organizationId, employeeId, rangeFrom, rangeTo);
 
         List<RecurringConflictDetail> conflicts = new List<RecurringConflictDetail>();
@@ -193,8 +196,7 @@ public class ScheduleBreakService : IScheduleBreakService
         {
             DateTimeOffset occurrenceEnd = occurrence.AddMinutes(durationMinutes);
 
-            bool appointmentHit = candidateAppointments.Any(a =>
-                a.StartsAt < occurrenceEnd && occurrence < a.StartsAt.AddMinutes(a.DurationMinutes));
+            bool appointmentHit = candidateAppointments.Any(a => a.Overlaps(occurrence, occurrenceEnd));
 
             if (appointmentHit)
             {
@@ -218,7 +220,7 @@ public class ScheduleBreakService : IScheduleBreakService
     /// drugom pauzom istog trenera. NE provjerava radno vrijeme — pauza smije biti postavljena bilo kad.</summary>
     private async Task EnsureNoOverlap(Guid organizationId, Guid employeeId, DateTimeOffset startsAt, int durationMinutes, Guid? excludeId)
     {
-        List<Appointment> appointmentOverlaps = await _appointmentHandler.GetOverlappingForEmployee(
+        List<OccupancySlot> appointmentOverlaps = await _schedulingOccupancyHandler.GetOverlappingForEmployee(
             organizationId, employeeId, startsAt, durationMinutes, excludeId: null);
         if (appointmentOverlaps.Count > 0)
             throw new BusinessRuleException(ErrorCodes.AppointmentOverlap, "Trener već ima termin u ovom vremenskom razdoblju.");

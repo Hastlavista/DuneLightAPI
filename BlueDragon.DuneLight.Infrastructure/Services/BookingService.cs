@@ -33,6 +33,7 @@ namespace BlueDragon.DuneLight.Infrastructure.Services;
 public class BookingService : IBookingService
 {
     private readonly IAppointmentHandler _appointmentHandler;
+    private readonly ISchedulingOccupancyHandler _schedulingOccupancyHandler;
     private readonly IAppointmentAuditLogHandler _auditLogHandler;
     private readonly IClientPackageService _clientPackageService;
     private readonly IClientPackageHandler _clientPackageHandler;
@@ -50,6 +51,7 @@ public class BookingService : IBookingService
 
     public BookingService(
         IAppointmentHandler appointmentHandler,
+        ISchedulingOccupancyHandler schedulingOccupancyHandler,
         IAppointmentAuditLogHandler auditLogHandler,
         IClientPackageService clientPackageService,
         IClientPackageHandler clientPackageHandler,
@@ -66,6 +68,7 @@ public class BookingService : IBookingService
         IUnitOfWorkFactory unitOfWorkFactory)
     {
         _appointmentHandler = appointmentHandler;
+        _schedulingOccupancyHandler = schedulingOccupancyHandler;
         _auditLogHandler = auditLogHandler;
         _clientPackageService = clientPackageService;
         _clientPackageHandler = clientPackageHandler;
@@ -435,7 +438,7 @@ public class BookingService : IBookingService
     /// neotkazanim terminima blokiraju interval. Pravilo ostaje strict-open interval pa su susjedni termini valjani.</summary>
     private async Task EnsureClientHasNoOverlap(Guid organizationId, Appointment appointment, Guid clientId)
     {
-        List<Appointment> overlapping = await _appointmentHandler.GetOverlappingForClients(
+        List<OccupancySlot> overlapping = await _schedulingOccupancyHandler.GetOverlappingForClients(
             organizationId, new List<Guid> { clientId }, appointment.StartsAt, appointment.DurationMinutes, excludeId: appointment.Id);
 
         if (overlapping.Count > 0)

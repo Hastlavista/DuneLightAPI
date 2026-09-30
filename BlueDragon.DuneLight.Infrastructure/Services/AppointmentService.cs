@@ -31,6 +31,7 @@ namespace BlueDragon.DuneLight.Infrastructure.Services;
 public class AppointmentService : IAppointmentService
 {
     private readonly IAppointmentHandler _appointmentHandler;
+    private readonly ISchedulingOccupancyHandler _schedulingOccupancyHandler;
     private readonly IAppointmentAuditLogHandler _auditLogHandler;
     private readonly IClientPackageService _clientPackageService;
     private readonly IClientPackageHandler _clientPackageHandler;
@@ -54,6 +55,7 @@ public class AppointmentService : IAppointmentService
 
     public AppointmentService(
         IAppointmentHandler appointmentHandler,
+        ISchedulingOccupancyHandler schedulingOccupancyHandler,
         IAppointmentAuditLogHandler auditLogHandler,
         IClientPackageService clientPackageService,
         IClientPackageHandler clientPackageHandler,
@@ -76,6 +78,7 @@ public class AppointmentService : IAppointmentService
         IUnitOfWorkFactory unitOfWorkFactory)
     {
         _appointmentHandler = appointmentHandler;
+        _schedulingOccupancyHandler = schedulingOccupancyHandler;
         _auditLogHandler = auditLogHandler;
         _clientPackageService = clientPackageService;
         _clientPackageHandler = clientPackageHandler;
@@ -703,13 +706,13 @@ public class AppointmentService : IAppointmentService
         DateTimeOffset rangeFrom = occurrences[0].AddDays(-1);
         DateTimeOffset rangeTo = occurrences[^1].AddDays(1);
 
-        List<Appointment> candidateAppointments = await _appointmentHandler.GetForEmployeeInRange(
+        List<OccupancySlot> candidateAppointments = await _schedulingOccupancyHandler.GetForEmployeeInRange(
             organizationId, employeeId, rangeFrom, rangeTo);
 
         bool checkRoom = room != null && !room.AllowConcurrentBookings;
-        List<Appointment> candidateRoomAppointments = checkRoom
-            ? await _appointmentHandler.GetForRoomInRange(organizationId, room.Id.GetValueOrDefault(), rangeFrom, rangeTo)
-            : new List<Appointment>();
+        List<OccupancySlot> candidateRoomAppointments = checkRoom
+            ? await _schedulingOccupancyHandler.GetForRoomInRange(organizationId, room.Id.GetValueOrDefault(), rangeFrom, rangeTo)
+            : new List<OccupancySlot>();
 
         List<ScheduleBreak> candidateBreaks = await _scheduleBreakHandler.GetForEmployeeInRange(
             organizationId, employeeId, rangeFrom, rangeTo);
@@ -736,13 +739,11 @@ public class AppointmentService : IAppointmentService
             DateTimeOffset occurrenceEnd = occurrence.AddMinutes(durationMinutes);
             List<WarningDto> warnings = new List<WarningDto>();
 
-            bool appointmentHit = candidateAppointments.Any(a =>
-                a.StartsAt < occurrenceEnd && occurrence < a.StartsAt.AddMinutes(a.DurationMinutes));
+            bool appointmentHit = candidateAppointments.Any(a => a.Overlaps(occurrence, occurrenceEnd));
             if (appointmentHit)
                 hardConflicts.Add(new RecurringConflictDetail { Date = occurrence, Reason = ErrorCodes.RecurringConflictReasonAppointment });
 
-            bool roomHit = checkRoom && candidateRoomAppointments.Any(a =>
-                a.StartsAt < occurrenceEnd && occurrence < a.StartsAt.AddMinutes(a.DurationMinutes));
+            bool roomHit = checkRoom && candidateRoomAppointments.Any(a => a.Overlaps(occurrence, occurrenceEnd));
             if (roomHit)
                 hardConflicts.Add(new RecurringConflictDetail { Date = occurrence, Reason = ErrorCodes.RecurringConflictReasonRoom });
 
@@ -810,21 +811,20 @@ public class AppointmentService : IAppointmentService
         DateTimeOffset rangeFrom = occurrences[0].AddDays(-1);
         DateTimeOffset rangeTo = occurrences[^1].AddDays(1);
 
-        List<Appointment> candidateAppointments = await _appointmentHandler.GetForClientsInRange(
+        List<OccupancySlot> candidateAppointments = await _schedulingOccupancyHandler.GetForClientsInRange(
             organizationId, clientIds, rangeFrom, rangeTo);
 
         foreach (DateTimeOffset occurrence in occurrences)
         {
             DateTimeOffset occurrenceEnd = occurrence.AddMinutes(durationMinutes);
 
-            List<Appointment> overlapping = candidateAppointments
-                .Where(a => a.StartsAt < occurrenceEnd && occurrence < a.StartsAt.AddMinutes(a.DurationMinutes))
+            List<OccupancySlot> overlapping = candidateAppointments
+                .Where(a => a.Overlaps(occurrence, occurrenceEnd))
                 .ToList();
 
             foreach (Client client in clients)
             {
-                bool hasOverlap = overlapping.Any(a => a.Bookings.Any(b =>
-                    b.ClientId == client.Id && b.Status != BookingStatus.Cancelled && b.Status != BookingStatus.NoShow));
+                bool hasOverlap = overlapping.Any(a => a.ActiveClientIds.Contains(client.Id.GetValueOrDefault()));
                 if (hasOverlap)
                     throw new BusinessRuleException(ErrorCodes.AppointmentOverlap, $"Klijent {client.FirstName} {client.LastName} je već zakazan u ovom vremenskom razdoblju.");
             }
@@ -897,7 +897,7 @@ public class AppointmentService : IAppointmentService
         List<WorkingHoursTemplate> employeeTemplates = await _workingHoursTemplateHandler.GetForEmployees(organizationId, employeeIds);
         WorkingHoursTemplate companyTemplate = await _workingHoursTemplateHandler.GetForCompany(organizationId, query.CompanyId);
         List<RosterEntry> rosterEntries = await _rosterEntryHandler.GetForPeriod(organizationId, employeeIds, dayStart, dayStart);
-        List<Appointment> appointments = await _appointmentHandler.GetForEmployeesInRange(organizationId, employeeIds, dayStart, dayEnd);
+        List<OccupancySlot> appointments = await _schedulingOccupancyHandler.GetForEmployeesInRange(organizationId, employeeIds, dayStart, dayEnd);
         List<ScheduleBreak> breaks = await _scheduleBreakHandler.GetForEmployeesInRange(organizationId, employeeIds, dayStart, dayEnd);
         List<CompanyHoliday> companyHolidays = await _companyHolidayHandler.GetForCompaniesInRange(
             organizationId, new List<Guid> { query.CompanyId }, dayStart, dayStart);
@@ -921,9 +921,11 @@ public class AppointmentService : IAppointmentService
                 WorkingHoursCalculator.IntersectIntervals(employeeIntervals, companyIntervals);
 
             List<(TimeSpan Start, TimeSpan End)> busy = new List<(TimeSpan Start, TimeSpan End)>();
+            // Start.TimeOfDay + trajanje (ne End.TimeOfDay) — interval koji prelazi ponoć ne smije se "zamotati" na
+            // sljedeći dan, isto kao prije (StartsAt.TimeOfDay + DurationMinutes).
             busy.AddRange(appointments
                 .Where(a => a.EmployeeId == employeeId)
-                .Select(a => (a.StartsAt.TimeOfDay, a.StartsAt.TimeOfDay + TimeSpan.FromMinutes(a.DurationMinutes))));
+                .Select(a => (a.Start.TimeOfDay, a.Start.TimeOfDay + (a.End - a.Start))));
             busy.AddRange(breaks
                 .Where(b => b.EmployeeId == employeeId)
                 .Select(b => (b.StartsAt.TimeOfDay, b.StartsAt.TimeOfDay + TimeSpan.FromMinutes(b.DurationMinutes))));
@@ -1331,27 +1333,26 @@ public class AppointmentService : IAppointmentService
     private async Task EnsureNoHardOverlap(
         Guid organizationId, Guid employeeId, List<Client> clients, DateTimeOffset startsAt, int durationMinutes, Guid? excludeId, Room room)
     {
-        List<Appointment> employeeOverlaps = await _appointmentHandler
+        List<OccupancySlot> employeeOverlaps = await _schedulingOccupancyHandler
             .GetOverlappingForEmployee(organizationId, employeeId, startsAt, durationMinutes, excludeId);
         if (employeeOverlaps.Count > 0)
             throw new BusinessRuleException(ErrorCodes.AppointmentOverlap, "Trener već ima termin u ovom vremenskom razdoblju.");
 
         if (room != null && !room.AllowConcurrentBookings)
         {
-            List<Appointment> roomOverlaps = await _appointmentHandler
+            List<OccupancySlot> roomOverlaps = await _schedulingOccupancyHandler
                 .GetOverlappingForRoom(organizationId, room.Id.GetValueOrDefault(), startsAt, durationMinutes, excludeId);
             if (roomOverlaps.Count > 0)
                 throw new BusinessRuleException(ErrorCodes.AppointmentOverlap, "Prostorija je već zauzeta u ovom vremenskom razdoblju.");
         }
 
         List<Guid> clientIds = clients.Select(c => c.Id.GetValueOrDefault()).ToList();
-        List<Appointment> clientOverlaps = await _appointmentHandler
+        List<OccupancySlot> clientOverlaps = await _schedulingOccupancyHandler
             .GetOverlappingForClients(organizationId, clientIds, startsAt, durationMinutes, excludeId);
 
         foreach (Client client in clients)
         {
-            bool hasOverlap = clientOverlaps.Any(a => a.Bookings.Any(b =>
-                b.ClientId == client.Id && b.Status != BookingStatus.Cancelled && b.Status != BookingStatus.NoShow));
+            bool hasOverlap = clientOverlaps.Any(a => a.ActiveClientIds.Contains(client.Id.GetValueOrDefault()));
             if (hasOverlap)
                 throw new BusinessRuleException(ErrorCodes.AppointmentOverlap, $"Klijent {client.FirstName} {client.LastName} je već zakazan u ovom vremenskom razdoblju.");
         }

@@ -369,6 +369,7 @@ public class Startup
         services.AddSingleton<IClientPackageHandler, ClientPackageHandler>();
 
         services.AddSingleton<IAppointmentHandler, AppointmentHandler>();
+        services.AddSingleton<ISchedulingOccupancyHandler, SchedulingOccupancyHandler>();
         services.AddSingleton<IAppointmentAuditLogHandler, AppointmentAuditLogHandler>();
         services.AddSingleton<IScheduleBreakHandler, ScheduleBreakHandler>();
 

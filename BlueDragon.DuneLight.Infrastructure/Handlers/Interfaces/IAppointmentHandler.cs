@@ -85,31 +85,6 @@ public interface IAppointmentHandler
 
     Task Delete(Appointment appointment);
 
-    Task<List<Appointment>> GetOverlappingForEmployee(Guid organizationId, Guid employeeId, DateTimeOffset startsAt, int durationMinutes, Guid? excludeId);
-
-    /// <summary>Termini gdje BAREM JEDAN od zadanih klijenata ima AKTIVAN Booking (Confirmed/Completed — ne
-    /// Cancelled/NoShow) koji se preklapa s traženim intervalom. Appointment.Status != Cancelled dodatno filtrira
-    /// (cijeli otkazan termin ne blokira nikoga bez obzira na booking retke).</summary>
-    Task<List<Appointment>> GetOverlappingForClients(Guid organizationId, List<Guid> clientIds, DateTimeOffset startsAt, int durationMinutes, Guid? excludeId);
-
-    Task<List<Appointment>> GetOverlappingForRoom(Guid organizationId, Guid roomId, DateTimeOffset startsAt, int durationMinutes, Guid? excludeId);
-
-    /// <summary>Svi termini trenera unutar raspona (bez otkazanih) — kandidati za preklapanje cijelog
-    /// recurring niza odjednom, precizna provjera po occurrenceu radi se u servisu u memoriji.</summary>
-    Task<List<Appointment>> GetForEmployeeInRange(Guid organizationId, Guid employeeId, DateTimeOffset rangeFrom, DateTimeOffset rangeTo);
-
-    /// <summary>Kao <see cref="GetForEmployeeInRange"/>, ali po prostoriji — za /recurring provjeru sudara prostorije
-    /// cijelog niza odjednom.</summary>
-    Task<List<Appointment>> GetForRoomInRange(Guid organizationId, Guid roomId, DateTimeOffset rangeFrom, DateTimeOffset rangeTo);
-
-    /// <summary>Kao <see cref="GetForEmployeeInRange"/>, ali za više zaposlenika u jednom upitu (bez otkazanih)
-    /// — za available-slots, izbjegava upit po zaposleniku u petlji.</summary>
-    Task<List<Appointment>> GetForEmployeesInRange(Guid organizationId, List<Guid> employeeIds, DateTimeOffset rangeFrom, DateTimeOffset rangeTo);
-
-    /// <summary>Svi termini s AKTIVNIM Bookingom bilo kojeg od klijenata unutar raspona — kandidati za
-    /// preklapanje cijelog recurring niza odjednom, precizna provjera po occurrenceu radi se u servisu u memoriji.</summary>
-    Task<List<Appointment>> GetForClientsInRange(Guid organizationId, List<Guid> clientIds, DateTimeOffset rangeFrom, DateTimeOffset rangeTo);
-
     Task<List<Appointment>> GetForSchedule(Guid organizationId, AppointmentScheduleQuery query);
 
     /// <summary>Termini jedne Company unutar [dayStart, dayEnd) s punim financijskim grafom (Bookings.CheckoutItems.

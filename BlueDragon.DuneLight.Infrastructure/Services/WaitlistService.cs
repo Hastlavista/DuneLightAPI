@@ -29,6 +29,7 @@ public class WaitlistService : IWaitlistService, IWaitlistPromotionService
 {
     private readonly IWaitlistHandler _waitlistHandler;
     private readonly IAppointmentHandler _appointmentHandler;
+    private readonly ISchedulingOccupancyHandler _schedulingOccupancyHandler;
     private readonly IAppointmentAuditLogHandler _auditLogHandler;
     private readonly IClientHandler _clientHandler;
     private readonly IGroupHandler _groupHandler;
@@ -40,6 +41,7 @@ public class WaitlistService : IWaitlistService, IWaitlistPromotionService
     public WaitlistService(
         IWaitlistHandler waitlistHandler,
         IAppointmentHandler appointmentHandler,
+        ISchedulingOccupancyHandler schedulingOccupancyHandler,
         IAppointmentAuditLogHandler auditLogHandler,
         IClientHandler clientHandler,
         IGroupHandler groupHandler,
@@ -50,6 +52,7 @@ public class WaitlistService : IWaitlistService, IWaitlistPromotionService
     {
         _waitlistHandler = waitlistHandler;
         _appointmentHandler = appointmentHandler;
+        _schedulingOccupancyHandler = schedulingOccupancyHandler;
         _auditLogHandler = auditLogHandler;
         _clientHandler = clientHandler;
         _groupHandler = groupHandler;
@@ -344,7 +347,7 @@ public class WaitlistService : IWaitlistService, IWaitlistPromotionService
         if (alreadyBooked)
             return WaitlistExpiredReasons.AppointmentNoLongerAvailable;
 
-        List<Appointment> overlapping = await _appointmentHandler.GetOverlappingForClients(
+        List<OccupancySlot> overlapping = await _schedulingOccupancyHandler.GetOverlappingForClients(
             organizationId, new List<Guid> { entry.ClientId }, appointment.StartsAt, appointment.DurationMinutes, excludeId: appointment.Id);
         if (overlapping.Count > 0)
             return WaitlistExpiredReasons.ClientScheduleConflict;

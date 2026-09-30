@@ -59,6 +59,8 @@ dotnet test BlueDragon.DuneLight.UnitTests --filter "FullyQualifiedName~Scheduli
 | `AppointmentRecurringCharacterizationTests` | recurring series |
 | `AppointmentReadModelCharacterizationTests` | schedule feed, detail/history DTOs, available slots, delete |
 | `TenantIsolationCharacterizationTests` | cross-organization ids |
+| `ScheduleBreakOverlapCharacterizationTests` | schedule break vs appointment overlap (single, update, recurring) — added with S1 |
+| `SchedulingOccupancyHandlerTests` | S1 occupancy read seam (`ISchedulingOccupancyHandler`) contract — not a characterization test of a service |
 
 ## Current behaviour findings
 
@@ -190,6 +192,8 @@ Legend — **Test**: the characterization test(s) that pin it. **Later**: whethe
   Baselines (suite as of the characterization commits, 528 tests):
   * **UTC host** (e.g. `TZ=UTC dotnet test` on Linux/macOS): **528 passed, 0 failed.**
   * **Windows / CET host** (and Linux with `TZ=Europe/Zagreb`): **518 passed, 10 failed** — exactly the 10 tests above, nothing else.
+
+  After S1 (occupancy read seam, +25 tests, 553 in total): **UTC 553/553**, **CET 543 passed / 10 failed** (the same 10).
 
   Any refactor must keep these two baselines (plus its own new tests) — a failure outside this list on a CET host, or any failure on a
   UTC host, is a real regression.
