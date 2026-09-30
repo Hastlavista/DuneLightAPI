@@ -158,6 +158,42 @@ Legend — **Test**: the characterization test(s) that pin it. **Later**: whethe
   an Individual appointment has no capacity concept; available-slot search ignores rooms and clients and lists absent employees
   with empty slot lists; read models join Service/Employee/Room names live (no name snapshot).
 
+### Host environment
+
+* **F-19 Scheduling depends on the host timezone.** Known defect, **not fixed** (deliberately left for the target-model work).
+  Root cause:
+  * Date → `DateTimeOffset` conversion uses the **machine-local offset** in the absence queries:
+    `AppointmentService.EnsureWorkforceAvailability` passes `startsAt.Date` (an unspecified-kind `DateTime`) to
+    `RosterEntryHandler.GetForPeriod`, and `GetAvailableSlots` does `DateTimeOffset requestedDay = query.Date.Date`. On a CET host
+    2031-03-03 becomes `2031-03-03 00:00+01:00` (= `2031-03-02 23:00Z`), so `DateFrom <= periodTo` misses a roster entry stored at
+    UTC midnight (the shape `RosterEntryService` writes) — the **first day of every absence** is dropped (the last day west of UTC).
+  * Legacy Npgsql timestamp behaviour (`Npgsql.EnableLegacyTimestampBehavior`, set in `DatabaseContext.GenerateContext`) returns
+    stored `timestamptz` values in the **host-local offset**.
+  * `GetAvailableSlots` builds busy intervals from `StartsAt.TimeOfDay` of those values, so appointments and breaks are shifted by
+    the host offset on non-UTC hosts.
+
+  Affected tests (all valid characterization tests; they pin the intended behaviour and must stay unchanged):
+
+  | Test class | Test |
+  |---|---|
+  | `AppointmentReadModelCharacterizationTests` | `AvailableSlots_DoNotConsiderRoomsOrClients_OnlyTheEmployee` |
+  | `AppointmentReadModelCharacterizationTests` | `AvailableSlots_ExcludeSlotsThatOverlapTheEmployeesAppointmentsAndBreaks` |
+  | `AppointmentReadModelCharacterizationTests` | `AvailableSlots_OmitEmployeesWhoCannotPerformTheServiceOrAreInactive_AndEmployeesOnAbsence` |
+  | `AppointmentWorkforceAvailabilityCharacterizationTests` | `Absence_EmployeeAbsentOnTheDay_IsRejected` |
+  | `AppointmentWorkforceAvailabilityCharacterizationTests` | `Absence_MultiDayRange_CoversEveryDayInclusive` |
+  | `AppointmentWorkforceAvailabilityCharacterizationTests` | `Absence_WithFullScopeOverride_SucceedsWithAWarning` |
+  | `AppointmentWorkforceAvailabilityCharacterizationTests` | `Override_IgnoredWithoutFullScope_EvenWhenRequested` |
+  | `AppointmentWorkforceAvailabilityCharacterizationTests` | `Override_OnlyOneWarningIsProducedPerCall` |
+  | `AppointmentWorkforceAvailabilityCharacterizationTests` | `Priority_AbsenceIsReportedBeforeABreak` |
+  | `AppointmentWorkforceAvailabilityCharacterizationTests` | `Priority_AnAbsenceHidesTheOutsideHoursViolation` |
+
+  Baselines (suite as of the characterization commits, 528 tests):
+  * **UTC host** (e.g. `TZ=UTC dotnet test` on Linux/macOS): **528 passed, 0 failed.**
+  * **Windows / CET host** (and Linux with `TZ=Europe/Zagreb`): **518 passed, 10 failed** — exactly the 10 tests above, nothing else.
+
+  Any refactor must keep these two baselines (plus its own new tests) — a failure outside this list on a CET host, or any failure on a
+  UTC host, is a real regression.
+
 ## Known limits of the suite
 
 * **Race conditions on Create/Update/Move** cannot be asserted deterministically without changing production code (see F-17).
@@ -166,7 +202,7 @@ Legend — **Test**: the characterization test(s) that pin it. **Later**: whethe
 * **HTTP layer / `RequireGrant` attributes** are not exercised; services take `hasFullScope` directly, which is the boundary the
   controllers use.
 * **Time zones**: everything is UTC; production uses `startsAt.Date` / `TimeOfDay` in the request's offset, so non-UTC offsets are
-  untested.
+  untested. The suite also assumes a **UTC host**; on a non-UTC host 10 tests fail because of F-19.
 * **Calendar constants** (2031 appointments, 2035 package expiry) are "far future" today; they must be moved forward if the real
   clock approaches them.
 * Group slot management (`AddSlot/UpdateSlot`), the operational dashboard and the future-activity providers are outside this suite.
