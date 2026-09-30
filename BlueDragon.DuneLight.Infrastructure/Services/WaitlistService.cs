@@ -28,6 +28,8 @@ namespace BlueDragon.DuneLight.Infrastructure.Services;
 /// </summary>
 public class WaitlistService : IWaitlistService, IWaitlistPromotionService
 {
+    private const string NotOwnerMessage = "Trener smije upravljati samo listom čekanja na svojim vlastitim terminima.";
+
     private readonly IWaitlistHandler _waitlistHandler;
     private readonly IAppointmentHandler _appointmentHandler;
     private readonly ISchedulingOccupancyHandler _schedulingOccupancyHandler;
@@ -110,7 +112,7 @@ public class WaitlistService : IWaitlistService, IWaitlistPromotionService
         if (appointment == null)
             throw new NotFoundAppException("Appointment", appointmentId);
 
-        await ValidateOwnership(organizationId, userId, hasFullScope, appointment.EmployeeId);
+        await AppointmentOwnership.EnsureCallerIsAssigned(_employeeHandler, organizationId, userId, hasFullScope, appointment, NotOwnerMessage);
 
         DateTimeOffset now = DateTimeOffset.UtcNow;
         if (appointment.Form != AppointmentForm.Group || appointment.Status != AppointmentStatus.Scheduled || appointment.StartsAt <= now)
@@ -183,7 +185,7 @@ public class WaitlistService : IWaitlistService, IWaitlistPromotionService
         if (appointment == null)
             throw new NotFoundAppException("Appointment", appointmentId);
 
-        await ValidateOwnership(organizationId, userId, hasFullScope, appointment.EmployeeId);
+        await AppointmentOwnership.EnsureCallerIsAssigned(_employeeHandler, organizationId, userId, hasFullScope, appointment, NotOwnerMessage);
 
         WaitlistEntry entry = await _waitlistHandler.GetMostRecentForClient(organizationId, appointmentId, clientId);
         if (entry == null)
@@ -277,17 +279,8 @@ public class WaitlistService : IWaitlistService, IWaitlistPromotionService
             // Obična Confirmed rezervacija od trenutka nastanka — bez paketa/plaćanja (spec section 13/45): klijent/
             // osoblje to razrješava naknadno kroz uobičajeni check-in tok (BookingService.ResolveCoverage), isto
             // kao svaki drugi Booking. Ne koristi se "slaba" posebna vrsta bookinga za promovirane retke.
-            Booking booking = new Booking
-            {
-                Id = Guid.NewGuid(),
-                OrganizationId = organizationId,
-                AppointmentId = appointmentId,
-                ClientId = entry.ClientId,
-                Status = BookingStatus.Confirmed,
-                Amount = suggestedAmount,
-                SuggestedAmount = suggestedAmount,
-                CreatedAt = now
-            };
+            Booking booking = BookingFactory.CreateConfirmed(
+                organizationId, appointmentId, entry.ClientId, BookingPricing.AtSuggested(suggestedAmount), now);
             uow.Context.Bookings.Add(booking);
             await uow.Context.SaveChangesAsync();
 
@@ -387,16 +380,6 @@ public class WaitlistService : IWaitlistService, IWaitlistPromotionService
                 ChangedBy = userId
             });
         }
-    }
-
-    private async Task ValidateOwnership(Guid organizationId, Guid userId, bool hasFullScope, Guid? appointmentEmployeeId)
-    {
-        if (hasFullScope)
-            return;
-
-        Employee employee = await _employeeHandler.GetByUserId(organizationId, userId);
-        if (employee == null || !appointmentEmployeeId.HasValue || employee.Id != appointmentEmployeeId)
-            throw new BusinessRuleException(ErrorCodes.NotOwner, "Trener smije upravljati samo listom čekanja na svojim vlastitim terminima.");
     }
 
     private static WaitlistEntryDto ToDto(WaitlistEntry entry, int? position)

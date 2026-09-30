@@ -30,6 +30,8 @@ namespace BlueDragon.DuneLight.Infrastructure.Services;
 
 public class AppointmentService : IAppointmentService
 {
+    private const string NotOwnerMessage = "Trener smije upravljati samo svojim vlastitim terminima.";
+
     private readonly IAppointmentHandler _appointmentHandler;
     private readonly ISchedulingOccupancyHandler _schedulingOccupancyHandler;
     private readonly IAppointmentAuditLogHandler _auditLogHandler;
@@ -108,7 +110,7 @@ public class AppointmentService : IAppointmentService
 
     public async Task<AppointmentDto> CompleteNew(Guid organizationId, Guid userId, bool hasFullScope, AppointmentCompleteRequest request)
     {
-        await ValidateOwnership(organizationId, userId, hasFullScope, request.EmployeeId);
+        await AppointmentOwnership.EnsureCallerIsEmployee(_employeeHandler, organizationId, userId, hasFullScope, request.EmployeeId, NotOwnerMessage);
         ServiceEntity service = await LoadServiceOrThrow(organizationId, request.ServiceId);
         bool overrideAvailability = request.OverrideAvailability && hasFullScope;
         await EnsureStructuralEligibility(organizationId, service, request.CompanyId, request.EmployeeId);
@@ -120,23 +122,11 @@ public class AppointmentService : IAppointmentService
         Dictionary<Guid, AppointmentClientSettlement> settlementByClient = await ValidateSettlements(
             organizationId, clients.Select(c => c.Id.GetValueOrDefault()).ToList(), request.ServiceId, request.StartsAt, request.Settlements);
 
-        Guid appointmentId = Guid.NewGuid();
-        Appointment appointment = new Appointment
-        {
-            Id = appointmentId,
-            OrganizationId = organizationId,
-            Form = AppointmentForm.Individual,
-            StartsAt = request.StartsAt,
-            DurationMinutes = service.DefaultDurationMinutes,
-            ServiceId = request.ServiceId,
-            EmployeeId = request.EmployeeId,
-            CompanyId = request.CompanyId,
-            RoomId = request.RoomId,
-            Status = AppointmentStatus.Completed,
-            Note = request.Note,
-            CreatedAt = DateTimeOffset.UtcNow,
-            CreatedBy = userId
-        };
+        Appointment appointment = AppointmentFactory.CreateIndividual(
+            organizationId, request.CompanyId,
+            new AppointmentFrame(request.ServiceId, request.EmployeeId, request.RoomId, request.StartsAt, service.DefaultDurationMinutes),
+            AppointmentStatus.Completed, request.Note, recurrenceGroupId: null, userId, DateTimeOffset.UtcNow);
+        Guid appointmentId = appointment.Id.GetValueOrDefault();
 
         Dictionary<Guid, Guid> packageByClient = new Dictionary<Guid, Guid>();
         List<(Booking Booking, PaymentMethod Method, decimal Amount)> pendingPayments = new List<(Booking, PaymentMethod, decimal)>();
@@ -151,20 +141,11 @@ public class AppointmentService : IAppointmentService
             if (hasPackage)
                 packageByClient[clientId] = settlement.ClientPackageId.GetValueOrDefault();
 
-            Booking booking = new Booking
-            {
-                Id = Guid.NewGuid(),
-                OrganizationId = organizationId,
-                AppointmentId = appointmentId,
-                ClientId = clientId,
-                Status = BookingStatus.Completed,
-                Amount = bookingAmount,
-                SuggestedAmount = suggestedAmount,
-                IsAmountManuallyOverridden = settlement.Amount.HasValue && settlement.Amount.Value != suggestedAmount,
-                ClientPackageId = hasPackage ? settlement.ClientPackageId : (Guid?)null,
-                PackageCoverageApplied = hasPackage,
-                CreatedAt = DateTimeOffset.UtcNow
-            };
+            Booking booking = BookingFactory.CreateCompletedAtCreation(
+                organizationId, appointmentId, clientId,
+                new BookingPricing(bookingAmount, suggestedAmount, settlement.Amount.HasValue && settlement.Amount.Value != suggestedAmount),
+                hasPackage ? settlement.ClientPackageId : (Guid?)null,
+                DateTimeOffset.UtcNow);
             appointment.Bookings.Add(booking);
 
             // Paket namiruje obvezu bez Paymenta (vidi Payment.cs/spec section 3/40) — monetarni Payment se
@@ -251,7 +232,7 @@ public class AppointmentService : IAppointmentService
         if (appointment.Status == AppointmentStatus.Completed)
             throw new BusinessRuleException(ErrorCodes.AlreadyCompleted, "Termin je već označen kao odrađen.");
 
-        await ValidateOwnership(organizationId, userId, hasFullScope, appointment.EmployeeId.GetValueOrDefault());
+        await AppointmentOwnership.EnsureCallerIsAssigned(_employeeHandler, organizationId, userId, hasFullScope, appointment, NotOwnerMessage);
 
         ServiceEntity service = await LoadServiceOrThrow(organizationId, request.ServiceId);
         await EnsureStructuralEligibility(organizationId, service, request.CompanyId, request.EmployeeId);
@@ -279,12 +260,9 @@ public class AppointmentService : IAppointmentService
             if (appointment.Status == AppointmentStatus.Completed)
                 throw new BusinessRuleException(ErrorCodes.AlreadyCompleted, "Termin je već označen kao odrađen.");
 
-            appointment.StartsAt = request.StartsAt;
-            appointment.DurationMinutes = service.DefaultDurationMinutes;
-            appointment.ServiceId = request.ServiceId;
-            appointment.EmployeeId = request.EmployeeId;
+            AppointmentFrameMutator.Apply(appointment,
+                new AppointmentFrame(request.ServiceId, request.EmployeeId, request.RoomId, request.StartsAt, service.DefaultDurationMinutes));
             appointment.CompanyId = request.CompanyId;
-            appointment.RoomId = request.RoomId;
             appointment.Status = AppointmentStatus.Completed;
             appointment.Note = request.Note;
             appointment.UpdatedAt = DateTimeOffset.UtcNow;
@@ -418,7 +396,7 @@ public class AppointmentService : IAppointmentService
             if (appointment.Status == AppointmentStatus.Cancelled)
                 throw new BusinessRuleException(ErrorCodes.AppointmentNotMovable, "Otkazan termin se ne može označiti kao odrađen.");
 
-            await ValidateOwnership(organizationId, userId, hasFullScope, appointment.EmployeeId.GetValueOrDefault());
+            await AppointmentOwnership.EnsureCallerIsAssigned(_employeeHandler, organizationId, userId, hasFullScope, appointment, NotOwnerMessage);
 
             AppointmentStatus oldStatus = appointment.Status;
             appointment.Status = AppointmentStatus.Completed;
@@ -474,7 +452,7 @@ public class AppointmentService : IAppointmentService
         if (appointment == null)
             throw new NotFoundAppException("Appointment", id);
 
-        await ValidateOwnership(organizationId, userId, hasFullScope, appointment.EmployeeId.GetValueOrDefault());
+        await AppointmentOwnership.EnsureCallerIsAssigned(_employeeHandler, organizationId, userId, hasFullScope, appointment, NotOwnerMessage);
 
         ServiceEntity service = await LoadServiceOrThrow(organizationId, request.ServiceId);
         bool overrideAvailability = request.OverrideAvailability && hasFullScope;
@@ -497,12 +475,11 @@ public class AppointmentService : IAppointmentService
         if (appointment.EmployeeId != request.EmployeeId)
             await LogEmployeeChange(id, appointment.EmployeeId, request.EmployeeId, userId);
 
-        appointment.StartsAt = request.StartsAt;
-        appointment.DurationMinutes = service.DefaultDurationMinutes;
-        appointment.ServiceId = request.ServiceId;
-        appointment.EmployeeId = request.EmployeeId;
+        // Mijenja samo skalarna polja učitanog grafa — pinned F-01 (zastarjele Service/Employee navigacije pobjeđuju
+        // kod spremanja) ostaje nepromijenjen.
+        AppointmentFrameMutator.Apply(appointment,
+            new AppointmentFrame(request.ServiceId, request.EmployeeId, request.RoomId, request.StartsAt, service.DefaultDurationMinutes));
         appointment.CompanyId = request.CompanyId;
-        appointment.RoomId = request.RoomId;
         appointment.Note = request.Note;
         appointment.UpdatedAt = DateTimeOffset.UtcNow;
         appointment.UpdatedBy = userId;
@@ -529,7 +506,7 @@ public class AppointmentService : IAppointmentService
         if (appointment.Status == AppointmentStatus.Cancelled)
             throw new BusinessRuleException(ErrorCodes.AppointmentNotMovable, "Otkazan termin se ne može pomicati.");
 
-        await ValidateOwnership(organizationId, userId, hasFullScope, appointment.EmployeeId.GetValueOrDefault());
+        await AppointmentOwnership.EnsureCallerIsAssigned(_employeeHandler, organizationId, userId, hasFullScope, appointment, NotOwnerMessage);
 
         bool overrideAvailability = request.OverrideAvailability && hasFullScope;
 
@@ -549,16 +526,20 @@ public class AppointmentService : IAppointmentService
         ServiceEntity service = await LoadServiceOrThrow(organizationId, appointment.ServiceId);
         await EnsureStructuralEligibility(organizationId, service, effectiveCompanyId, effectiveEmployeeId);
 
-        appointment.StartsAt = request.StartsAt;
-        if (request.EmployeeId.HasValue && request.EmployeeId.Value != appointment.EmployeeId)
+        // Djelomična izmjena: null u zahtjevu = "bez promjene" (pinned F-03 — prostorija se ne može očistiti),
+        // trajanje se ne mijenja.
+        AppointmentFrame currentFrame = AppointmentFrame.Of(appointment);
+        if (request.EmployeeId.HasValue && request.EmployeeId.Value != currentFrame.EmployeeId)
+            await LogEmployeeChange(id, currentFrame.EmployeeId, request.EmployeeId.Value, userId);
+
+        AppointmentFrameMutator.Apply(appointment, currentFrame with
         {
-            await LogEmployeeChange(id, appointment.EmployeeId, request.EmployeeId.Value, userId);
-            appointment.EmployeeId = request.EmployeeId.Value;
-        }
+            StartsAt = request.StartsAt,
+            EmployeeId = request.EmployeeId ?? currentFrame.EmployeeId,
+            RoomId = request.RoomId ?? currentFrame.RoomId
+        });
         if (request.CompanyId.HasValue)
             appointment.CompanyId = request.CompanyId.Value;
-        if (request.RoomId.HasValue)
-            appointment.RoomId = request.RoomId.Value;
         appointment.UpdatedAt = DateTimeOffset.UtcNow;
         appointment.UpdatedBy = userId;
 
@@ -622,7 +603,7 @@ public class AppointmentService : IAppointmentService
         Dictionary<DateTimeOffset, List<WarningDto>> warningsByOccurrence = await EnsureNoRecurringConflicts(
             organizationId, request.EmployeeId, request.CompanyId, occurrences, service.DefaultDurationMinutes, overrideAvailability, room);
 
-        await ValidateOwnership(organizationId, userId, hasFullScope, request.EmployeeId);
+        await AppointmentOwnership.EnsureCallerIsEmployee(_employeeHandler, organizationId, userId, hasFullScope, request.EmployeeId, NotOwnerMessage);
         List<Client> clients = await EnsureClientsExist(organizationId, request.ClientIds);
 
         await EnsureNoRecurringClientOverlap(organizationId, clients, occurrences, service.DefaultDurationMinutes);
@@ -634,38 +615,17 @@ public class AppointmentService : IAppointmentService
         {
             decimal suggestedAmount = await ResolveSuggestedAmount(organizationId, request.ServiceId, request.CompanyId, occurrence);
 
-            Guid appointmentId = Guid.NewGuid();
-            Appointment appointment = new Appointment
-            {
-                Id = appointmentId,
-                OrganizationId = organizationId,
-                Form = AppointmentForm.Individual,
-                StartsAt = occurrence,
-                DurationMinutes = service.DefaultDurationMinutes,
-                ServiceId = request.ServiceId,
-                EmployeeId = request.EmployeeId,
-                CompanyId = request.CompanyId,
-                RoomId = request.RoomId,
-                Status = AppointmentStatus.Scheduled,
-                Note = request.Note,
-                RecurrenceGroupId = recurrenceGroupId,
-                CreatedAt = DateTimeOffset.UtcNow,
-                CreatedBy = userId
-            };
+            Appointment appointment = AppointmentFactory.CreateIndividual(
+                organizationId, request.CompanyId,
+                new AppointmentFrame(request.ServiceId, request.EmployeeId, request.RoomId, occurrence, service.DefaultDurationMinutes),
+                AppointmentStatus.Scheduled, request.Note, recurrenceGroupId, userId, DateTimeOffset.UtcNow);
+            Guid appointmentId = appointment.Id.GetValueOrDefault();
 
+            // /recurring namjerno ignorira ručni iznos (request nema Amount) — svaki occurrence po svojoj predloženoj cijeni.
             foreach (Client client in clients)
             {
-                appointment.Bookings.Add(new Booking
-                {
-                    Id = Guid.NewGuid(),
-                    OrganizationId = organizationId,
-                    AppointmentId = appointmentId,
-                    ClientId = client.Id.GetValueOrDefault(),
-                    Status = BookingStatus.Confirmed,
-                    Amount = suggestedAmount,
-                    SuggestedAmount = suggestedAmount,
-                    CreatedAt = DateTimeOffset.UtcNow
-                });
+                appointment.Bookings.Add(BookingFactory.CreateConfirmed(
+                    organizationId, appointmentId, client.Id.GetValueOrDefault(), BookingPricing.AtSuggested(suggestedAmount), DateTimeOffset.UtcNow));
             }
 
             toCreate.Add(appointment);
@@ -951,7 +911,7 @@ public class AppointmentService : IAppointmentService
     private async Task<AppointmentDto> CreateInternal(
         Guid organizationId, Guid userId, bool hasFullScope, AppointmentCreateRequest request, Guid? recurrenceGroupId)
     {
-        await ValidateOwnership(organizationId, userId, hasFullScope, request.EmployeeId);
+        await AppointmentOwnership.EnsureCallerIsEmployee(_employeeHandler, organizationId, userId, hasFullScope, request.EmployeeId, NotOwnerMessage);
         ServiceEntity service = await LoadServiceOrThrow(organizationId, request.ServiceId);
         bool overrideAvailability = request.OverrideAvailability && hasFullScope;
         await EnsureStructuralEligibility(organizationId, service, request.CompanyId, request.EmployeeId);
@@ -962,39 +922,16 @@ public class AppointmentService : IAppointmentService
         decimal amount = request.Amount ?? suggestedAmount;
         bool overridden = request.Amount.HasValue && request.Amount.Value != suggestedAmount;
 
-        Guid appointmentId = Guid.NewGuid();
-        Appointment appointment = new Appointment
-        {
-            Id = appointmentId,
-            OrganizationId = organizationId,
-            Form = AppointmentForm.Individual,
-            StartsAt = request.StartsAt,
-            DurationMinutes = service.DefaultDurationMinutes,
-            ServiceId = request.ServiceId,
-            EmployeeId = request.EmployeeId,
-            CompanyId = request.CompanyId,
-            RoomId = request.RoomId,
-            Status = AppointmentStatus.Scheduled,
-            Note = request.Note,
-            RecurrenceGroupId = recurrenceGroupId,
-            CreatedAt = DateTimeOffset.UtcNow,
-            CreatedBy = userId
-        };
+        Appointment appointment = AppointmentFactory.CreateIndividual(
+            organizationId, request.CompanyId,
+            new AppointmentFrame(request.ServiceId, request.EmployeeId, request.RoomId, request.StartsAt, service.DefaultDurationMinutes),
+            AppointmentStatus.Scheduled, request.Note, recurrenceGroupId, userId, DateTimeOffset.UtcNow);
+        Guid appointmentId = appointment.Id.GetValueOrDefault();
 
         foreach (Client client in clients)
         {
-            appointment.Bookings.Add(new Booking
-            {
-                Id = Guid.NewGuid(),
-                OrganizationId = organizationId,
-                AppointmentId = appointmentId,
-                ClientId = client.Id.GetValueOrDefault(),
-                Status = BookingStatus.Confirmed,
-                Amount = amount,
-                SuggestedAmount = suggestedAmount,
-                IsAmountManuallyOverridden = overridden,
-                CreatedAt = DateTimeOffset.UtcNow
-            });
+            appointment.Bookings.Add(BookingFactory.CreateConfirmed(
+                organizationId, appointmentId, client.Id.GetValueOrDefault(), new BookingPricing(amount, suggestedAmount, overridden), DateTimeOffset.UtcNow));
         }
 
         List<WarningDto> warnings = new List<WarningDto>();
@@ -1031,7 +968,7 @@ public class AppointmentService : IAppointmentService
             if (appointment == null)
                 throw new NotFoundAppException("Appointment", id);
 
-            await ValidateOwnership(organizationId, userId, hasFullScope, appointment.EmployeeId.GetValueOrDefault());
+            await AppointmentOwnership.EnsureCallerIsAssigned(_employeeHandler, organizationId, userId, hasFullScope, appointment, NotOwnerMessage);
 
             // Completed je terminalno i za Cancel/MarkNoShow — već odrađen (i eventualno proviziran) termin se
             // ne smije naknadno "otkazati" kroz ove putanje (vidi spec section 1/3, CommissionService domenska
@@ -1168,16 +1105,6 @@ public class AppointmentService : IAppointmentService
         }
 
         return await GetByIdInternal(organizationId, id);
-    }
-
-    private async Task ValidateOwnership(Guid organizationId, Guid userId, bool hasFullScope, Guid employeeId)
-    {
-        if (hasFullScope)
-            return;
-
-        Employee employee = await _employeeHandler.GetByUserId(organizationId, userId);
-        if (employee == null || employee.Id != employeeId)
-            throw new BusinessRuleException(ErrorCodes.NotOwner, "Trener smije upravljati samo svojim vlastitim terminima.");
     }
 
     private async Task<ServiceEntity> LoadServiceOrThrow(Guid organizationId, Guid serviceId)

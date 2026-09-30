@@ -11,6 +11,7 @@ using BlueDragon.DuneLight.Infrastructure.Domain.Models.Appointments;
 using BlueDragon.DuneLight.Infrastructure.Domain.Settings;
 using BlueDragon.DuneLight.Infrastructure.Handlers.Interfaces;
 using BlueDragon.DuneLight.Infrastructure.UnitOfWork;
+using BlueDragon.DuneLight.Infrastructure.Utils;
 using Microsoft.EntityFrameworkCore;
 
 namespace BlueDragon.DuneLight.Infrastructure.Handlers.Implementations;
@@ -223,18 +224,9 @@ public class AppointmentHandler : IAppointmentHandler
         List<Guid> existingClientIds = existing.Select(b => b.ClientId).ToList();
         foreach (Guid clientId in clientIds.Where(id => !existingClientIds.Contains(id)))
         {
-            context.Bookings.Add(new Booking
-            {
-                Id = Guid.NewGuid(),
-                OrganizationId = appointment.OrganizationId,
-                AppointmentId = appointment.Id.GetValueOrDefault(),
-                ClientId = clientId,
-                Status = BookingStatus.Confirmed,
-                Amount = amount,
-                SuggestedAmount = suggestedAmount,
-                IsAmountManuallyOverridden = overridden,
-                CreatedAt = DateTimeOffset.UtcNow
-            });
+            context.Bookings.Add(BookingFactory.CreateConfirmed(
+                appointment.OrganizationId, appointment.Id.GetValueOrDefault(), clientId,
+                new BookingPricing(amount, suggestedAmount, overridden), DateTimeOffset.UtcNow));
         }
 
         context.Appointments.Update(appointment);

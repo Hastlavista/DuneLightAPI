@@ -63,6 +63,8 @@ dotnet test BlueDragon.DuneLight.UnitTests --filter "FullyQualifiedName~Scheduli
 | `SchedulingOccupancyHandlerTests` | S1 occupancy read seam (`ISchedulingOccupancyHandler`) contract — not a characterization test of a service |
 | `ExecutionContextResolverTests` | S2 execution-context seam (`ExecutionContextResolver`) mapping and guards — pure unit tests, no database |
 | `ExecutionContextConsumerCharacterizationTests` | checkout item description; CompleteExisting commission / package deduction for a rewritten service+employee — added with S2 |
+| `AppointmentWriteSeamTests` | S3 write seams (`AppointmentFactory`, `AppointmentFrameMutator`, `BookingFactory`, ownership predicate) — pure unit tests, no database |
+| `AppointmentOwnershipCharacterizationTests` | appointment own scope through `AppointmentOwnership` (helper + Cancel / booking SetStatus / waitlist Join messages) — added with S3 |
 
 ## Current behaviour findings
 
@@ -197,6 +199,7 @@ Legend — **Test**: the characterization test(s) that pin it. **Later**: whethe
 
   After S1 (occupancy read seam, +25 tests, 553 in total): **UTC 553/553**, **CET 543 passed / 10 failed** (the same 10).
   After S2 (execution-context seam, +14 tests, 567 in total): **UTC 567/567**, **CET 557 passed / 10 failed** (the same 10).
+  After S3 (write seams + ownership, +25 tests, 592 in total): **UTC 592/592**, **CET 582 passed / 10 failed** (the same 10).
 
   Any refactor must keep these two baselines (plus its own new tests) — a failure outside this list on a CET host, or any failure on a
   UTC host, is a real regression.

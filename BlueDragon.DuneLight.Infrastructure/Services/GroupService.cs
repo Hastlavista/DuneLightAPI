@@ -518,17 +518,8 @@ public class GroupService : IGroupService
                 decimal suggestedAmount = await ResolveSuggestedAmount(
                     organizationId, execution.ServiceId, execution.CompanyId, execution.StartsAt);
 
-                await _appointmentHandler.AddBooking(uow, new Booking
-                {
-                    Id = Guid.NewGuid(),
-                    OrganizationId = organizationId,
-                    AppointmentId = futureAppointment.Id.GetValueOrDefault(),
-                    ClientId = request.ClientId,
-                    Status = BookingStatus.Confirmed,
-                    Amount = suggestedAmount,
-                    SuggestedAmount = suggestedAmount,
-                    CreatedAt = now
-                });
+                await _appointmentHandler.AddBooking(uow, BookingFactory.CreateConfirmed(
+                    organizationId, futureAppointment.Id.GetValueOrDefault(), request.ClientId, BookingPricing.AtSuggested(suggestedAmount), now));
             }
 
             await uow.CommitAsync();
@@ -719,28 +710,15 @@ public class GroupService : IGroupService
             Group group = candidate.Group;
             GroupSlot slot = candidate.Slot;
             DateTimeOffset startsAt = candidate.StartsAt;
-            Guid appointmentId = Guid.NewGuid();
 
-            // Navigacijska svojstva se namjerno NE postavljaju ovdje — appointment ide u
+            // Navigacijska svojstva se namjerno NE postavljaju (AppointmentFactory ih nikad ne postavlja) — appointment ide u
             // AddAppointments preko svježeg DbContext-a, a Service/Company/DefaultTrainer su
             // materijalizirani u kontekstu GetAll/GetById poziva pa bi ih EF pokušao ponovno umetnuti.
-            Appointment appointment = new Appointment
-            {
-                Id = appointmentId,
-                OrganizationId = organizationId,
-                Form = AppointmentForm.Group,
-                StartsAt = startsAt,
-                DurationMinutes = group.Service.DefaultDurationMinutes,
-                ServiceId = group.ServiceId,
-                EmployeeId = group.DefaultTrainerId,
-                CompanyId = group.CompanyId,
-                RoomId = group.DefaultRoomId,
-                Status = AppointmentStatus.Scheduled,
-                GroupId = group.Id,
-                GroupSlotId = slot.Id,
-                CreatedAt = DateTimeOffset.UtcNow,
-                CreatedBy = userId
-            };
+            Appointment appointment = AppointmentFactory.CreateGroupOccurrence(
+                organizationId, group.CompanyId,
+                new AppointmentFrame(group.ServiceId, group.DefaultTrainerId, group.DefaultRoomId, startsAt, group.Service.DefaultDurationMinutes),
+                group.Id.GetValueOrDefault(), slot.Id.GetValueOrDefault(), userId, DateTimeOffset.UtcNow);
+            Guid appointmentId = appointment.Id.GetValueOrDefault();
 
             // Predložena cijena se snapshotta ODMAH po članu (isti IPricingService poziv kao za Individual) —
             // grupni termin prije ovog zahvata nikad nije imao cijenu (uvijek 0 na Appointment). Amount ostaje
@@ -755,17 +733,8 @@ public class GroupService : IGroupService
             // tek na check-inu (BookingService.AddBooking / SetStatus s nepostojećim bookingom).
             foreach (GroupMember member in group.Members.Where(m => m.IsActive))
             {
-                appointment.Bookings.Add(new Booking
-                {
-                    Id = Guid.NewGuid(),
-                    OrganizationId = organizationId,
-                    AppointmentId = appointmentId,
-                    ClientId = member.ClientId,
-                    Status = BookingStatus.Confirmed,
-                    Amount = suggestedAmount,
-                    SuggestedAmount = suggestedAmount,
-                    CreatedAt = DateTimeOffset.UtcNow
-                });
+                appointment.Bookings.Add(BookingFactory.CreateConfirmed(
+                    organizationId, appointmentId, member.ClientId, BookingPricing.AtSuggested(suggestedAmount), DateTimeOffset.UtcNow));
             }
 
             toCreate.Add(appointment);

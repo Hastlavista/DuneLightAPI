@@ -32,6 +32,8 @@ namespace BlueDragon.DuneLight.Infrastructure.Services;
 /// </summary>
 public class BookingService : IBookingService
 {
+    private const string NotOwnerMessage = "Trener smije upravljati samo bookinzima na svojim vlastitim terminima.";
+
     private readonly IAppointmentHandler _appointmentHandler;
     private readonly ISchedulingOccupancyHandler _schedulingOccupancyHandler;
     private readonly IAppointmentAuditLogHandler _auditLogHandler;
@@ -117,7 +119,7 @@ public class BookingService : IBookingService
         if (appointment.Status == AppointmentStatus.Cancelled)
             throw new BusinessRuleException(ErrorCodes.AppointmentNotMovable, "Otkazan termin se ne može dopunjavati novim rezervacijama.");
 
-        await ValidateOwnership(organizationId, userId, hasFullScope, appointment.EmployeeId);
+        await AppointmentOwnership.EnsureCallerIsAssigned(_employeeHandler, organizationId, userId, hasFullScope, appointment, NotOwnerMessage);
 
         Booking existing = appointment.Bookings.FirstOrDefault(b => b.ClientId == request.ClientId);
         if (existing != null)
@@ -130,17 +132,8 @@ public class BookingService : IBookingService
         AppointmentExecutionContext execution = ExecutionContextResolver.ForAppointment(appointment);
         decimal suggestedAmount = await ResolveSuggestedAmount(organizationId, execution.ServiceId, execution.CompanyId, execution.StartsAt);
 
-        Booking booking = new Booking
-        {
-            Id = Guid.NewGuid(),
-            OrganizationId = organizationId,
-            AppointmentId = appointmentId,
-            ClientId = request.ClientId,
-            Status = BookingStatus.Confirmed,
-            Amount = suggestedAmount,
-            SuggestedAmount = suggestedAmount,
-            CreatedAt = DateTimeOffset.UtcNow
-        };
+        Booking booking = BookingFactory.CreateConfirmed(
+            organizationId, appointmentId, request.ClientId, BookingPricing.AtSuggested(suggestedAmount), DateTimeOffset.UtcNow);
 
         await using (IUnitOfWork uow = await _unitOfWorkFactory.Begin())
         {
@@ -172,7 +165,7 @@ public class BookingService : IBookingService
         if (appointment == null)
             throw new NotFoundAppException("Appointment", appointmentId);
 
-        await ValidateOwnership(organizationId, userId, hasFullScope, appointment.EmployeeId);
+        await AppointmentOwnership.EnsureCallerIsAssigned(_employeeHandler, organizationId, userId, hasFullScope, appointment, NotOwnerMessage);
 
         bool isGroup = appointment.Form == AppointmentForm.Group;
 
@@ -229,17 +222,8 @@ public class BookingService : IBookingService
             decimal newBookingSuggestedAmount = await ResolveSuggestedAmount(
                 organizationId, guestExecution.ServiceId, guestExecution.CompanyId, guestExecution.StartsAt);
 
-            booking = new Booking
-            {
-                Id = Guid.NewGuid(),
-                OrganizationId = organizationId,
-                AppointmentId = appointmentId,
-                ClientId = clientId,
-                Status = BookingStatus.Confirmed,
-                Amount = newBookingSuggestedAmount,
-                SuggestedAmount = newBookingSuggestedAmount,
-                CreatedAt = DateTimeOffset.UtcNow
-            };
+            booking = BookingFactory.CreateConfirmed(
+                organizationId, appointmentId, clientId, BookingPricing.AtSuggested(newBookingSuggestedAmount), DateTimeOffset.UtcNow);
         }
 
         try
@@ -881,16 +865,6 @@ public class BookingService : IBookingService
 
         ClientPackageServiceEntryDto entry = package.ServiceEntries.FirstOrDefault(e => e.ServiceId == serviceId);
         return entry == null || !entry.RemainingEntries.HasValue;
-    }
-
-    private async Task ValidateOwnership(Guid organizationId, Guid userId, bool hasFullScope, Guid? appointmentEmployeeId)
-    {
-        if (hasFullScope)
-            return;
-
-        Employee employee = await _employeeHandler.GetByUserId(organizationId, userId);
-        if (employee == null || !appointmentEmployeeId.HasValue || employee.Id != appointmentEmployeeId)
-            throw new BusinessRuleException(ErrorCodes.NotOwner, "Trener smije upravljati samo bookinzima na svojim vlastitim terminima.");
     }
 
     private static BookingDto ToDto(Booking booking)
