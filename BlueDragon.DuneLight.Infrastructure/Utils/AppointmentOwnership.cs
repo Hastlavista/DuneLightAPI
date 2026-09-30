@@ -13,8 +13,8 @@ namespace BlueDragon.DuneLight.Infrastructure.Utils;
 /// prosljeđuje hasFullScope iz kontrolera). Pozivatelj se UVIJEK razrješava na backendu (User → Employee preko
 /// IEmployeeHandler.GetByUserId); EmployeeId iz zahtjeva klijenta nikad ne dokazuje vlasništvo sam po sebi.
 ///
-/// Danas "dodijeljen terminu" znači Appointment.EmployeeId == zaposlenik pozivatelja; u ciljnom modelu to postaje
-/// "zaposlenik je dodijeljen relevantnom segmentu" — mijenja se samo <see cref="IsAssignedToEmployee"/>.
+/// Od Phase D3A "dodijeljen terminu" znači: zaposlenik pozivatelja je dodijeljen JEDINOM segmentu termina (termin s više
+/// segmenata/zaposlenika baca iznimku — konačna semantika vlasništva višesegmentnog termina je otvorena odluka).
 /// Isti obrazac kao GroupCapacityGuard (statički, handler kao parametar).
 /// </summary>
 public static class AppointmentOwnership
@@ -23,7 +23,9 @@ public static class AppointmentOwnership
     public static bool IsAssignedToEmployee(Appointment appointment, Guid employeeId)
     {
         ArgumentNullException.ThrowIfNull(appointment);
-        return appointment.EmployeeId.HasValue && appointment.EmployeeId.Value == employeeId;
+        // Phase D3A: dodijeljen = zaposlenik jedinog segmenta (termin bez zaposlenika nema vlasnika u own-opsegu).
+        Guid? assigned = AppointmentSegments.GetSingleEmployeeId(AppointmentSegments.GetSingleExecutionSegment(appointment));
+        return assigned.HasValue && assigned.Value == employeeId;
     }
 
     /// <summary>Own-scope za POSTOJEĆI termin: pozivatelj mora biti zaposlenik dodijeljen tom terminu. Provjerava se

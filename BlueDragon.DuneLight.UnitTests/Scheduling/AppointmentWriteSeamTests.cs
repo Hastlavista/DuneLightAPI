@@ -52,9 +52,10 @@ public class AppointmentWriteSeamTests
         Assert.Null(a.UpdatedBy);
         Assert.Empty(a.Bookings);
         // Navigations are never set (the appointment is attached to a fresh DbContext by the handlers).
-        Assert.Null(a.Service);
-        Assert.Null(a.Employee);
-        Assert.Null(a.Room);
+        AppointmentSegment segment = AppointmentSegments.GetSingleExecutionSegment(a);
+        Assert.Null(segment.Service);
+        Assert.Null(segment.Room);
+        Assert.Null(Assert.Single(segment.Employees).Employee);
         Assert.Null(a.Company);
     }
 
@@ -109,7 +110,7 @@ public class AppointmentWriteSeamTests
         Guid id = a.Id.Value;
         AppointmentFrame next = new(Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), StartsAt.AddHours(3), 90);
 
-        AppointmentFrameMutator.Apply(a, next);
+        AppointmentFrameMutator.Apply(a, next, CreatedAt);
 
         Assert.Equal(next, AppointmentFrame.Of(a));
         // Nothing outside the frame is touched — company, status, note and audit fields stay with the caller.
@@ -127,7 +128,7 @@ public class AppointmentWriteSeamTests
         Appointment a = AppointmentFactory.CreateIndividual(
             Org, Company, Frame(Guid.NewGuid(), Guid.NewGuid()), AppointmentStatus.Scheduled, null, null, User, CreatedAt);
 
-        AppointmentFrameMutator.Apply(a, AppointmentFrame.Of(a) with { EmployeeId = null, RoomId = null });
+        AppointmentFrameMutator.Apply(a, AppointmentFrame.Of(a) with { EmployeeId = null, RoomId = null }, CreatedAt);
 
         Assert.Null(a.EmployeeId);
         Assert.Null(a.RoomId);
@@ -142,7 +143,7 @@ public class AppointmentWriteSeamTests
             Org, Company, Frame(employee, room), AppointmentStatus.Scheduled, null, null, User, CreatedAt);
         AppointmentFrame before = AppointmentFrame.Of(a);
 
-        AppointmentFrameMutator.Apply(a, before with { StartsAt = StartsAt.AddDays(1) });
+        AppointmentFrameMutator.Apply(a, before with { StartsAt = StartsAt.AddDays(1) }, CreatedAt);
 
         Assert.Equal(before.ServiceId, a.ServiceId);
         Assert.Equal(employee, a.EmployeeId);
@@ -154,7 +155,8 @@ public class AppointmentWriteSeamTests
     [Fact]
     public void Of_ReadsTheInMemoryValues_WithoutANavigationOrStoreRoundTrip()
     {
-        Appointment a = new() { ServiceId = Guid.NewGuid(), EmployeeId = null, RoomId = null, StartsAt = StartsAt, DurationMinutes = 30 };
+        Appointment a = new() { Id = Guid.NewGuid() };
+        AppointmentFrameMutator.NewSegment(a, new AppointmentFrame(Guid.NewGuid(), null, null, StartsAt, 30));
 
         AppointmentFrame frame = AppointmentFrame.Of(a);
 
@@ -241,8 +243,10 @@ public class AppointmentWriteSeamTests
     public void IsAssignedToEmployee_OnlyForTheAppointmentsEmployee_NeverForATrainerlessAppointment()
     {
         Guid employee = Guid.NewGuid();
-        Appointment assigned = new() { EmployeeId = employee };
-        Appointment trainerless = new() { EmployeeId = null };
+        Appointment assigned = new() { Id = Guid.NewGuid() };
+        AppointmentFrameMutator.NewSegment(assigned, Frame(employee));
+        Appointment trainerless = new() { Id = Guid.NewGuid() };
+        AppointmentFrameMutator.NewSegment(trainerless, Frame(employeeId: null));
 
         Assert.True(AppointmentOwnership.IsAssignedToEmployee(assigned, employee));
         Assert.False(AppointmentOwnership.IsAssignedToEmployee(assigned, Guid.NewGuid()));

@@ -17,20 +17,22 @@ public class ExecutionContextResolverTests
     private static readonly Guid OrganizationId = Guid.NewGuid();
     private static readonly DateTimeOffset StartsAt = new(2031, 3, 3, 10, 0, 0, TimeSpan.Zero);
 
-    private static Appointment NewAppointment(Guid? employeeId, ServiceEntity service = null, Guid? roomId = null) => new()
+    /// <summary>D3A: the frame lives on the appointment's single segment (Service navigation on the segment).</summary>
+    private static Appointment NewAppointment(Guid? employeeId, ServiceEntity service = null, Guid? roomId = null)
     {
-        Id = Guid.NewGuid(),
-        OrganizationId = OrganizationId,
-        Form = AppointmentForm.Individual,
-        StartsAt = StartsAt,
-        DurationMinutes = 45,
-        ServiceId = service?.Id ?? Guid.NewGuid(),
-        Service = service,
-        EmployeeId = employeeId,
-        CompanyId = Guid.NewGuid(),
-        RoomId = roomId,
-        Status = AppointmentStatus.Scheduled
-    };
+        Appointment appointment = new()
+        {
+            Id = Guid.NewGuid(),
+            OrganizationId = OrganizationId,
+            Form = AppointmentForm.Individual,
+            CompanyId = Guid.NewGuid(),
+            Status = AppointmentStatus.Scheduled
+        };
+        AppointmentSegment segment = AppointmentFrameMutator.NewSegment(appointment,
+            new AppointmentFrame(service?.Id ?? Guid.NewGuid(), employeeId, roomId, StartsAt, 45));
+        segment.Service = service;
+        return appointment;
+    }
 
     private static Booking NewBooking(Appointment appointment, Guid? organizationId = null, Guid? appointmentId = null) => new()
     {
@@ -88,9 +90,10 @@ public class ExecutionContextResolverTests
         Appointment appointment = NewAppointment(Guid.NewGuid());
         Guid newService = Guid.NewGuid(), newEmployee = Guid.NewGuid();
         DateTimeOffset newStart = StartsAt.AddHours(4);
-        appointment.ServiceId = newService;
-        appointment.EmployeeId = newEmployee;
-        appointment.StartsAt = newStart;
+        AppointmentFrameMutator.Apply(appointment, AppointmentFrame.Of(appointment) with
+        {
+            ServiceId = newService, EmployeeId = newEmployee, StartsAt = newStart
+        }, DateTimeOffset.UtcNow);
 
         AppointmentExecutionContext execution = ExecutionContextResolver.ForAppointment(appointment);
 

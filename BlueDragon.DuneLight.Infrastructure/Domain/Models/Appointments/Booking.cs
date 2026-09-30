@@ -72,7 +72,7 @@ public class Booking
     [Column("amount")]
     public decimal Amount { get; set; }
 
-    /// <summary>Snapshot predložene cijene iz IPricingService (Service/Company/Appointment.StartsAt) u trenutku
+    /// <summary>Snapshot predložene cijene iz IPricingService (usluga/poslovnica/početak segmenta termina) u trenutku
     /// kreiranja/naplate ovog Bookinga — ne mijenja se retroaktivno kasnijim promjenama cjenika (vidi domensku
     /// napomenu na klasi).</summary>
     [Column("suggested_amount")]

@@ -301,9 +301,7 @@ public class EmployeeHandler : IEmployeeHandler
     {
         await using DatabaseContext context = DatabaseContext.GenerateContext(_databaseSettings.ConnectionString);
 
-        if (await context.Appointments.AnyAsync(a => a.OrganizationId == organizationId && a.EmployeeId == employeeId))
-            return true;
-        // Phase D1: appointment_segment_employees.employee_id je Restrict FK.
+        // Phase D3A: dodjela zaposlenika terminu živi na segmentu (appointment_segment_employees, Restrict FK).
         if (await context.AppointmentSegmentEmployees.AnyAsync(e => e.EmployeeId == employeeId && e.Segment.OrganizationId == organizationId))
             return true;
         if (await context.ScheduleBreaks.AnyAsync(b => b.OrganizationId == organizationId && b.EmployeeId == employeeId))

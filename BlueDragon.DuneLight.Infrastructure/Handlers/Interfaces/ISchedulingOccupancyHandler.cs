@@ -8,11 +8,12 @@ namespace BlueDragon.DuneLight.Infrastructure.Handlers.Interfaces;
 /// <summary>
 /// Čitanje zauzetosti rasporeda (termini trenera/prostorije/klijenta) za provjere preklapanja, recurring/grupne
 /// batch provjere, pauze i available-slots. Vraća <see cref="OccupancySlot"/> umjesto Appointment entiteta, tako da
-/// pozivatelji ne ovise o jednom ServiceId/EmployeeId/RoomId/StartsAt obliku termina.
+/// pozivatelji ne ovise o obliku pohrane termina. Od Phase D3A se gradi iz AppointmentSegment (jedan slot po segmentu:
+/// PlannedStart/PlannedEnd, prostorija i zaposlenik segmenta, aktivni klijenti termina).
 ///
-/// Svi upiti isključuju termine sa Status = Cancelled. Metode "Overlapping" dohvaćaju kandidate čiji StartsAt pada
+/// Svi upiti isključuju termine sa Status = Cancelled. Metode "Overlapping" dohvaćaju kandidate čiji PlannedStart pada
 /// unutar ±1 dan od traženog početka i zatim u memoriji zadržavaju samo stvarna preklapanja (susjedni intervali nisu
-/// sudar); metode "InRange" vraćaju sve termine čiji StartsAt pada unutar [rangeFrom, rangeTo] (uključivo), a precizna
+/// sudar); metode "InRange" vraćaju sve segmente čiji PlannedStart pada unutar [rangeFrom, rangeTo] (uključivo), a precizna
 /// provjera po occurrenceu radi se kod pozivatelja.
 /// </summary>
 public interface ISchedulingOccupancyHandler

@@ -1,5 +1,6 @@
 #nullable disable
 using System;
+using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
 using BlueDragon.DuneLight.Core.DTOs.Appointments;
@@ -8,6 +9,8 @@ using BlueDragon.DuneLight.Core.Enums;
 using BlueDragon.DuneLight.Core.Shared;
 using BlueDragon.DuneLight.Core.Shared.Exceptions;
 using BlueDragon.DuneLight.Infrastructure.Domain.Contexts;
+using BlueDragon.DuneLight.Infrastructure.Utils;
+using BlueDragon.DuneLight.Infrastructure.Handlers.Interfaces;
 using BlueDragon.DuneLight.Infrastructure.Domain.Models.Appointments;
 using BlueDragon.DuneLight.Infrastructure.Domain.Models.Catalog;
 using BlueDragon.DuneLight.Infrastructure.Domain.Models.Clients;
@@ -289,34 +292,25 @@ public class GroupOccurrenceGenerationCharacterizationTests
     }
 
     [Fact]
-    public async Task DuplicateOccurrence_IsAlsoStoppedByTheDatabaseUniqueIndexOnSlotAndStart()
+    public async Task DuplicateOccurrence_IsAlsoStoppedAtWriteTime_UnderTheSlotLock()
     {
-        (SchedulingWorld w, ServiceEntity svc) = await Arrange(nameof(DuplicateOccurrence_IsAlsoStoppedByTheDatabaseUniqueIndexOnSlotAndStart));
+        (SchedulingWorld w, ServiceEntity svc) = await Arrange(nameof(DuplicateOccurrence_IsAlsoStoppedAtWriteTime_UnderTheSlotLock));
         await using SchedulingWorld _ = w;
         GroupDto group = await w.CreateGroup(svc, capacity: 5);
         Appointment existing = await w.GenerateSingleOccurrence(group);
 
-        // The application dedupes first (previous tests); ux_appointments_group_slot_startsat is the safety net beneath it.
-        await using DatabaseContext db = w.NewDb();
-        db.Appointments.Add(new Appointment
-        {
-            Id = Guid.NewGuid(),
-            OrganizationId = w.OrganizationId,
-            Form = AppointmentForm.Group,
-            StartsAt = existing.StartsAt,
-            DurationMinutes = existing.DurationMinutes,
-            ServiceId = existing.ServiceId,
-            CompanyId = existing.CompanyId,
-            Status = AppointmentStatus.Scheduled,
-            GroupId = existing.GroupId,
-            GroupSlotId = existing.GroupSlotId,
-            CreatedAt = DateTimeOffset.UtcNow
-        });
+        // The application dedupes first (previous tests). CHANGED in D3A: the safety net beneath it used to be the unique
+        // index ux_appointments_group_slot_startsat on appointments(group_slot_id, starts_at); starts_at no longer exists
+        // (the start lives on the segment), so the net is now GroupHandler.AddAppointments — a per-slot transaction lock
+        // plus a re-check of existing (slot, start) pairs before inserting. A duplicate write is refused and nothing is saved.
+        Appointment duplicate = AppointmentFactory.CreateGroupOccurrence(
+            w.OrganizationId, existing.CompanyId, AppointmentFrame.Of(existing), existing.GroupId.Value, existing.GroupSlotId.Value,
+            w.ActorUserId, DateTimeOffset.UtcNow);
 
-        DbUpdateException ex = await Assert.ThrowsAsync<DbUpdateException>(() => db.SaveChangesAsync());
-        PostgresException pg = Assert.IsType<PostgresException>(ex.InnerException);
-        Assert.Equal(PostgresErrorCodes.UniqueViolation, pg.SqlState);
-        Assert.Equal("ux_appointments_group_slot_startsat", pg.ConstraintName);
+        bool added = await w.Resolve<IGroupHandler>().AddAppointments(new List<Appointment> { duplicate });
+
+        Assert.False(added);
+        Assert.Equal(1, await w.CountAppointments(q => q.Where(a => a.GroupSlotId == existing.GroupSlotId)));
     }
 
     #endregion

@@ -362,7 +362,7 @@ public class AppointmentOverlapCharacterizationTests
             Assert.Equal(room.Id, dto.RoomId);
         }
 
-        Assert.Equal(3, await w.CountAppointments(q => q.Where(a => a.RoomId == room.Id)));
+        Assert.Equal(3, await w.CountAppointments(q => q.Where(a => a.Segments.Any(s => s.RoomId == room.Id))));
     }
 
     [Fact]
@@ -408,7 +408,7 @@ public class AppointmentOverlapCharacterizationTests
         await w.SeedAppointment(SchedulingWorld.Future(10), room: room, bookings: (w.Client, BookingStatus.Confirmed, 50m));
         await w.SeedAppointment(SchedulingWorld.Future(10), room: room, bookings: (other, BookingStatus.Confirmed, 50m));
 
-        Assert.Equal(2, await w.CountAppointments(q => q.Where(a => a.RoomId == room.Id && a.EmployeeId == w.Employee.Id)));
+        Assert.Equal(2, await w.CountAppointments(q => q.Where(a => a.Segments.Any(s => s.RoomId == room.Id && s.Employees.Any(e => e.EmployeeId == w.Employee.Id)))));
     }
 
     [Fact]

@@ -21,8 +21,6 @@ using BlueDragon.DuneLight.Infrastructure.Handlers.Interfaces;
 using BlueDragon.DuneLight.Infrastructure.Outbox;
 using BlueDragon.DuneLight.Infrastructure.UnitOfWork;
 using BlueDragon.DuneLight.Infrastructure.Utils;
-using Microsoft.EntityFrameworkCore;
-using Npgsql;
 using ServiceEntity = BlueDragon.DuneLight.Infrastructure.Domain.Models.Catalog.Service;
 
 namespace BlueDragon.DuneLight.Infrastructure.Services;
@@ -310,10 +308,10 @@ public class GroupService : IGroupService
         MapGroup(group, dto);
         dto.Members = group.Members.Where(m => m.IsActive).Select(ToMemberDto).ToList();
         int expectedCount = group.Members.Count(m => m.IsActive);
-        dto.UpcomingAppointments = appointments.Where(a => a.StartsAt >= now)
-            .OrderBy(a => a.StartsAt).Select(a => ToScheduleCellDto(a, group.Name, expectedCount)).ToList();
-        dto.PastAppointments = appointments.Where(a => a.StartsAt < now)
-            .OrderByDescending(a => a.StartsAt).Select(a => ToScheduleCellDto(a, group.Name, expectedCount)).ToList();
+        dto.UpcomingAppointments = appointments.Where(a => AppointmentFrame.Of(a).StartsAt >= now)
+            .OrderBy(a => AppointmentFrame.Of(a).StartsAt).Select(a => ToScheduleCellDto(a, group.Name, expectedCount)).ToList();
+        dto.PastAppointments = appointments.Where(a => AppointmentFrame.Of(a).StartsAt < now)
+            .OrderByDescending(a => AppointmentFrame.Of(a).StartsAt).Select(a => ToScheduleCellDto(a, group.Name, expectedCount)).ToList();
 
         return dto;
     }
@@ -480,14 +478,15 @@ public class GroupService : IGroupService
                 if (futureAppointment.Bookings.Any(b => b.ClientId == request.ClientId))
                     continue;
 
+                AppointmentFrame futureFrame = AppointmentFrame.Of(futureAppointment);
                 List<OccupancySlot> overlapping = await _schedulingOccupancyHandler.GetOverlappingForClients(
                     organizationId, new List<Guid> { request.ClientId },
-                    futureAppointment.StartsAt, futureAppointment.DurationMinutes, excludeId: futureAppointment.Id);
+                    futureFrame.StartsAt, futureFrame.DurationMinutes, excludeId: futureAppointment.Id);
 
                 if (overlapping.Count > 0)
                     conflicts.Add(new RecurringConflictDetail
                     {
-                        Date = futureAppointment.StartsAt,
+                        Date = futureFrame.StartsAt,
                         Reason = ErrorCodes.RecurringConflictReasonAppointment
                     });
             }
@@ -775,13 +774,10 @@ public class GroupService : IGroupService
             });
         }
 
-        try
-        {
-            await _groupHandler.AddAppointments(toCreate);
-        }
-        catch (DbUpdateException ex) when (ex.InnerException is PostgresException postgresException &&
-                                           postgresException.SqlState == PostgresErrorCodes.UniqueViolation &&
-                                           postgresException.ConstraintName == "ux_appointments_group_slot_startsat")
+        // Phase D3A: jedinstvenost (slot, početak) provodi GroupHandler.AddAppointments (advisory lock + ponovna provjera
+        // pod lockom) umjesto nekadašnjeg unique indeksa nad appointments.starts_at — isti ishod za pozivatelja.
+        bool added = await _groupHandler.AddAppointments(toCreate);
+        if (!added)
         {
             throw new BusinessRuleException(
                 ErrorCodes.RecurringConflict,
@@ -1378,20 +1374,21 @@ public class GroupService : IGroupService
     /// groupName/expectedCount dolaze iz već učitanog Group entiteta, ne iz a.Group (nije uključen u upit).</summary>
     private static AppointmentScheduleCellDto ToScheduleCellDto(Appointment a, string groupName, int expectedCount)
     {
+        AppointmentFrameView frame = AppointmentFrameView.Of(a);
         return new AppointmentScheduleCellDto
         {
             Id = a.Id.GetValueOrDefault(),
-            StartsAt = a.StartsAt,
-            DurationMinutes = a.DurationMinutes,
-            ServiceId = a.ServiceId,
-            ServiceName = a.Service?.Name,
-            ServiceCategoryColorHex = a.Service?.ColorHex,
-            EmployeeId = a.EmployeeId,
-            EmployeeName = a.Employee != null ? $"{a.Employee.FirstName} {a.Employee.LastName}" : null,
+            StartsAt = frame.StartsAt,
+            DurationMinutes = frame.DurationMinutes,
+            ServiceId = frame.ServiceId,
+            ServiceName = frame.ServiceName,
+            ServiceCategoryColorHex = frame.ServiceColorHex,
+            EmployeeId = frame.EmployeeId,
+            EmployeeName = frame.EmployeeName,
             CompanyId = a.CompanyId,
             CompanyName = a.Company?.Name,
-            RoomId = a.RoomId,
-            RoomName = a.Room?.Name,
+            RoomId = frame.RoomId,
+            RoomName = frame.RoomName,
             Status = a.Status,
             IsCancelled = a.Status == AppointmentStatus.Cancelled,
             Form = AppointmentForm.Group,

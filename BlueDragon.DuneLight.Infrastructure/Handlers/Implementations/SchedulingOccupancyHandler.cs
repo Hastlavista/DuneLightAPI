@@ -7,6 +7,7 @@ using BlueDragon.DuneLight.Infrastructure.Domain.Contexts;
 using BlueDragon.DuneLight.Infrastructure.Domain.Models.Appointments;
 using BlueDragon.DuneLight.Infrastructure.Domain.Settings;
 using BlueDragon.DuneLight.Infrastructure.Handlers.Interfaces;
+using BlueDragon.DuneLight.Infrastructure.Utils;
 using Microsoft.EntityFrameworkCore;
 
 namespace BlueDragon.DuneLight.Infrastructure.Handlers.Implementations;
@@ -33,13 +34,11 @@ public class SchedulingOccupancyHandler : ISchedulingOccupancyHandler
         DateTimeOffset windowEnd = startsAt.AddDays(1);
 
         await using DatabaseContext context = DatabaseContext.GenerateContext(_databaseSettings.ConnectionString);
-        List<OccupancySlot> candidates = await Project(context.Appointments
-            .Where(a =>
-                a.OrganizationId == organizationId &&
-                a.EmployeeId == employeeId &&
-                a.Status != AppointmentStatus.Cancelled &&
-                a.StartsAt >= windowStart && a.StartsAt <= windowEnd &&
-                (excludeId == null || a.Id != excludeId)));
+        List<OccupancySlot> candidates = await Project(ActiveSegments(context, organizationId)
+            .Where(s =>
+                s.Employees.Any(e => e.EmployeeId == employeeId) &&
+                s.PlannedStart >= windowStart && s.PlannedStart <= windowEnd &&
+                (excludeId == null || s.AppointmentId != excludeId)));
 
         return candidates.Where(s => s.Overlaps(startsAt, newEnd)).ToList();
     }
@@ -52,13 +51,11 @@ public class SchedulingOccupancyHandler : ISchedulingOccupancyHandler
         DateTimeOffset windowEnd = startsAt.AddDays(1);
 
         await using DatabaseContext context = DatabaseContext.GenerateContext(_databaseSettings.ConnectionString);
-        List<OccupancySlot> candidates = await Project(context.Appointments
-            .Where(a =>
-                a.OrganizationId == organizationId &&
-                a.Status != AppointmentStatus.Cancelled &&
-                a.StartsAt >= windowStart && a.StartsAt <= windowEnd &&
-                a.Bookings.Any(b => clientIds.Contains(b.ClientId) && b.Status != BookingStatus.Cancelled && b.Status != BookingStatus.NoShow) &&
-                (excludeId == null || a.Id != excludeId)));
+        List<OccupancySlot> candidates = await Project(ActiveSegments(context, organizationId)
+            .Where(s =>
+                s.PlannedStart >= windowStart && s.PlannedStart <= windowEnd &&
+                s.Appointment.Bookings.Any(b => clientIds.Contains(b.ClientId) && b.Status != BookingStatus.Cancelled && b.Status != BookingStatus.NoShow) &&
+                (excludeId == null || s.AppointmentId != excludeId)));
 
         return candidates.Where(s => s.Overlaps(startsAt, newEnd)).ToList();
     }
@@ -71,13 +68,11 @@ public class SchedulingOccupancyHandler : ISchedulingOccupancyHandler
         DateTimeOffset windowEnd = startsAt.AddDays(1);
 
         await using DatabaseContext context = DatabaseContext.GenerateContext(_databaseSettings.ConnectionString);
-        List<OccupancySlot> candidates = await Project(context.Appointments
-            .Where(a =>
-                a.OrganizationId == organizationId &&
-                a.RoomId == roomId &&
-                a.Status != AppointmentStatus.Cancelled &&
-                a.StartsAt >= windowStart && a.StartsAt <= windowEnd &&
-                (excludeId == null || a.Id != excludeId)));
+        List<OccupancySlot> candidates = await Project(ActiveSegments(context, organizationId)
+            .Where(s =>
+                s.RoomId == roomId &&
+                s.PlannedStart >= windowStart && s.PlannedStart <= windowEnd &&
+                (excludeId == null || s.AppointmentId != excludeId)));
 
         return candidates.Where(s => s.Overlaps(startsAt, newEnd)).ToList();
     }
@@ -86,63 +81,63 @@ public class SchedulingOccupancyHandler : ISchedulingOccupancyHandler
         Guid organizationId, Guid employeeId, DateTimeOffset rangeFrom, DateTimeOffset rangeTo)
     {
         await using DatabaseContext context = DatabaseContext.GenerateContext(_databaseSettings.ConnectionString);
-        return await Project(context.Appointments
-            .Where(a =>
-                a.OrganizationId == organizationId &&
-                a.EmployeeId == employeeId &&
-                a.Status != AppointmentStatus.Cancelled &&
-                a.StartsAt >= rangeFrom && a.StartsAt <= rangeTo));
+        return await Project(ActiveSegments(context, organizationId)
+            .Where(s =>
+                s.Employees.Any(e => e.EmployeeId == employeeId) &&
+                s.PlannedStart >= rangeFrom && s.PlannedStart <= rangeTo));
     }
 
     public async Task<List<OccupancySlot>> GetForEmployeesInRange(
         Guid organizationId, List<Guid> employeeIds, DateTimeOffset rangeFrom, DateTimeOffset rangeTo)
     {
         await using DatabaseContext context = DatabaseContext.GenerateContext(_databaseSettings.ConnectionString);
-        return await Project(context.Appointments
-            .Where(a =>
-                a.OrganizationId == organizationId &&
-                a.EmployeeId != null && employeeIds.Contains(a.EmployeeId.Value) &&
-                a.Status != AppointmentStatus.Cancelled &&
-                a.StartsAt >= rangeFrom && a.StartsAt <= rangeTo));
+        return await Project(ActiveSegments(context, organizationId)
+            .Where(s =>
+                s.Employees.Any(e => employeeIds.Contains(e.EmployeeId)) &&
+                s.PlannedStart >= rangeFrom && s.PlannedStart <= rangeTo));
     }
 
     public async Task<List<OccupancySlot>> GetForRoomInRange(
         Guid organizationId, Guid roomId, DateTimeOffset rangeFrom, DateTimeOffset rangeTo)
     {
         await using DatabaseContext context = DatabaseContext.GenerateContext(_databaseSettings.ConnectionString);
-        return await Project(context.Appointments
-            .Where(a =>
-                a.OrganizationId == organizationId &&
-                a.RoomId == roomId &&
-                a.Status != AppointmentStatus.Cancelled &&
-                a.StartsAt >= rangeFrom && a.StartsAt <= rangeTo));
+        return await Project(ActiveSegments(context, organizationId)
+            .Where(s =>
+                s.RoomId == roomId &&
+                s.PlannedStart >= rangeFrom && s.PlannedStart <= rangeTo));
     }
 
     public async Task<List<OccupancySlot>> GetForClientsInRange(
         Guid organizationId, List<Guid> clientIds, DateTimeOffset rangeFrom, DateTimeOffset rangeTo)
     {
         await using DatabaseContext context = DatabaseContext.GenerateContext(_databaseSettings.ConnectionString);
-        return await Project(context.Appointments
-            .Where(a =>
-                a.OrganizationId == organizationId &&
-                a.Status != AppointmentStatus.Cancelled &&
-                a.StartsAt >= rangeFrom && a.StartsAt <= rangeTo &&
-                a.Bookings.Any(b => clientIds.Contains(b.ClientId) && b.Status != BookingStatus.Cancelled && b.Status != BookingStatus.NoShow)));
+        return await Project(ActiveSegments(context, organizationId)
+            .Where(s =>
+                s.PlannedStart >= rangeFrom && s.PlannedStart <= rangeTo &&
+                s.Appointment.Bookings.Any(b => clientIds.Contains(b.ClientId) && b.Status != BookingStatus.Cancelled && b.Status != BookingStatus.NoShow)));
     }
 
-    /// <summary>StartsAt se učitava kao i prije (isti offset kao materijalizirani Appointment.StartsAt), a End se računa
-    /// u memoriji iz te iste vrijednosti — SQL aritmetika nad vremenom bi mogla promijeniti offset (vidi F-19).</summary>
-    private static async Task<List<OccupancySlot>> Project(IQueryable<Appointment> query)
+    /// <summary>Segmenti ne-otkazanih termina organizacije — status je i dalje na razini termina.</summary>
+    private static IQueryable<AppointmentSegment> ActiveSegments(DatabaseContext context, Guid organizationId) =>
+        context.AppointmentSegments.Where(s =>
+            s.OrganizationId == organizationId &&
+            s.Appointment.Status != AppointmentStatus.Cancelled);
+
+    /// <summary>Phase D3A: jedan OccupancySlot po segmentu (danas točno jedan po terminu). Segment s više zaposlenika se
+    /// NE sažima u jednog — OccupancySlot nosi jednog zaposlenika, pa se takav segment eksplicitno odbija
+    /// (<see cref="AppointmentSegments.GetSingleEmployeeId"/>) dok višezaposlenička zauzetost ne bude definirana.</summary>
+    private static async Task<List<OccupancySlot>> Project(IQueryable<AppointmentSegment> query)
     {
         var rows = await query
-            .Select(a => new
+            .Select(s => new
             {
-                a.Id,
-                a.StartsAt,
-                a.DurationMinutes,
-                a.EmployeeId,
-                a.RoomId,
-                ActiveClientIds = a.Bookings
+                s.Id,
+                s.AppointmentId,
+                s.PlannedStart,
+                s.PlannedEnd,
+                s.RoomId,
+                EmployeeIds = s.Employees.Select(e => e.EmployeeId).ToList(),
+                ActiveClientIds = s.Appointment.Bookings
                     .Where(b => b.Status != BookingStatus.Cancelled && b.Status != BookingStatus.NoShow)
                     .Select(b => b.ClientId)
                     .ToList()
@@ -151,10 +146,10 @@ public class SchedulingOccupancyHandler : ISchedulingOccupancyHandler
 
         return rows
             .Select(r => new OccupancySlot(
-                r.Id.GetValueOrDefault(),
-                r.StartsAt,
-                r.StartsAt.AddMinutes(r.DurationMinutes),
-                r.EmployeeId,
+                r.AppointmentId,
+                r.PlannedStart,
+                r.PlannedEnd,
+                AppointmentSegments.GetSingleEmployeeId(r.Id, r.EmployeeIds),
                 r.RoomId,
                 r.ActiveClientIds))
             .ToList();

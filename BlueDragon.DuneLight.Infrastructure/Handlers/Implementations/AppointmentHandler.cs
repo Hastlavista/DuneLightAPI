@@ -30,14 +30,59 @@ public class AppointmentHandler : IAppointmentHandler
     /// (klijent koji je otkazao/izostao nije stvarno spriječen zakazati nešto drugo u to vrijeme).</summary>
     private static bool IsActiveBookingStatus(BookingStatus status) => status != BookingStatus.Cancelled && status != BookingStatus.NoShow;
 
+    /// <summary>Phase D3A: izvršni okvir (usluga, prostorija, zaposlenik) se učitava preko segmenata.</summary>
     private static IQueryable<Appointment> IncludeGraph(IQueryable<Appointment> query)
     {
         return query
-            .Include(a => a.Service)
-            .Include(a => a.Employee)
+            .Include(a => a.Segments).ThenInclude(s => s.Service)
+            .Include(a => a.Segments).ThenInclude(s => s.Room)
+            .Include(a => a.Segments).ThenInclude(s => s.Employees).ThenInclude(e => e.Employee)
             .Include(a => a.Company)
-            .Include(a => a.Room)
             .Include(a => a.Bookings).ThenInclude(b => b.Client);
+    }
+
+    /// <summary>Samo segment(i) + dodjele zaposlenika, bez kataloških navigacija — za čitanje okvira/vlasništva i za
+    /// izmjenu (navigacije se ne učitavaju da ne bi kod spremanja nadjačale promijenjeni FK).</summary>
+    private static IQueryable<Appointment> IncludeFrame(IQueryable<Appointment> query)
+    {
+        return query.Include(a => a.Segments).ThenInclude(s => s.Employees);
+    }
+
+    /// <summary>
+    /// Phase D3A — priprema termina (i njegovog segmenta) za spremanje. Praćen entitet (FOR UPDATE unutar UnitOfWork):
+    /// EF već prati izmjene segmenta i dodjela (uklonjena dodjela = orphan brisanje, nova = Added) — samo DetectChanges.
+    /// Nepraćen graf: Update(graph) za termin/segment, a dodjele zaposlenika (složeni ključ) se sinkroniziraju eksplicitno
+    /// — Update(graph) bi novu dodjelu označio kao Modified, a uklonjenu uopće ne bi obrisao.
+    /// </summary>
+    private static async Task PrepareForSave(DatabaseContext context, Appointment appointment)
+    {
+        if (context.Entry(appointment).State != EntityState.Detached)
+        {
+            context.ChangeTracker.DetectChanges();
+            return;
+        }
+
+        List<(AppointmentSegment Segment, List<Guid> EmployeeIds)> desired = appointment.Segments
+            .Select(s => (s, s.Employees.Select(e => e.EmployeeId).ToList()))
+            .ToList();
+        foreach ((AppointmentSegment segment, _) in desired)
+            segment.Employees = new List<AppointmentSegmentEmployee>();
+
+        context.Appointments.Update(appointment);
+
+        foreach ((AppointmentSegment segment, List<Guid> employeeIds) in desired)
+        {
+            List<AppointmentSegmentEmployee> existing = await context.AppointmentSegmentEmployees
+                .Where(e => e.AppointmentSegmentId == segment.Id)
+                .ToListAsync();
+            context.AppointmentSegmentEmployees.RemoveRange(existing.Where(e => !employeeIds.Contains(e.EmployeeId)));
+            foreach (Guid employeeId in employeeIds.Where(id => existing.All(e => e.EmployeeId != id)))
+                context.AppointmentSegmentEmployees.Add(new AppointmentSegmentEmployee
+                {
+                    AppointmentSegmentId = segment.Id.GetValueOrDefault(),
+                    EmployeeId = employeeId
+                });
+        }
     }
 
     public async Task Add(Appointment appointment)
@@ -65,16 +110,14 @@ public class AppointmentHandler : IAppointmentHandler
     public async Task<Appointment> GetByIdLight(Guid organizationId, Guid id)
     {
         await using DatabaseContext context = DatabaseContext.GenerateContext(_databaseSettings.ConnectionString);
-        return await context.Appointments
+        return await IncludeFrame(context.Appointments)
             .SingleOrDefaultAsync(a => a.OrganizationId == organizationId && a.Id == id);
     }
 
     public async Task<Appointment> GetWithBookingsForMutation(Guid organizationId, Guid id)
     {
         await using DatabaseContext context = DatabaseContext.GenerateContext(_databaseSettings.ConnectionString);
-        return await context.Appointments
-            .Include(a => a.Service)
-            .Include(a => a.Employee)
+        return await IncludeFrame(context.Appointments)
             .Include(a => a.Group).ThenInclude(g => g.Members.Where(m => m.IsActive)).ThenInclude(m => m.Client)
             .Include(a => a.Bookings).ThenInclude(b => b.Client)
             .Include(a => a.Bookings).ThenInclude(b => b.CheckoutItems).ThenInclude(i => i.Allocations).ThenInclude(alloc => alloc.Payment)
@@ -104,14 +147,18 @@ public class AppointmentHandler : IAppointmentHandler
     {
         await using DatabaseContext context = DatabaseContext.GenerateContext(_databaseSettings.ConnectionString);
         return await context.Bookings
-            .Include(b => b.Appointment).ThenInclude(a => a.Service)
+            .Include(b => b.Appointment).ThenInclude(a => a.Segments).ThenInclude(s => s.Service)
+            .Include(b => b.Appointment).ThenInclude(a => a.Segments).ThenInclude(s => s.Employees)
+            .AsSplitQuery()
             .SingleOrDefaultAsync(b => b.OrganizationId == organizationId && b.Id == id);
     }
 
     public Task<Booking> GetBookingById(IUnitOfWork uow, Guid organizationId, Guid id)
     {
         return uow.Context.Bookings
-            .Include(b => b.Appointment).ThenInclude(a => a.Service)
+            .Include(b => b.Appointment).ThenInclude(a => a.Segments).ThenInclude(s => s.Service)
+            .Include(b => b.Appointment).ThenInclude(a => a.Segments).ThenInclude(s => s.Employees)
+            .AsSplitQuery()
             .SingleOrDefaultAsync(b => b.OrganizationId == organizationId && b.Id == id);
     }
 
@@ -151,13 +198,13 @@ public class AppointmentHandler : IAppointmentHandler
     public async Task UpdateScalar(Appointment appointment)
     {
         await using DatabaseContext context = DatabaseContext.GenerateContext(_databaseSettings.ConnectionString);
-        context.Appointments.Update(appointment);
+        await PrepareForSave(context, appointment);
         await context.SaveChangesAsync();
     }
 
     public async Task UpdateScalar(IUnitOfWork uow, Appointment appointment)
     {
-        uow.Context.Appointments.Update(appointment);
+        await PrepareForSave(uow.Context, appointment);
         await uow.Context.SaveChangesAsync();
     }
 
@@ -239,7 +286,7 @@ public class AppointmentHandler : IAppointmentHandler
                 new BookingPricing(amount, suggestedAmount, overridden), DateTimeOffset.UtcNow));
         }
 
-        context.Appointments.Update(appointment);
+        await PrepareForSave(context, appointment);
     }
 
     public async Task Delete(Appointment appointment)
@@ -255,27 +302,28 @@ public class AppointmentHandler : IAppointmentHandler
         IQueryable<Appointment> q = IncludeGraph(context.Appointments)
             .Include(a => a.Group).ThenInclude(g => g.Members.Where(m => m.IsActive))
             .AsSplitQuery()
-            .Where(a => a.OrganizationId == organizationId && a.StartsAt >= query.From && a.StartsAt <= query.To);
+            .Where(a => a.OrganizationId == organizationId &&
+                a.Segments.Any(s => s.PlannedStart >= query.From && s.PlannedStart <= query.To));
 
         if (query.CompanyId.HasValue)
             q = q.Where(a => a.CompanyId == query.CompanyId.Value);
 
         if (query.RoomId.HasValue)
-            q = q.Where(a => a.RoomId == query.RoomId.Value);
+            q = q.Where(a => a.Segments.Any(s => s.RoomId == query.RoomId.Value));
 
         if (query.EmployeeId.HasValue)
-            q = q.Where(a => a.EmployeeId == query.EmployeeId.Value);
+            q = q.Where(a => a.Segments.Any(s => s.Employees.Any(e => e.EmployeeId == query.EmployeeId.Value)));
 
         if (query.ServiceId.HasValue)
-            q = q.Where(a => a.ServiceId == query.ServiceId.Value);
+            q = q.Where(a => a.Segments.Any(s => s.ServiceId == query.ServiceId.Value));
 
         if (query.ExecutionMode.HasValue)
-            q = q.Where(a => a.Service.ExecutionMode == query.ExecutionMode.Value);
+            q = q.Where(a => a.Segments.Any(s => s.Service.ExecutionMode == query.ExecutionMode.Value));
 
         if (query.Status.HasValue)
             q = q.Where(a => a.Status == query.Status.Value);
 
-        return await q.OrderBy(a => a.StartsAt).ToListAsync();
+        return await q.OrderBy(a => a.Segments.Min(s => s.PlannedStart)).ToListAsync();
     }
 
     public async Task<List<Appointment>> GetForDashboard(Guid organizationId, Guid companyId, DateTimeOffset dayStart, DateTimeOffset dayEnd)
@@ -286,8 +334,8 @@ public class AppointmentHandler : IAppointmentHandler
             .Include(a => a.Bookings).ThenInclude(b => b.CheckoutItems).ThenInclude(i => i.Allocations).ThenInclude(alloc => alloc.Payment)
             .AsSplitQuery()
             .Where(a => a.OrganizationId == organizationId && a.CompanyId == companyId &&
-                a.StartsAt >= dayStart && a.StartsAt < dayEnd)
-            .OrderBy(a => a.StartsAt).ThenBy(a => a.Id)
+                a.Segments.Any(s => s.PlannedStart >= dayStart && s.PlannedStart < dayEnd))
+            .OrderBy(a => a.Segments.Min(s => s.PlannedStart)).ThenBy(a => a.Id)
             .ToListAsync();
     }
 
@@ -304,7 +352,7 @@ public class AppointmentHandler : IAppointmentHandler
         int totalCount = await query.CountAsync();
 
         List<Appointment> items = await query
-            .OrderByDescending(a => a.StartsAt)
+            .OrderByDescending(a => a.Segments.Min(s => s.PlannedStart))
             .Skip((request.Page - 1) * request.PageSize)
             .Take(request.PageSize)
             .ToListAsync();
@@ -319,13 +367,13 @@ public class AppointmentHandler : IAppointmentHandler
             .Include(a => a.Group)
             .Include(a => a.Bookings).ThenInclude(b => b.CheckoutItems).ThenInclude(i => i.Allocations).ThenInclude(alloc => alloc.Payment)
             .Where(a => a.OrganizationId == organizationId &&
-                a.EmployeeId == employeeId &&
+                a.Segments.Any(s => s.Employees.Any(e => e.EmployeeId == employeeId)) &&
                 a.Status == AppointmentStatus.Completed);
 
         int totalCount = await query.CountAsync();
 
         List<Appointment> items = await query
-            .OrderByDescending(a => a.StartsAt)
+            .OrderByDescending(a => a.Segments.Min(s => s.PlannedStart))
             .Skip((request.Page - 1) * request.PageSize)
             .Take(request.PageSize)
             .ToListAsync();
@@ -340,14 +388,14 @@ public class AppointmentHandler : IAppointmentHandler
     public Task<List<Appointment>> GetFutureScheduledForGroup(IUnitOfWork uow, Guid organizationId, Guid groupId)
     {
         DateTimeOffset now = DateTimeOffset.UtcNow;
-        return uow.Context.Appointments
+        return IncludeFrame(uow.Context.Appointments)
             .Include(a => a.Bookings)
             .Where(a =>
                 a.OrganizationId == organizationId &&
                 a.GroupId == groupId &&
                 a.Status == AppointmentStatus.Scheduled &&
-                a.StartsAt >= now)
-            .OrderBy(a => a.StartsAt).ThenBy(a => a.Id)
+                a.Segments.Any(s => s.PlannedStart >= now))
+            .OrderBy(a => a.Segments.Min(s => s.PlannedStart)).ThenBy(a => a.Id)
             .ToListAsync();
     }
 
@@ -355,11 +403,11 @@ public class AppointmentHandler : IAppointmentHandler
     {
         await using DatabaseContext context = DatabaseContext.GenerateContext(_databaseSettings.ConnectionString);
         DateTimeOffset now = DateTimeOffset.UtcNow;
-        return await context.Appointments.AnyAsync(a =>
-            a.OrganizationId == organizationId &&
-            a.EmployeeId == employeeId &&
-            a.Status == AppointmentStatus.Scheduled &&
-            a.StartsAt >= now);
+        return await context.AppointmentSegments.AnyAsync(s =>
+            s.OrganizationId == organizationId &&
+            s.Employees.Any(e => e.EmployeeId == employeeId) &&
+            s.Appointment.Status == AppointmentStatus.Scheduled &&
+            s.PlannedStart >= now);
     }
 
     public async Task<bool> HasAnyForClient(Guid organizationId, Guid clientId)
@@ -384,7 +432,7 @@ public class AppointmentHandler : IAppointmentHandler
             context.Appointments.Any(a =>
                 a.Id == b.AppointmentId &&
                 a.Status == AppointmentStatus.Scheduled &&
-                a.StartsAt >= now));
+                a.Segments.Any(s => s.PlannedStart >= now)));
     }
 
     /// <summary>FOR UPDATE preko FromSqlInterpolated (parametrizirano, sigurno od SQL injection) — Postgres Read
@@ -395,6 +443,7 @@ public class AppointmentHandler : IAppointmentHandler
     {
         return await uow.Context.Appointments
             .FromSqlInterpolated($"SELECT * FROM dunelight.appointments WHERE organization_id = {organizationId} AND id = {appointmentId} FOR UPDATE")
+            .Include(a => a.Segments).ThenInclude(s => s.Employees)
             .Include(a => a.Group)
             .SingleOrDefaultAsync();
     }
@@ -403,6 +452,7 @@ public class AppointmentHandler : IAppointmentHandler
     {
         return await uow.Context.Appointments
             .FromSqlInterpolated($"SELECT * FROM dunelight.appointments WHERE organization_id = {organizationId} AND id = {appointmentId} FOR UPDATE")
+            .Include(a => a.Segments).ThenInclude(s => s.Employees)
             .SingleOrDefaultAsync();
     }
 
@@ -410,6 +460,7 @@ public class AppointmentHandler : IAppointmentHandler
     {
         return await uow.Context.Appointments
             .FromSqlInterpolated($"SELECT * FROM dunelight.appointments WHERE organization_id = {organizationId} AND id = {appointmentId} FOR UPDATE")
+            .Include(a => a.Segments).ThenInclude(s => s.Employees)
             .Include(a => a.Bookings)
             .SingleOrDefaultAsync();
     }
@@ -469,12 +520,13 @@ public class AppointmentHandler : IAppointmentHandler
 
         DateTimeOffset? lastVisit = await bookings
             .Where(b => b.Status == BookingStatus.Completed)
-            .Select(b => (DateTimeOffset?)b.Appointment.StartsAt)
+            .Select(b => (DateTimeOffset?)b.Appointment.Segments.Min(s => s.PlannedStart))
             .MaxAsync();
 
         DateTimeOffset? nextVisit = await bookings
-            .Where(b => b.Status == BookingStatus.Confirmed && b.Appointment.Status == AppointmentStatus.Scheduled && b.Appointment.StartsAt > now)
-            .Select(b => (DateTimeOffset?)b.Appointment.StartsAt)
+            .Where(b => b.Status == BookingStatus.Confirmed && b.Appointment.Status == AppointmentStatus.Scheduled &&
+                b.Appointment.Segments.Any(s => s.PlannedStart > now))
+            .Select(b => (DateTimeOffset?)b.Appointment.Segments.Min(s => s.PlannedStart))
             .MinAsync();
 
         return new ClientAppointmentStatsDto

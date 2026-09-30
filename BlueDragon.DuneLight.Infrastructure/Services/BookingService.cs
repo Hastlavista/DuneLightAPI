@@ -209,7 +209,7 @@ public class BookingService : IBookingService
             await LoadEligibleClient(organizationId, clientId);
 
             if ((request.Status == BookingStatus.Completed || request.Status == BookingStatus.NoShow) &&
-                appointment.StartsAt > DateTimeOffset.UtcNow)
+                AppointmentFrame.Of(appointment).StartsAt > DateTimeOffset.UtcNow)
             {
                 throw new BusinessRuleException(
                     ErrorCodes.AttendanceBeforeStart,
@@ -269,13 +269,13 @@ public class BookingService : IBookingService
             // isNewGuestBooking — dopuštalo je da Cancelled->Confirmed korekcija nakon FIFO promocije proizvede
             // ConfirmedCount > Capacity (poznat defekt). Idempotentan Confirmed -> Confirmed nikad ne ulazi ovamo
             // (booking.Status != BookingStatus.Confirmed to isključuje) — ne zauzima novo mjesto pa ostaje no-op čak
-            // i kad je grupa puna. Za POSTOJEĆI Booking provjera je namjerno future-only (appointment.StartsAt u
+            // i kad je grupa puna. Za POSTOJEĆI Booking provjera je namjerno future-only (početak segmenta termina u
             // budućnosti) — nakon početka termina nominalni kapacitet više ne ograničava korekciju povijesne
             // prisutnosti (isto pravilo kao postojeće dopuštenje da Completed/NoShow premaše kapacitet nakon
             // početka); gost-čekiranje kroz GroupAttendanceService uvijek šalje Completed/NoShow (nikad Confirmed)
             // pa ta grana i dalje ne dira postojeći check-in tok.
             bool isExistingBookingReturningToConfirmed =
-                !isNewGuestBooking && booking.Status != BookingStatus.Confirmed && appointment.StartsAt > DateTimeOffset.UtcNow;
+                !isNewGuestBooking && booking.Status != BookingStatus.Confirmed && AppointmentFrame.Of(appointment).StartsAt > DateTimeOffset.UtcNow;
 
             if (isGroup && request.Status == BookingStatus.Confirmed && (isNewGuestBooking || isExistingBookingReturningToConfirmed))
                 await EnsureGroupCapacityAvailable(uow, organizationId, appointmentId);
@@ -424,8 +424,9 @@ public class BookingService : IBookingService
     /// neotkazanim terminima blokiraju interval. Pravilo ostaje strict-open interval pa su susjedni termini valjani.</summary>
     private async Task EnsureClientHasNoOverlap(Guid organizationId, Appointment appointment, Guid clientId)
     {
+        AppointmentFrame frame = AppointmentFrame.Of(appointment);
         List<OccupancySlot> overlapping = await _schedulingOccupancyHandler.GetOverlappingForClients(
-            organizationId, new List<Guid> { clientId }, appointment.StartsAt, appointment.DurationMinutes, excludeId: appointment.Id);
+            organizationId, new List<Guid> { clientId }, frame.StartsAt, frame.DurationMinutes, excludeId: appointment.Id);
 
         if (overlapping.Count > 0)
             throw new BusinessRuleException(

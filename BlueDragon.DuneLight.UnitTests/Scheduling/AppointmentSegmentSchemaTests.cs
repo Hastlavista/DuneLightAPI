@@ -132,16 +132,14 @@ public class AppointmentSegmentSchemaTests
     }
 
     [Fact]
-    public async Task LegacyAppointmentColumns_AreUnchanged()
+    public async Task LegacyAppointmentFrameColumns_AreRemoved()
     {
+        // CHANGED in D3A (was LegacyAppointmentColumns_AreUnchanged): the frame lives only on the segment now.
         Dictionary<string, (string Type, string Nullable)> columns = await Columns("appointments");
 
-        Assert.Equal(("uuid", "NO"), columns["service_id"]);
-        Assert.Equal(("uuid", "YES"), columns["employee_id"]);
-        Assert.Equal(("uuid", "YES"), columns["room_id"]);
+        foreach (string legacy in new[] { "service_id", "employee_id", "room_id", "starts_at", "duration_minutes" })
+            Assert.DoesNotContain(legacy, columns.Keys);
         Assert.Equal(("uuid", "NO"), columns["company_id"]);
-        Assert.Equal(("timestamp with time zone", "NO"), columns["starts_at"]);
-        Assert.Equal(("integer", "NO"), columns["duration_minutes"]);
         Assert.Empty(await Query("SELECT 1 FROM information_schema.triggers WHERE trigger_schema = 'dunelight' AND event_object_table LIKE 'appointment%'"));
     }
 }

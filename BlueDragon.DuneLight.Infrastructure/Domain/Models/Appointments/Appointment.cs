@@ -4,13 +4,14 @@ using System.ComponentModel.DataAnnotations;
 using System.ComponentModel.DataAnnotations.Schema;
 using BlueDragon.DuneLight.Core.Enums;
 using BlueDragon.DuneLight.Infrastructure.Domain.Models.Catalog;
-using BlueDragon.DuneLight.Infrastructure.Domain.Models.Employees;
 using BlueDragon.DuneLight.Infrastructure.Domain.Models.Groups;
 
 namespace BlueDragon.DuneLight.Infrastructure.Domain.Models.Appointments;
 
 /// <summary>
-/// Termin — okvir/resurs (usluga, vrijeme, trener, prostorija). Naplata (Amount/SuggestedAmount, i
+/// Termin — operativni kontejner (organizacija, poslovnica, životni ciklus, metapodaci, Bookinzi, segmenti). Od Phase D3A
+/// izvršni okvir (usluga, planirano vrijeme/trajanje, trener, prostorija) živi ISKLJUČIVO na njegovom jedinom
+/// AppointmentSegmentu (vidi Utils.AppointmentSegments/AppointmentFrame) — nekadašnji stupci termina su uklonjeni. Naplata (Amount/SuggestedAmount, i
 /// monetarni Payment ledger) živi isključivo na/preko Booking, ne ovdje — omogućuje mješovito plaćanje po
 /// klijentu na istom terminu (npr. duo: jedan klijent iz paketa, drugi karticom). Vidi Booking.cs za punu
 /// domensku napomenu. Form=Group: veza na Group/GroupSlot koji ga je generirao.
@@ -29,29 +30,8 @@ public class Appointment
     [Column("form")]
     public AppointmentForm Form { get; set; }
 
-    /// <summary>Pohranjeno u UTC, proizvoljno vrijeme (ne samo puni sat).</summary>
-    [Column("starts_at")]
-    public DateTimeOffset StartsAt { get; set; }
-
-    /// <summary>Snapshot Service.DefaultDurationMinutes u trenutku kreiranja termina.</summary>
-    [Column("duration_minutes")]
-    public int DurationMinutes { get; set; }
-
-    [Column("service_id")]
-    public Guid ServiceId { get; set; }
-
-    /// <summary>Null samo za grupne termine čija grupa nema zadanog trenera — dodjeljuje se ručno naknadno.
-    /// Individualni termin uvijek ima trenera.</summary>
-    [Column("employee_id")]
-    public Guid? EmployeeId { get; set; }
-
     [Column("company_id")]
     public Guid CompanyId { get; set; }
-
-    /// <summary>Opcionalno. Za grupne termine snapshot Group.DefaultRoomId u trenutku generiranja
-    /// (može se naknadno promijeniti po pojedinom terminu bez diranja grupe).</summary>
-    [Column("room_id")]
-    public Guid? RoomId { get; set; }
 
     [Column("status")]
     public AppointmentStatus Status { get; set; }
@@ -87,16 +67,12 @@ public class Appointment
     [Column("updated_by")]
     public Guid? UpdatedBy { get; set; }
 
-    public Service Service { get; set; }
-    public Employee Employee { get; set; }
     public Company Company { get; set; }
-    public Room Room { get; set; }
     public Group Group { get; set; }
     public GroupSlot GroupSlot { get; set; }
     public List<Booking> Bookings { get; set; } = new();
 
-    /// <summary>Ciljni model (Phase D1): konkretna izvođenja usluga unutar termina. Za sada NIJE autoritativno —
-    /// zakazivanje i dalje koristi ServiceId/EmployeeId/RoomId/StartsAt/DurationMinutes gore, nijedan produkcijski tok
-    /// ne kreira segmente i nema sinkronizacije između tih polja i segmenata.</summary>
+    /// <summary>Izvršni segmenti termina — od Phase D3A AUTORITATIVNI izvor okvira. Današnji tokovi uvijek imaju točno
+    /// jedan segment (vidi Utils.AppointmentSegments.GetSingleExecutionSegment).</summary>
     public List<AppointmentSegment> Segments { get; set; } = new();
 }

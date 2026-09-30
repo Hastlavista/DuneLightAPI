@@ -47,6 +47,14 @@ public class AppointmentSegmentPersistenceTests
 
     private static async Task<Guid> AnAppointment(SchedulingWorld w, int hour = 10) => (await w.CreateAppointment(Z(hour))).Id;
 
+    /// <summary>D3A: every appointment created through production already carries its one authoritative segment; the
+    /// persistence tests below add FURTHER segments to it and reason only about those.</summary>
+    private static async Task<Guid> ProductionSegmentId(SchedulingWorld w, Guid appointmentId)
+    {
+        await using DatabaseContext db = w.NewDb();
+        return await db.AppointmentSegments.Where(s => s.AppointmentId == appointmentId).Select(s => s.Id.Value).SingleAsync();
+    }
+
     private static async Task<Resource> AddResource(SchedulingWorld w, string name, int capacity = 5)
     {
         ResourceDto dto = await w.Resolve<IResourceService>().Create(w.OrganizationId, w.ActorUserId,
@@ -206,10 +214,12 @@ public class AppointmentSegmentPersistenceTests
         ordered.ActualStart = Z(12);
         ordered.ActualEnd = Z(13, 10); // may overrun the plan
 
+        Guid production = await ProductionSegmentId(w, appointmentId);
         foreach (AppointmentSegment segment in new[] { onlyStart, zeroLength, ordered })
             await Segments(w).Add(segment);
 
-        List<AppointmentSegment> read = await Segments(w).GetForAppointment(w.OrganizationId, appointmentId);
+        List<AppointmentSegment> read = (await Segments(w).GetForAppointment(w.OrganizationId, appointmentId))
+            .Where(x => x.Id != production).ToList();
         Assert.Equal(new[] { onlyStart.Id, zeroLength.Id, ordered.Id }, read.Select(s => s.Id).ToArray());
         Assert.Null(read[0].ActualEnd);
         Assert.Equal(Z(13, 10), read[2].ActualEnd);
@@ -220,11 +230,13 @@ public class AppointmentSegmentPersistenceTests
     {
         await using SchedulingWorld w = await SchedulingWorld.Create(nameof(Segments_OfOneAppointment_CanUseDifferentServices_AndAreOrderedByPlannedStart));
         Guid appointmentId = await AnAppointment(w);
+        Guid production = await ProductionSegmentId(w, appointmentId);
         ServiceEntity second = await w.AddService(45, 30m, name: "Second");
         await Segments(w).Add(NewSegment(w, appointmentId, Z(10, 30), Z(11, 15), serviceId: second.Id));
         await Segments(w).Add(NewSegment(w, appointmentId, Z(10), Z(10, 30)));
 
-        List<AppointmentSegment> read = await Segments(w).GetForAppointment(w.OrganizationId, appointmentId);
+        List<AppointmentSegment> read = (await Segments(w).GetForAppointment(w.OrganizationId, appointmentId))
+            .Where(x => x.Id != production).ToList();
 
         Assert.Equal(new[] { w.Service.Id.Value, second.Id.Value }, read.Select(s => s.ServiceId).ToArray());
         Assert.Equal(new[] { w.Service.Name, second.Name }, read.Select(s => s.Service.Name).ToArray());
@@ -289,7 +301,8 @@ public class AppointmentSegmentPersistenceTests
 
         Assert.Contains("pk_appointment_segment_employees", error);
         await using DatabaseContext verify = w.NewDb();
-        Assert.Equal(2, await verify.AppointmentSegmentEmployees.CountAsync(e => e.EmployeeId == w.Employee.Id.Value));
+        Assert.Equal(2, await verify.AppointmentSegmentEmployees.CountAsync(e =>
+            e.EmployeeId == w.Employee.Id.Value && (e.AppointmentSegmentId == first.Id || e.AppointmentSegmentId == second.Id)));
     }
 
     [Fact]
@@ -401,8 +414,9 @@ public class AppointmentSegmentPersistenceTests
         {
             Appointment appointment = await db.Appointments.Include(a => a.Segments).ThenInclude(s => s.Employees)
                 .SingleAsync(a => a.Id == appointmentId);
-            AppointmentSegment loaded = Assert.Single(appointment.Segments);
-            Assert.Equal(segment.Id, loaded.Id);
+            // D3A: the production segment plus the one added here.
+            Assert.Equal(2, appointment.Segments.Count);
+            AppointmentSegment loaded = Assert.Single(appointment.Segments, x => x.Id == segment.Id);
             Assert.Same(appointment, loaded.Appointment);
         }
 
@@ -464,9 +478,10 @@ public class AppointmentSegmentPersistenceTests
     #region Not authoritative: production flows create no segments
 
     [Fact]
-    public async Task ProductionSchedulingFlows_CreateNoSegments()
+    public async Task ProductionSchedulingFlows_CreateExactlyOneSegmentPerAppointment()
     {
-        await using SchedulingWorld w = await SchedulingWorld.Create(nameof(ProductionSchedulingFlows_CreateNoSegments));
+        // CHANGED in D3A (was ProductionSchedulingFlows_CreateNoSegments): segments are now the authoritative frame.
+        await using SchedulingWorld w = await SchedulingWorld.Create(nameof(ProductionSchedulingFlows_CreateExactlyOneSegmentPerAppointment));
         Room room = await w.AddRoom();
 
         AppointmentDto single = await w.CreateAppointment(Z(9), room: room);
@@ -481,16 +496,17 @@ public class AppointmentSegmentPersistenceTests
         await w.GenerateOccurrences(group, SchedulingWorld.FutureDay);
 
         await using DatabaseContext db = w.NewDb();
-        Assert.True(await db.Appointments.CountAsync(a => a.OrganizationId == w.OrganizationId) >= 5);
-        Assert.False(await db.AppointmentSegments.AnyAsync(s => s.OrganizationId == w.OrganizationId));
+        List<Guid> appointmentIds = await db.Appointments.Where(a => a.OrganizationId == w.OrganizationId).Select(a => a.Id.Value).ToListAsync();
+        Assert.True(appointmentIds.Count >= 5);
+        Assert.All(appointmentIds, id => Assert.Equal(1, db.AppointmentSegments.Count(s => s.AppointmentId == id)));
 
-        // The legacy singular fields are still what scheduling writes.
-        Appointment legacy = await db.Appointments.SingleAsync(a => a.Id == single.Id);
-        Assert.Equal(w.Service.Id.Value, legacy.ServiceId);
-        Assert.Equal(w.Employee.Id, legacy.EmployeeId);
-        Assert.Equal(room.Id, legacy.RoomId);
-        Assert.Equal(Z(9), legacy.StartsAt);
-        Assert.Equal(SchedulingWorld.DefaultServiceDuration, legacy.DurationMinutes);
+        AppointmentSegment segment = await db.AppointmentSegments.Include(s => s.Employees).SingleAsync(s => s.AppointmentId == single.Id);
+        Assert.Equal(w.Service.Id.Value, segment.ServiceId);
+        Assert.Equal(w.Employee.Id.Value, Assert.Single(segment.Employees).EmployeeId);
+        Assert.Equal(room.Id, segment.RoomId);
+        Assert.Equal(Z(9), segment.PlannedStart);
+        Assert.Equal(Z(9).AddMinutes(SchedulingWorld.DefaultServiceDuration), segment.PlannedEnd);
+        Assert.False(await db.AppointmentSegmentResources.AnyAsync(r => appointmentIds.Contains(r.Segment.AppointmentId)));
     }
 
     #endregion

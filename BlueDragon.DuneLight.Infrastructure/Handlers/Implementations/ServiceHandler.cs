@@ -131,10 +131,6 @@ public class ServiceHandler : IServiceHandler
             .Where(e => e.ServiceId == id && e.ClientPackage.OrganizationId == organizationId)
             .Select(e => 1);
 
-        IQueryable<int> appointments = context.Appointments
-            .Where(a => a.OrganizationId == organizationId && a.ServiceId == id)
-            .Select(a => 1);
-
         IQueryable<int> groups = context.Groups
             .Where(g => g.OrganizationId == organizationId && g.ServiceId == id)
             .Select(g => 1);
@@ -143,7 +139,7 @@ public class ServiceHandler : IServiceHandler
             .Where(r => r.OrganizationId == organizationId && r.ServiceId == id)
             .Select(r => 1);
 
-        // Phase D1: appointment_segments.service_id je Restrict FK.
+        // Phase D3A: usluga termina živi na njegovom segmentu (appointment_segments.service_id, Restrict FK).
         IQueryable<int> segments = context.AppointmentSegments
             .Where(s => s.OrganizationId == organizationId && s.ServiceId == id)
             .Select(s => 1);
@@ -153,23 +149,22 @@ public class ServiceHandler : IServiceHandler
             .Union(packageServiceItems)
             .Union(employeeServiceAssignments)
             .Union(clientPackageServiceEntries)
-            .Union(appointments)
             .Union(groups)
             .Union(commissionRules);
 
         return await anyReference.AnyAsync();
     }
 
-    /// <summary>Usluga je "korištena u zakazivanju" ako je referencirana od Appointment ili Group — namjerno UŽI
+    /// <summary>Usluga je "korištena u zakazivanju" ako je referencirana od termina (njegovog segmenta) ili Group — namjerno UŽI
     /// skup od IsReferenced (koji uključuje i katalog/konfiguracijske reference poput PriceList/Package/Employee).
     /// Vidi ServiceCatalogService.Update — ExecutionMode je zaključan samo dok postoji ova (uža) referenca.</summary>
     public async Task<bool> IsUsedInScheduling(Guid organizationId, Guid id)
     {
         await using DatabaseContext context = DatabaseContext.GenerateContext(_databaseSettings.ConnectionString);
 
-        IQueryable<int> appointments = context.Appointments
-            .Where(a => a.OrganizationId == organizationId && a.ServiceId == id)
-            .Select(a => 1);
+        IQueryable<int> appointments = context.AppointmentSegments
+            .Where(s => s.OrganizationId == organizationId && s.ServiceId == id)
+            .Select(s => 1);
 
         IQueryable<int> groups = context.Groups
             .Where(g => g.OrganizationId == organizationId && g.ServiceId == id)

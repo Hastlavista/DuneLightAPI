@@ -12,6 +12,7 @@ using BlueDragon.DuneLight.Core.Interfaces.Checkouts;
 using BlueDragon.DuneLight.Core.Interfaces.Clients;
 using BlueDragon.DuneLight.Core.Interfaces.Groups;
 using BlueDragon.DuneLight.Infrastructure.Domain.Contexts;
+using BlueDragon.DuneLight.Infrastructure.Utils;
 using BlueDragon.DuneLight.Infrastructure.Domain.Models;
 using BlueDragon.DuneLight.Infrastructure.Domain.Models.Appointments;
 using BlueDragon.DuneLight.Infrastructure.Domain.Models.Catalog;
@@ -873,17 +874,19 @@ public sealed class SchedulingWorld : IAsyncDisposable
             Id = appointmentId,
             OrganizationId = OrganizationId,
             Form = form,
-            StartsAt = startsAt,
-            DurationMinutes = durationMinutes ?? svc.DefaultDurationMinutes,
-            ServiceId = svc.Id.Value,
-            EmployeeId = form == AppointmentForm.Group && employee == null ? null : (employee ?? Employee).Id,
             CompanyId = Company.Id.Value,
-            RoomId = room?.Id,
             Status = status,
             GroupId = groupId,
             GroupSlotId = groupSlotId,
             CreatedAt = DateTimeOffset.UtcNow
         };
+        // D3A: the execution frame lives on the single authoritative segment (same shape production creates).
+        AppointmentFrameMutator.NewSegment(appointment, new AppointmentFrame(
+            svc.Id.Value,
+            form == AppointmentForm.Group && employee == null ? null : (employee ?? Employee).Id,
+            room?.Id,
+            startsAt,
+            durationMinutes ?? svc.DefaultDurationMinutes));
         foreach ((Client client, BookingStatus bookingStatus, decimal amount) in bookings)
             appointment.Bookings.Add(new Booking
             {
@@ -944,7 +947,11 @@ public sealed class SchedulingWorld : IAsyncDisposable
     public async Task<Appointment> LoadAppointment(Guid id)
     {
         await using DatabaseContext db = NewDb();
-        return await db.Appointments.AsNoTracking().Include(a => a.Bookings).SingleAsync(a => a.Id == id);
+        return await db.Appointments.AsNoTracking()
+            .Include(a => a.Bookings)
+            .Include(a => a.Segments).ThenInclude(s => s.Employees)
+            .AsSplitQuery()
+            .SingleAsync(a => a.Id == id);
     }
 
     public async Task<Booking> LoadBooking(Guid appointmentId, Client client)

@@ -3,6 +3,7 @@ using System.Linq;
 using System.Threading.Tasks;
 using BlueDragon.DuneLight.Core.Enums;
 using BlueDragon.DuneLight.Infrastructure.Domain.Contexts;
+using BlueDragon.DuneLight.Infrastructure.Utils;
 using BlueDragon.DuneLight.Infrastructure.Domain.Models;
 using BlueDragon.DuneLight.Infrastructure.Domain.Models.Appointments;
 using BlueDragon.DuneLight.Infrastructure.Domain.Models.Catalog;
@@ -149,17 +150,18 @@ public class LifecycleCleanupSafeFixesTests
             Guid appointmentId = Guid.NewGuid();
             await using (DatabaseContext context = DatabaseContext.GenerateContext(LocalConnectionString))
             {
-                context.Appointments.Add(new Appointment
+                Appointment appointment = new Appointment
                 {
                     Id = appointmentId,
                     OrganizationId = organizationId,
-                    ServiceId = serviceId,
                     CompanyId = companyId,
-                    StartsAt = DateTimeOffset.UtcNow.AddDays(-30),
-                    DurationMinutes = 30,
                     Status = AppointmentStatus.Completed,
                     CreatedAt = DateTimeOffset.UtcNow
-                });
+                };
+                // D3A: the execution frame lives on the appointment's single segment.
+                AppointmentFrameMutator.NewSegment(appointment,
+                    new AppointmentFrame(serviceId, null, null, DateTimeOffset.UtcNow.AddDays(-30), 30));
+                context.Appointments.Add(appointment);
                 await context.SaveChangesAsync();
 
                 // A CANCELLED (non-active) waitlist row - the exact gap: HasActiveWaitingForClient (Waiting-only,

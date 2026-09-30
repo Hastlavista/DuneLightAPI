@@ -55,11 +55,18 @@ public interface IGroupHandler
     /// članstvo se namjerno ne broji. Koristi ClientService.Anonymize.</summary>
     Task<bool> HasActiveMembershipForClient(Guid organizationId, Guid clientId);
 
-    /// <summary>Već postojeći (GroupSlotId, StartsAt) parovi u zadanom rasponu — idempotentna provjera generiranja.</summary>
+    /// <summary>Već postojeći (GroupSlotId, početak segmenta) parovi u zadanom rasponu — idempotentna provjera generiranja.</summary>
     Task<HashSet<(Guid GroupSlotId, DateTimeOffset StartsAt)>> GetExistingSlotOccurrences(
         List<Guid> groupSlotIds, DateTimeOffset from, DateTimeOffset to);
 
-    Task AddAppointments(List<Appointment> appointments);
+    /// <summary>
+    /// Sprema generirane occurrence (termin + segment) atomarno. Phase D3A: jedinstvenost (GroupSlotId, početak) više nije
+    /// unique indeks nad appointments.starts_at (stupac je uklonjen — početak živi na segmentu), nego se provodi ovdje:
+    /// transakcijski advisory lock po slotu (serijalizira konkurentna generiranja istog slota) + ponovna provjera
+    /// postojećih occurrencea pod lockom. Vraća false (i ne sprema NIŠTA) ako je bilo koji kandidat u međuvremenu već
+    /// generiran — pozivatelj to prijavljuje kao RECURRING_CONFLICT / DUPLICATE_OCCURRENCE, isto kao prije.
+    /// </summary>
+    Task<bool> AddAppointments(List<Appointment> appointments);
 
     Task<List<Appointment>> GetAppointmentsForGroup(Guid organizationId, Guid groupId, DateTimeOffset from, DateTimeOffset to);
 

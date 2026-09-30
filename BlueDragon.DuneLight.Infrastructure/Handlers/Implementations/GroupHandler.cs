@@ -9,6 +9,8 @@ using BlueDragon.DuneLight.Infrastructure.Domain.Settings;
 using BlueDragon.DuneLight.Infrastructure.Handlers.Interfaces;
 using BlueDragon.DuneLight.Infrastructure.UnitOfWork;
 using Microsoft.EntityFrameworkCore;
+using BlueDragon.DuneLight.Infrastructure.Utils;
+using Microsoft.EntityFrameworkCore.Storage;
 
 namespace BlueDragon.DuneLight.Infrastructure.Handlers.Implementations;
 
@@ -187,37 +189,63 @@ public class GroupHandler : IGroupHandler
         List<Guid> groupSlotIds, DateTimeOffset from, DateTimeOffset to)
     {
         await using DatabaseContext context = DatabaseContext.GenerateContext(_databaseSettings.ConnectionString);
-        List<(Guid, DateTimeOffset)> rows = await context.Appointments
-            .Where(a => a.GroupSlotId != null && groupSlotIds.Contains(a.GroupSlotId.Value) &&
-                a.StartsAt >= from && a.StartsAt <= to)
-            .Select(a => new ValueTuple<Guid, DateTimeOffset>(a.GroupSlotId.Value, a.StartsAt))
+        return await ExistingSlotOccurrences(context, groupSlotIds, from, to);
+    }
+
+    private static async Task<HashSet<(Guid GroupSlotId, DateTimeOffset StartsAt)>> ExistingSlotOccurrences(
+        DatabaseContext context, List<Guid> groupSlotIds, DateTimeOffset from, DateTimeOffset to)
+    {
+        List<(Guid, DateTimeOffset)> rows = await context.AppointmentSegments
+            .Where(s => s.Appointment.GroupSlotId != null && groupSlotIds.Contains(s.Appointment.GroupSlotId.Value) &&
+                s.PlannedStart >= from && s.PlannedStart <= to)
+            .Select(s => new ValueTuple<Guid, DateTimeOffset>(s.Appointment.GroupSlotId.Value, s.PlannedStart))
             .ToListAsync();
 
         return rows.ToHashSet();
     }
 
-    public async Task AddAppointments(List<Appointment> appointments)
+    public async Task<bool> AddAppointments(List<Appointment> appointments)
     {
         if (appointments.Count == 0)
-            return;
+            return true;
+
+        List<(Guid SlotId, DateTimeOffset StartsAt)> keys = appointments
+            .Select(a => (a.GroupSlotId.GetValueOrDefault(), AppointmentSegments.GetSingleExecutionSegment(a).PlannedStart))
+            .ToList();
+        List<Guid> slotIds = keys.Select(k => k.SlotId).Distinct().OrderBy(id => id).ToList();
 
         await using DatabaseContext context = DatabaseContext.GenerateContext(_databaseSettings.ConnectionString);
+        await using IDbContextTransaction transaction = await context.Database.BeginTransactionAsync();
+
+        // Uvijek istim redoslijedom (sortirani slotovi) — dva generiranja preko istih slotova se ne mogu zaključati uzajamno.
+        foreach (Guid slotId in slotIds)
+            await context.Database.ExecuteSqlInterpolatedAsync(
+                $"SELECT pg_advisory_xact_lock(hashtextextended({"group-slot-occurrence:" + slotId}, 0))");
+
+        HashSet<(Guid, DateTimeOffset)> existing = await ExistingSlotOccurrences(
+            context, slotIds, keys.Min(k => k.StartsAt), keys.Max(k => k.StartsAt));
+        if (keys.Any(existing.Contains))
+            return false;
+
         context.Appointments.AddRange(appointments);
         await context.SaveChangesAsync();
+        await transaction.CommitAsync();
+        return true;
     }
 
     public async Task<List<Appointment>> GetAppointmentsForGroup(Guid organizationId, Guid groupId, DateTimeOffset from, DateTimeOffset to)
     {
         await using DatabaseContext context = DatabaseContext.GenerateContext(_databaseSettings.ConnectionString);
         return await context.Appointments
-            .Include(a => a.Service)
-            .Include(a => a.Employee)
+            .Include(a => a.Segments).ThenInclude(s => s.Service)
+            .Include(a => a.Segments).ThenInclude(s => s.Room)
+            .Include(a => a.Segments).ThenInclude(s => s.Employees).ThenInclude(e => e.Employee)
             .Include(a => a.Company)
-            .Include(a => a.Room)
             .Include(a => a.Bookings)
+            .AsSplitQuery()
             .Where(a => a.OrganizationId == organizationId && a.GroupId == groupId &&
-                a.StartsAt >= from && a.StartsAt <= to)
-            .OrderBy(a => a.StartsAt)
+                a.Segments.Any(s => s.PlannedStart >= from && s.PlannedStart <= to))
+            .OrderBy(a => a.Segments.Min(s => s.PlannedStart))
             .ToListAsync();
     }
 

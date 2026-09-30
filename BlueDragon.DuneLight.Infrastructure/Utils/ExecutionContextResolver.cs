@@ -4,14 +4,14 @@ using BlueDragon.DuneLight.Infrastructure.Domain.Models.Appointments;
 namespace BlueDragon.DuneLight.Infrastructure.Utils;
 
 /// <summary>
-/// JEDINO mjesto koje prevodi današnji jednostruki Appointment okvir (ServiceId/EmployeeId/StartsAt) u izvršni
+/// JEDINO mjesto koje prevodi izvršni okvir termina (od Phase D3A: njegov jedini AppointmentSegment) u izvršni
 /// kontekst za cijenu, pakete, proviziju, rok otkazivanja i blagajnu — komercijalna logika čita
 /// <see cref="AppointmentExecutionContext"/>/<see cref="BookingExecutionContext"/>, ne Appointment polja izravno.
 ///
 /// Čisto preslikavanje nad VEĆ učitanim entitetima, bez upita u bazu: pozivatelji rade unutar vlastite transakcije i
-/// ponekad nad Appointmentom koji su upravo izmijenili (npr. CompleteExisting postavlja ServiceId/EmployeeId pa tek
-/// onda zarađuje proviziju) — kontekst mora odražavati točno te vrijednosti, kao i prije. Kad se uvede
-/// AppointmentSegment/BookingSegmentParticipation, ovdje se mijenja izvor, ne pozivatelji.
+/// ponekad nad Appointmentom koji su upravo izmijenili (npr. CompleteExisting mijenja okvir segmenta pa tek onda
+/// zarađuje proviziju) — kontekst mora odražavati točno te vrijednosti, kao i prije. Pozivatelji moraju učitati
+/// Segments (+ Employees). Kad Booking prijeđe na BookingSegmentParticipation, ovdje se mijenja izvor, ne pozivatelji.
 /// </summary>
 public static class ExecutionContextResolver
 {
@@ -21,14 +21,17 @@ public static class ExecutionContextResolver
         if (!appointment.Id.HasValue)
             throw new InvalidOperationException("Izvršni kontekst zahtijeva termin s dodijeljenim Id-em.");
 
+        // Phase D3A: okvir se čita iz jedinog autoritativnog segmenta (ServiceName iz segment.Service ako je učitan —
+        // ista semantika kao prije s appointment.Service).
+        AppointmentSegment segment = AppointmentSegments.GetSingleExecutionSegment(appointment);
         return new AppointmentExecutionContext(
             appointment.OrganizationId,
             appointment.Id.Value,
             appointment.CompanyId,
-            appointment.ServiceId,
-            appointment.Service?.Name,
-            appointment.EmployeeId,
-            appointment.StartsAt);
+            segment.ServiceId,
+            segment.Service?.Name,
+            AppointmentSegments.GetSingleEmployeeId(segment),
+            segment.PlannedStart);
     }
 
     /// <summary>Booking mora pripadati TOM terminu i TOJ organizaciji — neusklađen par je programska greška pozivatelja

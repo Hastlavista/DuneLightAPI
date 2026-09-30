@@ -29,14 +29,17 @@ public class BookingSegmentParticipationTests
 
     private static IBookingSegmentParticipationHandler Participations(SchedulingWorld w) => w.Resolve<IBookingSegmentParticipationHandler>();
 
-    /// <summary>An individual appointment (through the real Create flow) with its Booking(s) and one segment per slot.</summary>
+    /// <summary>An individual appointment (through the real Create flow) with its Booking(s); segment #1 is its production
+    /// segment (D3A), the rest are added directly.</summary>
     private sealed record Setup(Guid AppointmentId, List<Booking> Bookings, List<AppointmentSegment> Segments);
 
     private static async Task<Setup> AppointmentWithSegments(SchedulingWorld w, int hour, int segments = 1, params Client[] extraClients)
     {
         AppointmentDto dto = await w.CreateAppointment(Z(hour), extraClients: extraClients);
-        List<AppointmentSegment> created = new();
-        for (int i = 0; i < segments; i++)
+        // D3A: segment #1 is the appointment's own production (authoritative) segment; further ones are added here.
+        Appointment created0 = await w.LoadAppointment(dto.Id);
+        List<AppointmentSegment> created = new() { Assert.Single(created0.Segments) };
+        for (int i = 1; i < segments; i++)
         {
             AppointmentSegment segment = new()
             {
@@ -589,7 +592,9 @@ public class BookingSegmentParticipationTests
         Assert.Contains(await db.Bookings.Where(b => b.AppointmentId == occurrence.Id).Select(b => b.ClientId).ToListAsync(), c => c == waiter.Id);
         Assert.Contains(await db.Bookings.Where(b => b.AppointmentId == roomyOccurrence.Id).Select(b => b.ClientId).ToListAsync(), c => c == lateMember.Id);
         Assert.Equal(0, await ParticipationCount(w));
-        Assert.False(await db.AppointmentSegments.AnyAsync(x => x.OrganizationId == w.OrganizationId));
+        // D3A: every appointment now has exactly one (production) segment — still zero participations.
+        List<Guid> appointmentIds = await db.Appointments.Where(a => a.OrganizationId == w.OrganizationId).Select(a => a.Id.Value).ToListAsync();
+        Assert.All(appointmentIds, id => Assert.Equal(1, db.AppointmentSegments.Count(x => x.AppointmentId == id)));
     }
 
     #endregion

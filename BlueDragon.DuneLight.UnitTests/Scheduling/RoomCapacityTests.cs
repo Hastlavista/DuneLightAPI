@@ -176,7 +176,7 @@ public class RoomCapacityTests
             Assert.Equal(room.Id, dto.RoomId);
         }
 
-        Assert.Equal(3, await w.CountAppointments(q => q.Where(a => a.RoomId == room.Id)));
+        Assert.Equal(3, await w.CountAppointments(q => q.Where(a => a.Segments.Any(s => s.RoomId == room.Id))));
     }
 
     [Fact]

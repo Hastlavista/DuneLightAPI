@@ -82,6 +82,9 @@ Legend — **Test**: the characterization test(s) that pin it. **Later**: whethe
   Cause (observed): `AppointmentHandler.GetWithBookingsForMutation` loads the `Service`/`Employee` navigations, and
   `context.Appointments.Update(graph)` in `UpdateWithBookingsCore` lets the stale navigation win over the changed FK. `Move` and
   `CompleteExisting` (no such navigations) persist the same change correctly.
+  **D3A:** the frame now lives on the appointment's single `AppointmentSegment`, so the stale-navigation mechanism no longer
+  exists; the pinned behaviour is kept *explicitly* in `AppointmentService.Update` (the segment keeps the current service and
+  employee; time, duration and room follow the request). Not fixed — still pending the new edit path.
   Test: `AppointmentUpdateCharacterizationTests.Update_ChangingTheService_*`, `Update_ChangingTheEmployee_*`,
   `Update_AllFieldsAtOnce_*`; contrast `Move_CanChangeTheEmployee_*`, `CompleteExisting_RewritesTheFrame_*`.
   Later: **yes** — do not patch piecemeal; the edit path is replaced by the new model.
@@ -160,8 +163,12 @@ Legend — **Test**: the characterization test(s) that pin it. **Later**: whethe
 
 * **F-17 Overlap protection is application-level only** (employee, room, client): Create/Update/Move are not transactional and take no
   lock, so two concurrent requests can both pass the check. The database has no exclusion constraint (a double-booked employee/room
-  can be written directly); it does enforce `ux_bookings_appointment_client` and `ux_appointments_group_slot_startsat`.
-  Test: `Database_HasNoExclusionConstraint_*`, `Database_DoesEnforce_*`, `DuplicateOccurrence_IsAlsoStoppedByTheDatabase*`.
+  can be written directly); it does enforce `ux_bookings_appointment_client`. Group-occurrence uniqueness (slot, start) was the
+  unique index `ux_appointments_group_slot_startsat` until D3A; that index went away with `appointments.starts_at` and the guard
+  is now `GroupHandler.AddAppointments` (per-slot transaction advisory lock + re-check before insert — an application-level
+  guard, not a database constraint: a direct SQL insert is no longer refused).
+  Test: `Database_HasNoExclusionConstraint_*`, `Database_DoesEnforce_*`, `DuplicateOccurrence_IsAlsoStoppedAtWriteTime_UnderTheSlotLock`,
+  `AppointmentSegmentCutoverTests.ConcurrentGenerationOfTheSameRange_PersistsEachOccurrenceOnce`.
   The race itself is **not** asserted (non-deterministic); only the absence of a database guard is.
 * **F-18 Small hazards.** Appointment-wide `Cancel` twice silently overwrites the appointment's `CancellationReason`; `AddBooking` on
   an Individual appointment has no capacity concept; available-slot search ignores rooms and clients and lists absent employees

@@ -6,7 +6,7 @@ namespace BlueDragon.DuneLight.Infrastructure.Utils;
 
 /// <summary>
 /// JEDINO mjesto koje prevodi između UTC instanta i poslovnog kalendara organizacije (IANA vremenska zona, vidi
-/// Organization.TimeZone). Svi instanti (Appointment.StartsAt, ScheduleBreak.StartsAt, ...) su UTC; kalendarski
+/// Organization.TimeZone). Svi instanti (AppointmentSegment.PlannedStart, ScheduleBreak.StartsAt, ...) su UTC; kalendarski
 /// datumi (odsutnost, praznik, sidro predloška) su <see cref="DateOnly"/>; radno vrijeme su lokalna vremena u zoni
 /// organizacije. Nikad ne koristi TimeZoneInfo.Local niti offset učitane vrijednosti — rezultat ne ovisi o hostu.
 ///

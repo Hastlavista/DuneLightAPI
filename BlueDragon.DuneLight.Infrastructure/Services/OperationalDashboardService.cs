@@ -114,18 +114,19 @@ public class OperationalDashboardService : IOperationalDashboardService
 
     private static DashboardScheduleOccurrenceDto BuildOccurrence(Appointment appointment, List<WaitlistEntry> waiting, DateTimeOffset now)
     {
+        AppointmentFrameView frame = AppointmentFrameView.Of(appointment);
         DashboardScheduleOccurrenceDto dto = new DashboardScheduleOccurrenceDto
         {
             AppointmentId = appointment.Id.GetValueOrDefault(),
-            StartsAt = appointment.StartsAt,
-            DurationMinutes = appointment.DurationMinutes,
+            StartsAt = frame.StartsAt,
+            DurationMinutes = frame.DurationMinutes,
             Status = appointment.Status,
-            ServiceId = appointment.ServiceId,
-            ServiceName = appointment.Service?.Name,
-            EmployeeId = appointment.EmployeeId,
-            EmployeeName = appointment.Employee != null ? $"{appointment.Employee.FirstName} {appointment.Employee.LastName}" : null,
-            RoomId = appointment.RoomId,
-            RoomName = appointment.Room?.Name,
+            ServiceId = frame.ServiceId,
+            ServiceName = frame.ServiceName,
+            EmployeeId = frame.EmployeeId,
+            EmployeeName = frame.EmployeeName,
+            RoomId = frame.RoomId,
+            RoomName = frame.RoomName,
             IsGroup = appointment.Form == AppointmentForm.Group,
             GroupId = appointment.GroupId,
             GroupName = appointment.Group?.Name
@@ -146,7 +147,7 @@ public class OperationalDashboardService : IOperationalDashboardService
                 CancelledCount = bookings.Count(b => b.Status == BookingStatus.Cancelled),
                 WaitingCount = waiting.Count(w => w.AppointmentId == appointment.Id),
                 AvailableReservationSeats = Math.Max(0, capacity - confirmedCount),
-                HasUnresolvedAttendance = appointment.StartsAt <= now && bookings.Any(b => b.Status == BookingStatus.Confirmed)
+                HasUnresolvedAttendance = frame.StartsAt <= now && bookings.Any(b => b.Status == BookingStatus.Confirmed)
             };
         }
         else

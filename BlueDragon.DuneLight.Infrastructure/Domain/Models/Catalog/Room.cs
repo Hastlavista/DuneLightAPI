@@ -5,7 +5,7 @@ using System.ComponentModel.DataAnnotations.Schema;
 namespace BlueDragon.DuneLight.Infrastructure.Domain.Models.Catalog;
 
 /// <summary>
-/// Prostorija poslovnice (npr. "Masaža", "Vježbanje 1") — dodjeljuje se na Appointment.RoomId i/ili
+/// Prostorija poslovnice (npr. "Masaža", "Vježbanje 1") — dodjeljuje se na segment termina (AppointmentSegment.RoomId) i/ili
 /// Group.DefaultRoomId (isti obrazac kao DefaultTrainerId, snapshotira se na generirani termin).
 /// </summary>
 [Table("rooms")]

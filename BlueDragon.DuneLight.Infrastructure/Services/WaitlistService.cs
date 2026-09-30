@@ -115,7 +115,7 @@ public class WaitlistService : IWaitlistService, IWaitlistPromotionService
         await AppointmentOwnership.EnsureCallerIsAssigned(_employeeHandler, organizationId, userId, hasFullScope, appointment, NotOwnerMessage);
 
         DateTimeOffset now = DateTimeOffset.UtcNow;
-        if (appointment.Form != AppointmentForm.Group || appointment.Status != AppointmentStatus.Scheduled || appointment.StartsAt <= now)
+        if (appointment.Form != AppointmentForm.Group || appointment.Status != AppointmentStatus.Scheduled || AppointmentFrame.Of(appointment).StartsAt <= now)
             throw new BusinessRuleException(ErrorCodes.WaitlistNotAvailable, "Lista čekanja nije dostupna za ovaj termin.");
 
         Client client = await _clientHandler.GetByIdLight(organizationId, request.ClientId);
@@ -231,7 +231,7 @@ public class WaitlistService : IWaitlistService, IWaitlistPromotionService
             return;
 
         DateTimeOffset now = DateTimeOffset.UtcNow;
-        if (appointment.Status != AppointmentStatus.Scheduled || appointment.StartsAt <= now)
+        if (appointment.Status != AppointmentStatus.Scheduled || AppointmentFrame.Of(appointment).StartsAt <= now)
             return;
 
         int confirmedCount = await _appointmentHandler.CountConfirmedBookings(uow, organizationId, appointmentId);
@@ -342,8 +342,9 @@ public class WaitlistService : IWaitlistService, IWaitlistPromotionService
         if (alreadyBooked)
             return WaitlistExpiredReasons.AppointmentNoLongerAvailable;
 
+        AppointmentFrame frame = AppointmentFrame.Of(appointment);
         List<OccupancySlot> overlapping = await _schedulingOccupancyHandler.GetOverlappingForClients(
-            organizationId, new List<Guid> { entry.ClientId }, appointment.StartsAt, appointment.DurationMinutes, excludeId: appointment.Id);
+            organizationId, new List<Guid> { entry.ClientId }, frame.StartsAt, frame.DurationMinutes, excludeId: appointment.Id);
         if (overlapping.Count > 0)
             return WaitlistExpiredReasons.ClientScheduleConflict;
 

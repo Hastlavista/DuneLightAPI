@@ -105,21 +105,16 @@ public class RoomHandler : IRoomHandler
     {
         await using DatabaseContext context = DatabaseContext.GenerateContext(_databaseSettings.ConnectionString);
 
-        IQueryable<int> appointments = context.Appointments
-            .Where(a => a.OrganizationId == organizationId && a.RoomId == id)
-            .Select(a => 1);
-
         IQueryable<int> groups = context.Groups
             .Where(g => g.OrganizationId == organizationId && g.DefaultRoomId == id)
             .Select(g => 1);
 
-        // Phase D1: segmenti termina referenciraju prostoriju Restrict FK-om — uključeno da brisanje daje domensku
-        // grešku umjesto sirove FK greške (segment uvijek ima i svoj termin, ali ne nužno s istom prostorijom).
+        // Phase D3A: prostorija termina živi na njegovom segmentu (Restrict FK).
         IQueryable<int> segments = context.AppointmentSegments
             .Where(s => s.OrganizationId == organizationId && s.RoomId == id)
             .Select(s => 1);
 
-        return await appointments.Union(groups).Union(segments).AnyAsync();
+        return await groups.Union(segments).AnyAsync();
     }
 
     private static string Normalize(string name)

@@ -6,10 +6,10 @@ namespace BlueDragon.DuneLight.Infrastructure.Domain.Models.Appointments;
 /// <summary>
 /// Zauzetost rasporeda koju jedan termin stvara — jedini oblik u kojem provjere preklapanja (trener, prostorija,
 /// klijent) i available-slots vide postojeće termine (vidi ISchedulingOccupancyHandler). Nije EF entitet i nema
-/// tablicu: projekcija nad Appointment/Booking retcima.
+/// tablicu: od Phase D3A projekcija nad AppointmentSegment (jedan slot po segmentu) i Booking retcima termina.
 ///
-/// End = Start + Appointment.DurationMinutes, izračunato u memoriji iz iste Start vrijednosti (isti offset kao
-/// učitani Appointment.StartsAt — vidi F-19 u docs/appointment-booking-characterization.md). ActiveClientIds sadrži
+/// Start/End = PlannedStart/PlannedEnd segmenta (UTC instanti). EmployeeId = jedini zaposlenik segmenta (segment s više
+/// zaposlenika se eksplicitno odbija dok višezaposlenička zauzetost nije definirana). ActiveClientIds sadrži
 /// klijente čiji Booking na ovom terminu NIJE Cancelled/NoShow (klijent koji je otkazao/izostao ne zauzima raspored).
 /// </summary>
 public sealed record OccupancySlot(

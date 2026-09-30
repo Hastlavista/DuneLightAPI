@@ -4,8 +4,8 @@ namespace BlueDragon.DuneLight.Infrastructure.Domain.Models.Appointments;
 
 /// <summary>
 /// Izvršni kontekst jednog termina kako ga vide cijena, paketi, provizija i blagajna: koja usluga se izvodi, u kojoj
-/// poslovnici, tko je izvodi i kada. Danas je to 1:1 preslika jednog Appointment okvira (ServiceId/EmployeeId/StartsAt);
-/// u ciljnom modelu to postaje AppointmentSegment. Nije EF entitet i nema tablicu — stvara se isključivo kroz
+/// poslovnici, tko je izvodi i kada. Od Phase D3A je to 1:1 preslika jedinog AppointmentSegmenta termina (usluga,
+/// zaposlenik, planirani početak) + CompanyId termina. Nije EF entitet i nema tablicu — stvara se isključivo kroz
 /// <see cref="Utils.ExecutionContextResolver"/>.
 ///
 /// Namjerno uzak: sadrži samo ono što postojeći komercijalni pozivatelji stvarno čitaju (RoomId/trajanje nemaju

@@ -21,7 +21,7 @@ public class OrganizationSettings
     [Column("organization_id")]
     public Guid OrganizationId { get; set; }
 
-    /// <summary>Koliko minuta prije Appointment.StartsAt otkazivanje Bookinga prestaje biti "normalno" i
+    /// <summary>Koliko minuta prije početka termina (planirani početak njegovog segmenta) otkazivanje Bookinga prestaje biti "normalno" i
     /// postaje "kasno" — vidi BookingCancellationPolicy.IsLateCancellation. Mora biti &gt;= 0.</summary>
     [Column("cancellation_cutoff_minutes")]
     public int CancellationCutoffMinutes { get; set; }

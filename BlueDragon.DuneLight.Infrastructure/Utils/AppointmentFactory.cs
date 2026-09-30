@@ -5,10 +5,11 @@ using BlueDragon.DuneLight.Infrastructure.Domain.Models.Appointments;
 namespace BlueDragon.DuneLight.Infrastructure.Utils;
 
 /// <summary>
-/// JEDINO mjesto koje konstruira novi Appointment redak (današnji jednostruki oblik). Samo sastavlja perzistencijski
-/// oblik — sva validacija (podobnost, radno vrijeme, preklapanja, vlasništvo) ostaje u servisima PRIJE poziva.
-/// Kad se uvede AppointmentSegment, <see cref="AppointmentFrame"/> se ovdje preusmjerava u segment. Navigacijska svojstva
-/// se namjerno ne postavljaju (termin se dodaje kroz svjež DbContext — vidi GroupService.GenerateAppointments).
+/// JEDINO mjesto koje konstruira novi Appointment redak — od Phase D3A uvijek termin (kontejner) + točno JEDAN
+/// autoritativni AppointmentSegment s okvirom (<see cref="AppointmentFrame"/>: usluga, raspon, prostorija, zaposlenik);
+/// oboje se sprema istim SaveChanges (jedna transakcija). Samo sastavlja perzistencijski oblik — sva validacija
+/// (podobnost, radno vrijeme, preklapanja, vlasništvo) ostaje u servisima PRIJE poziva. Sudjelovanja se ne kreiraju.
+/// Navigacijska svojstva prema katalogu se namjerno ne postavljaju (termin se dodaje kroz svjež DbContext).
 /// </summary>
 public static class AppointmentFactory
 {
@@ -51,7 +52,7 @@ public static class AppointmentFactory
             CreatedAt = createdAt,
             CreatedBy = createdBy
         };
-        AppointmentFrameMutator.Apply(appointment, frame);
+        AppointmentFrameMutator.NewSegment(appointment, frame);
         return appointment;
     }
 }

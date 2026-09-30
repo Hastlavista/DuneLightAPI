@@ -417,8 +417,8 @@ public class DatabaseContext : DbContext
     private static void ConfigureAppointments(ModelBuilder modelBuilder)
     {
         modelBuilder.Entity<Appointment>().HasKey(a => a.Id);
-        modelBuilder.Entity<Appointment>().HasIndex(a => new { a.OrganizationId, a.CompanyId, a.StartsAt });
-        modelBuilder.Entity<Appointment>().HasIndex(a => new { a.OrganizationId, a.EmployeeId, a.StartsAt });
+        // Phase D3A: izvršni okvir (usluga/zaposlenik/prostorija/vrijeme) živi isključivo na AppointmentSegment —
+        // appointments više nema te stupce ni indekse/FK-ove nad njima.
         modelBuilder.Entity<Appointment>()
             .Property(a => a.Form)
             .HasConversion(v => v.ToString(), v => Enum.Parse<AppointmentForm>(v));
@@ -426,24 +426,9 @@ public class DatabaseContext : DbContext
             .Property(a => a.Status)
             .HasConversion(v => v.ToString(), v => Enum.Parse<AppointmentStatus>(v));
         modelBuilder.Entity<Appointment>()
-            .HasOne(a => a.Service)
-            .WithMany()
-            .HasForeignKey(a => a.ServiceId)
-            .OnDelete(DeleteBehavior.Restrict);
-        modelBuilder.Entity<Appointment>()
-            .HasOne(a => a.Employee)
-            .WithMany()
-            .HasForeignKey(a => a.EmployeeId)
-            .OnDelete(DeleteBehavior.Restrict);
-        modelBuilder.Entity<Appointment>()
             .HasOne(a => a.Company)
             .WithMany()
             .HasForeignKey(a => a.CompanyId)
-            .OnDelete(DeleteBehavior.Restrict);
-        modelBuilder.Entity<Appointment>()
-            .HasOne(a => a.Room)
-            .WithMany()
-            .HasForeignKey(a => a.RoomId)
             .OnDelete(DeleteBehavior.Restrict);
         modelBuilder.Entity<Appointment>()
             .HasOne(a => a.Group)

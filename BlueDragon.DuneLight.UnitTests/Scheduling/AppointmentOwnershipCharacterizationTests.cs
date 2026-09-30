@@ -18,8 +18,8 @@ namespace BlueDragon.DuneLight.UnitTests.Scheduling;
 
 /// <summary>
 /// CHARACTERIZATION of the appointment "own" scope, now decided by <see cref="AppointmentOwnership"/> (S3). The caller is
-/// always resolved on the backend (User → Employee in the caller's organization); today "assigned" means
-/// Appointment.EmployeeId. The service-level tests (messages included) were verified against the pre-S3 code.
+/// always resolved on the backend (User → Employee in the caller's organization); since D3A "assigned" means the
+/// employee assigned to the appointment's single segment (before D3A: Appointment.EmployeeId). The service-level tests (messages included) were verified against the pre-S3 code.
 /// </summary>
 public class AppointmentOwnershipCharacterizationTests
 {
@@ -27,8 +27,13 @@ public class AppointmentOwnershipCharacterizationTests
 
     private static IEmployeeHandler Employees(SchedulingWorld w) => w.Resolve<IEmployeeHandler>();
 
-    private static Appointment AssignedTo(SchedulingWorld w, Guid? employeeId) =>
-        new() { Id = Guid.NewGuid(), OrganizationId = w.OrganizationId, EmployeeId = employeeId };
+    /// <summary>D3A: assignment lives on the appointment's single segment.</summary>
+    private static Appointment AssignedTo(SchedulingWorld w, Guid? employeeId)
+    {
+        Appointment appointment = new() { Id = Guid.NewGuid(), OrganizationId = w.OrganizationId };
+        AppointmentFrameMutator.NewSegment(appointment, new AppointmentFrame(Guid.NewGuid(), employeeId, null, SchedulingWorld.Future(10), 30));
+        return appointment;
+    }
 
     #region AppointmentOwnership helper (real IEmployeeHandler)
 

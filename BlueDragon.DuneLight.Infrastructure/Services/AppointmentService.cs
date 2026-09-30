@@ -168,7 +168,7 @@ public class AppointmentService : IAppointmentService
             warnings.AddRange(await EnsureWorkforceAvailability(
                 organizationId, request.EmployeeId, request.CompanyId, request.StartsAt, service.DefaultDurationMinutes, overrideAvailability));
 
-        await EnsureNoHardOverlap(organizationId, request.EmployeeId, clients, request.StartsAt, appointment.DurationMinutes, excludeId: null, room);
+        await EnsureNoHardOverlap(organizationId, request.EmployeeId, clients, request.StartsAt, AppointmentFrame.Of(appointment).DurationMinutes, excludeId: null, room);
 
         try
         {
@@ -268,7 +268,8 @@ public class AppointmentService : IAppointmentService
                 throw new BusinessRuleException(ErrorCodes.AlreadyCompleted, "Termin je već označen kao odrađen.");
 
             AppointmentFrameMutator.Apply(appointment,
-                new AppointmentFrame(request.ServiceId, request.EmployeeId, request.RoomId, request.StartsAt, service.DefaultDurationMinutes));
+                new AppointmentFrame(request.ServiceId, request.EmployeeId, request.RoomId, request.StartsAt, service.DefaultDurationMinutes),
+                DateTimeOffset.UtcNow);
             appointment.CompanyId = request.CompanyId;
             appointment.Status = AppointmentStatus.Completed;
             appointment.Note = request.Note;
@@ -479,13 +480,18 @@ public class AppointmentService : IAppointmentService
             requestedClientIds.Contains(b.ClientId) && !TerminalBookingStatuses.Contains(b.Status) && amount != b.Amount))
             await LogAmountChange(id, booking.Id, booking.Amount, amount, userId);
 
-        if (appointment.EmployeeId != request.EmployeeId)
-            await LogEmployeeChange(id, appointment.EmployeeId, request.EmployeeId, userId);
+        AppointmentFrame currentFrame = AppointmentFrame.Of(appointment);
+        if (currentFrame.EmployeeId != request.EmployeeId)
+            await LogEmployeeChange(id, currentFrame.EmployeeId, request.EmployeeId, userId);
 
-        // Mijenja samo skalarna polja učitanog grafa — pinned F-01 (zastarjele Service/Employee navigacije pobjeđuju
-        // kod spremanja) ostaje nepromijenjen.
+        // Pinned F-01 — ZADRŽANO namjerno (ne ispravlja se u Phase D3A): Update validira i audita NOVU uslugu/trenera te
+        // iz nove usluge izvodi trajanje i cijenu, ali usluga i trener termina se NE mijenjaju. Prije D3A je to bila
+        // posljedica zastarjelih Service/Employee navigacija kod Update(graph); sada je isto ponašanje izraženo
+        // eksplicitno na jednom mjestu: segment zadržava trenutnu uslugu i zaposlenika, a mijenjaju se vrijeme,
+        // trajanje i prostorija.
         AppointmentFrameMutator.Apply(appointment,
-            new AppointmentFrame(request.ServiceId, request.EmployeeId, request.RoomId, request.StartsAt, service.DefaultDurationMinutes));
+            new AppointmentFrame(currentFrame.ServiceId, currentFrame.EmployeeId, request.RoomId, request.StartsAt, service.DefaultDurationMinutes),
+            DateTimeOffset.UtcNow);
         appointment.CompanyId = request.CompanyId;
         appointment.Note = request.Note;
         appointment.UpdatedAt = DateTimeOffset.UtcNow;
@@ -493,9 +499,9 @@ public class AppointmentService : IAppointmentService
 
         List<WarningDto> warnings = new List<WarningDto>();
         warnings.AddRange(await EnsureWorkforceAvailability(
-            organizationId, request.EmployeeId, request.CompanyId, request.StartsAt, appointment.DurationMinutes, overrideAvailability));
+            organizationId, request.EmployeeId, request.CompanyId, request.StartsAt, service.DefaultDurationMinutes, overrideAvailability));
 
-        await EnsureNoHardOverlap(organizationId, request.EmployeeId, clients, request.StartsAt, appointment.DurationMinutes, excludeId: id, room);
+        await EnsureNoHardOverlap(organizationId, request.EmployeeId, clients, request.StartsAt, service.DefaultDurationMinutes, excludeId: id, room);
 
         await _appointmentHandler.UpdateWithBookings(appointment, requestedClientIds, amount, suggestedAmount, overridden);
 
@@ -523,19 +529,19 @@ public class AppointmentService : IAppointmentService
         if (request.CompanyId.HasValue)
             await EnsureCompanyExists(organizationId, request.CompanyId.Value);
 
-        Guid effectiveEmployeeId = request.EmployeeId ?? appointment.EmployeeId.GetValueOrDefault();
+        AppointmentFrame currentFrame = AppointmentFrame.Of(appointment);
+        Guid effectiveEmployeeId = request.EmployeeId ?? currentFrame.EmployeeId.GetValueOrDefault();
         Guid effectiveCompanyId = request.CompanyId ?? appointment.CompanyId;
 
         Appointment full = await _appointmentHandler.GetById(organizationId, id);
         List<Client> clients = full.Bookings.Where(b => b.Status != BookingStatus.Cancelled && b.Status != BookingStatus.NoShow)
             .Select(b => b.Client).ToList();
 
-        ServiceEntity service = await LoadServiceOrThrow(organizationId, appointment.ServiceId);
+        ServiceEntity service = await LoadServiceOrThrow(organizationId, currentFrame.ServiceId);
         await EnsureStructuralEligibility(organizationId, service, effectiveCompanyId, effectiveEmployeeId);
 
         // Djelomična izmjena: null u zahtjevu = "bez promjene" (pinned F-03 — prostorija se ne može očistiti),
         // trajanje se ne mijenja.
-        AppointmentFrame currentFrame = AppointmentFrame.Of(appointment);
         if (request.EmployeeId.HasValue && request.EmployeeId.Value != currentFrame.EmployeeId)
             await LogEmployeeChange(id, currentFrame.EmployeeId, request.EmployeeId.Value, userId);
 
@@ -544,7 +550,8 @@ public class AppointmentService : IAppointmentService
             StartsAt = request.StartsAt,
             EmployeeId = request.EmployeeId ?? currentFrame.EmployeeId,
             RoomId = request.RoomId ?? currentFrame.RoomId
-        });
+        }, DateTimeOffset.UtcNow);
+        AppointmentFrame movedFrame = AppointmentFrame.Of(appointment);
         if (request.CompanyId.HasValue)
             appointment.CompanyId = request.CompanyId.Value;
         appointment.UpdatedAt = DateTimeOffset.UtcNow;
@@ -552,13 +559,13 @@ public class AppointmentService : IAppointmentService
 
         // Efektivna prostorija se revalidira i kad nije eksplicitno poslana u zahtjevu — pomicanje termina u drugu
         // poslovnicu bez zadanog RoomId inače bi ostavilo prostoriju iz stare poslovnice na terminu nove.
-        Room room = await EnsureRoomExists(organizationId, appointment.CompanyId, appointment.RoomId);
+        Room room = await EnsureRoomExists(organizationId, appointment.CompanyId, movedFrame.RoomId);
 
         List<WarningDto> warnings = new List<WarningDto>();
         warnings.AddRange(await EnsureWorkforceAvailability(
-            organizationId, effectiveEmployeeId, appointment.CompanyId, request.StartsAt, appointment.DurationMinutes, overrideAvailability));
+            organizationId, effectiveEmployeeId, appointment.CompanyId, request.StartsAt, movedFrame.DurationMinutes, overrideAvailability));
 
-        await EnsureNoHardOverlap(organizationId, effectiveEmployeeId, clients, request.StartsAt, appointment.DurationMinutes, excludeId: id, room);
+        await EnsureNoHardOverlap(organizationId, effectiveEmployeeId, clients, request.StartsAt, movedFrame.DurationMinutes, excludeId: id, room);
 
         await _appointmentHandler.UpdateScalar(appointment);
 
@@ -654,7 +661,7 @@ public class AppointmentService : IAppointmentService
         foreach (Appointment appointment in toCreate)
         {
             AppointmentDto dto = await GetByIdInternal(organizationId, appointment.Id.GetValueOrDefault());
-            if (warningsByOccurrence.TryGetValue(appointment.StartsAt, out List<WarningDto> occurrenceWarnings))
+            if (warningsByOccurrence.TryGetValue(AppointmentFrame.Of(appointment).StartsAt, out List<WarningDto> occurrenceWarnings))
                 dto.Warnings = occurrenceWarnings;
             created.Add(dto);
         }
@@ -953,9 +960,9 @@ public class AppointmentService : IAppointmentService
 
         List<WarningDto> warnings = new List<WarningDto>();
         warnings.AddRange(await EnsureWorkforceAvailability(
-            organizationId, request.EmployeeId, request.CompanyId, request.StartsAt, appointment.DurationMinutes, overrideAvailability));
+            organizationId, request.EmployeeId, request.CompanyId, request.StartsAt, AppointmentFrame.Of(appointment).DurationMinutes, overrideAvailability));
 
-        await EnsureNoHardOverlap(organizationId, request.EmployeeId, clients, request.StartsAt, appointment.DurationMinutes, excludeId: null, room);
+        await EnsureNoHardOverlap(organizationId, request.EmployeeId, clients, request.StartsAt, AppointmentFrame.Of(appointment).DurationMinutes, excludeId: null, room);
 
         await _appointmentHandler.Add(appointment);
 
@@ -1503,21 +1510,22 @@ public class AppointmentService : IAppointmentService
     {
         bool isGroup = a.Form == AppointmentForm.Group;
         List<Client> clients = a.Bookings.Where(b => b.Client != null).Select(b => b.Client).ToList();
+        AppointmentFrameView frame = AppointmentFrameView.Of(a);
 
         return new AppointmentScheduleCellDto
         {
             Id = a.Id.GetValueOrDefault(),
-            StartsAt = a.StartsAt,
-            DurationMinutes = a.DurationMinutes,
-            ServiceId = a.ServiceId,
-            ServiceName = a.Service?.Name,
-            ServiceCategoryColorHex = a.Service?.ColorHex,
-            EmployeeId = a.EmployeeId,
-            EmployeeName = a.Employee != null ? $"{a.Employee.FirstName} {a.Employee.LastName}" : null,
+            StartsAt = frame.StartsAt,
+            DurationMinutes = frame.DurationMinutes,
+            ServiceId = frame.ServiceId,
+            ServiceName = frame.ServiceName,
+            ServiceCategoryColorHex = frame.ServiceColorHex,
+            EmployeeId = frame.EmployeeId,
+            EmployeeName = frame.EmployeeName,
             CompanyId = a.CompanyId,
             CompanyName = a.Company?.Name,
-            RoomId = a.RoomId,
-            RoomName = a.Room?.Name,
+            RoomId = frame.RoomId,
+            RoomName = frame.RoomName,
             ClientNames = clients.Select(c => $"{c.FirstName} {c.LastName}").ToList(),
             ClientIds = clients.Select(c => c.Id.GetValueOrDefault()).ToList(),
             Status = a.Status,
@@ -1539,18 +1547,19 @@ public class AppointmentService : IAppointmentService
     {
         Booking booking = a.Bookings.First(b => b.ClientId == clientId);
         decimal outstandingAmount = BookingFinancialsCalculator.CalculateOutstanding(booking);
+        AppointmentFrameView frame = AppointmentFrameView.Of(a);
 
         return new ClientAppointmentHistoryDto
         {
             Id = a.Id.GetValueOrDefault(),
             Form = a.Form,
-            StartsAt = a.StartsAt,
-            DurationMinutes = a.DurationMinutes,
-            ServiceId = a.ServiceId,
-            ServiceName = a.Service?.Name,
-            ServiceCategoryColorHex = a.Service?.ColorHex,
-            EmployeeId = a.EmployeeId,
-            EmployeeName = a.Employee != null ? $"{a.Employee.FirstName} {a.Employee.LastName}" : null,
+            StartsAt = frame.StartsAt,
+            DurationMinutes = frame.DurationMinutes,
+            ServiceId = frame.ServiceId,
+            ServiceName = frame.ServiceName,
+            ServiceCategoryColorHex = frame.ServiceColorHex,
+            EmployeeId = frame.EmployeeId,
+            EmployeeName = frame.EmployeeName,
             CompanyId = a.CompanyId,
             CompanyName = a.Company?.Name,
             Status = a.Status,
@@ -1573,21 +1582,22 @@ public class AppointmentService : IAppointmentService
 
     private static AppointmentDto ToDto(Appointment a)
     {
+        AppointmentFrameView frame = AppointmentFrameView.Of(a);
         return new AppointmentDto
         {
             Id = a.Id.GetValueOrDefault(),
             Form = a.Form,
-            StartsAt = a.StartsAt,
-            DurationMinutes = a.DurationMinutes,
-            ServiceId = a.ServiceId,
-            ServiceName = a.Service?.Name,
-            ServiceCategoryColorHex = a.Service?.ColorHex,
-            EmployeeId = a.EmployeeId,
-            EmployeeName = a.Employee != null ? $"{a.Employee.FirstName} {a.Employee.LastName}" : null,
+            StartsAt = frame.StartsAt,
+            DurationMinutes = frame.DurationMinutes,
+            ServiceId = frame.ServiceId,
+            ServiceName = frame.ServiceName,
+            ServiceCategoryColorHex = frame.ServiceColorHex,
+            EmployeeId = frame.EmployeeId,
+            EmployeeName = frame.EmployeeName,
             CompanyId = a.CompanyId,
             CompanyName = a.Company?.Name,
-            RoomId = a.RoomId,
-            RoomName = a.Room?.Name,
+            RoomId = frame.RoomId,
+            RoomName = frame.RoomName,
             Status = a.Status,
             Note = a.Note,
             CancellationReason = a.CancellationReason,
