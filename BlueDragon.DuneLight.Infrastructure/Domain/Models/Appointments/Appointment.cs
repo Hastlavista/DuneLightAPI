@@ -94,4 +94,9 @@ public class Appointment
     public Group Group { get; set; }
     public GroupSlot GroupSlot { get; set; }
     public List<Booking> Bookings { get; set; } = new();
+
+    /// <summary>Ciljni model (Phase D1): konkretna izvođenja usluga unutar termina. Za sada NIJE autoritativno —
+    /// zakazivanje i dalje koristi ServiceId/EmployeeId/RoomId/StartsAt/DurationMinutes gore, nijedan produkcijski tok
+    /// ne kreira segmente i nema sinkronizacije između tih polja i segmenata.</summary>
+    public List<AppointmentSegment> Segments { get; set; } = new();
 }

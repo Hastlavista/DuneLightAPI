@@ -17,4 +17,7 @@ public interface IResourceHandler
     /// <summary>Naziv se uspoređuje normalizirano (trim + case-insensitive) unutar iste Company, isto kao
     /// ux_resources_org_company_name_active (i Room / ux_rooms_org_company_name_active).</summary>
     Task<bool> NameExistsAmongActive(Guid organizationId, Guid companyId, string name, Guid? excludeId);
+
+    /// <summary>Resurs je referenciran ako ga zauzima barem jedan segment termina (appointment_segment_resources).</summary>
+    Task<bool> IsReferenced(Guid organizationId, Guid id);
 }

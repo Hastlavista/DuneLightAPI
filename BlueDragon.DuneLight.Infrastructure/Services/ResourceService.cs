@@ -125,13 +125,17 @@ public class ResourceService : IResourceService
         return ToDto(resource);
     }
 
-    /// <summary>Trajno brisanje, kao Room.Delete. Resurs trenutno nitko ne referencira; kad rezervacije resursa
-    /// (segmenti termina) budu uvedene, ovdje dolazi provjera referenci (REFERENCED_CANNOT_DELETE) kao kod Room.</summary>
+    /// <summary>Trajno brisanje, kao Room.Delete: resurs koji zauzima barem jedan segment termina se ne može obrisati
+    /// (REFERENCED_CANNOT_DELETE) — deaktivirati umjesto toga.</summary>
     public async Task Delete(Guid organizationId, Guid id)
     {
         Resource resource = await _resourceHandler.GetById(organizationId, id);
         if (resource == null)
             throw new NotFoundAppException("Resource", id);
+
+        bool isReferenced = await _resourceHandler.IsReferenced(organizationId, id);
+        if (isReferenced)
+            throw new BusinessRuleException(ErrorCodes.ReferencedCannotDelete, "Resurs je korišten na terminu i ne može se trajno obrisati — deaktivirajte ga umjesto toga.");
 
         await _resourceHandler.Delete(resource);
     }

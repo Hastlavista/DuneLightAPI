@@ -49,6 +49,9 @@ public class DatabaseContext : DbContext
 
     public DbSet<Appointment> Appointments { get; set; }
     public DbSet<Booking> Bookings { get; set; }
+    public DbSet<AppointmentSegment> AppointmentSegments { get; set; }
+    public DbSet<AppointmentSegmentEmployee> AppointmentSegmentEmployees { get; set; }
+    public DbSet<AppointmentSegmentResource> AppointmentSegmentResources { get; set; }
     public DbSet<Payment> Payments { get; set; }
     public DbSet<AppointmentAuditLog> AppointmentAuditLog { get; set; }
     public DbSet<ScheduleBreak> ScheduleBreaks { get; set; }
@@ -449,6 +452,50 @@ public class DatabaseContext : DbContext
             .HasOne(a => a.GroupSlot)
             .WithMany()
             .HasForeignKey(a => a.GroupSlotId)
+            .OnDelete(DeleteBehavior.Restrict);
+
+        // Phase D1 — segmenti termina (additivno, nije autoritativno). Segment je dio termina (Cascade kao Booking);
+        // katalog/zaposlenik su Restrict. CHECK ograničenja vremena/količine i indeksi su u migraciji
+        // (Migration_2026_10_07_AppointmentSegments).
+        modelBuilder.Entity<AppointmentSegment>().HasKey(s => s.Id);
+        modelBuilder.Entity<AppointmentSegment>()
+            .HasOne(s => s.Appointment)
+            .WithMany(a => a.Segments)
+            .HasForeignKey(s => s.AppointmentId)
+            .OnDelete(DeleteBehavior.Cascade);
+        modelBuilder.Entity<AppointmentSegment>()
+            .HasOne(s => s.Service)
+            .WithMany()
+            .HasForeignKey(s => s.ServiceId)
+            .OnDelete(DeleteBehavior.Restrict);
+        modelBuilder.Entity<AppointmentSegment>()
+            .HasOne(s => s.Room)
+            .WithMany()
+            .HasForeignKey(s => s.RoomId)
+            .OnDelete(DeleteBehavior.Restrict);
+
+        modelBuilder.Entity<AppointmentSegmentEmployee>().HasKey(e => new { e.AppointmentSegmentId, e.EmployeeId });
+        modelBuilder.Entity<AppointmentSegmentEmployee>()
+            .HasOne(e => e.Segment)
+            .WithMany(s => s.Employees)
+            .HasForeignKey(e => e.AppointmentSegmentId)
+            .OnDelete(DeleteBehavior.Cascade);
+        modelBuilder.Entity<AppointmentSegmentEmployee>()
+            .HasOne(e => e.Employee)
+            .WithMany()
+            .HasForeignKey(e => e.EmployeeId)
+            .OnDelete(DeleteBehavior.Restrict);
+
+        modelBuilder.Entity<AppointmentSegmentResource>().HasKey(r => new { r.AppointmentSegmentId, r.ResourceId });
+        modelBuilder.Entity<AppointmentSegmentResource>()
+            .HasOne(r => r.Segment)
+            .WithMany(s => s.Resources)
+            .HasForeignKey(r => r.AppointmentSegmentId)
+            .OnDelete(DeleteBehavior.Cascade);
+        modelBuilder.Entity<AppointmentSegmentResource>()
+            .HasOne(r => r.Resource)
+            .WithMany()
+            .HasForeignKey(r => r.ResourceId)
             .OnDelete(DeleteBehavior.Restrict);
 
         modelBuilder.Entity<Booking>().HasKey(b => b.Id);

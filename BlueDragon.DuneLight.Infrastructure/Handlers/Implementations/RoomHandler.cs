@@ -113,7 +113,13 @@ public class RoomHandler : IRoomHandler
             .Where(g => g.OrganizationId == organizationId && g.DefaultRoomId == id)
             .Select(g => 1);
 
-        return await appointments.Union(groups).AnyAsync();
+        // Phase D1: segmenti termina referenciraju prostoriju Restrict FK-om — uključeno da brisanje daje domensku
+        // grešku umjesto sirove FK greške (segment uvijek ima i svoj termin, ali ne nužno s istom prostorijom).
+        IQueryable<int> segments = context.AppointmentSegments
+            .Where(s => s.OrganizationId == organizationId && s.RoomId == id)
+            .Select(s => 1);
+
+        return await appointments.Union(groups).Union(segments).AnyAsync();
     }
 
     private static string Normalize(string name)

@@ -303,6 +303,9 @@ public class EmployeeHandler : IEmployeeHandler
 
         if (await context.Appointments.AnyAsync(a => a.OrganizationId == organizationId && a.EmployeeId == employeeId))
             return true;
+        // Phase D1: appointment_segment_employees.employee_id je Restrict FK.
+        if (await context.AppointmentSegmentEmployees.AnyAsync(e => e.EmployeeId == employeeId && e.Segment.OrganizationId == organizationId))
+            return true;
         if (await context.ScheduleBreaks.AnyAsync(b => b.OrganizationId == organizationId && b.EmployeeId == employeeId))
             return true;
         if (await context.RosterEntries.AnyAsync(r => r.OrganizationId == organizationId && r.EmployeeId == employeeId))

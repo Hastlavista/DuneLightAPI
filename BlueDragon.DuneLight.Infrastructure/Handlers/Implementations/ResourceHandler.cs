@@ -92,6 +92,13 @@ public class ResourceHandler : IResourceHandler
             (excludeId == null || r.Id != excludeId));
     }
 
+    public async Task<bool> IsReferenced(Guid organizationId, Guid id)
+    {
+        await using DatabaseContext context = DatabaseContext.GenerateContext(_databaseSettings.ConnectionString);
+        return await context.AppointmentSegmentResources
+            .AnyAsync(r => r.ResourceId == id && r.Segment.OrganizationId == organizationId);
+    }
+
     private static string Normalize(string name)
     {
         return name?.Trim().ToLowerInvariant() ?? string.Empty;

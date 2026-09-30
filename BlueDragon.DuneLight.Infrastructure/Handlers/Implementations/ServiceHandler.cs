@@ -143,7 +143,13 @@ public class ServiceHandler : IServiceHandler
             .Where(r => r.OrganizationId == organizationId && r.ServiceId == id)
             .Select(r => 1);
 
+        // Phase D1: appointment_segments.service_id je Restrict FK.
+        IQueryable<int> segments = context.AppointmentSegments
+            .Where(s => s.OrganizationId == organizationId && s.ServiceId == id)
+            .Select(s => 1);
+
         IQueryable<int> anyReference = priceListItems
+            .Union(segments)
             .Union(packageServiceItems)
             .Union(employeeServiceAssignments)
             .Union(clientPackageServiceEntries)

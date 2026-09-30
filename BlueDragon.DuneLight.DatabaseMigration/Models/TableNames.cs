@@ -30,6 +30,9 @@ public static class Tables
 
     public const string Appointments = "appointments";
     public const string Bookings = "bookings";
+    public const string AppointmentSegments = "appointment_segments";
+    public const string AppointmentSegmentEmployees = "appointment_segment_employees";
+    public const string AppointmentSegmentResources = "appointment_segment_resources";
     public const string Payments = "payments";
     public const string AppointmentAuditLog = "appointment_audit_log";
     public const string ScheduleBreaks = "schedule_breaks";

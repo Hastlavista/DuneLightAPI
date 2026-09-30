@@ -169,6 +169,8 @@ public sealed class SchedulingWorld : IAsyncDisposable
         string[] childDeletes =
         {
             "DELETE FROM dunelight.appointment_audit_log WHERE appointment_id IN (SELECT id FROM dunelight.appointments WHERE organization_id = {0})",
+            "DELETE FROM dunelight.appointment_segment_employees WHERE appointment_segment_id IN (SELECT id FROM dunelight.appointment_segments WHERE organization_id = {0})",
+            "DELETE FROM dunelight.appointment_segment_resources WHERE appointment_segment_id IN (SELECT id FROM dunelight.appointment_segments WHERE organization_id = {0})",
             "DELETE FROM dunelight.checkout_audit_log WHERE checkout_id IN (SELECT id FROM dunelight.checkouts WHERE organization_id = {0})",
             "DELETE FROM dunelight.payment_allocations WHERE payment_id IN (SELECT id FROM dunelight.payments WHERE organization_id = {0})",
             "DELETE FROM dunelight.client_package_service_entries WHERE client_package_id IN (SELECT id FROM dunelight.client_packages WHERE organization_id = {0})",
