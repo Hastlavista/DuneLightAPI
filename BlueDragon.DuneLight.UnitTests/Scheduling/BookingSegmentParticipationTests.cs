@@ -19,9 +19,11 @@ namespace BlueDragon.DuneLight.UnitTests.Scheduling;
 
 /// <summary>
 /// Phase D2 — BookingSegmentParticipation persistence foundation: a Booking's client participating in one segment of the
-/// SAME appointment, with lifecycle status/version, arrival and cancellation metadata and a pricing snapshot. Written only
-/// through IBookingSegmentParticipationHandler.Add (the single validated write path); no production flow creates or
-/// reads participations yet.
+/// SAME appointment, with lifecycle status/version, arrival and cancellation metadata and a pricing snapshot.
+/// D3B1: every production Booking now owns exactly one (authoritative) participation on its appointment's segment, created
+/// by BookingFactory with no pricing snapshot. These foundation tests therefore attach their EXTRA participations
+/// (IBookingSegmentParticipationHandler.Add, always with a pricing snapshot) to additional segments, and ParticipationCount
+/// counts only those extra rows.
 /// </summary>
 public class BookingSegmentParticipationTests
 {
@@ -66,13 +68,24 @@ public class BookingSegmentParticipationTests
         BaseAmountSource = PriceSource.Default,
         SuggestedAmount = 50m,
         Amount = 50m,
+        IsAmountManuallyOverridden = false, // D3B1: nullable (snapshot optional until D3B2) — a full snapshot sets it
         CreatedAt = DateTimeOffset.UtcNow
     };
 
+    /// <summary>Participations added by these tests (they carry a pricing snapshot; D3B1 production ones do not).</summary>
     private static async Task<int> ParticipationCount(SchedulingWorld w)
     {
         await using DatabaseContext db = w.NewDb();
-        return await db.BookingSegmentParticipations.CountAsync(p => p.OrganizationId == w.OrganizationId);
+        return await db.BookingSegmentParticipations.CountAsync(p => p.OrganizationId == w.OrganizationId && p.Amount != null);
+    }
+
+    /// <summary>Gives the production participation of the booking lifecycle history without changing its status
+    /// (StatusVersion &gt; 0 — e.g. Confirmed -&gt; Completed -&gt; Confirmed).</summary>
+    private static async Task GiveHistory(SchedulingWorld w, Guid bookingId)
+    {
+        await using DatabaseContext db = w.NewDb();
+        await db.BookingSegmentParticipations.Where(p => p.BookingId == bookingId)
+            .ExecuteUpdateAsync(x => x.SetProperty(p => p.StatusVersion, 2));
     }
 
     #region Basic persistence and relations
@@ -81,15 +94,15 @@ public class BookingSegmentParticipationTests
     public async Task Participation_IsPersistedAndRead_WithItsBookingSegmentAndOrganization()
     {
         await using SchedulingWorld w = await SchedulingWorld.Create(nameof(Participation_IsPersistedAndRead_WithItsBookingSegmentAndOrganization));
-        Setup s = await AppointmentWithSegments(w, 10);
-        BookingSegmentParticipation p = Participation(w, s.Bookings[0], s.Segments[0]);
+        Setup s = await AppointmentWithSegments(w, 10, segments: 2);
+        BookingSegmentParticipation p = Participation(w, s.Bookings[0], s.Segments[1]);
 
         await Participations(w).Add(p);
 
         BookingSegmentParticipation read = await Participations(w).GetById(w.OrganizationId, p.Id.Value);
         Assert.Equal(w.OrganizationId, read.OrganizationId);
         Assert.Equal(s.Bookings[0].Id, read.BookingId);
-        Assert.Equal(s.Segments[0].Id, read.AppointmentSegmentId);
+        Assert.Equal(s.Segments[1].Id, read.AppointmentSegmentId);
         Assert.Equal(ParticipationStatus.Confirmed, read.Status);
 
         await using DatabaseContext db = w.NewDb();
@@ -99,8 +112,9 @@ public class BookingSegmentParticipationTests
         Assert.Equal(w.Client.Id, withGraph.Booking.ClientId);
         Assert.Equal(s.AppointmentId, withGraph.Segment.AppointmentId);
         Booking booking = await db.Bookings.Include(b => b.Participations).SingleAsync(b => b.Id == s.Bookings[0].Id);
-        Assert.Equal(p.Id, Assert.Single(booking.Participations).Id);
-        AppointmentSegment segment = await db.AppointmentSegments.Include(x => x.Participations).SingleAsync(x => x.Id == s.Segments[0].Id);
+        Assert.Equal(2, booking.Participations.Count); // its production participation + this one
+        Assert.Contains(booking.Participations, x => x.Id == p.Id);
+        AppointmentSegment segment = await db.AppointmentSegments.Include(x => x.Participations).SingleAsync(x => x.Id == s.Segments[1].Id);
         Assert.Equal(p.Id, Assert.Single(segment.Participations).Id);
     }
 
@@ -124,11 +138,11 @@ public class BookingSegmentParticipationTests
     public async Task Database_RequiresExistingBookingAndSegment_EvenOutsideTheHandler()
     {
         await using SchedulingWorld w = await SchedulingWorld.Create(nameof(Database_RequiresExistingBookingAndSegment_EvenOutsideTheHandler));
-        Setup s = await AppointmentWithSegments(w, 10);
+        Setup s = await AppointmentWithSegments(w, 10, segments: 2);
 
         async Task<string> Fails(Action<BookingSegmentParticipation> mutate)
         {
-            BookingSegmentParticipation p = Participation(w, s.Bookings[0], s.Segments[0]);
+            BookingSegmentParticipation p = Participation(w, s.Bookings[0], s.Segments[1]);
             mutate(p);
             await using DatabaseContext db = w.NewDb();
             db.BookingSegmentParticipations.Add(p);
@@ -145,8 +159,8 @@ public class BookingSegmentParticipationTests
     {
         await using SchedulingWorld w = await SchedulingWorld.Create(nameof(Reads_AreScopedToTheOrganization));
         await using SchedulingWorld other = await SchedulingWorld.Create($"{nameof(Reads_AreScopedToTheOrganization)}-other");
-        Setup s = await AppointmentWithSegments(w, 10);
-        BookingSegmentParticipation p = Participation(w, s.Bookings[0], s.Segments[0]);
+        Setup s = await AppointmentWithSegments(w, 10, segments: 2);
+        BookingSegmentParticipation p = Participation(w, s.Bookings[0], s.Segments[1]);
         await Participations(w).Add(p);
 
         Assert.Null(await Participations(w).GetById(other.OrganizationId, p.Id.Value));
@@ -216,14 +230,17 @@ public class BookingSegmentParticipationTests
     public async Task SameBookingAndSegment_Twice_IsRejected_InTheHandlerAndInTheDatabase()
     {
         await using SchedulingWorld w = await SchedulingWorld.Create(nameof(SameBookingAndSegment_Twice_IsRejected_InTheHandlerAndInTheDatabase));
-        Setup s = await AppointmentWithSegments(w, 10);
-        await Participations(w).Add(Participation(w, s.Bookings[0], s.Segments[0]));
+        Setup s = await AppointmentWithSegments(w, 10, segments: 2);
+        await Participations(w).Add(Participation(w, s.Bookings[0], s.Segments[1]));
 
         await SchedulingAssert.BusinessRule(ErrorCodes.DuplicateParticipation,
-            () => Participations(w).Add(Participation(w, s.Bookings[0], s.Segments[0], ParticipationStatus.Cancelled)));
+            () => Participations(w).Add(Participation(w, s.Bookings[0], s.Segments[1], ParticipationStatus.Cancelled)));
+        // D3B1: a second participation beside the booking's production one on the same segment is a duplicate too.
+        await SchedulingAssert.BusinessRule(ErrorCodes.DuplicateParticipation,
+            () => Participations(w).Add(Participation(w, s.Bookings[0], s.Segments[0])));
 
         await using DatabaseContext db = w.NewDb();
-        db.BookingSegmentParticipations.Add(Participation(w, s.Bookings[0], s.Segments[0]));
+        db.BookingSegmentParticipations.Add(Participation(w, s.Bookings[0], s.Segments[1]));
         DbUpdateException ex = await Assert.ThrowsAsync<DbUpdateException>(() => db.SaveChangesAsync());
         Assert.Contains("ux_booking_segment_participations_booking_segment", ex.InnerException?.Message);
         Assert.Equal(1, await ParticipationCount(w));
@@ -235,15 +252,17 @@ public class BookingSegmentParticipationTests
         await using SchedulingWorld w = await SchedulingWorld.Create(nameof(OneBooking_InSeveralSegments_AndOneSegment_WithSeveralBookings_AreAccepted));
         Client second = await w.AddClient("Second", "Client");
         Client third = await w.AddClient("Third", "Client");
-        Setup s = await AppointmentWithSegments(w, 10, segments: 3, second, third);
+        Setup s = await AppointmentWithSegments(w, 10, segments: 4, second, third);
         Assert.Equal(3, s.Bookings.Count); // still one Booking per client on the appointment
 
-        foreach (AppointmentSegment segment in s.Segments)
+        // Segment #0 already holds every booking's production participation (D3B1); the extra ones go to #1..#3.
+        foreach (AppointmentSegment segment in s.Segments.Skip(1))
             await Participations(w).Add(Participation(w, s.Bookings[0], segment));
         foreach (Booking booking in s.Bookings.Skip(1))
-            await Participations(w).Add(Participation(w, booking, s.Segments[0]));
+            await Participations(w).Add(Participation(w, booking, s.Segments[1]));
 
         Assert.Equal(s.Segments.Select(x => x.Id.Value), (await Participations(w).GetForBooking(w.OrganizationId, s.Bookings[0].Id.Value)).Select(p => p.AppointmentSegmentId));
+        Assert.Equal(3, (await Participations(w).GetForSegment(w.OrganizationId, s.Segments[1].Id.Value)).Count);
         Assert.Equal(3, (await Participations(w).GetForSegment(w.OrganizationId, s.Segments[0].Id.Value)).Count);
         Assert.Equal(5, await ParticipationCount(w));
     }
@@ -260,8 +279,8 @@ public class BookingSegmentParticipationTests
     public async Task EveryStatus_RoundTrips_AndNewParticipationsStartAtStatusVersionZero(ParticipationStatus status)
     {
         await using SchedulingWorld w = await SchedulingWorld.Create($"{nameof(EveryStatus_RoundTrips_AndNewParticipationsStartAtStatusVersionZero)}-{status}");
-        Setup s = await AppointmentWithSegments(w, 10);
-        BookingSegmentParticipation p = Participation(w, s.Bookings[0], s.Segments[0], status);
+        Setup s = await AppointmentWithSegments(w, 10, segments: 2);
+        BookingSegmentParticipation p = Participation(w, s.Bookings[0], s.Segments[1], status);
         p.StatusVersion = 7; // creation is not a transition: the write path always starts at 0
 
         await Participations(w).Add(p);
@@ -284,8 +303,8 @@ public class BookingSegmentParticipationTests
     public async Task Database_RejectsAnyOtherStatus(string status)
     {
         await using SchedulingWorld w = await SchedulingWorld.Create($"{nameof(Database_RejectsAnyOtherStatus)}-{status}");
-        Setup s = await AppointmentWithSegments(w, 10);
-        await Participations(w).Add(Participation(w, s.Bookings[0], s.Segments[0]));
+        Setup s = await AppointmentWithSegments(w, 10, segments: 2);
+        await Participations(w).Add(Participation(w, s.Bookings[0], s.Segments[1]));
 
         await using DatabaseContext db = w.NewDb();
         PostgresExceptionHolder error = await PostgresExceptionHolder.Capture(() => db.Database.ExecuteSqlRawAsync(
@@ -297,8 +316,8 @@ public class BookingSegmentParticipationTests
     public async Task StatusVersion_IsPersisted_AndCannotBeNegative()
     {
         await using SchedulingWorld w = await SchedulingWorld.Create(nameof(StatusVersion_IsPersisted_AndCannotBeNegative));
-        Setup s = await AppointmentWithSegments(w, 10);
-        BookingSegmentParticipation p = Participation(w, s.Bookings[0], s.Segments[0]);
+        Setup s = await AppointmentWithSegments(w, 10, segments: 2);
+        BookingSegmentParticipation p = Participation(w, s.Bookings[0], s.Segments[1]);
         await Participations(w).Add(p);
 
         await using (DatabaseContext db = w.NewDb())
@@ -322,9 +341,9 @@ public class BookingSegmentParticipationTests
     public async Task Arrival_IsOptionalMetadata_IndependentOfStatus()
     {
         await using SchedulingWorld w = await SchedulingWorld.Create(nameof(Arrival_IsOptionalMetadata_IndependentOfStatus));
-        Setup s = await AppointmentWithSegments(w, 10, segments: 2);
-        BookingSegmentParticipation notArrived = Participation(w, s.Bookings[0], s.Segments[0]);
-        BookingSegmentParticipation arrived = Participation(w, s.Bookings[0], s.Segments[1]); // still Confirmed
+        Setup s = await AppointmentWithSegments(w, 10, segments: 3);
+        BookingSegmentParticipation notArrived = Participation(w, s.Bookings[0], s.Segments[1]);
+        BookingSegmentParticipation arrived = Participation(w, s.Bookings[0], s.Segments[2]); // still Confirmed
         arrived.ArrivedAt = new DateTimeOffset(2031, 3, 3, 11, 58, 0, TimeSpan.FromHours(2));
         arrived.ArrivedBy = w.ActorUserId;
 
@@ -345,8 +364,8 @@ public class BookingSegmentParticipationTests
     public async Task ArrivedBy_WithoutArrivedAt_IsRejected()
     {
         await using SchedulingWorld w = await SchedulingWorld.Create(nameof(ArrivedBy_WithoutArrivedAt_IsRejected));
-        Setup s = await AppointmentWithSegments(w, 10);
-        BookingSegmentParticipation p = Participation(w, s.Bookings[0], s.Segments[0]);
+        Setup s = await AppointmentWithSegments(w, 10, segments: 2);
+        BookingSegmentParticipation p = Participation(w, s.Bookings[0], s.Segments[1]);
         p.ArrivedBy = w.ActorUserId;
 
         DbUpdateException ex = await Assert.ThrowsAsync<DbUpdateException>(() => Participations(w).Add(p));
@@ -358,8 +377,8 @@ public class BookingSegmentParticipationTests
     public async Task Cancellation_KeepsReasonAndLateClassification_AsMetadataBesideTheCancelledStatus()
     {
         await using SchedulingWorld w = await SchedulingWorld.Create(nameof(Cancellation_KeepsReasonAndLateClassification_AsMetadataBesideTheCancelledStatus));
-        Setup s = await AppointmentWithSegments(w, 10, segments: 3);
-        BookingSegmentParticipation late = Participation(w, s.Bookings[0], s.Segments[0], ParticipationStatus.Cancelled);
+        Setup s = await AppointmentWithSegments(w, 10, segments: 4);
+        BookingSegmentParticipation late = Participation(w, s.Bookings[0], s.Segments[3], ParticipationStatus.Cancelled);
         late.CancellationReason = "sick";
         late.IsLateCancellation = true;
         BookingSegmentParticipation inTime = Participation(w, s.Bookings[0], s.Segments[1], ParticipationStatus.Cancelled);
@@ -392,8 +411,8 @@ public class BookingSegmentParticipationTests
     public async Task PricingSnapshot_RoundTrips_WithAndWithoutAdjustment_AndManualOverride()
     {
         await using SchedulingWorld w = await SchedulingWorld.Create(nameof(PricingSnapshot_RoundTrips_WithAndWithoutAdjustment_AndManualOverride));
-        Setup s = await AppointmentWithSegments(w, 10, segments: 2);
-        BookingSegmentParticipation plain = Participation(w, s.Bookings[0], s.Segments[0]);
+        Setup s = await AppointmentWithSegments(w, 10, segments: 3);
+        BookingSegmentParticipation plain = Participation(w, s.Bookings[0], s.Segments[2]);
         plain.BaseAmount = 40m;
         plain.BaseAmountSource = PriceSource.CompanySpecific;
         plain.SuggestedAmount = 40m;
@@ -410,10 +429,10 @@ public class BookingSegmentParticipationTests
         await Participations(w).Add(adjusted);
 
         BookingSegmentParticipation readPlain = await Participations(w).GetById(w.OrganizationId, plain.Id.Value);
-        Assert.Equal((40m, PriceSource.CompanySpecific, (decimal?)null, 40m, 40m, false),
+        Assert.Equal(((decimal?)40m, (PriceSource?)PriceSource.CompanySpecific, (decimal?)null, (decimal?)40m, (decimal?)40m, (bool?)false),
             (readPlain.BaseAmount, readPlain.BaseAmountSource, readPlain.AdjustmentAmount, readPlain.SuggestedAmount, readPlain.Amount, readPlain.IsAmountManuallyOverridden));
         BookingSegmentParticipation readAdjusted = await Participations(w).GetById(w.OrganizationId, adjusted.Id.Value);
-        Assert.Equal((50m, PriceSource.AllCompanies, (decimal?)-7.5m, 42.5m, 30m, true),
+        Assert.Equal(((decimal?)50m, (PriceSource?)PriceSource.AllCompanies, (decimal?)-7.5m, (decimal?)42.5m, (decimal?)30m, (bool?)true),
             (readAdjusted.BaseAmount, readAdjusted.BaseAmountSource, readAdjusted.AdjustmentAmount, readAdjusted.SuggestedAmount, readAdjusted.Amount, readAdjusted.IsAmountManuallyOverridden));
     }
 
@@ -421,8 +440,8 @@ public class BookingSegmentParticipationTests
     public async Task PricingSnapshot_RejectsNegativeAmounts()
     {
         await using SchedulingWorld w = await SchedulingWorld.Create(nameof(PricingSnapshot_RejectsNegativeAmounts));
-        Setup s = await AppointmentWithSegments(w, 10);
-        BookingSegmentParticipation p = Participation(w, s.Bookings[0], s.Segments[0]);
+        Setup s = await AppointmentWithSegments(w, 10, segments: 2);
+        BookingSegmentParticipation p = Participation(w, s.Bookings[0], s.Segments[1]);
         p.Amount = -1m;
 
         DbUpdateException ex = await Assert.ThrowsAsync<DbUpdateException>(() => Participations(w).Add(p));
@@ -438,12 +457,12 @@ public class BookingSegmentParticipationTests
     public async Task Segment_WithoutParticipation_CanBeDeleted_ButNotOnceItHasOne()
     {
         await using SchedulingWorld w = await SchedulingWorld.Create(nameof(Segment_WithoutParticipation_CanBeDeleted_ButNotOnceItHasOne));
-        Setup s = await AppointmentWithSegments(w, 10, segments: 2);
+        Setup s = await AppointmentWithSegments(w, 10, segments: 3);
         await Participations(w).Add(Participation(w, s.Bookings[0], s.Segments[1]));
 
         await using (DatabaseContext db = w.NewDb())
         {
-            db.AppointmentSegments.Remove(await db.AppointmentSegments.SingleAsync(x => x.Id == s.Segments[0].Id));
+            db.AppointmentSegments.Remove(await db.AppointmentSegments.SingleAsync(x => x.Id == s.Segments[2].Id));
             await db.SaveChangesAsync();
         }
 
@@ -455,7 +474,8 @@ public class BookingSegmentParticipationTests
         }
 
         await using DatabaseContext verify = w.NewDb();
-        Assert.Equal(new[] { s.Segments[1].Id }, await verify.AppointmentSegments.Where(x => x.AppointmentId == s.AppointmentId).Select(x => x.Id).ToArrayAsync());
+        Assert.Equal(new[] { s.Segments[0].Id, s.Segments[1].Id }.OrderBy(x => x),
+            (await verify.AppointmentSegments.Where(x => x.AppointmentId == s.AppointmentId).Select(x => x.Id).ToArrayAsync()).OrderBy(x => x));
         Assert.Equal(1, await ParticipationCount(w));
     }
 
@@ -463,24 +483,23 @@ public class BookingSegmentParticipationTests
     public async Task Booking_WithParticipation_CannotBeDeletedDirectly()
     {
         await using SchedulingWorld w = await SchedulingWorld.Create(nameof(Booking_WithParticipation_CannotBeDeletedDirectly));
-        Setup s = await AppointmentWithSegments(w, 10);
-        await Participations(w).Add(Participation(w, s.Bookings[0], s.Segments[0]));
+        Setup s = await AppointmentWithSegments(w, 10); // D3B1: the booking's production participation is enough
 
         await using DatabaseContext db = w.NewDb();
-        db.Bookings.Remove(await db.Bookings.SingleAsync(b => b.Id == s.Bookings[0].Id));
+        db.Bookings.Remove(await db.Bookings.IgnoreAutoIncludes().SingleAsync(b => b.Id == s.Bookings[0].Id));
         DbUpdateException ex = await Assert.ThrowsAsync<DbUpdateException>(() => db.SaveChangesAsync());
 
         Assert.Contains("fk_booking_segment_participations_booking_id", ex.InnerException?.Message);
     }
 
     [Fact]
-    public async Task RemovingAClientWithParticipation_ThroughUpdate_IsBlocked_AndNothingIsErased()
+    public async Task RemovingAClientWithParticipationHistory_ThroughUpdate_IsBlocked_AndNothingIsErased()
     {
-        await using SchedulingWorld w = await SchedulingWorld.Create(nameof(RemovingAClientWithParticipation_ThroughUpdate_IsBlocked_AndNothingIsErased));
+        await using SchedulingWorld w = await SchedulingWorld.Create(nameof(RemovingAClientWithParticipationHistory_ThroughUpdate_IsBlocked_AndNothingIsErased));
         Client second = await w.AddClient("Second", "Client");
         Setup s = await AppointmentWithSegments(w, 10, 1, second);
         Booking secondBooking = s.Bookings.Single(b => b.ClientId == second.Id);
-        await Participations(w).Add(Participation(w, secondBooking, s.Segments[0]));
+        await GiveHistory(w, secondBooking.Id.Value); // D3B1: history (not mere existence) blocks the removal
         AppointmentDto current = await w.Appointments.GetById(w.OrganizationId, s.AppointmentId);
 
         await SchedulingAssert.BusinessRule(ErrorCodes.ReferencedCannotDelete, () => w.Appointments.Update(
@@ -488,16 +507,17 @@ public class BookingSegmentParticipationTests
 
         Appointment after = await w.LoadAppointment(s.AppointmentId);
         Assert.Equal(2, after.Bookings.Count);
-        Assert.Equal(1, await ParticipationCount(w));
+        await using DatabaseContext verify = w.NewDb();
+        Assert.Equal(2, await verify.BookingSegmentParticipations.CountAsync(p => p.Segment.AppointmentId == s.AppointmentId));
     }
 
     [Fact]
-    public async Task RemovingAClientWithoutParticipation_ThroughUpdate_StillHardDeletesTheConfirmedBooking()
+    public async Task RemovingAClientWithAnUntouchedParticipation_ThroughUpdate_StillHardDeletesTheConfirmedBooking()
     {
-        await using SchedulingWorld w = await SchedulingWorld.Create(nameof(RemovingAClientWithoutParticipation_ThroughUpdate_StillHardDeletesTheConfirmedBooking));
+        await using SchedulingWorld w = await SchedulingWorld.Create(nameof(RemovingAClientWithAnUntouchedParticipation_ThroughUpdate_StillHardDeletesTheConfirmedBooking));
         Client second = await w.AddClient("Second", "Client");
         Setup s = await AppointmentWithSegments(w, 10, 1, second);
-        await Participations(w).Add(Participation(w, s.Bookings.Single(b => b.ClientId == w.Client.Id), s.Segments[0]));
+        await GiveHistory(w, s.Bookings.Single(b => b.ClientId == w.Client.Id).Id.Value); // the KEPT client's history is irrelevant
         AppointmentDto current = await w.Appointments.GetById(w.OrganizationId, s.AppointmentId);
 
         await w.Appointments.Update(w.OrganizationId, w.ActorUserId, true, s.AppointmentId,
@@ -505,6 +525,8 @@ public class BookingSegmentParticipationTests
 
         Appointment after = await w.LoadAppointment(s.AppointmentId);
         Assert.Equal(new[] { w.Client.Id.Value }, after.Bookings.Select(b => b.ClientId).ToArray());
+        await using DatabaseContext verify = w.NewDb();
+        Assert.Equal(1, await verify.BookingSegmentParticipations.CountAsync(p => p.Segment.AppointmentId == s.AppointmentId));
     }
 
     [Fact]
@@ -512,7 +534,7 @@ public class BookingSegmentParticipationTests
     {
         await using SchedulingWorld w = await SchedulingWorld.Create(nameof(DeletingAnAppointment_WithParticipationHistory_IsBlocked_AndNothingIsErased));
         Setup s = await AppointmentWithSegments(w, 10);
-        await Participations(w).Add(Participation(w, s.Bookings[0], s.Segments[0]));
+        await GiveHistory(w, s.Bookings[0].Id.Value);
 
         await SchedulingAssert.BusinessRule(ErrorCodes.ReferencedCannotDelete,
             () => w.Appointments.Delete(w.OrganizationId, w.ActorUserId, s.AppointmentId));
@@ -520,7 +542,7 @@ public class BookingSegmentParticipationTests
         // Even bypassing the service, the database refuses to cascade the history away.
         await using (DatabaseContext db = w.NewDb())
         {
-            db.Appointments.Remove(await db.Appointments.SingleAsync(a => a.Id == s.AppointmentId));
+            db.Appointments.Remove(await db.Appointments.IgnoreAutoIncludes().SingleAsync(a => a.Id == s.AppointmentId));
             await Assert.ThrowsAsync<DbUpdateException>(() => db.SaveChangesAsync());
         }
 
@@ -528,13 +550,13 @@ public class BookingSegmentParticipationTests
         Assert.True(await verify.Appointments.AnyAsync(a => a.Id == s.AppointmentId));
         Assert.True(await verify.Bookings.AnyAsync(b => b.Id == s.Bookings[0].Id));
         Assert.True(await verify.AppointmentSegments.AnyAsync(x => x.Id == s.Segments[0].Id));
-        Assert.Equal(1, await ParticipationCount(w));
+        Assert.True(await verify.BookingSegmentParticipations.AnyAsync(p => p.BookingId == s.Bookings[0].Id));
     }
 
     [Fact]
-    public async Task DeletingAnAppointment_WithoutParticipations_IsUnchanged_EvenWithSegments()
+    public async Task DeletingAnAppointment_WithOnlyUntouchedParticipations_IsUnchanged_AndRemovesThem()
     {
-        await using SchedulingWorld w = await SchedulingWorld.Create(nameof(DeletingAnAppointment_WithoutParticipations_IsUnchanged_EvenWithSegments));
+        await using SchedulingWorld w = await SchedulingWorld.Create(nameof(DeletingAnAppointment_WithOnlyUntouchedParticipations_IsUnchanged_AndRemovesThem));
         Setup withSegment = await AppointmentWithSegments(w, 10);
         AppointmentDto plain = await w.CreateAppointment(Z(14));
 
@@ -545,16 +567,17 @@ public class BookingSegmentParticipationTests
         Assert.False(await verify.Appointments.AnyAsync(a => a.Id == withSegment.AppointmentId || a.Id == plain.Id));
         Assert.False(await verify.Bookings.AnyAsync(b => b.AppointmentId == withSegment.AppointmentId || b.AppointmentId == plain.Id));
         Assert.False(await verify.AppointmentSegments.AnyAsync(x => x.AppointmentId == withSegment.AppointmentId));
+        Assert.False(await verify.BookingSegmentParticipations.AnyAsync(p => p.OrganizationId == w.OrganizationId));
     }
 
     #endregion
 
-    #region Not authoritative: production flows create no participations
+    #region D3B1: production flows create exactly one participation per booking
 
     [Fact]
-    public async Task ProductionFlows_CreateNoParticipations()
+    public async Task ProductionFlows_CreateExactlyOneParticipationPerBooking_OnTheAppointmentsSegment()
     {
-        await using SchedulingWorld w = await SchedulingWorld.Create(nameof(ProductionFlows_CreateNoParticipations));
+        await using SchedulingWorld w = await SchedulingWorld.Create(nameof(ProductionFlows_CreateExactlyOneParticipationPerBooking_OnTheAppointmentsSegment));
 
         // Individual: create, recurring, AddBooking, SetStatus, Complete (existing and new).
         AppointmentDto single = await w.CreateAppointment(Z(8));
@@ -591,10 +614,15 @@ public class BookingSegmentParticipationTests
         Assert.True(await db.Bookings.CountAsync(b => b.OrganizationId == w.OrganizationId) >= 9);
         Assert.Contains(await db.Bookings.Where(b => b.AppointmentId == occurrence.Id).Select(b => b.ClientId).ToListAsync(), c => c == waiter.Id);
         Assert.Contains(await db.Bookings.Where(b => b.AppointmentId == roomyOccurrence.Id).Select(b => b.ClientId).ToListAsync(), c => c == lateMember.Id);
-        Assert.Equal(0, await ParticipationCount(w));
-        // D3A: every appointment now has exactly one (production) segment — still zero participations.
+        Assert.Equal(0, await ParticipationCount(w)); // none carries a pricing snapshot (Booking stays price-authoritative)
+        // D3A: every appointment has exactly one (production) segment; D3B1: every booking has exactly one participation on it.
         List<Guid> appointmentIds = await db.Appointments.Where(a => a.OrganizationId == w.OrganizationId).Select(a => a.Id.Value).ToListAsync();
         Assert.All(appointmentIds, id => Assert.Equal(1, db.AppointmentSegments.Count(x => x.AppointmentId == id)));
+        var pairs = await db.Bookings.IgnoreAutoIncludes().Where(b => b.OrganizationId == w.OrganizationId)
+            .Select(b => new { b.Id, b.AppointmentId, Segments = b.Participations.Select(p => p.Segment.AppointmentId).ToList() })
+            .ToListAsync();
+        Assert.All(pairs, b => Assert.Equal(b.AppointmentId, Assert.Single(b.Segments)));
+        Assert.Equal(pairs.Count, await db.BookingSegmentParticipations.CountAsync(p => p.OrganizationId == w.OrganizationId));
     }
 
     #endregion

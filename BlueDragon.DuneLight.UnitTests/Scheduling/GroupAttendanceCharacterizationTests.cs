@@ -65,6 +65,7 @@ public class GroupAttendanceCharacterizationTests
         await using (DatabaseContext db = w.NewDb())
         {
             Booking row = await db.Bookings.SingleAsync(b => b.AppointmentId == occurrence.Id);
+            db.BookingSegmentParticipations.RemoveRange(row.Participations); // D3B1: the participation goes with its booking
             db.Bookings.Remove(row); // the legacy / pre-migration shape
             await db.SaveChangesAsync();
         }

@@ -143,7 +143,7 @@ public class CheckoutService : ICheckoutService
         if (execution.CompanyId != locked.CompanyId)
             throw new BusinessRuleException(ErrorCodes.CheckoutItemCompanyMismatch, "Booking pripada drugoj tvrtki.");
 
-        if (booking.Status == BookingStatus.Cancelled)
+        if (BookingParticipations.StatusOf(booking) == BookingStatus.Cancelled)
             throw new BusinessRuleException(ErrorCodes.CheckoutItemNotEligible, "Otkazan booking se ne može dodati u checkout.");
 
         bool alreadyLocked = await uow.Context.CheckoutItems

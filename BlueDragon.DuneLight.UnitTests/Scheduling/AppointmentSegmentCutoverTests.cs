@@ -74,7 +74,9 @@ public class AppointmentSegmentCutoverTests
 
         await using DatabaseContext db = w.NewDb();
         Assert.False(await db.AppointmentSegmentResources.AnyAsync(r => r.AppointmentSegmentId == segment.Id));
-        Assert.False(await db.BookingSegmentParticipations.AnyAsync(p => p.AppointmentSegmentId == segment.Id));
+        // D3B1: the creation seam pairs the one Booking with exactly one participation on this segment.
+        BookingSegmentParticipation participation = await db.BookingSegmentParticipations.SingleAsync(p => p.AppointmentSegmentId == segment.Id);
+        Assert.Equal(ParticipationStatus.Confirmed, participation.Status);
     }
 
     [Fact]
@@ -364,6 +366,8 @@ public class AppointmentSegmentCutoverTests
         AppointmentDto created = await w.CreateAppointment(Z(10));
         await using (DatabaseContext db = w.NewDb())
         {
+            // D3B1: participations reference the segment, so the corrupt shape is produced by removing them first.
+            await db.BookingSegmentParticipations.Where(p => p.Segment.AppointmentId == created.Id).ExecuteDeleteAsync();
             await db.AppointmentSegments.Where(s => s.AppointmentId == created.Id).ExecuteDeleteAsync();
         }
 

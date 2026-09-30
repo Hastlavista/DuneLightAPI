@@ -888,17 +888,30 @@ public sealed class SchedulingWorld : IAsyncDisposable
             startsAt,
             durationMinutes ?? svc.DefaultDurationMinutes));
         foreach ((Client client, BookingStatus bookingStatus, decimal amount) in bookings)
-            appointment.Bookings.Add(new Booking
+        {
+            // D3B1: the lifecycle lives on the booking's single participation on the appointment's segment.
+            Guid bookingId = Guid.NewGuid();
+            Booking booking = new()
             {
-                Id = Guid.NewGuid(),
+                Id = bookingId,
                 OrganizationId = OrganizationId,
                 AppointmentId = appointmentId,
                 ClientId = client.Id.Value,
-                Status = bookingStatus,
                 Amount = amount,
                 SuggestedAmount = amount,
                 CreatedAt = DateTimeOffset.UtcNow
+            };
+            booking.Participations.Add(new BookingSegmentParticipation
+            {
+                Id = Guid.NewGuid(),
+                OrganizationId = OrganizationId,
+                BookingId = bookingId,
+                AppointmentSegmentId = appointment.Segments[0].Id.Value,
+                Status = BookingParticipations.ToParticipationStatus(bookingStatus),
+                CreatedAt = booking.CreatedAt
             });
+            appointment.Bookings.Add(booking);
+        }
         db.Appointments.Add(appointment);
         await db.SaveChangesAsync();
         return appointment;

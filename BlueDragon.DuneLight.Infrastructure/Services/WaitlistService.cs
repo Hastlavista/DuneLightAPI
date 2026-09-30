@@ -127,7 +127,7 @@ public class WaitlistService : IWaitlistService, IWaitlistPromotionService
             throw new BusinessRuleException(ErrorCodes.ClientAnonymized, "Klijent je anonimiziran.");
 
         Booking existingBooking = await _appointmentHandler.GetBooking(organizationId, appointmentId, request.ClientId);
-        if (existingBooking != null && (existingBooking.Status == BookingStatus.Confirmed || existingBooking.Status == BookingStatus.Completed))
+        if (existingBooking != null && (BookingParticipations.StatusOf(existingBooking) == BookingStatus.Confirmed || BookingParticipations.StatusOf(existingBooking) == BookingStatus.Completed))
             throw new BusinessRuleException(ErrorCodes.AlreadyBooked, "Klijent već ima rezervaciju na ovom terminu.");
 
         WaitlistEntry activeEntry = await _waitlistHandler.GetActiveForClient(organizationId, appointmentId, request.ClientId);
@@ -280,7 +280,8 @@ public class WaitlistService : IWaitlistService, IWaitlistPromotionService
             // osoblje to razrješava naknadno kroz uobičajeni check-in tok (BookingService.ResolveCoverage), isto
             // kao svaki drugi Booking. Ne koristi se "slaba" posebna vrsta bookinga za promovirane retke.
             Booking booking = BookingFactory.CreateConfirmed(
-                organizationId, appointmentId, entry.ClientId, BookingPricing.AtSuggested(suggestedAmount), now);
+                organizationId, AppointmentSegments.GetSingleExecutionSegment(appointment), entry.ClientId,
+                BookingPricing.AtSuggested(suggestedAmount), now);
             uow.Context.Bookings.Add(booking);
             await uow.Context.SaveChangesAsync();
 
@@ -338,7 +339,7 @@ public class WaitlistService : IWaitlistService, IWaitlistPromotionService
 
         bool alreadyBooked = await uow.Context.Bookings.AnyAsync(b =>
             b.AppointmentId == appointment.Id && b.ClientId == entry.ClientId &&
-            b.Status != BookingStatus.Cancelled && b.Status != BookingStatus.NoShow);
+            b.Participations.Any(p => p.Status != ParticipationStatus.Cancelled && p.Status != ParticipationStatus.NoShow));
         if (alreadyBooked)
             return WaitlistExpiredReasons.AppointmentNoLongerAvailable;
 

@@ -56,7 +56,6 @@ public class AppointmentService : IAppointmentService
     private readonly IUnitOfWorkFactory _unitOfWorkFactory;
 
     private readonly IOrganizationCalendarService _organizationCalendarService;
-    private readonly IBookingSegmentParticipationHandler _participationHandler;
 
     public AppointmentService(
         IAppointmentHandler appointmentHandler,
@@ -81,11 +80,9 @@ public class AppointmentService : IAppointmentService
         ICommissionLedgerService commissionLedgerService,
         IOutboxWriter outboxWriter,
         IUnitOfWorkFactory unitOfWorkFactory,
-        IOrganizationCalendarService organizationCalendarService,
-        IBookingSegmentParticipationHandler participationHandler)
+        IOrganizationCalendarService organizationCalendarService)
     {
         _organizationCalendarService = organizationCalendarService;
-        _participationHandler = participationHandler;
         _appointmentHandler = appointmentHandler;
         _schedulingOccupancyHandler = schedulingOccupancyHandler;
         _auditLogHandler = auditLogHandler;
@@ -149,7 +146,7 @@ public class AppointmentService : IAppointmentService
                 packageByClient[clientId] = settlement.ClientPackageId.GetValueOrDefault();
 
             Booking booking = BookingFactory.CreateCompletedAtCreation(
-                organizationId, appointmentId, clientId,
+                organizationId, AppointmentSegments.GetSingleExecutionSegment(appointment), clientId,
                 new BookingPricing(bookingAmount, suggestedAmount, settlement.Amount.HasValue && settlement.Amount.Value != suggestedAmount),
                 hasPackage ? settlement.ClientPackageId : (Guid?)null,
                 DateTimeOffset.UtcNow);
@@ -291,8 +288,8 @@ public class AppointmentService : IAppointmentService
                 if (bookingRow.Amount != bookingAmount)
                     await LogAmountChangeInTransaction(uow, id, bookingRow.Id, bookingRow.Amount, bookingAmount, userId);
 
-                BookingStatus bookingOldStatus = bookingRow.Status;
-                bool bookingStatusChanged = BookingStatusVersioning.TrySetStatus(bookingRow, BookingStatus.Completed);
+                BookingStatus bookingOldStatus = BookingParticipations.StatusOf(bookingRow);
+                bool bookingStatusChanged = BookingLifecycle.TrySetStatus(bookingRow, BookingStatus.Completed);
                 if (bookingStatusChanged)
                 {
                     // Isti "BookingStatus" audit obrazac kao BookingService.SetStatus — bez ovoga bi individualni
@@ -305,8 +302,8 @@ public class AppointmentService : IAppointmentService
                         BookingId = bookingRow.Id,
                         ChangeType = "BookingStatus",
                         OldValue = bookingOldStatus.ToString(),
-                        NewValue = bookingRow.Status.ToString(),
-                        StatusVersion = bookingRow.StatusVersion,
+                        NewValue = BookingParticipations.StatusOf(bookingRow).ToString(),
+                        StatusVersion = BookingParticipations.StatusVersionOf(bookingRow),
                         ChangedAt = DateTimeOffset.UtcNow,
                         ChangedBy = userId
                     });
@@ -437,7 +434,7 @@ public class AppointmentService : IAppointmentService
         }
 
         List<Guid> unresolvedClientIds = appointment.Bookings
-            .Where(b => b.Status == BookingStatus.Confirmed)
+            .Where(b => BookingParticipations.StatusOf(b) == BookingStatus.Confirmed)
             .Select(b => b.ClientId)
             .ToList();
 
@@ -477,7 +474,7 @@ public class AppointmentService : IAppointmentService
         // se ne dira (vidi TerminalBookingStatuses). Ovdje samo audit-logiramo promjenu za te retke.
         List<Guid> requestedClientIds = request.ClientIds.Distinct().ToList();
         foreach (Booking booking in appointment.Bookings.Where(b =>
-            requestedClientIds.Contains(b.ClientId) && !TerminalBookingStatuses.Contains(b.Status) && amount != b.Amount))
+            requestedClientIds.Contains(b.ClientId) && !TerminalBookingStatuses.Contains(BookingParticipations.StatusOf(b)) && amount != b.Amount))
             await LogAmountChange(id, booking.Id, booking.Amount, amount, userId);
 
         AppointmentFrame currentFrame = AppointmentFrame.Of(appointment);
@@ -534,7 +531,7 @@ public class AppointmentService : IAppointmentService
         Guid effectiveCompanyId = request.CompanyId ?? appointment.CompanyId;
 
         Appointment full = await _appointmentHandler.GetById(organizationId, id);
-        List<Client> clients = full.Bookings.Where(b => b.Status != BookingStatus.Cancelled && b.Status != BookingStatus.NoShow)
+        List<Client> clients = full.Bookings.Where(b => BookingParticipations.StatusOf(b) != BookingStatus.Cancelled && BookingParticipations.StatusOf(b) != BookingStatus.NoShow)
             .Select(b => b.Client).ToList();
 
         ServiceEntity service = await LoadServiceOrThrow(organizationId, currentFrame.ServiceId);
@@ -601,11 +598,8 @@ public class AppointmentService : IAppointmentService
         if (calendar.LocalDate(appointment.CreatedAt) != calendar.LocalDate(DateTimeOffset.UtcNow))
             throw new BusinessRuleException(ErrorCodes.SameDayOnly, "Termin se može trajno obrisati samo istog dana kad je unesen — u suprotnom ga otkažite.");
 
-        // Phase D2: povijest sudjelovanja (booking_segment_participations, RESTRICT FK) se nikad ne briše kaskadom —
-        // termin koji je ima se ne može trajno obrisati. Bez sudjelovanja (svi današnji termini) ponašanje je isto.
-        if (await _participationHandler.ExistsForAppointment(organizationId, id))
-            throw new BusinessRuleException(ErrorCodes.ReferencedCannotDelete, "Termin ima povijest sudjelovanja i ne može se trajno obrisati — otkažite ga umjesto toga.");
-
+        // Phase D3B1: fizičko brisanje samo ako su sva sudjelovanja netaknuta (pravilo i brisanje: ParticipationHistory kroz
+        // AppointmentHandler.Delete); sudjelovanje s poviješću → REFERENCED_CANNOT_DELETE.
         await _appointmentHandler.Delete(appointment);
     }
 
@@ -649,7 +643,8 @@ public class AppointmentService : IAppointmentService
             foreach (Client client in clients)
             {
                 appointment.Bookings.Add(BookingFactory.CreateConfirmed(
-                    organizationId, appointmentId, client.Id.GetValueOrDefault(), BookingPricing.AtSuggested(suggestedAmount), DateTimeOffset.UtcNow));
+                    organizationId, AppointmentSegments.GetSingleExecutionSegment(appointment), client.Id.GetValueOrDefault(),
+                    BookingPricing.AtSuggested(suggestedAmount), DateTimeOffset.UtcNow));
             }
 
             toCreate.Add(appointment);
@@ -955,7 +950,8 @@ public class AppointmentService : IAppointmentService
         foreach (Client client in clients)
         {
             appointment.Bookings.Add(BookingFactory.CreateConfirmed(
-                organizationId, appointmentId, client.Id.GetValueOrDefault(), new BookingPricing(amount, suggestedAmount, overridden), DateTimeOffset.UtcNow));
+                organizationId, AppointmentSegments.GetSingleExecutionSegment(appointment), client.Id.GetValueOrDefault(),
+                new BookingPricing(amount, suggestedAmount, overridden), DateTimeOffset.UtcNow));
         }
 
         List<WarningDto> warnings = new List<WarningDto>();
@@ -1024,11 +1020,11 @@ public class AppointmentService : IAppointmentService
                 });
             }
 
-            foreach (Booking booking in appointment.Bookings.Where(b => b.Status == BookingStatus.Confirmed))
+            foreach (Booking booking in appointment.Bookings.Where(b => BookingParticipations.StatusOf(b) == BookingStatus.Confirmed))
             {
-                BookingStatus oldBookingStatus = booking.Status;
-                BookingStatusVersioning.TrySetStatus(booking, targetBookingStatus);
-                booking.CancellationReason = request.CancellationReason;
+                BookingStatus oldBookingStatus = BookingParticipations.StatusOf(booking);
+                BookingLifecycle.TrySetStatus(booking, targetBookingStatus);
+                BookingLifecycle.SetCancellationReason(booking, request.CancellationReason);
                 booking.UpdatedAt = DateTimeOffset.UtcNow;
                 booking.UpdatedBy = userId;
                 // IsLateCancellation namjerno OSTAJE null ovdje (poslovno/appointment-wide otkazivanje, ne
@@ -1055,8 +1051,8 @@ public class AppointmentService : IAppointmentService
                     BookingId = booking.Id,
                     ChangeType = "BookingStatus",
                     OldValue = oldBookingStatus.ToString(),
-                    NewValue = booking.Status.ToString(),
-                    StatusVersion = booking.StatusVersion,
+                    NewValue = BookingParticipations.StatusOf(booking).ToString(),
+                    StatusVersion = BookingParticipations.StatusVersionOf(booking),
                     ChangedAt = DateTimeOffset.UtcNow,
                     ChangedBy = userId
                 });
@@ -1074,11 +1070,11 @@ public class AppointmentService : IAppointmentService
                             AppointmentId = id,
                             ClientId = booking.ClientId,
                             CompanyId = appointment.CompanyId,
-                            StatusVersion = booking.StatusVersion,
+                            StatusVersion = BookingParticipations.StatusVersionOf(booking),
                             OccurredAt = DateTimeOffset.UtcNow
                         },
                         DateTimeOffset.UtcNow,
-                        idempotencyKey: $"booking-cancelled:{booking.Id.GetValueOrDefault()}:{booking.StatusVersion}");
+                        idempotencyKey: $"booking-cancelled:{booking.Id.GetValueOrDefault()}:{BookingParticipations.StatusVersionOf(booking)}");
                 }
                 else if (targetBookingStatus == BookingStatus.NoShow)
                 {
@@ -1091,11 +1087,11 @@ public class AppointmentService : IAppointmentService
                             AppointmentId = id,
                             ClientId = booking.ClientId,
                             CompanyId = appointment.CompanyId,
-                            StatusVersion = booking.StatusVersion,
+                            StatusVersion = BookingParticipations.StatusVersionOf(booking),
                             OccurredAt = DateTimeOffset.UtcNow
                         },
                         DateTimeOffset.UtcNow,
-                        idempotencyKey: $"booking-noshow:{booking.Id.GetValueOrDefault()}:{booking.StatusVersion}");
+                        idempotencyKey: $"booking-noshow:{booking.Id.GetValueOrDefault()}:{BookingParticipations.StatusVersionOf(booking)}");
                 }
 
                 if (shouldReturn)
@@ -1533,7 +1529,7 @@ public class AppointmentService : IAppointmentService
             Form = a.Form,
             GroupId = a.GroupId,
             GroupName = isGroup ? a.Group?.Name : null,
-            AttendanceCount = isGroup ? a.Bookings.Count(b => b.Status == BookingStatus.Completed) : (int?)null,
+            AttendanceCount = isGroup ? a.Bookings.Count(b => BookingParticipations.StatusOf(b) == BookingStatus.Completed) : (int?)null,
             ExpectedCount = isGroup ? a.Group?.Members.Count(m => m.IsActive) : (int?)null
         };
     }
@@ -1570,13 +1566,13 @@ public class AppointmentService : IAppointmentService
             OutstandingAmount = outstandingAmount,
             IsPaid = outstandingAmount <= 0m,
             BookingId = booking.Id.GetValueOrDefault(),
-            BookingStatus = booking.Status,
+            BookingStatus = BookingParticipations.StatusOf(booking),
             ClientPackageId = booking.ClientPackageId,
             CoverageType = booking.CoverageType,
             PackageCoverageApplied = booking.PackageCoverageApplied,
             PackageCoverageReturned = booking.PackageCoverageReturned,
             BookingNote = booking.Note,
-            BookingCancellationReason = booking.CancellationReason
+            BookingCancellationReason = BookingParticipations.CancellationReasonOf(booking)
         };
     }
 
@@ -1612,7 +1608,7 @@ public class AppointmentService : IAppointmentService
                     Id = b.Id.GetValueOrDefault(),
                     ClientId = b.ClientId,
                     ClientName = b.Client != null ? $"{b.Client.FirstName} {b.Client.LastName}" : null,
-                    Status = b.Status,
+                    Status = BookingParticipations.StatusOf(b),
                     Amount = b.Amount,
                     SuggestedAmount = b.SuggestedAmount,
                     IsAmountManuallyOverridden = b.IsAmountManuallyOverridden,
@@ -1625,8 +1621,8 @@ public class AppointmentService : IAppointmentService
                     PackageCoverageReturned = b.PackageCoverageReturned,
                     Payments = BookingFinancialsCalculator.GetPayments(b).Select(PaymentDtoFactory.ToDto).ToList(),
                     Note = b.Note,
-                    CancellationReason = b.CancellationReason,
-                    IsLateCancellation = b.IsLateCancellation
+                    CancellationReason = BookingParticipations.CancellationReasonOf(b),
+                    IsLateCancellation = BookingParticipations.IsLateCancellationOf(b)
                 };
             }).ToList(),
             CreatedAt = a.CreatedAt,

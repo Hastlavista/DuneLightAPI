@@ -421,7 +421,7 @@ public class AppointmentOverlapCharacterizationTests
         db.Bookings.Add(new Booking
         {
             Id = Guid.NewGuid(), OrganizationId = w.OrganizationId, AppointmentId = seeded.Id.Value, ClientId = w.Client.Id.Value,
-            Status = BookingStatus.Confirmed, Amount = 50m, SuggestedAmount = 50m, CreatedAt = DateTimeOffset.UtcNow
+            Amount = 50m, SuggestedAmount = 50m, CreatedAt = DateTimeOffset.UtcNow
         });
 
         DbUpdateException ex = await Assert.ThrowsAsync<DbUpdateException>(() => db.SaveChangesAsync());

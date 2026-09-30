@@ -93,7 +93,7 @@ public class GroupAttendanceService : IGroupAttendanceService
                 {
                     ClientId = b.ClientId,
                     ClientName = b.Client != null ? $"{b.Client.FirstName} {b.Client.LastName}" : null,
-                    Attended = ToAttended(b.Status),
+                    Attended = ToAttended(BookingParticipations.StatusOf(b)),
                     CoverageType = b.CoverageType,
                     ClientPackageId = b.ClientPackageId,
                     PackageCoverageApplied = b.PackageCoverageApplied,

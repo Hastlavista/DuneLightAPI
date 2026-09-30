@@ -39,8 +39,7 @@ public class ExecutionContextResolverTests
         Id = Guid.NewGuid(),
         OrganizationId = organizationId ?? appointment.OrganizationId,
         AppointmentId = appointmentId ?? appointment.Id.Value,
-        ClientId = Guid.NewGuid(),
-        Status = BookingStatus.Confirmed
+        ClientId = Guid.NewGuid()
     };
 
     #region Appointment -> execution

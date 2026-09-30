@@ -133,7 +133,8 @@ public class BookingService : IBookingService
         decimal suggestedAmount = await ResolveSuggestedAmount(organizationId, execution.ServiceId, execution.CompanyId, execution.StartsAt);
 
         Booking booking = BookingFactory.CreateConfirmed(
-            organizationId, appointmentId, request.ClientId, BookingPricing.AtSuggested(suggestedAmount), DateTimeOffset.UtcNow);
+            organizationId, AppointmentSegments.GetSingleExecutionSegment(appointment), request.ClientId,
+            BookingPricing.AtSuggested(suggestedAmount), DateTimeOffset.UtcNow);
 
         await using (IUnitOfWork uow = await _unitOfWorkFactory.Begin())
         {
@@ -180,7 +181,7 @@ public class BookingService : IBookingService
         // ApplyIndividualCompletionCorrection), korekcija pogrešno evidentiranog izostanka (NoShow -> Confirmed,
         // vidi ApplyIndividualNoShowCorrection — P1 operativna korekcija, live E2E pokazao da izostanak bez ove
         // putanje trajno "zaglavi" i booking i pripadnu Notification pojavu) ili kao idempotentan retry
-        // (Confirmed -> Confirmed no-op, vidi BookingStatusVersioning.TrySetStatus) — Cancelled -> Confirmed I
+        // (Confirmed -> Confirmed no-op, vidi BookingLifecycle.TrySetStatus) — Cancelled -> Confirmed I
         // DALJE NIJE podržan prijelaz za Individual (namjerno uže od Group, koji dopušta povratak s BILO KOJEG
         // terminalnog statusa — vidi spec section 5; nema poznatog operativnog scenarija gdje bi pogrešno
         // otkazivanje individualnog bookinga trebalo istu administrativnu korekciju kao completion/no-show
@@ -192,7 +193,7 @@ public class BookingService : IBookingService
             if (isNewGuestBooking)
                 throw new NotFoundAppException("Booking", clientId);
 
-            if (booking.Status != BookingStatus.Completed && booking.Status != BookingStatus.NoShow && booking.Status != BookingStatus.Confirmed)
+            if (BookingParticipations.StatusOf(booking) != BookingStatus.Completed && BookingParticipations.StatusOf(booking) != BookingStatus.NoShow && BookingParticipations.StatusOf(booking) != BookingStatus.Confirmed)
                 throw new ValidationAppException(
                     "Povratak na Confirmed za individualni booking dopušten je samo korekcijom odrađenog check-ina " +
                     "(Completed -> Confirmed) ili pogrešno evidentiranog izostanka (NoShow -> Confirmed) — Cancelled nema povratnu putanju.");
@@ -223,7 +224,8 @@ public class BookingService : IBookingService
                 organizationId, guestExecution.ServiceId, guestExecution.CompanyId, guestExecution.StartsAt);
 
             booking = BookingFactory.CreateConfirmed(
-                organizationId, appointmentId, clientId, BookingPricing.AtSuggested(newBookingSuggestedAmount), DateTimeOffset.UtcNow);
+                organizationId, AppointmentSegments.GetSingleExecutionSegment(appointment), clientId,
+                BookingPricing.AtSuggested(newBookingSuggestedAmount), DateTimeOffset.UtcNow);
         }
 
         try
@@ -259,8 +261,8 @@ public class BookingService : IBookingService
                     throw new NotFoundAppException("Booking", clientId);
             }
 
-            BookingStatus oldStatus = booking.Status;
-            int oldStatusVersion = booking.StatusVersion;
+            BookingStatus oldStatus = BookingParticipations.StatusOf(booking);
+            int oldStatusVersion = BookingParticipations.StatusVersionOf(booking);
 
             // Kapacitet se provjerava kad ovaj poziv stvarno persistira NOVI Confirmed (mjesto-zauzimajući) status —
             // bilo za posve novi gost-Booking (isNewGuestBooking), bilo za POSTOJEĆI Booking koji se administrativno
@@ -268,14 +270,14 @@ public class BookingService : IBookingService
             // korekcija zaobilazila EnsureGroupCapacityAvailable u potpunosti jer je provjera gledala samo
             // isNewGuestBooking — dopuštalo je da Cancelled->Confirmed korekcija nakon FIFO promocije proizvede
             // ConfirmedCount > Capacity (poznat defekt). Idempotentan Confirmed -> Confirmed nikad ne ulazi ovamo
-            // (booking.Status != BookingStatus.Confirmed to isključuje) — ne zauzima novo mjesto pa ostaje no-op čak
+            // (BookingParticipations.StatusOf(booking) != BookingStatus.Confirmed to isključuje) — ne zauzima novo mjesto pa ostaje no-op čak
             // i kad je grupa puna. Za POSTOJEĆI Booking provjera je namjerno future-only (početak segmenta termina u
             // budućnosti) — nakon početka termina nominalni kapacitet više ne ograničava korekciju povijesne
             // prisutnosti (isto pravilo kao postojeće dopuštenje da Completed/NoShow premaše kapacitet nakon
             // početka); gost-čekiranje kroz GroupAttendanceService uvijek šalje Completed/NoShow (nikad Confirmed)
             // pa ta grana i dalje ne dira postojeći check-in tok.
             bool isExistingBookingReturningToConfirmed =
-                !isNewGuestBooking && booking.Status != BookingStatus.Confirmed && AppointmentFrame.Of(appointment).StartsAt > DateTimeOffset.UtcNow;
+                !isNewGuestBooking && BookingParticipations.StatusOf(booking) != BookingStatus.Confirmed && AppointmentFrame.Of(appointment).StartsAt > DateTimeOffset.UtcNow;
 
             if (isGroup && request.Status == BookingStatus.Confirmed && (isNewGuestBooking || isExistingBookingReturningToConfirmed))
                 await EnsureGroupCapacityAvailable(uow, organizationId, appointmentId);
@@ -283,7 +285,7 @@ public class BookingService : IBookingService
             (PaymentMethod Method, decimal Amount)? pendingPayment = null;
             if (isGroup)
                 pendingPayment = await ApplyGroupTransition(uow, organizationId, userId, appointment, booking, request);
-            else if (request.Status == BookingStatus.Confirmed && booking.Status == BookingStatus.NoShow)
+            else if (request.Status == BookingStatus.Confirmed && BookingParticipations.StatusOf(booking) == BookingStatus.NoShow)
                 await ApplyIndividualNoShowCorrection(uow, organizationId, userId, appointment, booking);
             else if (request.Status == BookingStatus.Confirmed)
                 await ApplyIndividualCompletionCorrection(uow, organizationId, userId, appointment, booking);
@@ -306,7 +308,7 @@ public class BookingService : IBookingService
                     uow, organizationId, userId, appointment.CompanyId, booking, pendingPayment.Value.Method, pendingPayment.Value.Amount,
                     note: null, isCheckInGenerated: true);
 
-            if (oldStatus != booking.Status)
+            if (oldStatus != BookingParticipations.StatusOf(booking))
             {
                 await _auditLogHandler.Add(uow, new AppointmentAuditLog
                 {
@@ -315,8 +317,8 @@ public class BookingService : IBookingService
                     BookingId = booking.Id,
                     ChangeType = "BookingStatus",
                     OldValue = oldStatus.ToString(),
-                    NewValue = booking.Status.ToString(),
-                    StatusVersion = booking.StatusVersion,
+                    NewValue = BookingParticipations.StatusOf(booking).ToString(),
+                    StatusVersion = BookingParticipations.StatusVersionOf(booking),
                     ChangedAt = DateTimeOffset.UtcNow,
                     ChangedBy = userId
                 });
@@ -324,9 +326,9 @@ public class BookingService : IBookingService
 
             // Notification-producing Outbox event — samo za STVARAN prijelaz Confirmed -> Cancelled/NoShow (ne
             // za idempotentne ponovljene pokušaje niti za Completed/poništenje), ista provjera pokriva i
-            // individualni i grupni put jer oboje ovdje završavaju istim booking.Status = request.Status (vidi
+            // individualni i grupni put jer oboje ovdje završavaju istim BookingLifecycle.TrySetStatus(booking, request.Status) (vidi
             // spec section 32/36). Ista uow transakcija kao domenska mutacija — rollback briše i ovaj redak.
-            if (oldStatus == BookingStatus.Confirmed && booking.Status == BookingStatus.Cancelled)
+            if (oldStatus == BookingStatus.Confirmed && BookingParticipations.StatusOf(booking) == BookingStatus.Cancelled)
             {
                 await _outboxWriter.Add(
                     uow, organizationId, OutboxEventTypes.BookingCancelledV1,
@@ -337,13 +339,13 @@ public class BookingService : IBookingService
                         AppointmentId = appointmentId,
                         ClientId = booking.ClientId,
                         CompanyId = appointment.CompanyId,
-                        StatusVersion = booking.StatusVersion,
+                        StatusVersion = BookingParticipations.StatusVersionOf(booking),
                         OccurredAt = DateTimeOffset.UtcNow
                     },
                     DateTimeOffset.UtcNow,
-                    idempotencyKey: $"booking-cancelled:{booking.Id.GetValueOrDefault()}:{booking.StatusVersion}");
+                    idempotencyKey: $"booking-cancelled:{booking.Id.GetValueOrDefault()}:{BookingParticipations.StatusVersionOf(booking)}");
             }
-            else if (oldStatus == BookingStatus.Confirmed && booking.Status == BookingStatus.NoShow)
+            else if (oldStatus == BookingStatus.Confirmed && BookingParticipations.StatusOf(booking) == BookingStatus.NoShow)
             {
                 await _outboxWriter.Add(
                     uow, organizationId, OutboxEventTypes.BookingNoShowV1,
@@ -354,13 +356,13 @@ public class BookingService : IBookingService
                         AppointmentId = appointmentId,
                         ClientId = booking.ClientId,
                         CompanyId = appointment.CompanyId,
-                        StatusVersion = booking.StatusVersion,
+                        StatusVersion = BookingParticipations.StatusVersionOf(booking),
                         OccurredAt = DateTimeOffset.UtcNow
                     },
                     DateTimeOffset.UtcNow,
-                    idempotencyKey: $"booking-noshow:{booking.Id.GetValueOrDefault()}:{booking.StatusVersion}");
+                    idempotencyKey: $"booking-noshow:{booking.Id.GetValueOrDefault()}:{BookingParticipations.StatusVersionOf(booking)}");
             }
-            else if (oldStatus == BookingStatus.NoShow && booking.Status == BookingStatus.Confirmed)
+            else if (oldStatus == BookingStatus.NoShow && BookingParticipations.StatusOf(booking) == BookingStatus.Confirmed)
             {
                 // Uska administrativna korekcija (vidi spec section 2/11-12/37) — cilja TOČNO onu NoShow pojavu
                 // koja se ovime korigira (oldStatusVersion, pročitan PRIJE inkrementa na Confirmed gore), NIKAD
@@ -373,7 +375,7 @@ public class BookingService : IBookingService
                     uow, organizationId, NotificationType.BookingNoShow, NotificationSourceType.Booking,
                     booking.Id.GetValueOrDefault(), oldStatusVersion);
             }
-            else if (oldStatus == BookingStatus.Cancelled && booking.Status == BookingStatus.Confirmed)
+            else if (oldStatus == BookingStatus.Cancelled && BookingParticipations.StatusOf(booking) == BookingStatus.Confirmed)
             {
                 // Isti obrazac kao NoShow korekcija iznad, za Cancelled -> Confirmed (vidi spec section 13) —
                 // zatvara asimetriju gdje je do sada samo NoShow imao ovo čišćenje.
@@ -385,7 +387,7 @@ public class BookingService : IBookingService
             // Oslobođeno mjesto na grupnom terminu -> pokušaj promocije liste čekanja (spec section 12/40) — samo
             // za stvaran prijelaz Confirmed->Cancelled (booking koji je stvarno zauzimao mjesto), ne za NoShow
             // (izostanak ne oslobađa smisleno mjesto, termin se već odvija/odvio) niti za Completed/poništenje.
-            if (isGroup && oldStatus == BookingStatus.Confirmed && booking.Status == BookingStatus.Cancelled)
+            if (isGroup && oldStatus == BookingStatus.Confirmed && BookingParticipations.StatusOf(booking) == BookingStatus.Cancelled)
                 await _waitlistPromotionService.PromoteEligibleWaiters(uow, organizationId, appointmentId, userId);
 
             await uow.CommitAsync();
@@ -444,7 +446,7 @@ public class BookingService : IBookingService
 
         if (request.Status == BookingStatus.Completed)
         {
-            bool needsFreshCoverage = booking.Status != BookingStatus.Completed ||
+            bool needsFreshCoverage = BookingParticipations.StatusOf(booking) != BookingStatus.Completed ||
                 (booking.PackageCoverageApplied && booking.PackageCoverageReturned);
 
             if (needsFreshCoverage)
@@ -472,7 +474,7 @@ public class BookingService : IBookingService
             });
         }
 
-        // booking.Status ovdje je JOŠ uvijek stari status (mijenja se tek ispod) — reset naplate se primjenjuje
+        // BookingParticipations.StatusOf(booking) ovdje je JOŠ uvijek stari status (mijenja se tek ispod) — reset naplate se primjenjuje
         // SAMO kad se stvarno poništava već odrađen/plaćen check-in (Completed -> bilo što drugo), ne kad se
         // otkazuje/izostaje booking koji nikad nije bio čekiran (Confirmed -> Cancelled/NoShow već ima
         // Amount=0 od kreiranja, ništa za poništiti — a SuggestedAmount snapshotiran kod generiranja termina se
@@ -481,7 +483,7 @@ public class BookingService : IBookingService
         // vidi Payment.cs "Void naspram Refund") dok se ručno dodani Paymenti iste rezervacije NE diraju (vidi
         // VoidCheckInGeneratedPayments); za razliku od stvarnog otkazivanja/no-showa koji nijedan Payment ne dira
         // (vidi spec section 27/28).
-        if (booking.Status == BookingStatus.Completed && request.Status != BookingStatus.Completed)
+        if (BookingParticipations.StatusOf(booking) == BookingStatus.Completed && request.Status != BookingStatus.Completed)
         {
             await _paymentLedgerService.VoidCheckInGeneratedPayments(uow, organizationId, userId, booking, "Poništen check-in");
 
@@ -493,13 +495,13 @@ public class BookingService : IBookingService
         if (request.Status == BookingStatus.Cancelled)
         {
             int cutoffMinutes = await _organizationSettingsService.GetCancellationCutoffMinutes(organizationId);
-            booking.IsLateCancellation = BookingCancellationPolicy.IsLateCancellation(
-                ExecutionContextResolver.ForBooking(appointment, booking).StartsAt, DateTimeOffset.UtcNow, cutoffMinutes);
+            BookingLifecycle.SetLateCancellation(booking, BookingCancellationPolicy.IsLateCancellation(
+                ExecutionContextResolver.ForBooking(appointment, booking).StartsAt, DateTimeOffset.UtcNow, cutoffMinutes));
         }
 
-        BookingStatusVersioning.TrySetStatus(booking, request.Status);
+        BookingLifecycle.TrySetStatus(booking, request.Status);
         if (request.Status == BookingStatus.Cancelled || request.Status == BookingStatus.NoShow)
-            booking.CancellationReason = request.CancellationReason;
+            BookingLifecycle.SetCancellationReason(booking, request.CancellationReason);
 
         return pendingPayment;
     }
@@ -510,7 +512,7 @@ public class BookingService : IBookingService
     private async Task ApplyIndividualTransition(
         IUnitOfWork uow, Guid organizationId, Guid userId, Appointment appointment, Booking booking, BookingSetStatusRequest request)
     {
-        if (booking.Status != BookingStatus.Confirmed)
+        if (BookingParticipations.StatusOf(booking) != BookingStatus.Confirmed)
             throw new BusinessRuleException(ErrorCodes.AlreadyCompleted, "Booking je već u terminalnom stanju.");
 
         if (request.ReturnPackageEntry && booking.PackageCoverageApplied && !booking.PackageCoverageReturned && booking.ClientPackageId.HasValue)
@@ -538,17 +540,17 @@ public class BookingService : IBookingService
         if (request.Status == BookingStatus.Cancelled)
         {
             int cutoffMinutes = await _organizationSettingsService.GetCancellationCutoffMinutes(organizationId);
-            booking.IsLateCancellation = BookingCancellationPolicy.IsLateCancellation(
-                ExecutionContextResolver.ForBooking(appointment, booking).StartsAt, DateTimeOffset.UtcNow, cutoffMinutes);
+            BookingLifecycle.SetLateCancellation(booking, BookingCancellationPolicy.IsLateCancellation(
+                ExecutionContextResolver.ForBooking(appointment, booking).StartsAt, DateTimeOffset.UtcNow, cutoffMinutes));
         }
 
-        BookingStatusVersioning.TrySetStatus(booking, request.Status);
-        booking.CancellationReason = request.CancellationReason;
+        BookingLifecycle.TrySetStatus(booking, request.Status);
+        BookingLifecycle.SetCancellationReason(booking, request.CancellationReason);
     }
 
     /// <summary>Form=Individual, Completed -&gt; Confirmed: uska administrativna korekcija pogrešno odrađenog
     /// check-ina (P1 korekcijski tok, vidi Booking.cs/IBookingService.SetStatus) — pozivatelj (SetStatus) je već
-    /// validirao da je ovo dopušteno (booking.Status je Completed, ili već Confirmed za idempotentan retry) prije
+    /// validirao da je ovo dopušteno (BookingParticipations.StatusOf(booking) je Completed, ili već Confirmed za idempotentan retry) prije
     /// poziva. Za razliku od ApplyGroupTransition (ista vrsta korekcije, ali implicitna za "bilo koji prijelaz
     /// DALJE OD Completed" i BEZ komisijske reverzije jer Group nema komisijski izvor po Bookingu), ovo je
     /// eksplicitna, samostalna putanja:
@@ -569,7 +571,7 @@ public class BookingService : IBookingService
     ///    vraća na puni iznos automatski (vidi "Do NOT simply copy Group behavior blindly", spec section 4).
     /// 5) CommissionEntry zarađen OVIM completionom prelazi Earned -&gt; Reversed (ICommissionLedgerService.
     ///    ReverseForIndividualServiceCorrection) — jedini dio ove korekcije bez Group ekvivalenta.
-    /// 6) BookingStatusVersioning.TrySetStatus na kraju — jedina dozvoljena mutacijska putanja za Status, no-op
+    /// 6) BookingLifecycle.TrySetStatus na kraju — jedina dozvoljena mutacijska putanja za Status, no-op
     ///    (bez inkrementa) ako je booking već Confirmed (idempotentan retry, vidi spec section 15/41).
     /// 7) Appointment.Status Completed -&gt; Scheduled, SAMO ako je korekcija stvaran prijelaz (ne no-op) —
     ///    BEZOVJETNO na sestrinske Booking statuse (vidi TryRevertAppointmentCompletion): Appointment=Completed
@@ -628,7 +630,7 @@ public class BookingService : IBookingService
 
         await _commissionLedgerService.ReverseForIndividualServiceCorrection(uow, organizationId, userId, booking);
 
-        bool wasRealTransition = BookingStatusVersioning.TrySetStatus(booking, BookingStatus.Confirmed);
+        bool wasRealTransition = BookingLifecycle.TrySetStatus(booking, BookingStatus.Confirmed);
         if (wasRealTransition)
             await TryRevertAppointmentCompletion(uow, organizationId, userId, appointment);
     }
@@ -646,7 +648,7 @@ public class BookingService : IBookingService
     /// POTPUNO NEPOVEZANE ručne uplate na istom Bookingu koju NoShow nikad nije dirao (vidi spec section 7 — "no
     /// unrelated financial/package/commission mutation").
     ///
-    /// 1) BookingStatusVersioning.TrySetStatus na kraju — jedina dozvoljena mutacijska putanja za Status, no-op
+    /// 1) BookingLifecycle.TrySetStatus na kraju — jedina dozvoljena mutacijska putanja za Status, no-op
     ///    (bez inkrementa) ako je booking već Confirmed (idempotentan retry).
     /// 2) Appointment.Status Completed -&gt; Scheduled, SAMO ako je korekcija stvaran prijelaz (ne no-op) I ako je
     ///    Appointment stvarno Completed — isti TryRevertAppointmentCompletion poziv kao
@@ -660,7 +662,7 @@ public class BookingService : IBookingService
     private async Task ApplyIndividualNoShowCorrection(
         IUnitOfWork uow, Guid organizationId, Guid userId, Appointment appointment, Booking booking)
     {
-        bool wasRealTransition = BookingStatusVersioning.TrySetStatus(booking, BookingStatus.Confirmed);
+        bool wasRealTransition = BookingLifecycle.TrySetStatus(booking, BookingStatus.Confirmed);
         if (wasRealTransition)
             await TryRevertAppointmentCompletion(uow, organizationId, userId, appointment);
     }
@@ -880,7 +882,7 @@ public class BookingService : IBookingService
             ClientName = booking.Client != null && booking.Client.OrganizationId == booking.OrganizationId
                 ? $"{booking.Client.FirstName} {booking.Client.LastName}"
                 : null,
-            Status = booking.Status,
+            Status = BookingParticipations.StatusOf(booking),
             Amount = booking.Amount,
             SuggestedAmount = booking.SuggestedAmount,
             IsAmountManuallyOverridden = booking.IsAmountManuallyOverridden,
@@ -893,8 +895,8 @@ public class BookingService : IBookingService
             PackageCoverageReturned = booking.PackageCoverageReturned,
             Payments = BookingFinancialsCalculator.GetPayments(booking).Select(PaymentDtoFactory.ToDto).ToList(),
             Note = booking.Note,
-            CancellationReason = booking.CancellationReason,
-            IsLateCancellation = booking.IsLateCancellation
+            CancellationReason = BookingParticipations.CancellationReasonOf(booking),
+            IsLateCancellation = BookingParticipations.IsLateCancellationOf(booking)
         };
     }
 }

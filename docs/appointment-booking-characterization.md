@@ -68,6 +68,8 @@ dotnet test BlueDragon.DuneLight.UnitTests --filter "FullyQualifiedName~Scheduli
 | `OrganizationCalendarTests` | local ↔ UTC conversion, DST gap/overlap, local-time recurrence, IANA id validation — pure unit tests |
 | `TimezoneSchedulingTests` | Europe/Zagreb organization: local absences, working hours, holidays, available slots, DST, recurrence, group generation, timezone setting |
 | `CompanyTimeZoneTests` | Company timezone override: inheritance/override/clearing via the Company API, validation, org change vs overridden companies, Company-local hours, absences, holidays, slots, recurring appointments/breaks and group occurrences across DST, dashboard day boundaries |
+| `BookingParticipationLifecycleTests` | D3B1 — lifecycle authoritative on `BookingSegmentParticipation`: creation seam, lifecycle writes, single-participation resolver failures, read model, dropped booking columns, the "untouched = deletable" rule for Update / CompleteExisting omission and same-day Delete |
+| `BookingParticipationLifecycleCutoverMigrationTests` (project root) | D3B1 migration on a throw-away database: backfill, guards, rollback |
 
 ## Current behaviour findings
 
@@ -170,6 +172,13 @@ Legend — **Test**: the characterization test(s) that pin it. **Later**: whethe
   Test: `Database_HasNoExclusionConstraint_*`, `Database_DoesEnforce_*`, `DuplicateOccurrence_IsAlsoStoppedAtWriteTime_UnderTheSlotLock`,
   `AppointmentSegmentCutoverTests.ConcurrentGenerationOfTheSameRange_PersistsEachOccurrenceOnce`.
   The race itself is **not** asserted (non-deterministic); only the absence of a database guard is.
+* **D3B1 hard-delete rule (locked).** A Booking and its Participation are hard-deleted only while the participation is
+  *untouched* (Confirmed, `StatusVersion` 0, no arrival, no cancellation reason, no late classification) — one definition,
+  `ParticipationHistory`. Update / CompleteExisting omitting a Confirmed client with history → `REFERENCED_CANNOT_DELETE`
+  (omitted terminal bookings are still preserved silently); same-day Delete is refused if any participation has history.
+  Participations are deleted explicitly before their bookings — never by cascade. F-09 is unchanged for untouched bookings
+  that sit on a checkout (a Completed-then-corrected booking is now stopped earlier by the history rule).
+  Test: `BookingParticipationLifecycleTests` (deletion region).
 * **F-18 Small hazards.** Appointment-wide `Cancel` twice silently overwrites the appointment's `CancellationReason`; `AddBooking` on
   an Individual appointment has no capacity concept; available-slot search ignores rooms and clients and lists absent employees
   with empty slot lists; read models join Service/Employee/Room names live (no name snapshot).

@@ -44,7 +44,7 @@ public interface ICommissionLedgerService
 
     /// <summary>Reverzira (Earned -&gt; Reversed) CommissionEntry zarađen TOČNO OVIM completionom individualnog
     /// Bookinga, kao dio BookingService.ApplyIndividualCompletionCorrection (Individual Booking Completed -&gt;
-    /// Confirmed administrativna korekcija) — poziva se PRIJE nego booking.Status stvarno prijeđe na Confirmed
+    /// Confirmed administrativna korekcija) — poziva se PRIJE nego BookingParticipations.StatusOf(booking) stvarno prijeđe na Confirmed
     /// (pozivatelj još drži Booking pod FOR UPDATE lockom iz iste transakcije). No-op ako aktivan (Earned) zapis
     /// ne postoji (nikad nije bilo primjenjivog CommissionRule kod completiona, ili je već reverziran — idempotentan
     /// retry, vidi spec section 15/41). Identificira izvor isključivo preko BookingId + Status=Earned

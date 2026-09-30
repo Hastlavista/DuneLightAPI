@@ -22,6 +22,11 @@ public class AppointmentWriteSeamTests
     private static AppointmentFrame Frame(Guid? employeeId = null, Guid? roomId = null) =>
         new(Guid.NewGuid(), employeeId, roomId, StartsAt, 45);
 
+    /// <summary>D3B1: bookings are created against the appointment's authoritative segment.</summary>
+    private static AppointmentSegment NewSegment() =>
+        AppointmentSegments.GetSingleExecutionSegment(
+            AppointmentFactory.CreateIndividual(Org, Company, Frame(), AppointmentStatus.Scheduled, null, null, User, CreatedAt));
+
     #region AppointmentFactory
 
     [Theory]
@@ -171,9 +176,10 @@ public class AppointmentWriteSeamTests
     [Fact]
     public void CreateConfirmed_IsAFreshConfirmedBooking_WithPricingAndNoPackageOrCancellationState()
     {
-        Guid appointment = Guid.NewGuid(), client = Guid.NewGuid();
+        AppointmentSegment segment = NewSegment();
+        Guid appointment = segment.AppointmentId, client = Guid.NewGuid();
 
-        Booking b = BookingFactory.CreateConfirmed(Org, appointment, client, new BookingPricing(40m, 50m, true), CreatedAt);
+        Booking b = BookingFactory.CreateConfirmed(Org, segment, client, new BookingPricing(40m, 50m, true), CreatedAt);
 
         Assert.NotNull(b.Id);
         Assert.Equal(Org, b.OrganizationId);
@@ -201,7 +207,7 @@ public class AppointmentWriteSeamTests
     [Fact]
     public void CreateConfirmed_AtTheSuggestedPrice_IsNotAManualOverride()
     {
-        Booking b = BookingFactory.CreateConfirmed(Org, Guid.NewGuid(), Guid.NewGuid(), BookingPricing.AtSuggested(35m), CreatedAt);
+        Booking b = BookingFactory.CreateConfirmed(Org, NewSegment(), Guid.NewGuid(), BookingPricing.AtSuggested(35m), CreatedAt);
 
         Assert.Equal(35m, b.Amount);
         Assert.Equal(35m, b.SuggestedAmount);
@@ -212,7 +218,7 @@ public class AppointmentWriteSeamTests
     public void CreateCompletedAtCreation_IsCompletedAtStatusVersionZero_WithoutAPackage()
     {
         // F-07 (pinned): CompleteNew creates the Booking directly as Completed without going through TrySetStatus.
-        Booking b = BookingFactory.CreateCompletedAtCreation(Org, Guid.NewGuid(), Guid.NewGuid(), new BookingPricing(50m, 50m, false), null, CreatedAt);
+        Booking b = BookingFactory.CreateCompletedAtCreation(Org, NewSegment(), Guid.NewGuid(), new BookingPricing(50m, 50m, false), null, CreatedAt);
 
         Assert.Equal(BookingStatus.Completed, b.Status);
         Assert.Equal(0, b.StatusVersion);
@@ -227,7 +233,7 @@ public class AppointmentWriteSeamTests
     {
         Guid package = Guid.NewGuid();
 
-        Booking b = BookingFactory.CreateCompletedAtCreation(Org, Guid.NewGuid(), Guid.NewGuid(), new BookingPricing(50m, 50m, false), package, CreatedAt);
+        Booking b = BookingFactory.CreateCompletedAtCreation(Org, NewSegment(), Guid.NewGuid(), new BookingPricing(50m, 50m, false), package, CreatedAt);
 
         Assert.Equal(package, b.ClientPackageId);
         Assert.True(b.PackageCoverageApplied);

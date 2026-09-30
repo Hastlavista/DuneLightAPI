@@ -54,7 +54,7 @@ public class SchedulingOccupancyHandler : ISchedulingOccupancyHandler
         List<OccupancySlot> candidates = await Project(ActiveSegments(context, organizationId)
             .Where(s =>
                 s.PlannedStart >= windowStart && s.PlannedStart <= windowEnd &&
-                s.Appointment.Bookings.Any(b => clientIds.Contains(b.ClientId) && b.Status != BookingStatus.Cancelled && b.Status != BookingStatus.NoShow) &&
+                s.Appointment.Bookings.Any(b => clientIds.Contains(b.ClientId) && b.Participations.Any(p => p.Status != ParticipationStatus.Cancelled && p.Status != ParticipationStatus.NoShow)) &&
                 (excludeId == null || s.AppointmentId != excludeId)));
 
         return candidates.Where(s => s.Overlaps(startsAt, newEnd)).ToList();
@@ -114,7 +114,7 @@ public class SchedulingOccupancyHandler : ISchedulingOccupancyHandler
         return await Project(ActiveSegments(context, organizationId)
             .Where(s =>
                 s.PlannedStart >= rangeFrom && s.PlannedStart <= rangeTo &&
-                s.Appointment.Bookings.Any(b => clientIds.Contains(b.ClientId) && b.Status != BookingStatus.Cancelled && b.Status != BookingStatus.NoShow)));
+                s.Appointment.Bookings.Any(b => clientIds.Contains(b.ClientId) && b.Participations.Any(p => p.Status != ParticipationStatus.Cancelled && p.Status != ParticipationStatus.NoShow))));
     }
 
     /// <summary>Segmenti ne-otkazanih termina organizacije — status je i dalje na razini termina.</summary>
@@ -138,7 +138,7 @@ public class SchedulingOccupancyHandler : ISchedulingOccupancyHandler
                 s.RoomId,
                 EmployeeIds = s.Employees.Select(e => e.EmployeeId).ToList(),
                 ActiveClientIds = s.Appointment.Bookings
-                    .Where(b => b.Status != BookingStatus.Cancelled && b.Status != BookingStatus.NoShow)
+                    .Where(b => b.Participations.Any(p => p.Status != ParticipationStatus.Cancelled && p.Status != ParticipationStatus.NoShow))
                     .Select(b => b.ClientId)
                     .ToList()
             })

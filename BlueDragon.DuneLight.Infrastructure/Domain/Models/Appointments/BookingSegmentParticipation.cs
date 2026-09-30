@@ -7,9 +7,11 @@ using BlueDragon.DuneLight.Core.Enums;
 namespace BlueDragon.DuneLight.Infrastructure.Domain.Models.Appointments;
 
 /// <summary>
-/// Phase D2 — klijent Bookinga sudjeluje u JEDNOM segmentu istog termina (ciljna izvršna i cjenovna jedinica).
-/// Persistence temelj, NIJE autoritativno: produkcijski tokovi i dalje rade isključivo s Bookingom, nijedan tok ne
-/// kreira sudjelovanja i nema sinkronizacije s Bookingom.
+/// Klijent Bookinga sudjeluje u JEDNOM segmentu istog termina (ciljna izvršna i cjenovna jedinica). Od Phase D3B1 je
+/// AUTORITATIVAN izvor izvršnog životnog ciklusa (Status, StatusVersion, dolazak, razlog/klasifikacija otkazivanja) —
+/// svaki produkcijski Booking ima točno jedno sudjelovanje (BookingFactory), a čita/piše se kroz
+/// Utils.BookingParticipations/BookingLifecycle. Cjenovni snapshot NIJE još autoritativan: u D3B1 ostaje NULL (cijena,
+/// paket i naplata su i dalje na Bookingu) i postaje autoritativan tek u D3B2.
 ///
 /// Invarijante (provodi ih jedina write-putanja, IBookingSegmentParticipationHandler.Add): Booking i segment postoje u
 /// organizaciji sudjelovanja i pripadaju ISTOM terminu; (BookingId, AppointmentSegmentId) je jedinstven (i u bazi).
@@ -62,22 +64,22 @@ public class BookingSegmentParticipation
     public bool? IsLateCancellation { get; set; }
 
     [Column("base_amount")]
-    public decimal BaseAmount { get; set; }
+    public decimal? BaseAmount { get; set; }
 
     [Column("base_amount_source")]
-    public PriceSource BaseAmountSource { get; set; }
+    public PriceSource? BaseAmountSource { get; set; }
 
     [Column("adjustment_amount")]
     public decimal? AdjustmentAmount { get; set; }
 
     [Column("suggested_amount")]
-    public decimal SuggestedAmount { get; set; }
+    public decimal? SuggestedAmount { get; set; }
 
     [Column("amount")]
-    public decimal Amount { get; set; }
+    public decimal? Amount { get; set; }
 
     [Column("is_amount_manually_overridden")]
-    public bool IsAmountManuallyOverridden { get; set; }
+    public bool? IsAmountManuallyOverridden { get; set; }
 
     [Column("created_at")]
     public DateTimeOffset CreatedAt { get; set; }

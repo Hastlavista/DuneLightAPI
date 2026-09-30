@@ -135,19 +135,19 @@ public class OperationalDashboardService : IOperationalDashboardService
         if (appointment.Form == AppointmentForm.Group)
         {
             List<Booking> bookings = appointment.Bookings;
-            int confirmedCount = bookings.Count(b => b.Status == BookingStatus.Confirmed);
+            int confirmedCount = bookings.Count(b => BookingParticipations.StatusOf(b) == BookingStatus.Confirmed);
             int capacity = appointment.Group?.Capacity ?? 0;
 
             dto.GroupSummary = new DashboardGroupSummaryDto
             {
                 Capacity = capacity,
                 ConfirmedCount = confirmedCount,
-                CompletedCount = bookings.Count(b => b.Status == BookingStatus.Completed),
-                NoShowCount = bookings.Count(b => b.Status == BookingStatus.NoShow),
-                CancelledCount = bookings.Count(b => b.Status == BookingStatus.Cancelled),
+                CompletedCount = bookings.Count(b => BookingParticipations.StatusOf(b) == BookingStatus.Completed),
+                NoShowCount = bookings.Count(b => BookingParticipations.StatusOf(b) == BookingStatus.NoShow),
+                CancelledCount = bookings.Count(b => BookingParticipations.StatusOf(b) == BookingStatus.Cancelled),
                 WaitingCount = waiting.Count(w => w.AppointmentId == appointment.Id),
                 AvailableReservationSeats = Math.Max(0, capacity - confirmedCount),
-                HasUnresolvedAttendance = frame.StartsAt <= now && bookings.Any(b => b.Status == BookingStatus.Confirmed)
+                HasUnresolvedAttendance = frame.StartsAt <= now && bookings.Any(b => BookingParticipations.StatusOf(b) == BookingStatus.Confirmed)
             };
         }
         else
@@ -166,7 +166,7 @@ public class OperationalDashboardService : IOperationalDashboardService
             BookingId = booking.Id.GetValueOrDefault(),
             ClientId = booking.ClientId,
             ClientName = booking.Client != null ? $"{booking.Client.FirstName} {booking.Client.LastName}" : null,
-            BookingStatus = booking.Status,
+            BookingStatus = BookingParticipations.StatusOf(booking),
             PaidAmount = BookingFinancialsCalculator.CalculatePaidAmount(booking),
             OutstandingAmount = outstanding,
             IsPaid = outstanding <= 0m,
@@ -182,7 +182,7 @@ public class OperationalDashboardService : IOperationalDashboardService
         // spec section 17, Booking.IsLateCancellation je trenutno samo klasifikacijska priprema, ne naplata).
         List<Booking> obligationBookings = appointments
             .SelectMany(a => a.Bookings)
-            .Where(b => b.Status != BookingStatus.Cancelled)
+            .Where(b => BookingParticipations.StatusOf(b) != BookingStatus.Cancelled)
             .ToList();
 
         decimal outstandingAmount = 0m;
@@ -220,8 +220,8 @@ public class OperationalDashboardService : IOperationalDashboardService
         return new DashboardAlertsDto
         {
             WaitingCount = waiting.Count,
-            NoShowCount = allBookings.Count(b => b.Status == BookingStatus.NoShow),
-            CancelledBookingCount = allBookings.Count(b => b.Status == BookingStatus.Cancelled),
+            NoShowCount = allBookings.Count(b => BookingParticipations.StatusOf(b) == BookingStatus.NoShow),
+            CancelledBookingCount = allBookings.Count(b => BookingParticipations.StatusOf(b) == BookingStatus.Cancelled),
             CancelledAppointmentCount = appointments.Count(a => a.Status == AppointmentStatus.Cancelled),
             UnpaidBookingCount = unpaidBookingCount,
             OutOfStockCount = outOfStock.Count,

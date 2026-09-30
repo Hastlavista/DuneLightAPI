@@ -29,9 +29,9 @@ public class BookingStatusVersioningCharacterizationTests
     [Fact]
     public void TrySetStatus_ARealTransition_ChangesTheStatusAndIncrementsTheVersionByExactlyOne()
     {
-        Booking booking = new() { Status = BookingStatus.Confirmed, StatusVersion = 0 };
+        Booking booking = AppointmentFrameTestExtensions.InMemoryBooking(BookingStatus.Confirmed, 0);
 
-        bool changed = BookingStatusVersioning.TrySetStatus(booking, BookingStatus.Completed);
+        bool changed = BookingLifecycle.TrySetStatus(booking, BookingStatus.Completed);
 
         Assert.True(changed);
         Assert.Equal(BookingStatus.Completed, booking.Status);
@@ -45,9 +45,9 @@ public class BookingStatusVersioningCharacterizationTests
     [InlineData(BookingStatus.NoShow)]
     public void TrySetStatus_TheSameStatusAgain_IsANoOp_AndDoesNotIncrementTheVersion(BookingStatus status)
     {
-        Booking booking = new() { Status = status, StatusVersion = 7 };
+        Booking booking = AppointmentFrameTestExtensions.InMemoryBooking(status, 7);
 
-        bool changed = BookingStatusVersioning.TrySetStatus(booking, status);
+        bool changed = BookingLifecycle.TrySetStatus(booking, status);
 
         Assert.False(changed);
         Assert.Equal(status, booking.Status);
@@ -57,13 +57,13 @@ public class BookingStatusVersioningCharacterizationTests
     [Fact]
     public void TrySetStatus_ACycleOfTransitions_AdvancesOncePerRealChange_AndSkipsRepeats()
     {
-        Booking booking = new() { Status = BookingStatus.Confirmed };
+        Booking booking = AppointmentFrameTestExtensions.InMemoryBooking(BookingStatus.Confirmed);
 
-        BookingStatusVersioning.TrySetStatus(booking, BookingStatus.NoShow);      // 1
-        BookingStatusVersioning.TrySetStatus(booking, BookingStatus.NoShow);      // repeat: no change
-        BookingStatusVersioning.TrySetStatus(booking, BookingStatus.Confirmed);   // 2
-        BookingStatusVersioning.TrySetStatus(booking, BookingStatus.NoShow);      // 3 — a NEW occurrence of NoShow
-        BookingStatusVersioning.TrySetStatus(booking, BookingStatus.Cancelled);   // 4
+        BookingLifecycle.TrySetStatus(booking, BookingStatus.NoShow);      // 1
+        BookingLifecycle.TrySetStatus(booking, BookingStatus.NoShow);      // repeat: no change
+        BookingLifecycle.TrySetStatus(booking, BookingStatus.Confirmed);   // 2
+        BookingLifecycle.TrySetStatus(booking, BookingStatus.NoShow);      // 3 — a NEW occurrence of NoShow
+        BookingLifecycle.TrySetStatus(booking, BookingStatus.Cancelled);   // 4
 
         Assert.Equal(4, booking.StatusVersion);
         Assert.Equal(BookingStatus.Cancelled, booking.Status);
@@ -72,12 +72,13 @@ public class BookingStatusVersioningCharacterizationTests
     [Fact]
     public void TrySetStatus_DoesNotTouchAnyOtherBookingField()
     {
-        Booking booking = new()
-        {
-            Status = BookingStatus.Confirmed, Amount = 50m, SuggestedAmount = 50m, Note = "n", CancellationReason = "r", PackageCoverageApplied = true
-        };
+        Booking booking = AppointmentFrameTestExtensions.InMemoryBooking(BookingStatus.Confirmed, cancellationReason: "r");
+        booking.Amount = 50m;
+        booking.SuggestedAmount = 50m;
+        booking.Note = "n";
+        booking.PackageCoverageApplied = true;
 
-        BookingStatusVersioning.TrySetStatus(booking, BookingStatus.Cancelled);
+        BookingLifecycle.TrySetStatus(booking, BookingStatus.Cancelled);
 
         Assert.Equal(50m, booking.Amount);
         Assert.Equal("n", booking.Note);

@@ -8,6 +8,7 @@ using BlueDragon.DuneLight.Infrastructure.Domain.Models.Appointments;
 using BlueDragon.DuneLight.Infrastructure.Domain.Models.Clients;
 using BlueDragon.DuneLight.Infrastructure.Domain.Models.Notifications;
 using BlueDragon.DuneLight.Infrastructure.Handlers.Interfaces;
+using BlueDragon.DuneLight.Infrastructure.Utils;
 using BlueDragon.DuneLight.Infrastructure.UnitOfWork;
 using Microsoft.EntityFrameworkCore;
 
@@ -60,7 +61,7 @@ public class BookingNoShowNotificationHandler : IOutboxMessageHandler
         // (NoShow -> Confirmed) ILI odavno prošao kroz noviju pojavu, oboje daju Cancelled (vidi spec section
         // 14/37/42, isto ponašanje kao anonimizacija: "ne treba se dogoditi komunikacija", samo drugi razlog).
         NotificationStatus status = client.IsAnonymized ||
-            booking.Status != BookingStatus.NoShow || booking.StatusVersion != @event.StatusVersion
+            BookingParticipations.StatusOf(booking) != BookingStatus.NoShow || BookingParticipations.StatusVersionOf(booking) != @event.StatusVersion
                 ? NotificationStatus.Cancelled
                 : NotificationStatus.Pending;
 

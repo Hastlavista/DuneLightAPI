@@ -522,7 +522,8 @@ public class GroupService : IGroupService
                     organizationId, execution.ServiceId, execution.CompanyId, execution.StartsAt);
 
                 await _appointmentHandler.AddBooking(uow, BookingFactory.CreateConfirmed(
-                    organizationId, futureAppointment.Id.GetValueOrDefault(), request.ClientId, BookingPricing.AtSuggested(suggestedAmount), now));
+                    organizationId, AppointmentSegments.GetSingleExecutionSegment(futureAppointment), request.ClientId,
+                    BookingPricing.AtSuggested(suggestedAmount), now));
             }
 
             await uow.CommitAsync();
@@ -566,13 +567,13 @@ public class GroupService : IGroupService
             List<Appointment> futureAppointments = await _appointmentHandler.GetFutureScheduledForGroup(uow, organizationId, groupId);
             foreach (Appointment futureAppointment in futureAppointments)
             {
-                Booking booking = futureAppointment.Bookings.FirstOrDefault(b => b.ClientId == member.ClientId && b.Status == BookingStatus.Confirmed);
+                Booking booking = futureAppointment.Bookings.FirstOrDefault(b => b.ClientId == member.ClientId && BookingParticipations.StatusOf(b) == BookingStatus.Confirmed);
                 if (booking == null)
                     continue;
 
-                BookingStatus oldBookingStatus = booking.Status;
-                BookingStatusVersioning.TrySetStatus(booking, BookingStatus.Cancelled);
-                booking.CancellationReason = "Klijent uklonjen iz grupe";
+                BookingStatus oldBookingStatus = BookingParticipations.StatusOf(booking);
+                BookingLifecycle.TrySetStatus(booking, BookingStatus.Cancelled);
+                BookingLifecycle.SetCancellationReason(booking, "Klijent uklonjen iz grupe");
                 booking.UpdatedAt = now;
                 booking.UpdatedBy = userId;
                 await _appointmentHandler.UpdateBooking(uow, booking);
@@ -587,8 +588,8 @@ public class GroupService : IGroupService
                     BookingId = booking.Id,
                     ChangeType = "BookingStatus",
                     OldValue = oldBookingStatus.ToString(),
-                    NewValue = booking.Status.ToString(),
-                    StatusVersion = booking.StatusVersion,
+                    NewValue = BookingParticipations.StatusOf(booking).ToString(),
+                    StatusVersion = BookingParticipations.StatusVersionOf(booking),
                     ChangedAt = now,
                     ChangedBy = userId
                 });
@@ -604,11 +605,11 @@ public class GroupService : IGroupService
                         AppointmentId = futureAppointment.Id.GetValueOrDefault(),
                         ClientId = booking.ClientId,
                         CompanyId = futureAppointment.CompanyId,
-                        StatusVersion = booking.StatusVersion,
+                        StatusVersion = BookingParticipations.StatusVersionOf(booking),
                         OccurredAt = now
                     },
                     now,
-                    idempotencyKey: $"booking-cancelled:{booking.Id.GetValueOrDefault()}:{booking.StatusVersion}");
+                    idempotencyKey: $"booking-cancelled:{booking.Id.GetValueOrDefault()}:{BookingParticipations.StatusVersionOf(booking)}");
 
                 // Oslobođeno mjesto -> pokušaj promocije liste čekanja za OVAJ occurrence (spec section 39) —
                 // ista promocijska logika kao izravno otkazivanje Bookinga (BookingService), ne duplicirana ovdje.
@@ -742,7 +743,8 @@ public class GroupService : IGroupService
             foreach (GroupMember member in group.Members.Where(m => m.IsActive))
             {
                 appointment.Bookings.Add(BookingFactory.CreateConfirmed(
-                    organizationId, appointmentId, member.ClientId, BookingPricing.AtSuggested(suggestedAmount), DateTimeOffset.UtcNow));
+                    organizationId, AppointmentSegments.GetSingleExecutionSegment(appointment), member.ClientId,
+                    BookingPricing.AtSuggested(suggestedAmount), DateTimeOffset.UtcNow));
             }
 
             toCreate.Add(appointment);
@@ -1394,7 +1396,7 @@ public class GroupService : IGroupService
             Form = AppointmentForm.Group,
             GroupId = a.GroupId,
             GroupName = groupName,
-            AttendanceCount = a.Bookings.Count(b => b.Status == BookingStatus.Completed),
+            AttendanceCount = a.Bookings.Count(b => BookingParticipations.StatusOf(b) == BookingStatus.Completed),
             ExpectedCount = expectedCount
         };
     }

@@ -14,6 +14,7 @@ using BlueDragon.DuneLight.Infrastructure.Domain.Models.Commissions;
 using BlueDragon.DuneLight.Infrastructure.Domain.Models.Employees;
 using BlueDragon.DuneLight.Infrastructure.Handlers.Interfaces;
 using BlueDragon.DuneLight.Infrastructure.UnitOfWork;
+using BlueDragon.DuneLight.Infrastructure.Utils;
 using Microsoft.EntityFrameworkCore;
 using ProductEntity = BlueDragon.DuneLight.Infrastructure.Domain.Models.Products.Product;
 
@@ -361,7 +362,7 @@ public class CommissionService : ICommissionRuleService, ICommissionService, ICo
             // Booking.StatusVersion NAKON prijelaza u Completed (pozivatelj TrySetStatus prije ovog poziva, vidi
             // FK zahtjev u domenskoj napomeni) — daje ovoj completion-pojavi zaseban identitet naspram eventualnog
             // narednog completiona nakon korekcije (vidi CommissionEntry.cs SourceVersion napomenu).
-            SourceVersion = booking.StatusVersion,
+            SourceVersion = BookingParticipations.StatusVersionOf(booking),
             EarnedAt = DateTimeOffset.UtcNow,
             CreatedAt = DateTimeOffset.UtcNow
         });

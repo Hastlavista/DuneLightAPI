@@ -509,13 +509,13 @@ public class DatabaseContext : DbContext
             .OnDelete(DeleteBehavior.Restrict);
 
         modelBuilder.Entity<Booking>().HasKey(b => b.Id);
+        // Phase D3B1: životni ciklus Bookinga živi na njegovom (jedinom) sudjelovanju — učitava se uvijek s Bookingom, pa
+        // nijedan upit ne može "zaboraviti" Include i tiho vidjeti Booking bez statusa (BookingParticipations bi bacio).
+        modelBuilder.Entity<Booking>().Navigation(b => b.Participations).AutoInclude();
         modelBuilder.Entity<Booking>().HasIndex(b => new { b.OrganizationId, b.ClientId });
         modelBuilder.Entity<Booking>()
             .HasIndex(b => new { b.AppointmentId, b.ClientId })
             .IsUnique();
-        modelBuilder.Entity<Booking>()
-            .Property(b => b.Status)
-            .HasConversion(v => v.ToString(), v => Enum.Parse<BookingStatus>(v));
         modelBuilder.Entity<Booking>()
             .Property(b => b.CoverageType)
             .HasConversion(

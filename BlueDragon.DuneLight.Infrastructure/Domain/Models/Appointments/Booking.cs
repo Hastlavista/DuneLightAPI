@@ -51,20 +51,6 @@ public class Booking
     [Column("client_id")]
     public Guid ClientId { get; set; }
 
-    [Column("status")]
-    public BookingStatus Status { get; set; }
-
-    /// <summary>Monotono raste SAMO kad se Status stvarno promijeni (nikad za idempotentan poziv sa istim
-    /// statusom) — vidi BookingStatusVersioning.TrySetStatus, jedina dozvoljena mutacijska putanja za Status.
-    /// Daje stabilan identitet JEDNOJ konkretnoj pojavi prijelaza (npr. Confirmed-&gt;NoShow #5 naspram sljedećeg
-    /// Confirmed-&gt;NoShow #7 nakon međuvremenog #6 povratka na Confirmed), potrebno jer grupni Booking status
-    /// legitimno ciklira (Confirmed/NoShow/Cancelled naprijed-natrag) — bez ovoga Outbox idempotencija po samom
-    /// BookingId bi trajno "zaključala" prvu pojavu i tiho progutala svaku narednu (vidi BookingCancelledEvent/
-    /// BookingNoShowEvent.StatusVersion, Notification.SourceVersion). Počinje od 0 za sve retke (i postojeće i
-    /// nove) — povijesne pojave prije uvođenja ovog polja se ne rekonstruiraju.</summary>
-    [Column("status_version")]
-    public int StatusVersion { get; set; }
-
     /// <summary>Cijena OVOG klijenta za ovaj booking (uvijek popunjeno od trenutka kreiranja, prije bilo kakve
     /// naplate) — vrijednost usluge bez obzira na način podmirenja: kod paket-pokrića (ClientPackageId) ovo i
     /// dalje nosi redovnu/predloženu cijenu (ne 0), OutstandingAmount=0 samo znači da je obveza podmirena
@@ -118,20 +104,6 @@ public class Booking
 
     [Column("note")]
     public string Note { get; set; }
-
-    /// <summary>Popunjeno samo kad je Status Cancelled ili NoShow — booking-razina ekvivalent Appointment.CancellationReason.</summary>
-    [Column("cancellation_reason")]
-    public string CancellationReason { get; set; }
-
-    /// <summary>Klasifikacija trenutka otkazivanja naspram OrganizationSettings.CancellationCutoffMinutes — vidi
-    /// BookingCancellationPolicy. Popunjeno SAMO za otkazivanje ovog konkretnog Bookinga od strane
-    /// klijenta/osoblja (BookingService.SetStatus) — namjerno null za NoShow (klasifikacija je isključivo o
-    /// "kasnom otkazivanju", ne o izostanku) i za posloVno/appointment-wide otkazivanje cijelog termina
-    /// (AppointmentService.Cancel) jer se kasno-otkazivanje pravilo odnosi na inicijativu klijenta, ne na
-    /// odluku poslovnice da otkaže termin (vidi spec section 38 — nema kazne kad poslovnica otkazuje).
-    /// Nikad se ne koristi za stvarnu naplatu naknade u ovoj fazi — samo priprema za buduću Commerce logiku.</summary>
-    [Column("is_late_cancellation")]
-    public bool? IsLateCancellation { get; set; }
 
     [Column("created_at")]
     public DateTimeOffset CreatedAt { get; set; }

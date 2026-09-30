@@ -8,6 +8,7 @@ using BlueDragon.DuneLight.Infrastructure.Domain.Models.Appointments;
 using BlueDragon.DuneLight.Infrastructure.Domain.Models.Clients;
 using BlueDragon.DuneLight.Infrastructure.Domain.Models.Notifications;
 using BlueDragon.DuneLight.Infrastructure.Handlers.Interfaces;
+using BlueDragon.DuneLight.Infrastructure.Utils;
 using BlueDragon.DuneLight.Infrastructure.UnitOfWork;
 using Microsoft.EntityFrameworkCore;
 
@@ -56,7 +57,7 @@ public class BookingCancelledNotificationHandler : IOutboxMessageHandler
         // korigiran (Cancelled -> Confirmed) ILI odavno prošao kroz noviju pojavu, oboje daju Cancelled (vidi
         // spec section 14/37/42).
         NotificationStatus status = client.IsAnonymized ||
-            booking.Status != BookingStatus.Cancelled || booking.StatusVersion != @event.StatusVersion
+            BookingParticipations.StatusOf(booking) != BookingStatus.Cancelled || BookingParticipations.StatusVersionOf(booking) != @event.StatusVersion
                 ? NotificationStatus.Cancelled
                 : NotificationStatus.Pending;
 

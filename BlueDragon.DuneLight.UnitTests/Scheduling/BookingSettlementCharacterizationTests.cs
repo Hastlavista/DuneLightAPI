@@ -81,11 +81,13 @@ public class BookingSettlementCharacterizationTests
     {
         await using SchedulingWorld w = await SchedulingWorld.Create(nameof(RecordingAPayment_DoesNotModifyTheBookingRow_OnlyTheDerivedFinancialsChange));
         (Guid bookingId, AppointmentDto dto) = await UnpaidCompletedBooking(w, SchedulingWorld.Past(10));
-        string before = JsonSerializer.Serialize(await w.LoadBooking(dto.Id, w.Client));
+        // D3B1: the booking now carries its participation (lifecycle) — IgnoreCycles snapshots both without the back-reference.
+        JsonSerializerOptions snapshot = new() { ReferenceHandler = System.Text.Json.Serialization.ReferenceHandler.IgnoreCycles };
+        string before = JsonSerializer.Serialize(await w.LoadBooking(dto.Id, w.Client), snapshot);
 
         await w.PayBookingViaCheckout(bookingId, w.Client, 50m);
 
-        Assert.Equal(before, JsonSerializer.Serialize(await w.LoadBooking(dto.Id, w.Client)));
+        Assert.Equal(before, JsonSerializer.Serialize(await w.LoadBooking(dto.Id, w.Client), snapshot));
         BookingDto derived = await BookingDtoOf(w, dto.Id);
         Assert.Equal(50m, derived.PaidAmount);
         Assert.True(derived.IsPaid);
