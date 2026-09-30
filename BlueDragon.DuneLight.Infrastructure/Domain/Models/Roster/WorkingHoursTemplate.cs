@@ -36,7 +36,7 @@ public class WorkingHoursTemplate
 
     /// <summary>Referentni datum (ponedjeljak) od kojeg se broji koji je tjedan ciklusa (0-based) — vidi WorkingHoursCalculator.</summary>
     [Column("anchor_date")]
-    public DateTimeOffset AnchorDate { get; set; }
+    public DateOnly AnchorDate { get; set; }
 
     [Column("created_at")]
     public DateTimeOffset CreatedAt { get; set; }

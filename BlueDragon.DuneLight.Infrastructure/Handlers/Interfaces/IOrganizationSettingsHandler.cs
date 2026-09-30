@@ -12,4 +12,10 @@ public interface IOrganizationSettingsHandler
 
     Task Add(OrganizationSettings settings);
     Task Update(OrganizationSettings settings);
+
+    /// <summary>Organization.TimeZone; null ako organizacija ne postoji.</summary>
+    Task<string> GetTimeZone(Guid organizationId);
+
+    /// <summary>Postavlja Organization.TimeZone (pozivatelj je već validirao id); false ako organizacija ne postoji.</summary>
+    Task<bool> UpdateTimeZone(Guid organizationId, string timeZone);
 }

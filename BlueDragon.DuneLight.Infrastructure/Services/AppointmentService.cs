@@ -55,6 +55,8 @@ public class AppointmentService : IAppointmentService
     private readonly IOutboxWriter _outboxWriter;
     private readonly IUnitOfWorkFactory _unitOfWorkFactory;
 
+    private readonly IOrganizationCalendarService _organizationCalendarService;
+
     public AppointmentService(
         IAppointmentHandler appointmentHandler,
         ISchedulingOccupancyHandler schedulingOccupancyHandler,
@@ -77,8 +79,10 @@ public class AppointmentService : IAppointmentService
         ICheckoutHandler checkoutHandler,
         ICommissionLedgerService commissionLedgerService,
         IOutboxWriter outboxWriter,
-        IUnitOfWorkFactory unitOfWorkFactory)
+        IUnitOfWorkFactory unitOfWorkFactory,
+        IOrganizationCalendarService organizationCalendarService)
     {
+        _organizationCalendarService = organizationCalendarService;
         _appointmentHandler = appointmentHandler;
         _schedulingOccupancyHandler = schedulingOccupancyHandler;
         _auditLogHandler = auditLogHandler;
@@ -582,7 +586,9 @@ public class AppointmentService : IAppointmentService
         if (appointment == null)
             throw new NotFoundAppException("Appointment", id);
 
-        if (appointment.CreatedAt.UtcDateTime.Date != DateTimeOffset.UtcNow.UtcDateTime.Date)
+        // "Isti dan" je kalendarski dan organizacije, ne UTC dan (F-19 / timezone foundation).
+        OrganizationCalendar calendar = await _organizationCalendarService.GetCalendar(organizationId);
+        if (calendar.LocalDate(appointment.CreatedAt) != calendar.LocalDate(DateTimeOffset.UtcNow))
             throw new BusinessRuleException(ErrorCodes.SameDayOnly, "Termin se može trajno obrisati samo istog dana kad je unesen — u suprotnom ga otkažite.");
 
         await _appointmentHandler.Delete(appointment);
@@ -595,7 +601,9 @@ public class AppointmentService : IAppointmentService
 
         ServiceEntity service = await LoadServiceOrThrow(organizationId, request.ServiceId);
         bool overrideAvailability = request.OverrideAvailability && hasFullScope;
-        List<DateTimeOffset> occurrences = BuildOccurrenceDates(request.RecurrenceType, request.FirstOccurrenceStartsAt, request.EndDate);
+        OrganizationCalendar calendar = await _organizationCalendarService.GetCalendar(organizationId);
+        List<DateTimeOffset> occurrences = calendar.RepeatAtLocalTime(
+            request.FirstOccurrenceStartsAt, request.EndDate, request.RecurrenceType == RecurrenceType.Daily ? 1 : 7);
 
         await EnsureStructuralEligibility(organizationId, service, request.CompanyId, request.EmployeeId);
         Room room = await EnsureRoomExists(organizationId, request.CompanyId, request.RoomId);
@@ -645,18 +653,6 @@ public class AppointmentService : IAppointmentService
         return created;
     }
 
-    /// <summary>Weekly = postojeće ponašanje (+7 dana). Daily = svaki kalendarski dan uključivo vikend, bez preskakanja.</summary>
-    private static List<DateTimeOffset> BuildOccurrenceDates(RecurrenceType recurrenceType, DateTimeOffset first, DateTimeOffset end)
-    {
-        int stepDays = recurrenceType == RecurrenceType.Daily ? 1 : 7;
-
-        List<DateTimeOffset> occurrences = new List<DateTimeOffset>();
-        for (DateTimeOffset occurrence = first; occurrence <= end; occurrence = occurrence.AddDays(stepDays))
-            occurrences.Add(occurrence);
-
-        return occurrences;
-    }
-
     /// <summary>SAMO za /recurring. STVARNI sudari (trener već ima termin/grupu u to vrijeme, ili soba zauzeta)
     /// i dalje abortiraju CIJELI niz s RECURRING_CONFLICT (409) prije nego se bilo što spremi — pojedinačni
     /// endpointi umjesto ovoga koriste EnsureNoHardOverlap (isto tvrda blokada za iste razloge, ali baca
@@ -685,8 +681,13 @@ public class AppointmentService : IAppointmentService
 
         // Učitano JEDNOM za cijeli raspon niza (apsencije + eventualni work-override redovi) — dijeli se između
         // absenceHit provjere i working-hours provjere ispod, isti obrazac kao candidateAppointments.
+        // Kalendarski datumi i lokalna vremena occurrencea u zoni organizacije — nikad offset zahtjeva ni hosta.
+        OrganizationCalendar calendar = await _organizationCalendarService.GetCalendar(organizationId);
+        DateOnly firstLocalDate = calendar.LocalDate(occurrences[0]);
+        DateOnly lastLocalDate = calendar.LocalDate(occurrences[^1]);
+
         List<RosterEntry> rosterEntriesInRange = await _rosterEntryHandler.GetForPeriod(
-            organizationId, new List<Guid> { employeeId }, occurrences[0], occurrences[^1]);
+            organizationId, new List<Guid> { employeeId }, firstLocalDate, lastLocalDate);
 
         List<RosterEntry> absences = rosterEntriesInRange.Where(e => e.RosterType.IsAbsence).ToList();
 
@@ -695,7 +696,7 @@ public class AppointmentService : IAppointmentService
 
         // Učitano JEDNOM za cijeli raspon niza — isti obrazac kao rosterEntriesInRange iznad.
         List<CompanyHoliday> companyHolidaysInRange = await _companyHolidayHandler.GetForCompaniesInRange(
-            organizationId, new List<Guid> { companyId }, occurrences[0], occurrences[^1]);
+            organizationId, new List<Guid> { companyId }, firstLocalDate, lastLocalDate);
 
         List<RecurringConflictDetail> hardConflicts = new List<RecurringConflictDetail>();
         Dictionary<DateTimeOffset, List<WarningDto>> warningsByOccurrence = new Dictionary<DateTimeOffset, List<WarningDto>>();
@@ -716,19 +717,22 @@ public class AppointmentService : IAppointmentService
             bool breakHit = candidateBreaks.Any(b =>
                 b.StartsAt < occurrenceEnd && occurrence < b.StartsAt.AddMinutes(b.DurationMinutes));
 
+            DateOnly localDate = calendar.LocalDate(occurrence);
+
             bool absenceHit = absences.Any(a =>
-                a.DateFrom.Date <= occurrence.Date && (a.DateTo == null || occurrence.Date <= a.DateTo.Value.Date));
+                a.DateFrom <= localDate && (a.DateTo == null || localDate <= a.DateTo.Value));
 
             List<RosterEntry> rosterEntriesForOccurrence = rosterEntriesInRange
-                .Where(e => !e.RosterType.IsAbsence && e.DateFrom.Date == occurrence.Date)
+                .Where(e => !e.RosterType.IsAbsence && e.DateFrom == localDate)
                 .ToList();
 
             List<CompanyHoliday> companyHolidaysForOccurrence = companyHolidaysInRange
-                .Where(h => h.Date.Date == occurrence.Date)
+                .Where(h => h.Date == localDate)
                 .ToList();
 
             bool withinHours = absenceHit || IsWithinWorkingHours(
-                employeeTemplate, companyTemplate, rosterEntriesForOccurrence, occurrence, durationMinutes, companyHolidaysForOccurrence);
+                employeeTemplate, companyTemplate, rosterEntriesForOccurrence, localDate, calendar.LocalTimeOfDay(occurrence),
+                durationMinutes, companyHolidaysForOccurrence);
 
             AppointmentEligibilityHelper.WorkforceViolation violation = AppointmentEligibilityHelper.Classify(
                 absenceHit, breakHit, companyHolidaysForOccurrence.Count > 0, withinHours);
@@ -823,13 +827,17 @@ public class AppointmentService : IAppointmentService
 
     public async Task<List<EmployeeAvailableSlotsDto>> GetAvailableSlots(Guid organizationId, AvailableSlotsQuery query)
     {
+        // Traženi dan je kalendarski datum kako ga je klijent napisao; "danas", granice dana i sva lokalna vremena
+        // (radno vrijeme, zauzeti intervali) su u zoni organizacije — ne ovise o hostu ni o offsetu učitanih vrijednosti.
+        OrganizationCalendar calendar = await _organizationCalendarService.GetCalendar(organizationId);
         DateTimeOffset now = DateTimeOffset.UtcNow;
-        DateTimeOffset requestedDay = query.Date.Date;
+        DateOnly requestedDay = CalendarDates.FromWallDate(query.Date);
+        DateOnly today = calendar.LocalDate(now);
 
-        if (requestedDay < now.Date)
+        if (requestedDay < today)
             return new List<EmployeeAvailableSlotsDto>();
 
-        TimeSpan? minimumStart = requestedDay == now.Date ? now.TimeOfDay + AvailableSlotLeadTime : null;
+        TimeSpan? minimumStart = requestedDay == today ? calendar.LocalTimeOfDay(now) + AvailableSlotLeadTime : null;
 
         ServiceEntity service = await LoadServiceOrThrow(organizationId, query.ServiceId);
         Company company = await _companyHandler.GetById(organizationId, query.CompanyId);
@@ -857,19 +865,19 @@ public class AppointmentService : IAppointmentService
 
         List<Guid> employeeIds = employees.Select(e => e.Id.GetValueOrDefault()).ToList();
 
-        DateTimeOffset dayStart = requestedDay;
-        DateTimeOffset dayEnd = dayStart.AddDays(1).AddTicks(-1);
+        DateTimeOffset dayStart = calendar.StartOfDay(requestedDay);
+        DateTimeOffset dayEnd = calendar.StartOfDay(requestedDay.AddDays(1)).AddTicks(-1);
 
         List<WorkingHoursTemplate> employeeTemplates = await _workingHoursTemplateHandler.GetForEmployees(organizationId, employeeIds);
         WorkingHoursTemplate companyTemplate = await _workingHoursTemplateHandler.GetForCompany(organizationId, query.CompanyId);
-        List<RosterEntry> rosterEntries = await _rosterEntryHandler.GetForPeriod(organizationId, employeeIds, dayStart, dayStart);
+        List<RosterEntry> rosterEntries = await _rosterEntryHandler.GetForPeriod(organizationId, employeeIds, requestedDay, requestedDay);
         List<OccupancySlot> appointments = await _schedulingOccupancyHandler.GetForEmployeesInRange(organizationId, employeeIds, dayStart, dayEnd);
         List<ScheduleBreak> breaks = await _scheduleBreakHandler.GetForEmployeesInRange(organizationId, employeeIds, dayStart, dayEnd);
         List<CompanyHoliday> companyHolidays = await _companyHolidayHandler.GetForCompaniesInRange(
-            organizationId, new List<Guid> { query.CompanyId }, dayStart, dayStart);
+            organizationId, new List<Guid> { query.CompanyId }, requestedDay, requestedDay);
 
         (List<WorkingHoursCalculator.Interval> companyIntervals, _) =
-            WorkingHoursCalculator.GetEffectiveCompanyIntervals(companyTemplate, companyHolidays, dayStart);
+            WorkingHoursCalculator.GetEffectiveCompanyIntervals(companyTemplate, companyHolidays, requestedDay);
 
         List<EmployeeAvailableSlotsDto> result = new List<EmployeeAvailableSlotsDto>();
 
@@ -881,20 +889,20 @@ public class AppointmentService : IAppointmentService
             List<RosterEntry> rosterForEmployee = rosterEntries.Where(r => r.EmployeeId == employeeId).ToList();
 
             (List<WorkingHoursCalculator.Interval> employeeIntervals, _) =
-                WorkingHoursCalculator.GetEffectiveEmployeeIntervals(employeeTemplate, rosterForEmployee, dayStart);
+                WorkingHoursCalculator.GetEffectiveEmployeeIntervals(employeeTemplate, rosterForEmployee, requestedDay);
 
             List<WorkingHoursCalculator.Interval> effectiveIntervals =
                 WorkingHoursCalculator.IntersectIntervals(employeeIntervals, companyIntervals);
 
             List<(TimeSpan Start, TimeSpan End)> busy = new List<(TimeSpan Start, TimeSpan End)>();
-            // Start.TimeOfDay + trajanje (ne End.TimeOfDay) — interval koji prelazi ponoć ne smije se "zamotati" na
-            // sljedeći dan, isto kao prije (StartsAt.TimeOfDay + DurationMinutes).
+            // Lokalni početak u zoni organizacije + trajanje (ne lokalni kraj) — interval koji prelazi ponoć ne smije se
+            // "zamotati" na sljedeći dan.
             busy.AddRange(appointments
                 .Where(a => a.EmployeeId == employeeId)
-                .Select(a => (a.Start.TimeOfDay, a.Start.TimeOfDay + (a.End - a.Start))));
+                .Select(a => (calendar.LocalTimeOfDay(a.Start), calendar.LocalTimeOfDay(a.Start) + (a.End - a.Start))));
             busy.AddRange(breaks
                 .Where(b => b.EmployeeId == employeeId)
-                .Select(b => (b.StartsAt.TimeOfDay, b.StartsAt.TimeOfDay + TimeSpan.FromMinutes(b.DurationMinutes))));
+                .Select(b => (calendar.LocalTimeOfDay(b.StartsAt), calendar.LocalTimeOfDay(b.StartsAt) + TimeSpan.FromMinutes(b.DurationMinutes))));
 
             result.Add(new EmployeeAvailableSlotsDto
             {
@@ -1301,22 +1309,27 @@ public class AppointmentService : IAppointmentService
     private async Task<List<WarningDto>> EnsureWorkforceAvailability(
         Guid organizationId, Guid employeeId, Guid companyId, DateTimeOffset startsAt, int durationMinutes, bool overrideAvailability)
     {
+        // Datum i lokalno vrijeme termina u zoni organizacije (F-19: prije je DateTime -> DateTimeOffset konverzija
+        // koristila offset hosta pa je prvi dan odsutnosti "nestajao" na ne-UTC hostu).
+        OrganizationCalendar calendar = await _organizationCalendarService.GetCalendar(organizationId);
+        DateOnly localDate = calendar.LocalDate(startsAt);
+
         WorkingHoursTemplate employeeTemplate = await _workingHoursTemplateHandler.GetForEmployee(organizationId, employeeId);
         WorkingHoursTemplate companyTemplate = await _workingHoursTemplateHandler.GetForCompany(organizationId, companyId);
         List<RosterEntry> rosterEntriesForDate = await _rosterEntryHandler.GetForPeriod(
-            organizationId, new List<Guid> { employeeId }, startsAt.Date, startsAt.Date);
+            organizationId, new List<Guid> { employeeId }, localDate, localDate);
         List<CompanyHoliday> companyHolidaysForDate = await _companyHolidayHandler.GetForCompaniesInRange(
-            organizationId, new List<Guid> { companyId }, startsAt.Date, startsAt.Date);
+            organizationId, new List<Guid> { companyId }, localDate, localDate);
         List<ScheduleBreak> breakOverlaps = await _scheduleBreakHandler.GetOverlappingForEmployee(
             organizationId, employeeId, startsAt, durationMinutes, excludeId: null);
 
         bool absenceHit = rosterEntriesForDate.Any(e =>
-            e.RosterType.IsAbsence && e.DateFrom.Date <= startsAt.Date && (e.DateTo == null || startsAt.Date <= e.DateTo.Value.Date));
+            e.RosterType.IsAbsence && e.DateFrom <= localDate && (e.DateTo == null || localDate <= e.DateTo.Value));
         bool breakHit = breakOverlaps.Count > 0;
 
         List<RosterEntry> nonAbsenceEntries = rosterEntriesForDate.Where(e => !e.RosterType.IsAbsence).ToList();
         bool withinHours = absenceHit || IsWithinWorkingHours(
-            employeeTemplate, companyTemplate, nonAbsenceEntries, startsAt, durationMinutes, companyHolidaysForDate);
+            employeeTemplate, companyTemplate, nonAbsenceEntries, localDate, calendar.LocalTimeOfDay(startsAt), durationMinutes, companyHolidaysForDate);
 
         AppointmentEligibilityHelper.WorkforceViolation violation = AppointmentEligibilityHelper.Classify(
             absenceHit, breakHit, companyHolidaysForDate.Count > 0, withinHours);
@@ -1328,18 +1341,20 @@ public class AppointmentService : IAppointmentService
 
     /// <summary>Čista provjera dijeljena s EnsureNoRecurringConflicts (batch grana) — rosterEntriesForDate/
     /// companyHolidaysForDate moraju sadržavati SAMO redove relevantne za TOČNO taj datum (apsencija čiji raspon
-    /// ga pokriva, work-redovi s DateFrom==taj datum, praznik čiji Date==taj datum), ne cijeli raspon niza.</summary>
+    /// ga pokriva, work-redovi s DateFrom==taj datum, praznik čiji Date==taj datum), ne cijeli raspon niza.
+    /// localDate/localStart su u zoni organizacije (vidi OrganizationCalendar); kraj = početak + trajanje, pa termin koji
+    /// prelazi ponoć nikad nije "unutar" radnog vremena jednog dana.</summary>
     private static bool IsWithinWorkingHours(
         WorkingHoursTemplate employeeTemplate, WorkingHoursTemplate companyTemplate, List<RosterEntry> rosterEntriesForDate,
-        DateTimeOffset startsAt, int durationMinutes, List<CompanyHoliday> companyHolidaysForDate)
+        DateOnly localDate, TimeSpan localStart, int durationMinutes, List<CompanyHoliday> companyHolidaysForDate)
     {
-        TimeSpan start = startsAt.TimeOfDay;
+        TimeSpan start = localStart;
         TimeSpan end = start + TimeSpan.FromMinutes(durationMinutes);
 
         (List<WorkingHoursCalculator.Interval> employeeIntervals, _) =
-            WorkingHoursCalculator.GetEffectiveEmployeeIntervals(employeeTemplate, rosterEntriesForDate, startsAt);
+            WorkingHoursCalculator.GetEffectiveEmployeeIntervals(employeeTemplate, rosterEntriesForDate, localDate);
         (List<WorkingHoursCalculator.Interval> companyIntervals, _) =
-            WorkingHoursCalculator.GetEffectiveCompanyIntervals(companyTemplate, companyHolidaysForDate, startsAt);
+            WorkingHoursCalculator.GetEffectiveCompanyIntervals(companyTemplate, companyHolidaysForDate, localDate);
 
         return WorkingHoursCalculator.IsWithinIntervals(employeeIntervals, start, end)
             && WorkingHoursCalculator.IsWithinIntervals(companyIntervals, start, end);

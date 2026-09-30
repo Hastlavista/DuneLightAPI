@@ -48,21 +48,21 @@ public class WorkingHoursTemplateHandler : IWorkingHoursTemplateHandler
     }
 
     public Task<WorkingHoursTemplate> UpsertForEmployee(
-        Guid organizationId, Guid employeeId, WorkingHoursCycleType cycleType, DateTimeOffset anchorDate,
+        Guid organizationId, Guid employeeId, WorkingHoursCycleType cycleType, DateOnly anchorDate,
         List<WorkingHoursInterval> intervals, Guid userId)
     {
         return UpsertInternal(organizationId, employeeId, null, cycleType, anchorDate, intervals, userId);
     }
 
     public Task<WorkingHoursTemplate> UpsertForCompany(
-        Guid organizationId, Guid companyId, WorkingHoursCycleType cycleType, DateTimeOffset anchorDate,
+        Guid organizationId, Guid companyId, WorkingHoursCycleType cycleType, DateOnly anchorDate,
         List<WorkingHoursInterval> intervals, Guid userId)
     {
         return UpsertInternal(organizationId, null, companyId, cycleType, anchorDate, intervals, userId);
     }
 
     private async Task<WorkingHoursTemplate> UpsertInternal(
-        Guid organizationId, Guid? employeeId, Guid? companyId, WorkingHoursCycleType cycleType, DateTimeOffset anchorDate,
+        Guid organizationId, Guid? employeeId, Guid? companyId, WorkingHoursCycleType cycleType, DateOnly anchorDate,
         List<WorkingHoursInterval> intervals, Guid userId)
     {
         await using DatabaseContext context = DatabaseContext.GenerateContext(_databaseSettings.ConnectionString);

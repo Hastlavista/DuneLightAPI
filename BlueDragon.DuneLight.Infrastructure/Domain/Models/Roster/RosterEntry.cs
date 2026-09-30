@@ -32,10 +32,10 @@ public class RosterEntry
     public Guid RosterTypeId { get; set; }
 
     [Column("date_from")]
-    public DateTimeOffset DateFrom { get; set; }
+    public DateOnly DateFrom { get; set; }
 
     [Column("date_to")]
-    public DateTimeOffset? DateTo { get; set; }
+    public DateOnly? DateTo { get; set; }
 
     [Column("start_time")]
     public TimeSpan? StartTime { get; set; }

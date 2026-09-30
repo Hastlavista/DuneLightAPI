@@ -1,3 +1,4 @@
+using BlueDragon.DuneLight.Core.Shared;
 using System;
 using System.ComponentModel.DataAnnotations;
 using System.ComponentModel.DataAnnotations.Schema;
@@ -37,6 +38,11 @@ public class Organization
     /// <summary>Boja površine (kartice/paneli). HEX format (npr. #F5F5F5). Nullable — nije obavezna.</summary>
     [Column("surface_color")]
     public string SurfaceColor { get; set; }
+
+    /// <summary>IANA vremenska zona poslovnog kalendara organizacije (npr. "Europe/Zagreb") — radno vrijeme, odsutnosti,
+    /// praznici i termini se procjenjuju u ovoj zoni (vidi OrganizationCalendar). Validira OrganizationTimeZones.IsSupported.</summary>
+    [Column("time_zone")]
+    public string TimeZone { get; set; } = OrganizationTimeZones.Default;
 
     [Column("created_at")]
     public DateTimeOffset? CreatedAt { get; set; }

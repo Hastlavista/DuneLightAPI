@@ -12,7 +12,7 @@ public interface ICompanyHolidayHandler
 
     Task<CompanyHoliday> GetByIdLight(Guid organizationId, Guid companyId, Guid id);
 
-    Task<bool> ExistsForDate(Guid organizationId, Guid companyId, DateTimeOffset date);
+    Task<bool> ExistsForDate(Guid organizationId, Guid companyId, DateOnly date);
 
     Task Add(CompanyHoliday holiday);
 
@@ -23,5 +23,5 @@ public interface ICompanyHolidayHandler
 
     /// <summary>Svi praznici bilo koje od zadanih poslovnica čiji Date pada u [rangeFrom,rangeTo] (uključivo) —
     /// jedan upit za više poslovnica odjednom, isti obrazac kao ScheduleBreakHandler.GetForEmployeesInRange.</summary>
-    Task<List<CompanyHoliday>> GetForCompaniesInRange(Guid organizationId, List<Guid> companyIds, DateTimeOffset rangeFrom, DateTimeOffset rangeTo);
+    Task<List<CompanyHoliday>> GetForCompaniesInRange(Guid organizationId, List<Guid> companyIds, DateOnly rangeFrom, DateOnly rangeTo);
 }

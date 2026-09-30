@@ -21,8 +21,8 @@ public class CompanyHolidayHandler : ICompanyHolidayHandler
 
     public async Task<List<CompanyHoliday>> GetForCompanyByYear(Guid organizationId, Guid companyId, int year)
     {
-        DateTimeOffset yearStart = new DateTimeOffset(year, 1, 1, 0, 0, 0, TimeSpan.Zero);
-        DateTimeOffset yearEnd = yearStart.AddYears(1).AddTicks(-1);
+        DateOnly yearStart = new DateOnly(year, 1, 1);
+        DateOnly yearEnd = new DateOnly(year, 12, 31);
 
         await using DatabaseContext context = DatabaseContext.GenerateContext(_databaseSettings.ConnectionString);
         return await context.CompanyHolidays
@@ -41,13 +41,12 @@ public class CompanyHolidayHandler : ICompanyHolidayHandler
             h.OrganizationId == organizationId && h.CompanyId == companyId && h.Id == id);
     }
 
-    public async Task<bool> ExistsForDate(Guid organizationId, Guid companyId, DateTimeOffset date)
+    public async Task<bool> ExistsForDate(Guid organizationId, Guid companyId, DateOnly date)
     {
-        DateTimeOffset normalizedDate = NormalizeToUtcMidnight(date);
 
         await using DatabaseContext context = DatabaseContext.GenerateContext(_databaseSettings.ConnectionString);
         return await context.CompanyHolidays.AnyAsync(h =>
-            h.OrganizationId == organizationId && h.CompanyId == companyId && h.Date == normalizedDate);
+            h.OrganizationId == organizationId && h.CompanyId == companyId && h.Date == date);
     }
 
     public async Task Add(CompanyHoliday holiday)
@@ -75,29 +74,18 @@ public class CompanyHolidayHandler : ICompanyHolidayHandler
     }
 
     public async Task<List<CompanyHoliday>> GetForCompaniesInRange(
-        Guid organizationId, List<Guid> companyIds, DateTimeOffset rangeFrom, DateTimeOffset rangeTo)
+        Guid organizationId, List<Guid> companyIds, DateOnly rangeFrom, DateOnly rangeTo)
     {
         if (companyIds.Count == 0)
             return new List<CompanyHoliday>();
 
-        DateTimeOffset normalizedFrom = NormalizeToUtcMidnight(rangeFrom);
-        DateTimeOffset normalizedTo = NormalizeToUtcMidnight(rangeTo);
 
         await using DatabaseContext context = DatabaseContext.GenerateContext(_databaseSettings.ConnectionString);
         return await context.CompanyHolidays
             .Where(h =>
                 h.OrganizationId == organizationId &&
                 companyIds.Contains(h.CompanyId) &&
-                h.Date >= normalizedFrom && h.Date <= normalizedTo)
+                h.Date >= rangeFrom && h.Date <= rangeTo)
             .ToListAsync();
-    }
-
-    /// <summary>Normalizira na ponoć UTC (offset nula) — CompanyHoliday.Date se UVIJEK sprema u tom obliku
-    /// (vidi CompanyHolidayService), pa upiti i usporedbe moraju koristiti isti oblik bez obzira na offset
-    /// koji je pozivatelj proslijedio (izbjegava DateTimeOffset.Date implicit-conversion zamku ovisnu o lokalnoj
-    /// vremenskoj zoni servera).</summary>
-    private static DateTimeOffset NormalizeToUtcMidnight(DateTimeOffset value)
-    {
-        return new DateTimeOffset(value.Date, TimeSpan.Zero);
     }
 }

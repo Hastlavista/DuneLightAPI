@@ -17,10 +17,10 @@ public static class WorkingHoursCalculator
     public readonly record struct Interval(TimeSpan Start, TimeSpan End);
 
     /// <summary>0-based tjedan ciklusa za zadani datum, poravnat na dan-u-tjednu AnchorDate-a (ispravan modulo i za datume prije anchora).</summary>
-    public static int GetCycleWeekIndex(WorkingHoursCycleType cycleType, DateTimeOffset anchorDate, DateTimeOffset targetDate)
+    public static int GetCycleWeekIndex(WorkingHoursCycleType cycleType, DateOnly anchorDate, DateOnly targetDate)
     {
         int cycleLength = CycleLength(cycleType);
-        int weeksSinceAnchor = (int)Math.Floor((targetDate.Date - anchorDate.Date).TotalDays / 7.0);
+        int weeksSinceAnchor = (int)Math.Floor((targetDate.DayNumber - anchorDate.DayNumber) / 7.0);
         return ((weeksSinceAnchor % cycleLength) + cycleLength) % cycleLength;
     }
 
@@ -33,7 +33,7 @@ public static class WorkingHoursCalculator
     };
 
     /// <summary>Sirovi intervali predloška za taj datum (bez override/apsencije) — prazno = legitiman slobodan dan po predlošku.</summary>
-    public static List<Interval> GetTemplateIntervals(WorkingHoursTemplate template, DateTimeOffset date)
+    public static List<Interval> GetTemplateIntervals(WorkingHoursTemplate template, DateOnly date)
     {
         int cycleWeekIndex = GetCycleWeekIndex(template.CycleType, template.AnchorDate, date);
         return template.Intervals
@@ -49,7 +49,7 @@ public static class WorkingHoursCalculator
     /// (RosterType uključen).
     /// </summary>
     public static (List<Interval> Intervals, AvailabilitySource Source) GetEffectiveEmployeeIntervals(
-        WorkingHoursTemplate template, List<RosterEntry> rosterEntriesForDate, DateTimeOffset date)
+        WorkingHoursTemplate template, List<RosterEntry> rosterEntriesForDate, DateOnly date)
     {
         if (rosterEntriesForDate.Any(e => e.RosterType.IsAbsence))
             return (new List<Interval>(), AvailabilitySource.Absence);
@@ -71,9 +71,9 @@ public static class WorkingHoursCalculator
     /// praznik, ili "nema predloška". Praznik pobjeđuje predložak (poslovnica ne radi taj dan bez obzira što predložak
     /// možda ima radne intervale) — holidaysForDate mora sadržavati SAMO praznike TE poslovnice (filtrirano od pozivatelja).</summary>
     public static (List<Interval> Intervals, AvailabilitySource Source) GetEffectiveCompanyIntervals(
-        WorkingHoursTemplate template, List<CompanyHoliday> holidaysForDate, DateTimeOffset date)
+        WorkingHoursTemplate template, List<CompanyHoliday> holidaysForDate, DateOnly date)
     {
-        if (holidaysForDate.Any(h => h.Date.Date == date.Date))
+        if (holidaysForDate.Any(h => h.Date == date))
             return (new List<Interval>(), AvailabilitySource.Holiday);
 
         if (template == null)
@@ -90,7 +90,7 @@ public static class WorkingHoursCalculator
     /// sadržavati SAMO ne-apsencijske (rad) RosterEntry redove za TOČNO taj EmployeeId+datum — override pobjeđuje
     /// predložak (bilo koji override work-zapis znači radni dan, jer work-zapis uvijek ima StartTime/EndTime);
     /// bez override-a koristi se predložak; bez predloška dan se ne broji kao radni (fail-closed).</summary>
-    public static bool IsExpectedWorkDay(WorkingHoursTemplate template, List<RosterEntry> workEntriesForDate, DateTimeOffset date)
+    public static bool IsExpectedWorkDay(WorkingHoursTemplate template, List<RosterEntry> workEntriesForDate, DateOnly date)
     {
         bool hasWorkOverride = workEntriesForDate.Any(e => e.IsOverride);
         if (hasWorkOverride)

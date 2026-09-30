@@ -19,10 +19,10 @@ public interface IWorkingHoursTemplateHandler
 
     /// <summary>Upsert-u-mjestu (singleton po vlasniku) — pun zamjenski popis intervala (delete-all/insert-all, nema unique indeksa na intervalima).</summary>
     Task<WorkingHoursTemplate> UpsertForEmployee(
-        Guid organizationId, Guid employeeId, WorkingHoursCycleType cycleType, DateTimeOffset anchorDate,
+        Guid organizationId, Guid employeeId, WorkingHoursCycleType cycleType, DateOnly anchorDate,
         List<WorkingHoursInterval> intervals, Guid userId);
 
     Task<WorkingHoursTemplate> UpsertForCompany(
-        Guid organizationId, Guid companyId, WorkingHoursCycleType cycleType, DateTimeOffset anchorDate,
+        Guid organizationId, Guid companyId, WorkingHoursCycleType cycleType, DateOnly anchorDate,
         List<WorkingHoursInterval> intervals, Guid userId);
 }

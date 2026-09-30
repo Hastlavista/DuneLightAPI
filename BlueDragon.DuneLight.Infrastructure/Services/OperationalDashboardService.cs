@@ -39,6 +39,8 @@ public class OperationalDashboardService : IOperationalDashboardService
     private readonly IProductHandler _productHandler;
     private readonly IProductStockHandler _productStockHandler;
 
+    private readonly IOrganizationCalendarService _organizationCalendarService;
+
     public OperationalDashboardService(
         ICompanyHandler companyHandler,
         IAppointmentHandler appointmentHandler,
@@ -50,8 +52,10 @@ public class OperationalDashboardService : IOperationalDashboardService
         ICompanyHolidayHandler companyHolidayHandler,
         IScheduleBreakHandler scheduleBreakHandler,
         IProductHandler productHandler,
-        IProductStockHandler productStockHandler)
+        IProductStockHandler productStockHandler,
+        IOrganizationCalendarService organizationCalendarService)
     {
+        _organizationCalendarService = organizationCalendarService;
         _companyHandler = companyHandler;
         _appointmentHandler = appointmentHandler;
         _waitlistHandler = waitlistHandler;
@@ -71,10 +75,12 @@ public class OperationalDashboardService : IOperationalDashboardService
         if (company == null)
             throw new NotFoundAppException("Company", companyId);
 
-        // Isti obrazac kao AppointmentService.GetAvailableSlots (query.Date.Date) — kalendarski dan, ne
-        // uvodi novu timezone pretpostavku (vidi spec section 30/31).
-        DateTimeOffset dayStart = (date ?? DateTimeOffset.UtcNow).Date;
-        DateTimeOffset dayEnd = dayStart.AddDays(1);
+        // Kalendarski dan organizacije: zatraženi datum kako ga je klijent napisao, inače "danas" u zoni organizacije;
+        // granice [dayStart, dayEnd) su UTC instanti lokalnih ponoći (isto pravilo kao AppointmentService.GetAvailableSlots).
+        OrganizationCalendar calendar = await _organizationCalendarService.GetCalendar(organizationId);
+        DateOnly day = date.HasValue ? CalendarDates.FromWallDate(date.Value) : calendar.LocalDate(DateTimeOffset.UtcNow);
+        DateTimeOffset dayStart = calendar.StartOfDay(day);
+        DateTimeOffset dayEnd = calendar.StartOfDay(day.AddDays(1));
         DateTimeOffset now = DateTimeOffset.UtcNow;
 
         List<Appointment> appointments = await _appointmentHandler.GetForDashboard(organizationId, companyId, dayStart, dayEnd);
@@ -85,7 +91,7 @@ public class OperationalDashboardService : IOperationalDashboardService
             .Select(a => BuildOccurrence(a, waiting, now))
             .ToList();
 
-        List<DashboardStaffMemberDto> staff = await BuildStaff(organizationId, companyId, dayStart);
+        List<DashboardStaffMemberDto> staff = await BuildStaff(organizationId, companyId, calendar, day, dayStart, dayEnd);
 
         DashboardFinancialDto financial = await BuildFinancial(organizationId, companyId, dayStart, dayEnd, appointments);
         DashboardAlertsDto alerts = await BuildAlerts(organizationId, companyId, appointments, waiting, financial.UnpaidBookingCount);
@@ -98,7 +104,7 @@ public class OperationalDashboardService : IOperationalDashboardService
                 Name = company.Name,
                 IsActive = company.IsActive
             },
-            Date = dayStart,
+            Date = CalendarDates.ToUtcMidnight(day),
             Schedule = schedule,
             Staff = staff,
             Financial = financial,
@@ -241,7 +247,8 @@ public class OperationalDashboardService : IOperationalDashboardService
             .ToList();
     }
 
-    private async Task<List<DashboardStaffMemberDto>> BuildStaff(Guid organizationId, Guid companyId, DateTimeOffset dayStart)
+    private async Task<List<DashboardStaffMemberDto>> BuildStaff(
+        Guid organizationId, Guid companyId, OrganizationCalendar calendar, DateOnly day, DateTimeOffset dayStart, DateTimeOffset dayEnd)
     {
         // GetForCompany vraća samo trenutno aktivne zaposlenike trenutno dodijeljene ovoj Company (vidi
         // EmployeeCompany) — nema povijesne evidencije dodjele kroz vrijeme, pa je za POVIJESNI datum ovo
@@ -251,17 +258,17 @@ public class OperationalDashboardService : IOperationalDashboardService
             return new List<DashboardStaffMemberDto>();
 
         List<Guid> employeeIds = employees.Select(e => e.Id.GetValueOrDefault()).ToList();
-        DateTimeOffset dayEndInclusive = dayStart.AddDays(1).AddTicks(-1);
+        DateTimeOffset dayEndInclusive = dayEnd.AddTicks(-1);
 
         List<WorkingHoursTemplate> employeeTemplates = await _workingHoursTemplateHandler.GetForEmployees(organizationId, employeeIds);
         WorkingHoursTemplate companyTemplate = await _workingHoursTemplateHandler.GetForCompany(organizationId, companyId);
-        List<RosterEntry> rosterEntries = await _rosterEntryHandler.GetForPeriod(organizationId, employeeIds, dayStart, dayStart);
+        List<RosterEntry> rosterEntries = await _rosterEntryHandler.GetForPeriod(organizationId, employeeIds, day, day);
         List<CompanyHoliday> companyHolidays = await _companyHolidayHandler.GetForCompaniesInRange(
-            organizationId, new List<Guid> { companyId }, dayStart, dayStart);
+            organizationId, new List<Guid> { companyId }, day, day);
         List<ScheduleBreak> breaks = await _scheduleBreakHandler.GetForEmployeesInRange(organizationId, employeeIds, dayStart, dayEndInclusive);
 
         (List<WorkingHoursCalculator.Interval> companyIntervals, _) =
-            WorkingHoursCalculator.GetEffectiveCompanyIntervals(companyTemplate, companyHolidays, dayStart);
+            WorkingHoursCalculator.GetEffectiveCompanyIntervals(companyTemplate, companyHolidays, day);
 
         List<DashboardStaffMemberDto> result = new List<DashboardStaffMemberDto>();
 
@@ -272,7 +279,7 @@ public class OperationalDashboardService : IOperationalDashboardService
             List<RosterEntry> rosterForEmployee = rosterEntries.Where(r => r.EmployeeId == employeeId).ToList();
 
             (List<WorkingHoursCalculator.Interval> employeeIntervals, AvailabilitySource source) =
-                WorkingHoursCalculator.GetEffectiveEmployeeIntervals(employeeTemplate, rosterForEmployee, dayStart);
+                WorkingHoursCalculator.GetEffectiveEmployeeIntervals(employeeTemplate, rosterForEmployee, day);
 
             List<WorkingHoursCalculator.Interval> effectiveIntervals =
                 WorkingHoursCalculator.IntersectIntervals(employeeIntervals, companyIntervals);
@@ -285,7 +292,7 @@ public class OperationalDashboardService : IOperationalDashboardService
             // ScheduleBreak kao busy raspon) — oduzimamo pauze od efektivnih intervala SAMO za taj izračun.
             // WorkIntervals namjerno ostaje puni planirani raspon prije pauza (vidi DTO napomenu).
             List<(TimeSpan Start, TimeSpan End)> busyFromBreaks = breaksForEmployee
-                .Select(b => (b.StartsAt.TimeOfDay, b.StartsAt.TimeOfDay + TimeSpan.FromMinutes(b.DurationMinutes)))
+                .Select(b => (calendar.LocalTimeOfDay(b.StartsAt), calendar.LocalTimeOfDay(b.StartsAt) + TimeSpan.FromMinutes(b.DurationMinutes)))
                 .ToList();
             List<WorkingHoursCalculator.Interval> postBreakIntervals =
                 WorkingHoursCalculator.SubtractIntervals(effectiveIntervals, busyFromBreaks);

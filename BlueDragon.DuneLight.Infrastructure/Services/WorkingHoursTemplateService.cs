@@ -53,7 +53,7 @@ public class WorkingHoursTemplateService : IWorkingHoursTemplateService
             throw new NotFoundAppException("Employee", employeeId);
 
         List<WorkingHoursInterval> intervals = ValidateAndBuildIntervals(request);
-        DateTimeOffset anchorMonday = NormalizeToMonday(request.AnchorDate);
+        DateOnly anchorMonday = NormalizeToMonday(request.AnchorDate);
 
         WorkingHoursTemplate saved = await _templateHandler.UpsertForEmployee(
             organizationId, employeeId, request.CycleType, anchorMonday, intervals, userId);
@@ -78,7 +78,7 @@ public class WorkingHoursTemplateService : IWorkingHoursTemplateService
             throw new NotFoundAppException("Company", companyId);
 
         List<WorkingHoursInterval> intervals = ValidateAndBuildIntervals(request);
-        DateTimeOffset anchorMonday = NormalizeToMonday(request.AnchorDate);
+        DateOnly anchorMonday = NormalizeToMonday(request.AnchorDate);
 
         WorkingHoursTemplate saved = await _templateHandler.UpsertForCompany(
             organizationId, companyId, request.CycleType, anchorMonday, intervals, userId);
@@ -93,6 +93,9 @@ public class WorkingHoursTemplateService : IWorkingHoursTemplateService
     /// baca tvrdu grešku za isto stanje).</summary>
     public async Task<AvailabilityDto> GetAvailability(Guid organizationId, Guid employeeId, Guid companyId, DateTimeOffset date)
     {
+        // Kalendarski datum kako ga je klijent napisao — ne DateTime -> DateTimeOffset konverzija s offsetom hosta.
+        DateOnly day = CalendarDates.FromWallDate(date);
+
         Employee employee = await _employeeHandler.GetByIdLight(organizationId, employeeId);
         if (employee == null)
             throw new NotFoundAppException("Employee", employeeId);
@@ -105,7 +108,7 @@ public class WorkingHoursTemplateService : IWorkingHoursTemplateService
         {
             return new AvailabilityDto
             {
-                Date = date.Date,
+                Date = CalendarDates.ToUtcMidnight(day),
                 EmployeeSource = employee.IsActive ? AvailabilitySource.None : AvailabilitySource.Inactive,
                 CompanySource = company.IsActive ? AvailabilitySource.None : AvailabilitySource.Inactive
             };
@@ -116,7 +119,7 @@ public class WorkingHoursTemplateService : IWorkingHoursTemplateService
         {
             return new AvailabilityDto
             {
-                Date = date.Date,
+                Date = CalendarDates.ToUtcMidnight(day),
                 EmployeeSource = AvailabilitySource.NotAssignedToCompany,
                 CompanySource = AvailabilitySource.None
             };
@@ -126,22 +129,22 @@ public class WorkingHoursTemplateService : IWorkingHoursTemplateService
         WorkingHoursTemplate companyTemplate = await _templateHandler.GetForCompany(organizationId, companyId);
 
         List<RosterEntry> rosterEntriesForDate = await _rosterEntryHandler.GetForPeriod(
-            organizationId, new List<Guid> { employeeId }, date.Date, date.Date);
+            organizationId, new List<Guid> { employeeId }, day, day);
 
         List<CompanyHoliday> companyHolidaysForDate = await _companyHolidayHandler.GetForCompaniesInRange(
-            organizationId, new List<Guid> { companyId }, date.Date, date.Date);
+            organizationId, new List<Guid> { companyId }, day, day);
 
         (List<WorkingHoursCalculator.Interval> employeeIntervals, AvailabilitySource employeeSource) =
-            WorkingHoursCalculator.GetEffectiveEmployeeIntervals(employeeTemplate, rosterEntriesForDate, date);
+            WorkingHoursCalculator.GetEffectiveEmployeeIntervals(employeeTemplate, rosterEntriesForDate, day);
 
         (List<WorkingHoursCalculator.Interval> companyIntervals, AvailabilitySource companySource) =
-            WorkingHoursCalculator.GetEffectiveCompanyIntervals(companyTemplate, companyHolidaysForDate, date);
+            WorkingHoursCalculator.GetEffectiveCompanyIntervals(companyTemplate, companyHolidaysForDate, day);
 
         List<WorkingHoursCalculator.Interval> effective = WorkingHoursCalculator.IntersectIntervals(employeeIntervals, companyIntervals);
 
         return new AvailabilityDto
         {
-            Date = date.Date,
+            Date = CalendarDates.ToUtcMidnight(day),
             EmployeeIntervals = employeeIntervals.Select(ToDto).ToList(),
             CompanyIntervals = companyIntervals.Select(ToDto).ToList(),
             EffectiveIntervals = effective.Select(ToDto).ToList(),
@@ -151,10 +154,11 @@ public class WorkingHoursTemplateService : IWorkingHoursTemplateService
     }
 
     /// <summary>Monday istog tjedna kao anchorDate (ne "kronološki najbliži") — poravnava sve predloške na predvidljivu tjednu granicu za admin UI.</summary>
-    private static DateTimeOffset NormalizeToMonday(DateTimeOffset anchorDate)
+    private static DateOnly NormalizeToMonday(DateTimeOffset anchorDate)
     {
-        int diff = (7 + (int)anchorDate.DayOfWeek - (int)DayOfWeek.Monday) % 7;
-        return anchorDate.Date.AddDays(-diff);
+        DateOnly date = CalendarDates.FromWallDate(anchorDate);
+        int diff = (7 + (int)date.DayOfWeek - (int)DayOfWeek.Monday) % 7;
+        return date.AddDays(-diff);
     }
 
     private static List<WorkingHoursInterval> ValidateAndBuildIntervals(WorkingHoursTemplateUpsertRequest request)
@@ -206,7 +210,7 @@ public class WorkingHoursTemplateService : IWorkingHoursTemplateService
             CompanyId = template.CompanyId,
             CompanyName = template.Company?.Name,
             CycleType = template.CycleType,
-            AnchorDate = template.AnchorDate,
+            AnchorDate = CalendarDates.ToUtcMidnight(template.AnchorDate),
             Intervals = template.Intervals
                 .OrderBy(i => i.CycleWeekIndex).ThenBy(i => i.DayOfWeek).ThenBy(i => i.StartTime)
                 .Select(i => new WorkingHoursIntervalDto

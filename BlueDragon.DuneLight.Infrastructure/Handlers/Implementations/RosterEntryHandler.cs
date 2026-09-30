@@ -22,7 +22,7 @@ public class RosterEntryHandler : IRosterEntryHandler
     }
 
     public async Task<(List<RosterEntry> Items, int TotalCount)> GetPaged(
-        Guid organizationId, PagedRequest request, Guid? employeeId, Guid? rosterTypeId, DateTimeOffset? from, DateTimeOffset? to)
+        Guid organizationId, PagedRequest request, Guid? employeeId, Guid? rosterTypeId, DateOnly? from, DateOnly? to)
     {
         await using DatabaseContext context = DatabaseContext.GenerateContext(_databaseSettings.ConnectionString);
 
@@ -70,7 +70,7 @@ public class RosterEntryHandler : IRosterEntryHandler
     }
 
     public async Task<List<RosterEntry>> GetOverlapCandidates(
-        Guid organizationId, Guid employeeId, DateTimeOffset windowFrom, DateTimeOffset windowTo, Guid? excludeId)
+        Guid organizationId, Guid employeeId, DateOnly windowFrom, DateOnly? windowTo, Guid? excludeId)
     {
         await using DatabaseContext context = DatabaseContext.GenerateContext(_databaseSettings.ConnectionString);
         return await context.RosterEntries
@@ -78,14 +78,14 @@ public class RosterEntryHandler : IRosterEntryHandler
             .Where(e =>
                 e.OrganizationId == organizationId &&
                 e.EmployeeId == employeeId &&
-                e.DateFrom <= windowTo &&
+                (windowTo == null || e.DateFrom <= windowTo) &&
                 (e.DateTo == null || e.DateTo >= windowFrom) &&
                 (excludeId == null || e.Id != excludeId))
             .ToListAsync();
     }
 
     public async Task<List<RosterEntry>> GetForPeriod(
-        Guid organizationId, List<Guid> employeeIds, DateTimeOffset periodFrom, DateTimeOffset periodTo)
+        Guid organizationId, List<Guid> employeeIds, DateOnly periodFrom, DateOnly periodTo)
     {
         await using DatabaseContext context = DatabaseContext.GenerateContext(_databaseSettings.ConnectionString);
         return await context.RosterEntries

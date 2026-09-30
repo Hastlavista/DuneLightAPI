@@ -49,6 +49,8 @@ public class GroupService : IGroupService
     private readonly IOutboxWriter _outboxWriter;
     private readonly IUnitOfWorkFactory _unitOfWorkFactory;
 
+    private readonly IOrganizationCalendarService _organizationCalendarService;
+
     public GroupService(
         IGroupHandler groupHandler,
         IGroupAuditLogHandler auditLogHandler,
@@ -68,8 +70,10 @@ public class GroupService : IGroupService
         IScheduleBreakHandler scheduleBreakHandler,
         IWaitlistPromotionService waitlistPromotionService,
         IOutboxWriter outboxWriter,
-        IUnitOfWorkFactory unitOfWorkFactory)
+        IUnitOfWorkFactory unitOfWorkFactory,
+        IOrganizationCalendarService organizationCalendarService)
     {
+        _organizationCalendarService = organizationCalendarService;
         _groupHandler = groupHandler;
         _auditLogHandler = auditLogHandler;
         _appointmentAuditLogHandler = appointmentAuditLogHandler;
@@ -639,9 +643,11 @@ public class GroupService : IGroupService
             candidateGroups = await _groupHandler.GetAll(organizationId, isActive: true);
         }
 
-        DateTimeOffset offset = request.FromDate;
-        DateTime fromDate = request.FromDate.Date;
-        DateTime toDate = request.ToDate.Date;
+        // Raspon su kalendarski datumi kako ih je klijent napisao; vrijeme slota je lokalno vrijeme u zoni organizacije
+        // (i preko DST prijelaza) — ne offset zahtjeva ni hosta (F-19 / timezone foundation).
+        OrganizationCalendar calendar = await _organizationCalendarService.GetCalendar(organizationId);
+        DateOnly fromDate = CalendarDates.FromWallDate(request.FromDate);
+        DateOnly toDate = CalendarDates.FromWallDate(request.ToDate);
 
         List<GroupSlot> activeSlots = candidateGroups.SelectMany(g => g.Slots.Where(s => s.IsActive)).ToList();
         List<Guid> activeSlotIds = activeSlots.Select(s => s.Id.GetValueOrDefault()).ToList();
@@ -649,7 +655,7 @@ public class GroupService : IGroupService
         HashSet<(Guid GroupSlotId, DateTimeOffset StartsAt)> existing = activeSlotIds.Count == 0
             ? new HashSet<(Guid, DateTimeOffset)>()
             : await _groupHandler.GetExistingSlotOccurrences(
-                activeSlotIds, ComputeStartsAt(fromDate, TimeSpan.Zero, offset), ComputeStartsAt(toDate, new TimeSpan(23, 59, 59), offset));
+                activeSlotIds, calendar.StartOfDay(fromDate), calendar.ToInstant(toDate, new TimeSpan(23, 59, 59)));
 
         List<Guid> candidateCompanyIds = candidateGroups.Select(g => g.CompanyId).Distinct().ToList();
         List<CompanyHoliday> holidaysForCompanies = await _companyHolidayHandler.GetForCompaniesInRange(
@@ -662,18 +668,18 @@ public class GroupService : IGroupService
         {
             foreach (GroupSlot slot in group.Slots.Where(s => s.IsActive))
             {
-                for (DateTime date = fromDate; date <= toDate; date = date.AddDays(1))
+                for (DateOnly date = fromDate; date <= toDate; date = date.AddDays(1))
                 {
                     if (date.DayOfWeek != slot.DayOfWeek)
                         continue;
 
-                    if (holidaysForCompanies.Any(h => h.CompanyId == group.CompanyId && h.Date.Date == date))
+                    if (holidaysForCompanies.Any(h => h.CompanyId == group.CompanyId && h.Date == date))
                     {
                         skipped++;
                         continue;
                     }
 
-                    DateTimeOffset startsAt = ComputeStartsAt(date, slot.StartTime, offset);
+                    DateTimeOffset startsAt = calendar.ToInstant(date, slot.StartTime);
                     (Guid, DateTimeOffset) key = (slot.Id.GetValueOrDefault(), startsAt);
 
                     if (existing.Contains(key))
@@ -838,6 +844,7 @@ public class GroupService : IGroupService
     private async Task<Dictionary<(Guid SlotId, DateTimeOffset StartsAt), List<WarningDto>>> EnsureNoTrainerConflicts(
         Guid organizationId, List<GroupOccurrenceCandidate> candidates, bool overrideAvailability)
     {
+        OrganizationCalendar calendar = await _organizationCalendarService.GetCalendar(organizationId);
         List<RecurringConflictDetail> hardConflicts = new List<RecurringConflictDetail>();
         Dictionary<(Guid, DateTimeOffset), List<WarningDto>> warningsByCandidate = new Dictionary<(Guid, DateTimeOffset), List<WarningDto>>();
 
@@ -860,7 +867,7 @@ public class GroupService : IGroupService
                 organizationId, employeeId, rangeFrom, rangeTo);
 
             List<RosterEntry> rosterEntriesInRange = await _rosterEntryHandler.GetForPeriod(
-                organizationId, new List<Guid> { employeeId }, rangeFrom, rangeTo);
+                organizationId, new List<Guid> { employeeId }, calendar.LocalDate(rangeFrom), calendar.LocalDate(rangeTo));
 
             List<RosterEntry> absences = rosterEntriesInRange.Where(e => e.RosterType.IsAbsence).ToList();
 
@@ -894,18 +901,21 @@ public class GroupService : IGroupService
                 bool breakHit = candidateBreaks.Any(b =>
                     b.StartsAt < occurrenceEnd && startsAt < b.StartsAt.AddMinutes(b.DurationMinutes));
 
+                DateOnly localDate = calendar.LocalDate(startsAt);
+
                 bool absenceHit = absences.Any(a =>
-                    a.DateFrom.Date <= startsAt.Date && (a.DateTo == null || startsAt.Date <= a.DateTo.Value.Date));
+                    a.DateFrom <= localDate && (a.DateTo == null || localDate <= a.DateTo.Value));
 
                 List<RosterEntry> rosterEntriesForOccurrence = rosterEntriesInRange
-                    .Where(e => !e.RosterType.IsAbsence && e.DateFrom.Date == startsAt.Date)
+                    .Where(e => !e.RosterType.IsAbsence && e.DateFrom == localDate)
                     .ToList();
 
                 WorkingHoursTemplate companyTemplate = companyTemplatesById[candidate.Group.CompanyId];
 
                 // Praznik je za ovu granu već obrađen ranije u GenerateAppointments (tiho preskačanje kandidata
                 // na dan praznika) — holidayHit je uvijek false ovdje, vidi IsWithinWorkingHours doc-komentar.
-                bool withinHours = absenceHit || IsWithinWorkingHours(employeeTemplate, companyTemplate, rosterEntriesForOccurrence, startsAt, durationMinutes);
+                bool withinHours = absenceHit || IsWithinWorkingHours(
+                    employeeTemplate, companyTemplate, rosterEntriesForOccurrence, localDate, calendar.LocalTimeOfDay(startsAt), durationMinutes);
 
                 AppointmentEligibilityHelper.WorkforceViolation violation = AppointmentEligibilityHelper.Classify(
                     absenceHit, breakHit, holidayHit: false, withinWorkingHours: withinHours);
@@ -1129,23 +1139,18 @@ public class GroupService : IGroupService
     /// definiciji nisu na praznik.</summary>
     private static bool IsWithinWorkingHours(
         WorkingHoursTemplate employeeTemplate, WorkingHoursTemplate companyTemplate, List<RosterEntry> rosterEntriesForDate,
-        DateTimeOffset startsAt, int durationMinutes)
+        DateOnly localDate, TimeSpan localStart, int durationMinutes)
     {
-        TimeSpan start = startsAt.TimeOfDay;
+        TimeSpan start = localStart;
         TimeSpan end = start + TimeSpan.FromMinutes(durationMinutes);
 
         (List<WorkingHoursCalculator.Interval> employeeIntervals, _) =
-            WorkingHoursCalculator.GetEffectiveEmployeeIntervals(employeeTemplate, rosterEntriesForDate, startsAt);
+            WorkingHoursCalculator.GetEffectiveEmployeeIntervals(employeeTemplate, rosterEntriesForDate, localDate);
         (List<WorkingHoursCalculator.Interval> companyIntervals, _) =
-            WorkingHoursCalculator.GetEffectiveCompanyIntervals(companyTemplate, new List<CompanyHoliday>(), startsAt);
+            WorkingHoursCalculator.GetEffectiveCompanyIntervals(companyTemplate, new List<CompanyHoliday>(), localDate);
 
         return WorkingHoursCalculator.IsWithinIntervals(employeeIntervals, start, end)
             && WorkingHoursCalculator.IsWithinIntervals(companyIntervals, start, end);
-    }
-
-    private static DateTimeOffset ComputeStartsAt(DateTime date, TimeSpan timeOfDay, DateTimeOffset offsetSource)
-    {
-        return new DateTimeOffset(date.Year, date.Month, date.Day, 0, 0, 0, offsetSource.Offset).Add(timeOfDay);
     }
 
     /// <summary>Radno vrijeme (trener/poslovnica) za definiciju grupe (Create/Update/AddSlot/UpdateSlot) je
@@ -1162,14 +1167,14 @@ public class GroupService : IGroupService
 
         WorkingHoursTemplate employeeTemplate = await _workingHoursTemplateHandler.GetForEmployee(organizationId, trainerId.Value);
         WorkingHoursTemplate companyTemplate = await _workingHoursTemplateHandler.GetForCompany(organizationId, companyId);
-        DateTimeOffset now = DateTimeOffset.UtcNow;
+        OrganizationCalendar calendar = await _organizationCalendarService.GetCalendar(organizationId);
+        DateOnly today = calendar.LocalDate(DateTimeOffset.UtcNow);
 
         foreach ((DayOfWeek dayOfWeek, TimeSpan startTime) in slots)
         {
-            DateTime representativeDate = NextOccurrenceDate(now, dayOfWeek);
-            DateTimeOffset startsAt = ComputeStartsAt(representativeDate, startTime, now);
+            DateOnly representativeDate = NextOccurrenceDate(today, dayOfWeek);
 
-            if (!IsWithinWorkingHours(employeeTemplate, companyTemplate, new List<RosterEntry>(), startsAt, durationMinutes))
+            if (!IsWithinWorkingHours(employeeTemplate, companyTemplate, new List<RosterEntry>(), representativeDate, startTime, durationMinutes))
             {
                 warnings.Add(new WarningDto(WarningCodes.OutsideWorkingHours, new WarningSlotDetails
                 {
@@ -1182,10 +1187,10 @@ public class GroupService : IGroupService
         return warnings;
     }
 
-    private static DateTime NextOccurrenceDate(DateTimeOffset from, DayOfWeek dayOfWeek)
+    private static DateOnly NextOccurrenceDate(DateOnly from, DayOfWeek dayOfWeek)
     {
         int diff = ((int)dayOfWeek - (int)from.DayOfWeek + 7) % 7;
-        return from.Date.AddDays(diff);
+        return from.AddDays(diff);
     }
 
     /// <summary>Tvrda blokada (409) — druga aktivna grupa već koristi istu prostoriju u preklapajućem

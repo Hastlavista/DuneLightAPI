@@ -11,4 +11,13 @@ public static class DateRangeOverlap
         bool aEndsAfterOrOnBStart = aTo is null || aTo.Value >= bFrom;
         return aStartsBeforeOrOnBEnd && aEndsAfterOrOnBStart;
     }
+
+    /// <summary>Isto pravilo nad lokalnim zidnim vremenima (bez offseta) — roster rasponi su kalendarski datum + lokalno
+    /// vrijeme u poslovnom kalendaru organizacije, ne instanti.</summary>
+    public static bool Overlaps(DateTime aFrom, DateTime? aTo, DateTime bFrom, DateTime? bTo)
+    {
+        bool aStartsBeforeOrOnBEnd = bTo is null || aFrom <= bTo.Value;
+        bool aEndsAfterOrOnBStart = aTo is null || aTo.Value >= bFrom;
+        return aStartsBeforeOrOnBEnd && aEndsAfterOrOnBStart;
+    }
 }

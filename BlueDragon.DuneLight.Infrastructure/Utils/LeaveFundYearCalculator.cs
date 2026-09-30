@@ -16,6 +16,13 @@ public static class LeaveFundYearCalculator
         return date.Date >= renewalThisCalendarYear ? date.Year : date.Year - 1;
     }
 
+    /// <summary>Isto pravilo za kalendarski datum (datum odsutnosti u rosteru).</summary>
+    public static int ResolveFundYear(EmployeeLeaveSettings settings, DateOnly date)
+    {
+        DateTime renewalThisCalendarYear = SafeDate(date.Year, settings.RenewalMonth, settings.RenewalDay);
+        return date.ToDateTime(TimeOnly.MinValue) >= renewalThisCalendarYear ? date.Year : date.Year - 1;
+    }
+
     public static DateTimeOffset ResolveOpenedAt(EmployeeLeaveSettings settings, int fundYear)
     {
         return new DateTimeOffset(SafeDate(fundYear, settings.RenewalMonth, settings.RenewalDay), TimeSpan.Zero);

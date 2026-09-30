@@ -12,6 +12,7 @@ using BlueDragon.DuneLight.Infrastructure.Domain.Models.Appointments;
 using BlueDragon.DuneLight.Infrastructure.Domain.Models.Catalog;
 using BlueDragon.DuneLight.Infrastructure.Domain.Models.Employees;
 using BlueDragon.DuneLight.Infrastructure.Handlers.Interfaces;
+using BlueDragon.DuneLight.Infrastructure.Utils;
 
 namespace BlueDragon.DuneLight.Infrastructure.Services;
 
@@ -23,13 +24,17 @@ public class ScheduleBreakService : IScheduleBreakService
     private readonly IEmployeeHandler _employeeHandler;
     private readonly ICompanyHandler _companyHandler;
 
+    private readonly IOrganizationCalendarService _organizationCalendarService;
+
     public ScheduleBreakService(
         IScheduleBreakHandler scheduleBreakHandler,
         IAppointmentHandler appointmentHandler,
         ISchedulingOccupancyHandler schedulingOccupancyHandler,
         IEmployeeHandler employeeHandler,
-        ICompanyHandler companyHandler)
+        ICompanyHandler companyHandler,
+        IOrganizationCalendarService organizationCalendarService)
     {
+        _organizationCalendarService = organizationCalendarService;
         _scheduleBreakHandler = scheduleBreakHandler;
         _appointmentHandler = appointmentHandler;
         _schedulingOccupancyHandler = schedulingOccupancyHandler;
@@ -88,7 +93,10 @@ public class ScheduleBreakService : IScheduleBreakService
         await ValidateOwnership(organizationId, userId, hasFullScope, request.EmployeeId);
         await EnsureEmployeeAndCompanyOperational(organizationId, request.EmployeeId, request.CompanyId);
 
-        List<DateTimeOffset> occurrences = BuildOccurrenceDates(request.RecurrenceType, request.FirstOccurrenceStartsAt, request.EndDate);
+        // Isto lokalno vrijeme u zoni organizacije svaki dan/tjedan, i preko DST prijelaza (ne fiksni offset prve pauze).
+        OrganizationCalendar calendar = await _organizationCalendarService.GetCalendar(organizationId);
+        List<DateTimeOffset> occurrences = calendar.RepeatAtLocalTime(
+            request.FirstOccurrenceStartsAt, request.EndDate, request.RecurrenceType == RecurrenceType.Daily ? 1 : 7);
 
         await EnsureNoRecurringConflicts(organizationId, request.EmployeeId, occurrences, request.DurationMinutes);
 
@@ -164,18 +172,6 @@ public class ScheduleBreakService : IScheduleBreakService
         await _scheduleBreakHandler.Add(scheduleBreak);
 
         return await GetByIdInternal(organizationId, id);
-    }
-
-    /// <summary>Weekly = +7 dana. Daily = svaki kalendarski dan uključivo vikend, bez preskakanja.</summary>
-    private static List<DateTimeOffset> BuildOccurrenceDates(RecurrenceType recurrenceType, DateTimeOffset first, DateTimeOffset end)
-    {
-        int stepDays = recurrenceType == RecurrenceType.Daily ? 1 : 7;
-
-        List<DateTimeOffset> occurrences = new List<DateTimeOffset>();
-        for (DateTimeOffset occurrence = first; occurrence <= end; occurrence = occurrence.AddDays(stepDays))
-            occurrences.Add(occurrence);
-
-        return occurrences;
     }
 
     /// <summary>Tvrda unaprijedna provjera za /recurring — svaki datum u nizu provjerava se protiv postojećih

@@ -12,4 +12,7 @@ public interface IOrganizationSettingsService
     /// <summary>Vrijednost koju koristi BookingCancellationPolicy — platformski default (1440 = 24h) ako
     /// organizacija nema eksplicitan redak postavki.</summary>
     Task<int> GetCancellationCutoffMinutes(Guid organizationId);
+
+    /// <summary>Postavlja IANA vremensku zonu organizacije; nepodržan id baca ValidationAppException.</summary>
+    Task<OrganizationSettingsDto> UpdateTimeZone(Guid organizationId, Guid userId, OrganizationTimeZoneUpdateRequest request);
 }

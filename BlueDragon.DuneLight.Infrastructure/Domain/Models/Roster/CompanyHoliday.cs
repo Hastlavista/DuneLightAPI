@@ -25,9 +25,9 @@ public class CompanyHoliday
     [Column("company_id")]
     public Guid CompanyId { get; set; }
 
-    /// <summary>Samo Date dio se koristi (isto kao RosterEntry.DateFrom) — vrijeme dana se ignorira.</summary>
+    /// <summary>Kalendarski datum praznika (PostgreSQL date) u poslovnom kalendaru organizacije — nije instant.</summary>
     [Column("date")]
-    public DateTimeOffset Date { get; set; }
+    public DateOnly Date { get; set; }
 
     [Column("name")]
     public string Name { get; set; }

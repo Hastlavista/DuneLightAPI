@@ -2,6 +2,8 @@ using System;
 using System.Threading.Tasks;
 using BlueDragon.DuneLight.Core.DTOs.Organization;
 using BlueDragon.DuneLight.Core.Interfaces.Organization;
+using BlueDragon.DuneLight.Core.Shared;
+using BlueDragon.DuneLight.Core.Shared.Exceptions;
 using BlueDragon.DuneLight.Infrastructure.Domain.Models.Organizations;
 using BlueDragon.DuneLight.Infrastructure.Handlers.Interfaces;
 using Microsoft.EntityFrameworkCore;
@@ -33,7 +35,11 @@ public class OrganizationSettingsService : IOrganizationSettingsService
 
     public async Task<OrganizationSettingsDto> GetSettings(Guid organizationId)
     {
-        return new OrganizationSettingsDto { CancellationCutoffMinutes = await GetCancellationCutoffMinutes(organizationId) };
+        return new OrganizationSettingsDto
+        {
+            CancellationCutoffMinutes = await GetCancellationCutoffMinutes(organizationId),
+            TimeZone = await _handler.GetTimeZone(organizationId) ?? OrganizationTimeZones.Default
+        };
     }
 
     public async Task<OrganizationSettingsDto> UpdateCancellationCutoff(Guid organizationId, Guid userId, OrganizationSettingsUpdateRequest request)
@@ -55,7 +61,7 @@ public class OrganizationSettingsService : IOrganizationSettingsService
             try
             {
                 await _handler.Add(created);
-                return new OrganizationSettingsDto { CancellationCutoffMinutes = created.CancellationCutoffMinutes };
+                return await GetSettings(organizationId);
             }
             catch (DbUpdateException)
             {
@@ -71,6 +77,18 @@ public class OrganizationSettingsService : IOrganizationSettingsService
         existing.UpdatedBy = userId;
         await _handler.Update(existing);
 
-        return new OrganizationSettingsDto { CancellationCutoffMinutes = existing.CancellationCutoffMinutes };
+        return await GetSettings(organizationId);
+    }
+
+    public async Task<OrganizationSettingsDto> UpdateTimeZone(Guid organizationId, Guid userId, OrganizationTimeZoneUpdateRequest request)
+    {
+        string timeZone = request?.TimeZone;
+        if (!OrganizationTimeZones.IsSupported(timeZone))
+            throw new ValidationAppException($"Nepodržana vremenska zona '{timeZone}' — očekuje se IANA oznaka, npr. \"Europe/Zagreb\".");
+
+        if (!await _handler.UpdateTimeZone(organizationId, timeZone))
+            throw new NotFoundAppException("Organization", organizationId);
+
+        return await GetSettings(organizationId);
     }
 }

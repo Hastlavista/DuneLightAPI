@@ -38,4 +38,13 @@ public class OrganizationSettingsController : ControllerBase
         return Ok(await _organizationSettingsService.UpdateCancellationCutoff(
             this.CurrentOrganizationId(), this.CurrentUserId(), request));
     }
+
+    /// <summary>IANA vremenska zona poslovnog kalendara (radno vrijeme, odsutnosti, praznici, termini).</summary>
+    [HttpPut("time-zone")]
+    [RequireGrant(Grants.OrganizationSettingsManage)]
+    public async Task<ActionResult<OrganizationSettingsDto>> UpdateTimeZone([FromBody] OrganizationTimeZoneUpdateRequest request)
+    {
+        return Ok(await _organizationSettingsService.UpdateTimeZone(
+            this.CurrentOrganizationId(), this.CurrentUserId(), request));
+    }
 }

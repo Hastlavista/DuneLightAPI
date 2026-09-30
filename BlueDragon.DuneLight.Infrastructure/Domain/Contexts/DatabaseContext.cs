@@ -111,6 +111,11 @@ public class DatabaseContext : DbContext
     {
     }
 
+    protected override void ConfigureConventions(ModelConfigurationBuilder configurationBuilder)
+    {
+        configurationBuilder.Properties<DateTimeOffset>().HaveConversion<UtcDateTimeOffsetConverter>();
+    }
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         modelBuilder.HasDefaultSchema("dunelight");
@@ -1119,9 +1124,13 @@ public class DatabaseContext : DbContext
 
     public static DatabaseContext GenerateContext(string connectionString)
     {
-        AppContext.SetSwitch("Npgsql.EnableLegacyTimestampBehavior", true);
         DbContextOptionsBuilder<DatabaseContext> builder = new DbContextOptionsBuilder<DatabaseContext>();
         builder.UseNpgsql(connectionString);
         return new DatabaseContext(builder.Options);
     }
+}
+
+public sealed class UtcDateTimeOffsetConverter : Microsoft.EntityFrameworkCore.Storage.ValueConversion.ValueConverter<DateTimeOffset, DateTimeOffset>
+{
+    public UtcDateTimeOffsetConverter() : base(v => v.ToUniversalTime(), v => v.ToUniversalTime()) { }
 }

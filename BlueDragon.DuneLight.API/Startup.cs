@@ -307,6 +307,7 @@ public class Startup
         services.AddScoped<IOrganizationBrandingService, OrganizationBrandingService>();
         services.AddScoped<IBrandingFileStorage, BrandingFileStorage>();
         services.AddScoped<IOrganizationSettingsService, OrganizationSettingsService>();
+        services.AddScoped<IOrganizationCalendarService, OrganizationCalendarService>();
 
         services.AddScoped<IOperationalDashboardService, OperationalDashboardService>();
 
