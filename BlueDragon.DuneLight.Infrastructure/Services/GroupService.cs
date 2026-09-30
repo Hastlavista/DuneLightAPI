@@ -514,8 +514,9 @@ public class GroupService : IGroupService
                 // postojeći RecurringConflict abort iznad).
                 await GroupCapacityGuard.EnsureAvailable(_appointmentHandler, uow, organizationId, futureAppointment.Id.GetValueOrDefault());
 
+                AppointmentExecutionContext execution = ExecutionContextResolver.ForAppointment(futureAppointment);
                 decimal suggestedAmount = await ResolveSuggestedAmount(
-                    organizationId, futureAppointment.ServiceId, futureAppointment.CompanyId, futureAppointment.StartsAt);
+                    organizationId, execution.ServiceId, execution.CompanyId, execution.StartsAt);
 
                 await _appointmentHandler.AddBooking(uow, new Booking
                 {

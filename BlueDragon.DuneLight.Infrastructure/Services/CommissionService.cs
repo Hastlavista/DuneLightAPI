@@ -331,13 +331,13 @@ public class CommissionService : ICommissionRuleService, ICommissionService, ICo
 
     #region Ledger generation (called from AppointmentService/CheckoutService within their own transaction)
 
-    public async Task GenerateForIndividualServiceCompletion(IUnitOfWork uow, Guid organizationId, Appointment appointment, Booking booking)
+    public async Task GenerateForIndividualServiceCompletion(IUnitOfWork uow, Guid organizationId, BookingExecutionContext execution, Booking booking)
     {
-        if (!appointment.EmployeeId.HasValue)
+        if (!execution.EmployeeId.HasValue)
             return;
 
         CommissionRule rule = await _ruleHandler.GetActiveForSubject(
-            organizationId, appointment.EmployeeId.Value, CommissionSubjectType.Service, appointment.ServiceId, null, null);
+            organizationId, execution.EmployeeId.Value, CommissionSubjectType.Service, execution.ServiceId, null, null);
         if (rule == null)
             return;
 
@@ -347,11 +347,11 @@ public class CommissionService : ICommissionRuleService, ICommissionService, ICo
         {
             Id = Guid.NewGuid(),
             OrganizationId = organizationId,
-            EmployeeId = appointment.EmployeeId.Value,
-            CompanyId = appointment.CompanyId,
+            EmployeeId = execution.EmployeeId.Value,
+            CompanyId = execution.CompanyId,
             CommissionRuleId = rule.Id.GetValueOrDefault(),
             SourceType = CommissionSourceType.IndividualService,
-            AppointmentId = appointment.Id,
+            AppointmentId = execution.AppointmentId,
             BookingId = booking.Id,
             BaseAmount = booking.Amount,
             CalculationType = rule.CalculationType,
@@ -367,13 +367,13 @@ public class CommissionService : ICommissionRuleService, ICommissionService, ICo
         });
     }
 
-    public async Task GenerateForGroupServiceCompletion(IUnitOfWork uow, Guid organizationId, Appointment appointment)
+    public async Task GenerateForGroupServiceCompletion(IUnitOfWork uow, Guid organizationId, AppointmentExecutionContext execution)
     {
-        if (!appointment.EmployeeId.HasValue)
+        if (!execution.EmployeeId.HasValue)
             return;
 
         CommissionRule rule = await _ruleHandler.GetActiveForSubject(
-            organizationId, appointment.EmployeeId.Value, CommissionSubjectType.Service, appointment.ServiceId, null, null);
+            organizationId, execution.EmployeeId.Value, CommissionSubjectType.Service, execution.ServiceId, null, null);
 
         // Defensive — CommissionRuleService već odbija Percentage za Group-mode Service kod kreiranja/izmjene
         // pravila, ovo je samo backstop ako se Service.ExecutionMode promijeni nakon što je pravilo stvoreno.
@@ -384,11 +384,11 @@ public class CommissionService : ICommissionRuleService, ICommissionService, ICo
         {
             Id = Guid.NewGuid(),
             OrganizationId = organizationId,
-            EmployeeId = appointment.EmployeeId.Value,
-            CompanyId = appointment.CompanyId,
+            EmployeeId = execution.EmployeeId.Value,
+            CompanyId = execution.CompanyId,
             CommissionRuleId = rule.Id.GetValueOrDefault(),
             SourceType = CommissionSourceType.GroupService,
-            AppointmentId = appointment.Id,
+            AppointmentId = execution.AppointmentId,
             BookingId = null,
             BaseAmount = 0m,
             CalculationType = rule.CalculationType,

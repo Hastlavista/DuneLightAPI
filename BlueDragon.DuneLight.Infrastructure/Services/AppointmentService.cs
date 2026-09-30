@@ -190,9 +190,11 @@ public class AppointmentService : IAppointmentService
 
             foreach (KeyValuePair<Guid, Guid> kvp in packageByClient)
             {
-                await DeductPackageEntryInTransaction(uow, organizationId, kvp.Value, request.ServiceId, userId);
-
                 Booking packageBooking = appointment.Bookings.First(b => b.ClientId == kvp.Key);
+                BookingExecutionContext packageExecution = ExecutionContextResolver.ForBooking(appointment, packageBooking);
+
+                await DeductPackageEntryInTransaction(uow, organizationId, kvp.Value, packageExecution.ServiceId, userId);
+
                 await _auditLogHandler.Add(uow, new AppointmentAuditLog
                 {
                     Id = Guid.NewGuid(),
@@ -215,7 +217,8 @@ public class AppointmentService : IAppointmentService
             // Provizija se zarađuje ISTOM transakcijom kao completion — svaki upravo odrađen Booking je jedan
             // izvor (vidi ICommissionLedgerService, spec section 27/28).
             foreach (Booking booking in appointment.Bookings)
-                await _commissionLedgerService.GenerateForIndividualServiceCompletion(uow, organizationId, appointment, booking);
+                await _commissionLedgerService.GenerateForIndividualServiceCompletion(
+                    uow, organizationId, ExecutionContextResolver.ForBooking(appointment, booking), booking);
 
             await uow.CommitAsync();
         }
@@ -293,6 +296,8 @@ public class AppointmentService : IAppointmentService
 
             foreach (Booking bookingRow in bookingRows)
             {
+                // appointment je gore već postavljen na zatraženu uslugu/trenera/vrijeme — kontekst čita te vrijednosti.
+                BookingExecutionContext execution = ExecutionContextResolver.ForBooking(appointment, bookingRow);
                 AppointmentClientSettlement settlement = settlementByClient[bookingRow.ClientId];
                 bool hasPackage = settlement.ClientPackageId.HasValue;
                 decimal bookingAmount = settlement.Amount ?? suggestedAmount;
@@ -340,7 +345,7 @@ public class AppointmentService : IAppointmentService
                             new { bookingId = bookingRow.Id, existingMonetaryPaid });
 
                     Guid clientPackageId = settlement.ClientPackageId.GetValueOrDefault();
-                    await DeductPackageEntryInTransaction(uow, organizationId, clientPackageId, request.ServiceId, userId);
+                    await DeductPackageEntryInTransaction(uow, organizationId, clientPackageId, execution.ServiceId, userId);
                     bookingRow.ClientPackageId = clientPackageId;
                     bookingRow.PackageCoverageApplied = true;
                 }
@@ -368,7 +373,7 @@ public class AppointmentService : IAppointmentService
                             note: null, isCheckInGenerated: true);
 
                     // Provizija se zarađuje ISTOM transakcijom kao completion — vidi CompleteNew.
-                    await _commissionLedgerService.GenerateForIndividualServiceCompletion(uow, organizationId, appointment, bookingRow);
+                    await _commissionLedgerService.GenerateForIndividualServiceCompletion(uow, organizationId, execution, bookingRow);
                 }
             }
 
@@ -439,7 +444,8 @@ public class AppointmentService : IAppointmentService
 
             // Provizija se zarađuje PO CIJELOM odrađenom terminu, ne po sudioniku — vidi CommissionService
             // domensku napomenu (spec section 14/27/28).
-            await _commissionLedgerService.GenerateForGroupServiceCompletion(uow, organizationId, appointment);
+            await _commissionLedgerService.GenerateForGroupServiceCompletion(
+                uow, organizationId, ExecutionContextResolver.ForAppointment(appointment));
 
             await uow.CommitAsync();
         }
@@ -1072,7 +1078,8 @@ public class AppointmentService : IAppointmentService
 
                 if (shouldReturn)
                 {
-                    await ReturnPackageEntryInTransaction(uow, organizationId, booking.ClientPackageId.Value, appointment.ServiceId, userId);
+                    await ReturnPackageEntryInTransaction(
+                        uow, organizationId, booking.ClientPackageId.Value, ExecutionContextResolver.ForBooking(appointment, booking).ServiceId, userId);
                     booking.PackageCoverageReturned = true;
                     booking.PackageCoverageReturnedAt = DateTimeOffset.UtcNow;
                     booking.PackageCoverageReturnedBy = userId;

@@ -25,16 +25,16 @@ public interface ICommissionLedgerService
 {
     /// <summary>Individualna usluga — jedan odrađen Booking (Status upravo postavljen na Completed od
     /// pozivatelja, PRIJE poziva ovoj metodi jer FK commission_entries.booking_id zahtijeva već persistiran
-    /// redak) = jedan izvor. Employee = appointment.EmployeeId, osnovica = booking.Amount (retail vrijednost
+    /// redak) = jedan izvor. Employee = execution.EmployeeId, osnovica = booking.Amount (retail vrijednost
     /// izvedenog rada, neovisno o paket-pokriću/nenaplaćenosti — vidi spec section 15/51).</summary>
-    Task GenerateForIndividualServiceCompletion(IUnitOfWork uow, Guid organizationId, Appointment appointment, Booking booking);
+    Task GenerateForIndividualServiceCompletion(IUnitOfWork uow, Guid organizationId, BookingExecutionContext execution, Booking booking);
 
     /// <summary>Grupna usluga — jedan odrađen grupni termin (Appointment.Status upravo postavljen na Completed)
     /// = jedan izvor, PO TERMINU ne po sudioniku (vidi CommissionSourceType.GroupService domensku napomenu za
-    /// obrazloženje). No-op ako termin nema dodijeljenog trenera (appointment.EmployeeId je null za grupne
+    /// obrazloženje). No-op ako termin nema dodijeljenog trenera (execution.EmployeeId je null za grupne
     /// termine bez zadanog trenera) ili ne postoji primjenjivo Fixed pravilo (Percentage je odbijen već kod
     /// kreiranja pravila za Group-mode usluge, vidi CommissionRuleService).</summary>
-    Task GenerateForGroupServiceCompletion(IUnitOfWork uow, Guid organizationId, Appointment appointment);
+    Task GenerateForGroupServiceCompletion(IUnitOfWork uow, Guid organizationId, AppointmentExecutionContext execution);
 
     /// <summary>Prodaja Producta/Packagea — jedna CheckoutItem stavka (Type=Product ili Package) na upravo
     /// Completed Checkoutu = jedan izvor. Prodavatelj se razrješava iz completedByUserId preko postojeće

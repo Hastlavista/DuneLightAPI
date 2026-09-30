@@ -127,7 +127,8 @@ public class BookingService : IBookingService
 
         await EnsureClientHasNoOverlap(organizationId, appointment, request.ClientId);
 
-        decimal suggestedAmount = await ResolveSuggestedAmount(organizationId, appointment.ServiceId, appointment.CompanyId, appointment.StartsAt);
+        AppointmentExecutionContext execution = ExecutionContextResolver.ForAppointment(appointment);
+        decimal suggestedAmount = await ResolveSuggestedAmount(organizationId, execution.ServiceId, execution.CompanyId, execution.StartsAt);
 
         Booking booking = new Booking
         {
@@ -224,8 +225,9 @@ public class BookingService : IBookingService
 
             await EnsureClientHasNoOverlap(organizationId, appointment, clientId);
 
+            AppointmentExecutionContext guestExecution = ExecutionContextResolver.ForAppointment(appointment);
             decimal newBookingSuggestedAmount = await ResolveSuggestedAmount(
-                organizationId, appointment.ServiceId, appointment.CompanyId, appointment.StartsAt);
+                organizationId, guestExecution.ServiceId, guestExecution.CompanyId, guestExecution.StartsAt);
 
             booking = new Booking
             {
@@ -465,7 +467,8 @@ public class BookingService : IBookingService
         }
         else if (booking.PackageCoverageApplied && !booking.PackageCoverageReturned && booking.ClientPackageId.HasValue)
         {
-            await ReturnPackageEntryInTransaction(uow, organizationId, booking.ClientPackageId.Value, appointment.ServiceId, userId);
+            await ReturnPackageEntryInTransaction(
+                uow, organizationId, booking.ClientPackageId.Value, ExecutionContextResolver.ForBooking(appointment, booking).ServiceId, userId);
 
             booking.PackageCoverageReturned = true;
             booking.PackageCoverageReturnedAt = DateTimeOffset.UtcNow;
@@ -505,7 +508,8 @@ public class BookingService : IBookingService
         if (request.Status == BookingStatus.Cancelled)
         {
             int cutoffMinutes = await _organizationSettingsService.GetCancellationCutoffMinutes(organizationId);
-            booking.IsLateCancellation = BookingCancellationPolicy.IsLateCancellation(appointment.StartsAt, DateTimeOffset.UtcNow, cutoffMinutes);
+            booking.IsLateCancellation = BookingCancellationPolicy.IsLateCancellation(
+                ExecutionContextResolver.ForBooking(appointment, booking).StartsAt, DateTimeOffset.UtcNow, cutoffMinutes);
         }
 
         BookingStatusVersioning.TrySetStatus(booking, request.Status);
@@ -526,7 +530,8 @@ public class BookingService : IBookingService
 
         if (request.ReturnPackageEntry && booking.PackageCoverageApplied && !booking.PackageCoverageReturned && booking.ClientPackageId.HasValue)
         {
-            await ReturnPackageEntryInTransaction(uow, organizationId, booking.ClientPackageId.Value, appointment.ServiceId, userId);
+            await ReturnPackageEntryInTransaction(
+                uow, organizationId, booking.ClientPackageId.Value, ExecutionContextResolver.ForBooking(appointment, booking).ServiceId, userId);
 
             booking.PackageCoverageReturned = true;
             booking.PackageCoverageReturnedAt = DateTimeOffset.UtcNow;
@@ -548,7 +553,8 @@ public class BookingService : IBookingService
         if (request.Status == BookingStatus.Cancelled)
         {
             int cutoffMinutes = await _organizationSettingsService.GetCancellationCutoffMinutes(organizationId);
-            booking.IsLateCancellation = BookingCancellationPolicy.IsLateCancellation(appointment.StartsAt, DateTimeOffset.UtcNow, cutoffMinutes);
+            booking.IsLateCancellation = BookingCancellationPolicy.IsLateCancellation(
+                ExecutionContextResolver.ForBooking(appointment, booking).StartsAt, DateTimeOffset.UtcNow, cutoffMinutes);
         }
 
         BookingStatusVersioning.TrySetStatus(booking, request.Status);
@@ -615,7 +621,8 @@ public class BookingService : IBookingService
 
         if (booking.PackageCoverageApplied && !booking.PackageCoverageReturned && booking.ClientPackageId.HasValue)
         {
-            await ReturnPackageEntryInTransaction(uow, organizationId, booking.ClientPackageId.Value, appointment.ServiceId, userId);
+            await ReturnPackageEntryInTransaction(
+                uow, organizationId, booking.ClientPackageId.Value, ExecutionContextResolver.ForBooking(appointment, booking).ServiceId, userId);
 
             booking.PackageCoverageReturned = true;
             booking.PackageCoverageReturnedAt = DateTimeOffset.UtcNow;
@@ -722,8 +729,10 @@ public class BookingService : IBookingService
     private async Task<(PaymentMethod Method, decimal Amount)?> ResolveCoverage(
         IUnitOfWork uow, Guid organizationId, Guid userId, Appointment appointment, Booking booking, BookingSetStatusRequest request)
     {
+        BookingExecutionContext execution = ExecutionContextResolver.ForBooking(appointment, booking);
+
         List<ClientPackageDto> eligible = await _clientPackageService.GetEligibleForService(
-            organizationId, booking.ClientId, appointment.ServiceId, appointment.StartsAt);
+            organizationId, execution.ClientId, execution.ServiceId, execution.StartsAt);
 
         ClientPackageDto selected;
         if (request.ClientPackageId.HasValue)
@@ -745,7 +754,7 @@ public class BookingService : IBookingService
             selected = null;
         }
 
-        decimal suggestedAmount = await ResolveSuggestedAmount(organizationId, appointment.ServiceId, appointment.CompanyId, appointment.StartsAt);
+        decimal suggestedAmount = await ResolveSuggestedAmount(organizationId, execution.ServiceId, execution.CompanyId, execution.StartsAt);
         decimal amount = request.Amount ?? suggestedAmount;
         booking.SuggestedAmount = suggestedAmount;
         booking.Amount = amount;
@@ -783,7 +792,7 @@ public class BookingService : IBookingService
                 "Booking već ima aktivnu novčanu uplatu — pokriće paketom se ne može primijeniti dok se ne poništi ta uplata.",
                 new { existingMonetaryPaid });
 
-        bool isUnlimited = IsUnlimited(selected, appointment.ServiceId);
+        bool isUnlimited = IsUnlimited(selected, execution.ServiceId);
 
         booking.ClientPackageId = selected.Id;
         booking.PackageCoverageReturned = false;
@@ -820,7 +829,7 @@ public class BookingService : IBookingService
         else
         {
             booking.CoverageType = AttendanceCoverageType.SessionPackage;
-            await DeductPackageEntryInTransaction(uow, organizationId, selected.Id, appointment.ServiceId, userId);
+            await DeductPackageEntryInTransaction(uow, organizationId, selected.Id, execution.ServiceId, userId);
             booking.PackageCoverageApplied = true;
 
             await _auditLogHandler.Add(uow, new AppointmentAuditLog

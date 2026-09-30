@@ -17,6 +17,7 @@ using BlueDragon.DuneLight.Infrastructure.Domain.Models.Groups;
 using BlueDragon.DuneLight.Infrastructure.Handlers.Interfaces;
 using BlueDragon.DuneLight.Infrastructure.Outbox;
 using BlueDragon.DuneLight.Infrastructure.UnitOfWork;
+using BlueDragon.DuneLight.Infrastructure.Utils;
 using Microsoft.EntityFrameworkCore;
 
 namespace BlueDragon.DuneLight.Infrastructure.Services;
@@ -270,7 +271,8 @@ public class WaitlistService : IWaitlistService, IWaitlistPromotionService
                 continue;
             }
 
-            decimal suggestedAmount = await ResolveSuggestedAmount(organizationId, appointment.ServiceId, appointment.CompanyId, appointment.StartsAt);
+            AppointmentExecutionContext execution = ExecutionContextResolver.ForAppointment(appointment);
+            decimal suggestedAmount = await ResolveSuggestedAmount(organizationId, execution.ServiceId, execution.CompanyId, execution.StartsAt);
 
             // Obična Confirmed rezervacija od trenutka nastanka — bez paketa/plaćanja (spec section 13/45): klijent/
             // osoblje to razrješava naknadno kroz uobičajeni check-in tok (BookingService.ResolveCoverage), isto
