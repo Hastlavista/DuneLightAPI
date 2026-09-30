@@ -23,15 +23,18 @@ public class ServiceAvailabilityService : IServiceAvailabilityService
     private readonly IServiceHandler _serviceHandler;
     private readonly ICompanyHandler _companyHandler;
     private readonly IServiceCompanyHandler _serviceCompanyHandler;
+    private readonly IOrganizationSettingsHandler _organizationSettingsHandler;
 
     public ServiceAvailabilityService(
         IServiceHandler serviceHandler,
         ICompanyHandler companyHandler,
-        IServiceCompanyHandler serviceCompanyHandler)
+        IServiceCompanyHandler serviceCompanyHandler,
+        IOrganizationSettingsHandler organizationSettingsHandler)
     {
         _serviceHandler = serviceHandler;
         _companyHandler = companyHandler;
         _serviceCompanyHandler = serviceCompanyHandler;
+        _organizationSettingsHandler = organizationSettingsHandler;
     }
 
     public async Task<List<CompanyDto>> GetAssignedCompanies(Guid organizationId, Guid serviceId)
@@ -39,10 +42,11 @@ public class ServiceAvailabilityService : IServiceAvailabilityService
         await EnsureServiceExists(organizationId, serviceId);
 
         List<ServiceCompany> assignments = await _serviceCompanyHandler.GetForService(organizationId, serviceId);
+        string organizationTimeZone = await _organizationSettingsHandler.GetTimeZone(organizationId);
         return assignments
             .OrderBy(sc => sc.Company.SortOrder)
             .ThenBy(sc => sc.Company.Name)
-            .Select(sc => ToCompanyDto(sc.Company))
+            .Select(sc => ToCompanyDto(sc.Company, organizationTimeZone))
             .ToList();
     }
 
@@ -130,7 +134,7 @@ public class ServiceAvailabilityService : IServiceAvailabilityService
         return service;
     }
 
-    private static CompanyDto ToCompanyDto(Company company)
+    private static CompanyDto ToCompanyDto(Company company, string organizationTimeZone)
     {
         return new CompanyDto
         {
@@ -140,6 +144,8 @@ public class ServiceAvailabilityService : IServiceAvailabilityService
             Phone = company.Phone,
             ColorHex = company.ColorHex,
             Country = company.Country,
+            TimeZone = company.TimeZone,
+            EffectiveTimeZone = OrganizationTimeZones.Effective(company.TimeZone, organizationTimeZone),
             IsActive = company.IsActive,
             Note = company.Note,
             SortOrder = company.SortOrder,

@@ -25,4 +25,13 @@ public static class OrganizationTimeZones
 
         return TimeZoneInfo.TryFindSystemTimeZoneById(timeZoneId, out _);
     }
+
+    /// <summary>
+    /// The one resolution rule for a Company's business timezone: its own override if set, otherwise its
+    /// Organization's timezone (NULL on the Company means "inherit" — the Organization value is never copied down).
+    /// </summary>
+    public static string Effective(string companyTimeZone, string organizationTimeZone)
+    {
+        return companyTimeZone ?? organizationTimeZone ?? Default;
+    }
 }

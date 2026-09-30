@@ -57,6 +57,14 @@ public class CompanyHandler : ICompanyHandler
             .ToListAsync();
     }
 
+    public async Task<Dictionary<Guid, string>> GetTimeZoneOverrides(Guid organizationId, List<Guid> ids)
+    {
+        await using DatabaseContext context = DatabaseContext.GenerateContext(_databaseSettings.ConnectionString);
+        return await context.Companies
+            .Where(l => l.OrganizationId == organizationId && l.Id.HasValue && ids.Contains(l.Id.Value))
+            .ToDictionaryAsync(l => l.Id.Value, l => l.TimeZone);
+    }
+
     public async Task Add(Company company)
     {
         await using DatabaseContext context = DatabaseContext.GenerateContext(_databaseSettings.ConnectionString);

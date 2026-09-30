@@ -75,9 +75,9 @@ public class OperationalDashboardService : IOperationalDashboardService
         if (company == null)
             throw new NotFoundAppException("Company", companyId);
 
-        // Kalendarski dan organizacije: zatraženi datum kako ga je klijent napisao, inače "danas" u zoni organizacije;
+        // Kalendarski dan poslovnice: zatraženi datum kako ga je klijent napisao, inače "danas" u efektivnoj zoni poslovnice;
         // granice [dayStart, dayEnd) su UTC instanti lokalnih ponoći (isto pravilo kao AppointmentService.GetAvailableSlots).
-        OrganizationCalendar calendar = await _organizationCalendarService.GetCalendar(organizationId);
+        OrganizationCalendar calendar = await _organizationCalendarService.GetCompanyCalendar(organizationId, companyId);
         DateOnly day = date.HasValue ? CalendarDates.FromWallDate(date.Value) : calendar.LocalDate(DateTimeOffset.UtcNow);
         DateTimeOffset dayStart = calendar.StartOfDay(day);
         DateTimeOffset dayEnd = calendar.StartOfDay(day.AddDays(1));

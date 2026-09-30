@@ -643,21 +643,24 @@ public class GroupService : IGroupService
             candidateGroups = await _groupHandler.GetAll(organizationId, isActive: true);
         }
 
-        // Raspon su kalendarski datumi kako ih je klijent napisao; vrijeme slota je lokalno vrijeme u zoni organizacije
-        // (i preko DST prijelaza) — ne offset zahtjeva ni hosta (F-19 / timezone foundation).
-        OrganizationCalendar calendar = await _organizationCalendarService.GetCalendar(organizationId);
+        // Raspon su kalendarski datumi kako ih je klijent napisao; vrijeme slota je lokalno vrijeme u efektivnoj zoni
+        // poslovnice grupe (i preko DST prijelaza) — ne offset zahtjeva ni hosta (F-19 / timezone foundation).
         DateOnly fromDate = CalendarDates.FromWallDate(request.FromDate);
         DateOnly toDate = CalendarDates.FromWallDate(request.ToDate);
+        List<Guid> candidateCompanyIds = candidateGroups.Select(g => g.CompanyId).Distinct().ToList();
+        Dictionary<Guid, OrganizationCalendar> calendarsByCompany =
+            await _organizationCalendarService.GetCompanyCalendars(organizationId, candidateCompanyIds);
 
         List<GroupSlot> activeSlots = candidateGroups.SelectMany(g => g.Slots.Where(s => s.IsActive)).ToList();
         List<Guid> activeSlotIds = activeSlots.Select(s => s.Id.GetValueOrDefault()).ToList();
 
+        // Postojeći occurrencei: raspon je unija lokalnih dana [fromDate, toDate] svih uključenih poslovnica.
         HashSet<(Guid GroupSlotId, DateTimeOffset StartsAt)> existing = activeSlotIds.Count == 0
             ? new HashSet<(Guid, DateTimeOffset)>()
             : await _groupHandler.GetExistingSlotOccurrences(
-                activeSlotIds, calendar.StartOfDay(fromDate), calendar.ToInstant(toDate, new TimeSpan(23, 59, 59)));
-
-        List<Guid> candidateCompanyIds = candidateGroups.Select(g => g.CompanyId).Distinct().ToList();
+                activeSlotIds,
+                calendarsByCompany.Values.Min(c => c.StartOfDay(fromDate)),
+                calendarsByCompany.Values.Max(c => c.ToInstant(toDate, new TimeSpan(23, 59, 59))));
         List<CompanyHoliday> holidaysForCompanies = await _companyHolidayHandler.GetForCompaniesInRange(
             organizationId, candidateCompanyIds, fromDate, toDate);
 
@@ -679,7 +682,7 @@ public class GroupService : IGroupService
                         continue;
                     }
 
-                    DateTimeOffset startsAt = calendar.ToInstant(date, slot.StartTime);
+                    DateTimeOffset startsAt = calendarsByCompany[group.CompanyId].ToInstant(date, slot.StartTime);
                     (Guid, DateTimeOffset) key = (slot.Id.GetValueOrDefault(), startsAt);
 
                     if (existing.Contains(key))
@@ -844,7 +847,9 @@ public class GroupService : IGroupService
     private async Task<Dictionary<(Guid SlotId, DateTimeOffset StartsAt), List<WarningDto>>> EnsureNoTrainerConflicts(
         Guid organizationId, List<GroupOccurrenceCandidate> candidates, bool overrideAvailability)
     {
-        OrganizationCalendar calendar = await _organizationCalendarService.GetCalendar(organizationId);
+        // Datum i lokalno vrijeme svakog kandidata u efektivnoj zoni poslovnice njegove grupe.
+        Dictionary<Guid, OrganizationCalendar> calendarsByCompany = await _organizationCalendarService.GetCompanyCalendars(
+            organizationId, candidates.Select(c => c.Group.CompanyId));
         List<RecurringConflictDetail> hardConflicts = new List<RecurringConflictDetail>();
         Dictionary<(Guid, DateTimeOffset), List<WarningDto>> warningsByCandidate = new Dictionary<(Guid, DateTimeOffset), List<WarningDto>>();
 
@@ -866,8 +871,10 @@ public class GroupService : IGroupService
             List<ScheduleBreak> candidateBreaks = await _scheduleBreakHandler.GetForEmployeeInRange(
                 organizationId, employeeId, rangeFrom, rangeTo);
 
+            List<OrganizationCalendar> employeeCalendars = ordered.Select(c => calendarsByCompany[c.Group.CompanyId]).Distinct().ToList();
             List<RosterEntry> rosterEntriesInRange = await _rosterEntryHandler.GetForPeriod(
-                organizationId, new List<Guid> { employeeId }, calendar.LocalDate(rangeFrom), calendar.LocalDate(rangeTo));
+                organizationId, new List<Guid> { employeeId },
+                employeeCalendars.Min(c => c.LocalDate(rangeFrom)), employeeCalendars.Max(c => c.LocalDate(rangeTo)));
 
             List<RosterEntry> absences = rosterEntriesInRange.Where(e => e.RosterType.IsAbsence).ToList();
 
@@ -901,6 +908,7 @@ public class GroupService : IGroupService
                 bool breakHit = candidateBreaks.Any(b =>
                     b.StartsAt < occurrenceEnd && startsAt < b.StartsAt.AddMinutes(b.DurationMinutes));
 
+                OrganizationCalendar calendar = calendarsByCompany[candidate.Group.CompanyId];
                 DateOnly localDate = calendar.LocalDate(startsAt);
 
                 bool absenceHit = absences.Any(a =>
@@ -1167,7 +1175,7 @@ public class GroupService : IGroupService
 
         WorkingHoursTemplate employeeTemplate = await _workingHoursTemplateHandler.GetForEmployee(organizationId, trainerId.Value);
         WorkingHoursTemplate companyTemplate = await _workingHoursTemplateHandler.GetForCompany(organizationId, companyId);
-        OrganizationCalendar calendar = await _organizationCalendarService.GetCalendar(organizationId);
+        OrganizationCalendar calendar = await _organizationCalendarService.GetCompanyCalendar(organizationId, companyId);
         DateOnly today = calendar.LocalDate(DateTimeOffset.UtcNow);
 
         foreach ((DayOfWeek dayOfWeek, TimeSpan startTime) in slots)

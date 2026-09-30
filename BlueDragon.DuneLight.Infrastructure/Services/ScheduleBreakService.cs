@@ -93,8 +93,8 @@ public class ScheduleBreakService : IScheduleBreakService
         await ValidateOwnership(organizationId, userId, hasFullScope, request.EmployeeId);
         await EnsureEmployeeAndCompanyOperational(organizationId, request.EmployeeId, request.CompanyId);
 
-        // Isto lokalno vrijeme u zoni organizacije svaki dan/tjedan, i preko DST prijelaza (ne fiksni offset prve pauze).
-        OrganizationCalendar calendar = await _organizationCalendarService.GetCalendar(organizationId);
+        // Isto lokalno vrijeme u efektivnoj zoni poslovnice svaki dan/tjedan, i preko DST prijelaza (ne fiksni offset prve pauze).
+        OrganizationCalendar calendar = await _organizationCalendarService.GetCompanyCalendar(organizationId, request.CompanyId);
         List<DateTimeOffset> occurrences = calendar.RepeatAtLocalTime(
             request.FirstOccurrenceStartsAt, request.EndDate, request.RecurrenceType == RecurrenceType.Daily ? 1 : 7);
 

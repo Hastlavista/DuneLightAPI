@@ -13,9 +13,9 @@ namespace BlueDragon.DuneLight.Core.Interfaces.Dashboard;
 public interface IOperationalDashboardService
 {
     /// <summary>
-    /// `date` = odabrani kalendarski dan (UTC, isti konvencija kao ostatak sustava — vidi RosterEntryService/
-    /// AppointmentService, nema per-organizaciju timezone). Izostavljeno = tekući UTC kalendarski dan
-    /// (DateTimeOffset.UtcNow.Date). Company mora pripadati organizationId (inače NotFoundAppException) —
+    /// `date` = odabrani kalendarski dan kako ga je klijent napisao (bitan je samo datum, ne offset); izostavljeno =
+    /// "danas" u efektivnoj zoni poslovnice (Company.TimeZone ?? Organization.TimeZone). Granice dana su lokalne
+    /// ponoći te zone pretvorene u UTC instante (dan može imati 23/25 sati na DST prijelazu). Company mora pripadati organizationId (inače NotFoundAppException) —
     /// deaktivirana Company i dalje vraća podatke (Company.IsActive se samo prenosi u DTO, vidi spec section 4).
     /// </summary>
     Task<OperationalDashboardDto> GetDashboard(Guid organizationId, Guid companyId, DateTimeOffset? date);

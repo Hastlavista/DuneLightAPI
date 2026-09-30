@@ -22,6 +22,9 @@ public interface ICompanyHandler
 
     /// <summary>Batch dohvat po ID-evima u jednom upitu — izbjegava N+1 kod validacije liste tvrtka.</summary>
     Task<List<Company>> GetByIds(Guid organizationId, List<Guid> ids);
+    /// <summary>Vlastite zone (Company.TimeZone) traženih poslovnica organizacije — NULL vrijednost znači
+    /// "nasljeđuje organizaciju"; poslovnice koje ne pripadaju organizaciji nisu u rezultatu.</summary>
+    Task<Dictionary<Guid, string>> GetTimeZoneOverrides(Guid organizationId, List<Guid> ids);
     Task Add(Company company);
     Task Update(Company company);
     Task Delete(Company company);

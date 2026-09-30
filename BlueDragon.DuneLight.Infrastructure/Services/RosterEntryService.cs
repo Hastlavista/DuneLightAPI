@@ -282,8 +282,11 @@ public class RosterEntryService : IRosterEntryService
         List<CompanyHoliday> holidays = await _companyHolidayHandler.GetForCompaniesInRange(
             organizationId, primaryCompanyIds, monthStart, monthEndInclusive);
 
-        // "Danas" (granica Assumed/Planned) je kalendarski dan organizacije, ne UTC dan.
-        DateOnly today = (await _organizationCalendarService.GetCalendar(organizationId)).LocalDate(DateTimeOffset.UtcNow);
+        // "Danas" (granica Assumed/Planned) je kalendarski dan u efektivnoj zoni primarne poslovnice zaposlenika
+        // (poslovnice mogu biti u različitim zonama), a bez primarne poslovnice u zoni organizacije — nikad UTC dan.
+        DateOnly organizationToday = (await _organizationCalendarService.GetCalendar(organizationId)).LocalDate(DateTimeOffset.UtcNow);
+        Dictionary<Guid, OrganizationCalendar> calendarsByCompany =
+            await _organizationCalendarService.GetCompanyCalendars(organizationId, primaryCompanyIds);
         RosterTeamMonthlyDto result = new RosterTeamMonthlyDto { Year = year, Month = month };
 
         foreach (Employee employee in employees.OrderBy(e => e.SortOrder).ThenBy(e => e.LastName))
@@ -291,6 +294,9 @@ public class RosterEntryService : IRosterEntryService
             List<RosterEntry> employeeEntries = byEmployee[employee.Id.GetValueOrDefault()].ToList();
             templateByEmployee.TryGetValue(employee.Id.GetValueOrDefault(), out WorkingHoursTemplate employeeTemplate);
             Guid? employeeCompanyId = primaryCompanyByEmployee[employee.Id.GetValueOrDefault()];
+            DateOnly today = employeeCompanyId.HasValue
+                ? calendarsByCompany[employeeCompanyId.Value].LocalDate(DateTimeOffset.UtcNow)
+                : organizationToday;
 
             RosterEmployeeMonthDto employeeDto = new RosterEmployeeMonthDto
             {
@@ -372,12 +378,16 @@ public class RosterEntryService : IRosterEntryService
 
         DateOnly fromDate = CalendarDates.FromWallDate(from);
         DateOnly toDate = CalendarDates.FromWallDate(to);
-        DateOnly today = (await _organizationCalendarService.GetCalendar(organizationId)).LocalDate(DateTimeOffset.UtcNow);
 
         List<RosterEntry> entries = await _rosterEntryHandler.GetForPeriod(organizationId, new List<Guid> { employeeId }, fromDate, toDate);
         WorkingHoursTemplate template = await _workingHoursTemplateHandler.GetForEmployee(organizationId, employeeId);
 
         Guid? employeeCompanyId = employee.Companies.FirstOrDefault(c => c.IsPrimary)?.CompanyId;
+        // "Danas" u efektivnoj zoni primarne poslovnice zaposlenika (bez nje: zona organizacije).
+        OrganizationCalendar calendar = employeeCompanyId.HasValue
+            ? await _organizationCalendarService.GetCompanyCalendar(organizationId, employeeCompanyId.Value)
+            : await _organizationCalendarService.GetCalendar(organizationId);
+        DateOnly today = calendar.LocalDate(DateTimeOffset.UtcNow);
         List<CompanyHoliday> holidays = employeeCompanyId.HasValue
             ? await _companyHolidayHandler.GetForCompaniesInRange(organizationId, new List<Guid> { employeeCompanyId.Value }, fromDate, toDate)
             : new List<CompanyHoliday>();

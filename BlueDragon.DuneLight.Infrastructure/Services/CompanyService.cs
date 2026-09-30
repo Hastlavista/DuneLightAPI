@@ -19,16 +19,20 @@ namespace BlueDragon.DuneLight.Infrastructure.Services;
 public class CompanyService : ICompanyService
 {
     private readonly ICompanyHandler _companyHandler;
+    private readonly IOrganizationSettingsHandler _organizationSettingsHandler;
 
-    public CompanyService(ICompanyHandler companyHandler)
+    public CompanyService(ICompanyHandler companyHandler, IOrganizationSettingsHandler organizationSettingsHandler)
     {
         _companyHandler = companyHandler;
+        _organizationSettingsHandler = organizationSettingsHandler;
     }
 
     public async Task<PagedResult<CompanyDto>> GetPaged(Guid organizationId, PagedRequest request)
     {
         (List<Company> items, int totalCount) = await _companyHandler.GetPaged(organizationId, request);
-        return PagedResult<CompanyDto>.Create(items.Select(ToDto).ToList(), totalCount, request.Page, request.PageSize);
+        string organizationTimeZone = await _organizationSettingsHandler.GetTimeZone(organizationId);
+        return PagedResult<CompanyDto>.Create(
+            items.Select(c => ToDto(c, organizationTimeZone)).ToList(), totalCount, request.Page, request.PageSize);
     }
 
     public async Task<CompanyDto> GetById(Guid organizationId, Guid id)
@@ -37,12 +41,13 @@ public class CompanyService : ICompanyService
         if (company == null)
             throw new NotFoundAppException("Company", id);
 
-        return ToDto(company);
+        return await ToDto(organizationId, company);
     }
 
     public async Task<CompanyDto> Create(Guid organizationId, Guid userId, CompanyCreateRequest request)
     {
         string name = request.Name?.Trim();
+        EnsureTimeZoneIsSupported(request.TimeZone);
         await EnsureNameIsUnique(organizationId, name, excludeId: null);
 
         Company company = new Company
@@ -54,6 +59,7 @@ public class CompanyService : ICompanyService
             Phone = request.Phone,
             ColorHex = request.ColorHex,
             Country = request.Country,
+            TimeZone = request.TimeZone,
             Note = request.Note,
             SortOrder = request.SortOrder,
             IsActive = true,
@@ -62,7 +68,7 @@ public class CompanyService : ICompanyService
         };
 
         await _companyHandler.Add(company);
-        return ToDto(company);
+        return await ToDto(organizationId, company);
     }
 
     public async Task<CompanyDto> Update(Guid organizationId, Guid userId, Guid id, CompanyUpdateRequest request)
@@ -72,6 +78,7 @@ public class CompanyService : ICompanyService
             throw new NotFoundAppException("Company", id);
 
         string name = request.Name?.Trim();
+        EnsureTimeZoneIsSupported(request.TimeZone);
         await EnsureNameIsUnique(organizationId, name, excludeId: id);
 
         // OrganizationId i Id se namjerno ne diraju — Company nikad ne mijenja vlasničku organizaciju.
@@ -80,13 +87,14 @@ public class CompanyService : ICompanyService
         company.Phone = request.Phone;
         company.ColorHex = request.ColorHex;
         company.Country = request.Country;
+        company.TimeZone = request.TimeZone;
         company.Note = request.Note;
         company.SortOrder = request.SortOrder;
         company.UpdatedAt = DateTimeOffset.UtcNow;
         company.UpdatedBy = userId;
 
         await _companyHandler.Update(company);
-        return ToDto(company);
+        return await ToDto(organizationId, company);
     }
 
     public async Task<CompanyDto> SetActive(Guid organizationId, Guid userId, Guid id, bool isActive)
@@ -115,7 +123,7 @@ public class CompanyService : ICompanyService
             await _companyHandler.Update(company);
         }
 
-        return ToDto(company);
+        return await ToDto(organizationId, company);
     }
 
     private async Task<CompanyDto> Deactivate(Guid organizationId, Guid userId, Guid id)
@@ -156,7 +164,21 @@ public class CompanyService : ICompanyService
             throw new BusinessRuleException(ErrorCodes.DuplicateName, $"Aktivna tvrtka s nazivom '{name}' već postoji.");
     }
 
-    private static CompanyDto ToDto(Company company)
+    /// <summary>Null = nasljeđivanje (dopušteno); inače samo poznati IANA id bez praznina (isto pravilo kao zona
+    /// organizacije) — prazan string se NE tumači kao "nasljeđuj", nego se odbija.</summary>
+    private static void EnsureTimeZoneIsSupported(string timeZone)
+    {
+        if (timeZone != null && !OrganizationTimeZones.IsSupported(timeZone))
+            throw new ValidationAppException($"Nepoznata vremenska zona '{timeZone}' — očekuje se IANA id (npr. Europe/Zagreb) ili null za nasljeđivanje zone organizacije.");
+    }
+
+    private async Task<CompanyDto> ToDto(Guid organizationId, Company company)
+    {
+        string organizationTimeZone = await _organizationSettingsHandler.GetTimeZone(organizationId);
+        return ToDto(company, organizationTimeZone);
+    }
+
+    private static CompanyDto ToDto(Company company, string organizationTimeZone)
     {
         return new CompanyDto
         {
@@ -166,6 +188,8 @@ public class CompanyService : ICompanyService
             Phone = company.Phone,
             ColorHex = company.ColorHex,
             Country = company.Country,
+            TimeZone = company.TimeZone,
+            EffectiveTimeZone = OrganizationTimeZones.Effective(company.TimeZone, organizationTimeZone),
             IsActive = company.IsActive,
             Note = company.Note,
             SortOrder = company.SortOrder,

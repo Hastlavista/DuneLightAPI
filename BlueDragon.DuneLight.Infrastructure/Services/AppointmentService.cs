@@ -586,8 +586,8 @@ public class AppointmentService : IAppointmentService
         if (appointment == null)
             throw new NotFoundAppException("Appointment", id);
 
-        // "Isti dan" je kalendarski dan organizacije, ne UTC dan (F-19 / timezone foundation).
-        OrganizationCalendar calendar = await _organizationCalendarService.GetCalendar(organizationId);
+        // "Isti dan" je kalendarski dan poslovnice termina (efektivna zona), ne UTC dan (F-19 / timezone foundation).
+        OrganizationCalendar calendar = await _organizationCalendarService.GetCompanyCalendar(organizationId, appointment.CompanyId);
         if (calendar.LocalDate(appointment.CreatedAt) != calendar.LocalDate(DateTimeOffset.UtcNow))
             throw new BusinessRuleException(ErrorCodes.SameDayOnly, "Termin se može trajno obrisati samo istog dana kad je unesen — u suprotnom ga otkažite.");
 
@@ -601,7 +601,8 @@ public class AppointmentService : IAppointmentService
 
         ServiceEntity service = await LoadServiceOrThrow(organizationId, request.ServiceId);
         bool overrideAvailability = request.OverrideAvailability && hasFullScope;
-        OrganizationCalendar calendar = await _organizationCalendarService.GetCalendar(organizationId);
+        // Isto lokalno vrijeme u efektivnoj zoni poslovnice svaki dan/tjedan, i preko DST prijelaza.
+        OrganizationCalendar calendar = await _organizationCalendarService.GetCompanyCalendar(organizationId, request.CompanyId);
         List<DateTimeOffset> occurrences = calendar.RepeatAtLocalTime(
             request.FirstOccurrenceStartsAt, request.EndDate, request.RecurrenceType == RecurrenceType.Daily ? 1 : 7);
 
@@ -681,8 +682,8 @@ public class AppointmentService : IAppointmentService
 
         // Učitano JEDNOM za cijeli raspon niza (apsencije + eventualni work-override redovi) — dijeli se između
         // absenceHit provjere i working-hours provjere ispod, isti obrazac kao candidateAppointments.
-        // Kalendarski datumi i lokalna vremena occurrencea u zoni organizacije — nikad offset zahtjeva ni hosta.
-        OrganizationCalendar calendar = await _organizationCalendarService.GetCalendar(organizationId);
+        // Kalendarski datumi i lokalna vremena occurrencea u efektivnoj zoni poslovnice — nikad offset zahtjeva ni hosta.
+        OrganizationCalendar calendar = await _organizationCalendarService.GetCompanyCalendar(organizationId, companyId);
         DateOnly firstLocalDate = calendar.LocalDate(occurrences[0]);
         DateOnly lastLocalDate = calendar.LocalDate(occurrences[^1]);
 
@@ -828,8 +829,8 @@ public class AppointmentService : IAppointmentService
     public async Task<List<EmployeeAvailableSlotsDto>> GetAvailableSlots(Guid organizationId, AvailableSlotsQuery query)
     {
         // Traženi dan je kalendarski datum kako ga je klijent napisao; "danas", granice dana i sva lokalna vremena
-        // (radno vrijeme, zauzeti intervali) su u zoni organizacije — ne ovise o hostu ni o offsetu učitanih vrijednosti.
-        OrganizationCalendar calendar = await _organizationCalendarService.GetCalendar(organizationId);
+        // (radno vrijeme, zauzeti intervali) su u efektivnoj zoni poslovnice — ne ovise o hostu ni o offsetu učitanih vrijednosti.
+        OrganizationCalendar calendar = await _organizationCalendarService.GetCompanyCalendar(organizationId, query.CompanyId);
         DateTimeOffset now = DateTimeOffset.UtcNow;
         DateOnly requestedDay = CalendarDates.FromWallDate(query.Date);
         DateOnly today = calendar.LocalDate(now);
@@ -1309,9 +1310,9 @@ public class AppointmentService : IAppointmentService
     private async Task<List<WarningDto>> EnsureWorkforceAvailability(
         Guid organizationId, Guid employeeId, Guid companyId, DateTimeOffset startsAt, int durationMinutes, bool overrideAvailability)
     {
-        // Datum i lokalno vrijeme termina u zoni organizacije (F-19: prije je DateTime -> DateTimeOffset konverzija
-        // koristila offset hosta pa je prvi dan odsutnosti "nestajao" na ne-UTC hostu).
-        OrganizationCalendar calendar = await _organizationCalendarService.GetCalendar(organizationId);
+        // Datum i lokalno vrijeme termina u efektivnoj zoni poslovnice (F-19: prije je DateTime -> DateTimeOffset
+        // konverzija koristila offset hosta pa je prvi dan odsutnosti "nestajao" na ne-UTC hostu).
+        OrganizationCalendar calendar = await _organizationCalendarService.GetCompanyCalendar(organizationId, companyId);
         DateOnly localDate = calendar.LocalDate(startsAt);
 
         WorkingHoursTemplate employeeTemplate = await _workingHoursTemplateHandler.GetForEmployee(organizationId, employeeId);

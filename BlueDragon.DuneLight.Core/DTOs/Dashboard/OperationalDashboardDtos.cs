@@ -14,8 +14,9 @@ public class OperationalDashboardDto
 {
     public DashboardCompanyDto Company { get; set; }
 
-    /// <summary>Kalendarski dan (UTC) na koji se sve niže vezano odnosi — vidi domensku napomenu na
-    /// IOperationalDashboardService za točnu granicu (StartsAt/CreatedAt &gt;= Date I &lt; Date+1 dan).</summary>
+    /// <summary>Kalendarski dan poslovnice na koji se sve niže vezano odnosi, serijaliziran kao UTC ponoć tog datuma
+    /// (samo datum je značajan). Stvarne granice su lokalne ponoći u efektivnoj zoni poslovnice — vidi napomenu na
+    /// IOperationalDashboardService.</summary>
     public DateTimeOffset Date { get; set; }
 
     public List<DashboardScheduleOccurrenceDto> Schedule { get; set; } = new();

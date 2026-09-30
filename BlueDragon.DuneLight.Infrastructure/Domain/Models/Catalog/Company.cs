@@ -31,6 +31,11 @@ public class Company
     [Column("country")]
     public string Country { get; set; }
 
+    /// <summary>IANA zona poslovnice (npr. "Europe/London") ili NULL = nasljeđuje Organization.TimeZone. Vrijednost
+    /// organizacije se nikad ne kopira ovamo — efektivna zona je OrganizationTimeZones.Effective(TimeZone, org).</summary>
+    [Column("time_zone")]
+    public string TimeZone { get; set; }
+
     [Column("is_active")]
     public bool IsActive { get; set; }
 

@@ -13,6 +13,12 @@ public class CompanyDto
 
     /// <summary>ISO 3166-1 alpha-2 kod (npr. "HR") — određuje koji katalog fiksnih praznika Generate koristi.</summary>
     public string Country { get; set; }
+
+    /// <summary>Vlastita IANA zona poslovnice ili null = nasljeđuje zonu organizacije.</summary>
+    public string TimeZone { get; set; }
+
+    /// <summary>Zona u kojoj se stvarno računa zakazivanje poslovnice: TimeZone ?? Organization.TimeZone.</summary>
+    public string EffectiveTimeZone { get; set; }
     public bool IsActive { get; set; }
     public string Note { get; set; }
     public int SortOrder { get; set; }
@@ -42,6 +48,11 @@ public class CompanyCreateRequest
     [RegularExpression("^[A-Z]{2}$", ErrorMessage = "Country mora biti ISO 3166-1 alpha-2 kod (npr. HR, DE, AT).")]
     public string Country { get; set; } = "HR";
 
+    /// <summary>Opcionalna IANA zona (npr. "Europe/London"); null = nasljeđuje zonu organizacije. PUT je potpuna
+    /// zamjena, pa izostavljena/null vrijednost kod Update briše vlastitu zonu i vraća nasljeđivanje.</summary>
+    [MaxLength(64)]
+    public string TimeZone { get; set; }
+
     public string Note { get; set; }
 
     public int SortOrder { get; set; }
@@ -66,6 +77,11 @@ public class CompanyUpdateRequest
     [Required]
     [RegularExpression("^[A-Z]{2}$", ErrorMessage = "Country mora biti ISO 3166-1 alpha-2 kod (npr. HR, DE, AT).")]
     public string Country { get; set; } = "HR";
+
+    /// <summary>Opcionalna IANA zona (npr. "Europe/London"); null = nasljeđuje zonu organizacije. PUT je potpuna
+    /// zamjena, pa izostavljena/null vrijednost kod Update briše vlastitu zonu i vraća nasljeđivanje.</summary>
+    [MaxLength(64)]
+    public string TimeZone { get; set; }
 
     public string Note { get; set; }
 

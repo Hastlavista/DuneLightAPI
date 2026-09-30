@@ -67,6 +67,7 @@ dotnet test BlueDragon.DuneLight.UnitTests --filter "FullyQualifiedName~Scheduli
 | `AppointmentOwnershipCharacterizationTests` | appointment own scope through `AppointmentOwnership` (helper + Cancel / booking SetStatus / waitlist Join messages) — added with S3 |
 | `OrganizationCalendarTests` | local ↔ UTC conversion, DST gap/overlap, local-time recurrence, IANA id validation — pure unit tests |
 | `TimezoneSchedulingTests` | Europe/Zagreb organization: local absences, working hours, holidays, available slots, DST, recurrence, group generation, timezone setting |
+| `CompanyTimeZoneTests` | Company timezone override: inheritance/override/clearing via the Company API, validation, org change vs overridden companies, Company-local hours, absences, holidays, slots, recurring appointments/breaks and group occurrences across DST, dashboard day boundaries |
 
 ## Current behaviour findings
 
@@ -204,16 +205,21 @@ Legend — **Test**: the characterization test(s) that pin it. **Later**: whethe
   After S3 (write seams + ownership, +25 tests, 592 in total): **UTC 592/592**, **CET 582 passed / 10 failed** (the same 10).
 
   **Resolution (Timezone Foundation).** Scheduling no longer reads the host timezone anywhere:
-  * `Organization.TimeZone` (IANA id, default `Europe/Zagreb`) is the business calendar; `OrganizationCalendar` /
-    `IOrganizationCalendarService` are the only local ↔ UTC conversion (never `TimeZoneInfo.Local`).
+  * `Organization.TimeZone` (IANA id, default `Europe/Zagreb`) is the organization's business timezone;
+    `Company.TimeZone` (nullable IANA id) overrides it per Company — NULL inherits, the Organization value is never copied
+    into Company rows. **Effective Company zone = `Company.TimeZone ?? Organization.TimeZone`**
+    (`OrganizationTimeZones.Effective`), exposed as `CompanyDto.TimeZone` / `CompanyDto.EffectiveTimeZone`.
+  * `OrganizationCalendar` / `IOrganizationCalendarService` (`GetCalendar`, `GetCompanyCalendar`, `GetCompanyCalendars`) are
+    the only local ↔ UTC conversion (never `TimeZoneInfo.Local`).
   * Absence dates (`roster_entries.date_from/date_to`), holiday dates (`company_holidays.date`) and the working-hours cycle
-    anchor are PostgreSQL `date` / `DateOnly` — compared with the appointment's **organization-local** date.
-  * Working hours, available slots, break busy-windows and the dashboard use organization-local wall-clock times;
-    overlaps stay UTC-instant comparisons.
+    anchor are PostgreSQL `date` / `DateOnly` — compared with the appointment's **Company-local** date.
+  * Working hours, available slots, break busy-windows, recurrence (appointments, breaks), group generation, the dashboard
+    day and the same-day delete rule use the effective **Company** zone; the roster "today" uses the employee's primary
+    Company zone (Organization zone without one). Overlaps stay UTC-instant comparisons.
   * `Npgsql.EnableLegacyTimestampBehavior` is removed; every `DateTimeOffset` is written and read as a UTC instant.
   * The characterization fixture (`SchedulingWorld`) configures its Organization as **UTC** — the suite's constants are UTC
     wall-clock values — so the 10 tests above pass unchanged; Europe/Zagreb and DST behaviour is covered by
-    `TimezoneSchedulingTests` and `OrganizationCalendarTests`.
+    `TimezoneSchedulingTests`, `CompanyTimeZoneTests` and `OrganizationCalendarTests`.
   * Verified host-independent: the full suite passes with `TZ=UTC`, `Europe/Zagreb`, `America/New_York` and `Asia/Tokyo`.
 
   Any refactor must keep these two baselines (plus its own new tests) — a failure outside this list on a CET host, or any failure on a
@@ -227,7 +233,8 @@ Legend — **Test**: the characterization test(s) that pin it. **Later**: whethe
 * **HTTP layer / `RequireGrant` attributes** are not exercised; services take `hasFullScope` directly, which is the boundary the
   controllers use.
 * **Time zones**: the characterization tests run their Organization in the UTC business timezone (all constants are UTC
-  wall-clock values). Organization-local scheduling (Europe/Zagreb, DST) is covered by `TimezoneSchedulingTests`; results
+  wall-clock values). Organization-local scheduling (Europe/Zagreb, DST) is covered by `TimezoneSchedulingTests`, Company
+  overrides (inheritance, New York/Tokyo, DST) by `CompanyTimeZoneTests`; results
   do not depend on the host timezone (F-19 fixed).
 * **Calendar constants** (2031 appointments, 2035 package expiry) are "far future" today; they must be moved forward if the real
   clock approaches them.
