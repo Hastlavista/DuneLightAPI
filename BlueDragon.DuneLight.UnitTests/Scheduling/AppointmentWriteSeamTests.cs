@@ -219,7 +219,7 @@ public class AppointmentWriteSeamTests
     public void CreateCompletedAtCreation_IsCompletedAtStatusVersionZero_WithoutAPackage()
     {
         // F-07 (pinned): CompleteNew creates the Booking directly as Completed without going through TrySetStatus.
-        Booking b = BookingFactory.CreateCompletedAtCreation(Org, NewSegment(), Guid.NewGuid(), new BookingPricing(50m, 50m, false), null, CreatedAt);
+        Booking b = BookingFactory.CreateCompletedAtCreation(Org, NewSegment(), Guid.NewGuid(), new BookingPricing(50m, 50m, false), CreatedAt);
 
         Assert.Equal(BookingStatus.Completed, b.Status);
         Assert.Equal(0, b.StatusVersion);
@@ -230,16 +230,14 @@ public class AppointmentWriteSeamTests
     }
 
     [Fact]
-    public void CreateCompletedAtCreation_WithAPackage_HasCoverageAppliedAlready()
+    public void CreateCompletedAtCreation_NeverRecordsPackageUsage_TheLedgerDoes()
     {
-        Guid package = Guid.NewGuid();
+        // D3B3A: the factory only shapes Booking + Participation; package usage is a PackageConsumption written by the
+        // ledger (IPackageConsumptionLedgerService) in CompleteNew's transaction — see PackageConsumptionLedgerTests.
+        Booking b = BookingFactory.CreateCompletedAtCreation(Org, NewSegment(), Guid.NewGuid(), new BookingPricing(50m, 50m, false), CreatedAt);
 
-        Booking b = BookingFactory.CreateCompletedAtCreation(Org, NewSegment(), Guid.NewGuid(), new BookingPricing(50m, 50m, false), package, CreatedAt);
-
-        Assert.Equal(package, b.ClientPackageId);
-        Assert.True(b.PackageCoverageApplied);
-        Assert.False(b.PackageCoverageReturned);
-        Assert.Null(b.CoverageType); // Individual coverage is derived from ClientPackageId, CoverageType stays null
+        Assert.Empty(BookingParticipations.GetSingleParticipation(b).PackageConsumptions);
+        Assert.False(b.PackageCoverageApplied);
     }
 
     #endregion

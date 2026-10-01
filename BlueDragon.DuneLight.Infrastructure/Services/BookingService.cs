@@ -38,7 +38,7 @@ public class BookingService : IBookingService
     private readonly ISchedulingOccupancyHandler _schedulingOccupancyHandler;
     private readonly IAppointmentAuditLogHandler _auditLogHandler;
     private readonly IClientPackageService _clientPackageService;
-    private readonly IClientPackageHandler _clientPackageHandler;
+    private readonly IPackageConsumptionLedgerService _packageConsumptionLedgerService;
     private readonly IClientHandler _clientHandler;
     private readonly IEmployeeHandler _employeeHandler;
     private readonly IPricingService _pricingService;
@@ -56,7 +56,7 @@ public class BookingService : IBookingService
         ISchedulingOccupancyHandler schedulingOccupancyHandler,
         IAppointmentAuditLogHandler auditLogHandler,
         IClientPackageService clientPackageService,
-        IClientPackageHandler clientPackageHandler,
+        IPackageConsumptionLedgerService packageConsumptionLedgerService,
         IClientHandler clientHandler,
         IEmployeeHandler employeeHandler,
         IPricingService pricingService,
@@ -73,7 +73,7 @@ public class BookingService : IBookingService
         _schedulingOccupancyHandler = schedulingOccupancyHandler;
         _auditLogHandler = auditLogHandler;
         _clientPackageService = clientPackageService;
-        _clientPackageHandler = clientPackageHandler;
+        _packageConsumptionLedgerService = packageConsumptionLedgerService;
         _clientHandler = clientHandler;
         _employeeHandler = employeeHandler;
         _pricingService = pricingService;
@@ -108,7 +108,7 @@ public class BookingService : IBookingService
         if (appointment == null)
             throw new NotFoundAppException("Appointment", appointmentId);
 
-        return appointment.Bookings.Select(ToDto).ToList();
+        return appointment.Bookings.Select(b => ToDto(b, appointment.Form)).ToList();
     }
 
     public async Task<BookingDto> AddBooking(Guid organizationId, Guid userId, bool hasFullScope, Guid appointmentId, BookingCreateRequest request)
@@ -124,7 +124,7 @@ public class BookingService : IBookingService
 
         Booking existing = appointment.Bookings.FirstOrDefault(b => b.ClientId == request.ClientId);
         if (existing != null)
-            return ToDto(existing);
+            return ToDto(existing, appointment.Form);
 
         Client client = await LoadEligibleClient(organizationId, request.ClientId);
 
@@ -147,7 +147,7 @@ public class BookingService : IBookingService
         }
 
         booking.Client = client;
-        return ToDto(booking);
+        return ToDto(booking, appointment.Form);
     }
 
     /// <summary>Tanki wrapper preko GroupCapacityGuard (dijeljen s GroupService.AddMember — vidi ondje za puni
@@ -400,7 +400,7 @@ public class BookingService : IBookingService
         }
 
         Booking refreshed = await _appointmentHandler.GetBooking(organizationId, appointmentId, clientId);
-        return ToDto(refreshed);
+        return ToDto(refreshed, appointment.Form);
     }
 
     private async Task<bool> BookingExists(IUnitOfWork uow, Guid bookingId)
@@ -447,21 +447,17 @@ public class BookingService : IBookingService
 
         if (request.Status == BookingStatus.Completed)
         {
+            PackageCoverageView coverage = PackageConsumptions.CoverageOf(booking, AppointmentForm.Group);
             bool needsFreshCoverage = BookingParticipations.StatusOf(booking) != BookingStatus.Completed ||
-                (booking.PackageCoverageApplied && booking.PackageCoverageReturned);
+                (coverage.PackageCoverageApplied && coverage.PackageCoverageReturned);
 
             if (needsFreshCoverage)
                 pendingPayment = await ResolveCoverage(uow, organizationId, userId, appointment, booking, request);
         }
-        else if (booking.PackageCoverageApplied && !booking.PackageCoverageReturned && booking.ClientPackageId.HasValue)
+        else if (await _packageConsumptionLedgerService.ReverseActive(
+                     uow, organizationId, userId, booking, ReversalReasonFor(request.Status)))
         {
-            await ReturnPackageEntryInTransaction(
-                uow, organizationId, booking.ClientPackageId.Value, ExecutionContextResolver.ForBooking(appointment, booking).ServiceId, userId);
-
-            booking.PackageCoverageReturned = true;
-            booking.PackageCoverageReturnedAt = DateTimeOffset.UtcNow;
-            booking.PackageCoverageReturnedBy = userId;
-
+            // Phase D3B3A: poništenje AKTIVNE potrošnje paketa (ledger) — vraća ulazak, zapis potrošnje ostaje.
             await _auditLogHandler.Add(uow, new AppointmentAuditLog
             {
                 Id = Guid.NewGuid(),
@@ -514,15 +510,9 @@ public class BookingService : IBookingService
         if (BookingParticipations.StatusOf(booking) != BookingStatus.Confirmed)
             throw new BusinessRuleException(ErrorCodes.AlreadyCompleted, "Booking je već u terminalnom stanju.");
 
-        if (request.ReturnPackageEntry && booking.PackageCoverageApplied && !booking.PackageCoverageReturned && booking.ClientPackageId.HasValue)
+        if (request.ReturnPackageEntry && await _packageConsumptionLedgerService.ReverseActive(
+                uow, organizationId, userId, booking, ReversalReasonFor(request.Status)))
         {
-            await ReturnPackageEntryInTransaction(
-                uow, organizationId, booking.ClientPackageId.Value, ExecutionContextResolver.ForBooking(appointment, booking).ServiceId, userId);
-
-            booking.PackageCoverageReturned = true;
-            booking.PackageCoverageReturnedAt = DateTimeOffset.UtcNow;
-            booking.PackageCoverageReturnedBy = userId;
-
             await _auditLogHandler.Add(uow, new AppointmentAuditLog
             {
                 Id = Guid.NewGuid(),
@@ -605,15 +595,9 @@ public class BookingService : IBookingService
         await _paymentLedgerService.VoidCheckInGeneratedPayments(
             uow, organizationId, userId, booking, "Poništen check-in (korekcija Completed -> Confirmed)");
 
-        if (booking.PackageCoverageApplied && !booking.PackageCoverageReturned && booking.ClientPackageId.HasValue)
+        if (await _packageConsumptionLedgerService.ReverseActive(
+                uow, organizationId, userId, booking, PackageConsumptionReversalReason.CompletionCorrection))
         {
-            await ReturnPackageEntryInTransaction(
-                uow, organizationId, booking.ClientPackageId.Value, ExecutionContextResolver.ForBooking(appointment, booking).ServiceId, userId);
-
-            booking.PackageCoverageReturned = true;
-            booking.PackageCoverageReturnedAt = DateTimeOffset.UtcNow;
-            booking.PackageCoverageReturnedBy = userId;
-
             await _auditLogHandler.Add(uow, new AppointmentAuditLog
             {
                 Id = Guid.NewGuid(),
@@ -718,7 +702,7 @@ public class BookingService : IBookingService
         BookingExecutionContext execution = ExecutionContextResolver.ForBooking(appointment, booking);
 
         List<ClientPackageDto> eligible = await _clientPackageService.GetEligibleForService(
-            organizationId, execution.ClientId, execution.ServiceId, execution.StartsAt);
+            organizationId, execution.ClientId, execution.ServiceId, execution.StartsAt, execution.CompanyId);
 
         ClientPackageDto selected;
         if (request.ClientPackageId.HasValue)
@@ -747,13 +731,8 @@ public class BookingService : IBookingService
 
         if (selected == null)
         {
-            booking.CoverageType = AttendanceCoverageType.SinglePaid;
-            booking.ClientPackageId = null;
-            booking.PackageCoverageApplied = false;
-            booking.PackageCoverageReturned = false;
-            booking.PackageCoverageReturnedAt = null;
-            booking.PackageCoverageReturnedBy = null;
-
+            // Phase D3B3A: "SinglePaid" se više ne sprema — Completed grupno sudjelovanje bez aktivne potrošnje paketa
+            // JEST check-in razriješen bez paketa (PackageConsumptions.CoverageOf).
             // Bez paketa, naplata je EKSPLICITNA odluka osoblja (vidi BookingSetStatusRequest.PaymentMethod) —
             // izostanak znači "evidentirano, još neplaćeno", isto ponašanje kao prije uvođenja naplate na grupne
             // bookinge (stari kontrakt SetGroupAttendanceRequest bez ovih polja). Payment se stvara samo za
@@ -777,99 +756,43 @@ public class BookingService : IBookingService
                 "Booking već ima aktivnu novčanu uplatu — pokriće paketom se ne može primijeniti dok se ne poništi ta uplata.",
                 new { existingMonetaryPaid });
 
-        bool isUnlimited = IsUnlimited(selected, execution.ServiceId);
-
-        booking.ClientPackageId = selected.Id;
-        booking.PackageCoverageReturned = false;
-        booking.PackageCoverageReturnedAt = null;
-        booking.PackageCoverageReturnedBy = null;
-
         // Paket podmiruje obvezu bez obzira na zatraženi PaymentMethod (spec section 32) — Amount i dalje nosi
         // redovnu/predloženu cijenu (retail vrijednost), ne 0 (isto ponašanje kao Individual complete). Paket
         // NIKAD ne stvara Payment (nije novac, vidi Payment.cs/spec section 3/40) — OutstandingAmount postaje 0
-        // preko PackageCoverageApplied u BookingFinancialsCalculator, ne preko Paymenta.
+        // preko aktivne potrošnje paketa u BookingFinancialsCalculator, ne preko Paymenta.
         //
-        // PackageCoverageApplied = true u OBA slučaja (SessionPackage/MonthlyPackage) — entitlement je STVARNO
-        // PRIMIJENJEN na ovaj booking čim se check-in razriješi paketom, bez obzira postoji li brojač ulazaka za
-        // smanjiti. ClientPackageEntryMutator.Deduct je odgovoran SAMO za numeričku mutaciju (kod neograničenog
-        // paketa je no-op jer nema brojača), NIJE jedini izvor istine za "je li pokriće primijenjeno" — vidi
-        // domensku napomenu na Booking.PackageCoverageApplied.
-        if (isUnlimited)
-        {
-            booking.CoverageType = AttendanceCoverageType.MonthlyPackage;
-            booking.PackageCoverageApplied = true;
+        // Phase D3B3A: entitlement se primjenjuje kroz ledger (PackageConsumption na sudjelovanju) u OBA slučaja —
+        // paket s brojačem skida jedinicu (Units = 1, prikaz SessionPackage), neograničen paket nema brojača (Units = 0,
+        // prikaz MonthlyPackage); valjanost na datum izvođenja usluge (F-08).
+        await _packageConsumptionLedgerService.Consume(
+            uow, organizationId, userId, booking, execution, selected.Id, BookingStatus.Completed);
 
-            await _auditLogHandler.Add(uow, new AppointmentAuditLog
-            {
-                Id = Guid.NewGuid(),
-                AppointmentId = appointment.Id.GetValueOrDefault(),
-                BookingId = booking.Id,
-                ChangeType = "BookingPackageCoverageApplied",
-                OldValue = null,
-                NewValue = selected.Id.ToString(),
-                ChangedAt = DateTimeOffset.UtcNow,
-                ChangedBy = userId
-            });
-        }
-        else
+        await _auditLogHandler.Add(uow, new AppointmentAuditLog
         {
-            booking.CoverageType = AttendanceCoverageType.SessionPackage;
-            await DeductPackageEntryInTransaction(uow, organizationId, selected.Id, execution.ServiceId, userId);
-            booking.PackageCoverageApplied = true;
-
-            await _auditLogHandler.Add(uow, new AppointmentAuditLog
-            {
-                Id = Guid.NewGuid(),
-                AppointmentId = appointment.Id.GetValueOrDefault(),
-                BookingId = booking.Id,
-                ChangeType = "BookingPackageCoverageApplied",
-                OldValue = null,
-                NewValue = selected.Id.ToString(),
-                ChangedAt = DateTimeOffset.UtcNow,
-                ChangedBy = userId
-            });
-        }
+            Id = Guid.NewGuid(),
+            AppointmentId = appointment.Id.GetValueOrDefault(),
+            BookingId = booking.Id,
+            ChangeType = "BookingPackageCoverageApplied",
+            OldValue = null,
+            NewValue = selected.Id.ToString(),
+            ChangedAt = DateTimeOffset.UtcNow,
+            ChangedBy = userId
+        });
 
         return null;
     }
 
-    private async Task DeductPackageEntryInTransaction(IUnitOfWork uow, Guid organizationId, Guid clientPackageId, Guid serviceId, Guid userId)
+    /// <summary>Phase D3B3A: razlog poništenja potrošnje paketa prema ciljnom statusu prijelaza.</summary>
+    private static PackageConsumptionReversalReason ReversalReasonFor(BookingStatus target) => target switch
     {
-        ClientPackage clientPackage = await _clientPackageHandler.GetById(uow, organizationId, clientPackageId);
-        if (clientPackage == null)
-            throw new NotFoundAppException("ClientPackage", clientPackageId);
+        BookingStatus.Cancelled => PackageConsumptionReversalReason.Cancellation,
+        BookingStatus.NoShow => PackageConsumptionReversalReason.NoShow,
+        _ => PackageConsumptionReversalReason.CompletionCorrection
+    };
 
-        ClientPackageEntryMutator.Deduct(clientPackage, serviceId, DateTimeOffset.UtcNow);
-        clientPackage.UpdatedAt = DateTimeOffset.UtcNow;
-        clientPackage.UpdatedBy = userId;
-
-        await _clientPackageHandler.Update(uow, clientPackage);
-    }
-
-    private async Task ReturnPackageEntryInTransaction(IUnitOfWork uow, Guid organizationId, Guid clientPackageId, Guid serviceId, Guid userId)
+    private static BookingDto ToDto(Booking booking, AppointmentForm form)
     {
-        ClientPackage clientPackage = await _clientPackageHandler.GetById(uow, organizationId, clientPackageId);
-        if (clientPackage == null)
-            throw new NotFoundAppException("ClientPackage", clientPackageId);
-
-        ClientPackageEntryMutator.Return(clientPackage, serviceId, DateTimeOffset.UtcNow);
-        clientPackage.UpdatedAt = DateTimeOffset.UtcNow;
-        clientPackage.UpdatedBy = userId;
-
-        await _clientPackageHandler.Update(uow, clientPackage);
-    }
-
-    private static bool IsUnlimited(ClientPackageDto package, Guid serviceId)
-    {
-        if (package.EntryMode == PackageEntryMode.SharedPool)
-            return !package.RemainingSharedEntries.HasValue;
-
-        ClientPackageServiceEntryDto entry = package.ServiceEntries.FirstOrDefault(e => e.ServiceId == serviceId);
-        return entry == null || !entry.RemainingEntries.HasValue;
-    }
-
-    private static BookingDto ToDto(Booking booking)
-    {
+        PackageCoverageView coverage = PackageConsumptions.CoverageOf(booking, form);
         decimal paidAmount = BookingFinancialsCalculator.CalculatePaidAmount(booking);
         decimal outstandingAmount = BookingFinancialsCalculator.CalculateOutstanding(booking);
 
@@ -887,10 +810,10 @@ public class BookingService : IBookingService
             PaidAmount = paidAmount,
             OutstandingAmount = outstandingAmount,
             IsPaid = outstandingAmount <= 0m,
-            ClientPackageId = booking.ClientPackageId,
-            CoverageType = booking.CoverageType,
-            PackageCoverageApplied = booking.PackageCoverageApplied,
-            PackageCoverageReturned = booking.PackageCoverageReturned,
+            ClientPackageId = coverage.ClientPackageId,
+            CoverageType = coverage.CoverageType,
+            PackageCoverageApplied = coverage.PackageCoverageApplied,
+            PackageCoverageReturned = coverage.PackageCoverageReturned,
             Payments = BookingFinancialsCalculator.GetPayments(booking).Select(PaymentDtoFactory.ToDto).ToList(),
             Note = booking.Note,
             CancellationReason = BookingParticipations.CancellationReasonOf(booking),

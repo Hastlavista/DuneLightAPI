@@ -14,12 +14,16 @@ namespace BlueDragon.DuneLight.Infrastructure.Utils;
 /// termina, gdje se paket čita/piše preko istog IUnitOfWork-a kao i sam termin). Budući da AppointmentService
 /// zaobilazi ClientPackageService, sve provjere podobnosti (cancelled/expired/depleted/coverage) moraju biti
 /// ovdje — ovo je jedino zajedničko grlo za obje putanje poziva.
+///
+/// Phase D3B3A: jedini pozivatelj je IPackageConsumptionLedgerService (svaka promjena brojača ima svoj PackageConsumption
+/// zapis). Deduct prima VALIDITY CUTOFF datuma izvođenja usluge (PackageValidity.ValidityCutoff) umjesto trenutnog sata
+/// (F-08); Return prima "sada" samo za odluku Depleted -&gt; Active (status, ne valjanost potrošnje).
 /// </summary>
 public static class ClientPackageEntryMutator
 {
-    public static void Deduct(ClientPackage clientPackage, Guid serviceId, DateTimeOffset now)
+    public static void Deduct(ClientPackage clientPackage, Guid serviceId, DateTimeOffset validityCutoff)
     {
-        EnsureEligible(clientPackage, now);
+        EnsureEligible(clientPackage, validityCutoff);
 
         if (clientPackage.EntryMode == PackageEntryMode.SharedPool)
         {
@@ -86,11 +90,11 @@ public static class ClientPackageEntryMutator
             clientPackage.Status = ClientPackageStatus.Active;
     }
 
-    private static void EnsureEligible(ClientPackage clientPackage, DateTimeOffset now)
+    private static void EnsureEligible(ClientPackage clientPackage, DateTimeOffset validityCutoff)
     {
         if (clientPackage.Status == ClientPackageStatus.Cancelled)
             throw new BusinessRuleException(ErrorCodes.PackageNotEligible, "Paket je otkazan.");
-        if (clientPackage.ExpiryDate < now)
+        if (!PackageValidity.IsValidOn(clientPackage, validityCutoff))
             throw new BusinessRuleException(ErrorCodes.PackageNotEligible, "Paket je istekao.");
     }
 }

@@ -170,7 +170,7 @@ public class OperationalDashboardService : IOperationalDashboardService
             PaidAmount = BookingFinancialsCalculator.CalculatePaidAmount(booking),
             OutstandingAmount = outstanding,
             IsPaid = outstanding <= 0m,
-            PackageCovered = booking.ClientPackageId.HasValue && booking.PackageCoverageApplied && !booking.PackageCoverageReturned
+            PackageCovered = PackageConsumptions.IsSettledByPackage(booking)
         };
     }
 

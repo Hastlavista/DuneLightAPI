@@ -11,14 +11,11 @@ public interface IClientPackageService
     Task<ClientPackageDto> GetById(Guid organizationId, Guid clientId, Guid id);
     Task<List<ClientPackageDto>> GetByClient(Guid organizationId, Guid clientId);
 
-    /// <summary>Aktivni paketi klijenta koji pokrivaju uslugu i imaju preostalih ulazaka (ili su neograničeni) na dani datum.</summary>
-    Task<List<ClientPackageDto>> GetEligibleForService(Guid organizationId, Guid clientId, Guid serviceId, DateTimeOffset date);
-
-    /// <summary>Skida jedan ulazak (SharedPool ili PerService, ovisno o EntryMode). Koristi AppointmentService kod naplate.</summary>
-    Task DeductEntry(Guid organizationId, Guid clientPackageId, Guid serviceId, Guid userId);
-
-    /// <summary>Vraća jedan ulazak — eksplicitna akcija, nikad automatska.</summary>
-    Task ReturnEntry(Guid organizationId, Guid clientPackageId, Guid serviceId, Guid userId);
+    /// <summary>Aktivni paketi klijenta koji pokrivaju uslugu i imaju preostalih ulazaka (ili su neograničeni), valjani na
+    /// lokalni datum izvođenja usluge <paramref name="date"/> (kalendar poslovnice <paramref name="companyId"/>, inače
+    /// organizacije). Potrošnja/povrat ulaska ide isključivo kroz ledger potrošnje (Phase D3B3A), ne kroz ovaj servis.</summary>
+    Task<List<ClientPackageDto>> GetEligibleForService(
+        Guid organizationId, Guid clientId, Guid serviceId, DateTimeOffset date, Guid? companyId = null);
 
     /// <summary>Otkazuje paket — terminalno, sprječava buduće trošenje. Ne briše i ne vraća ulaske.</summary>
     Task<ClientPackageDto> Cancel(Guid organizationId, Guid clientId, Guid id, Guid userId);

@@ -12,8 +12,8 @@ namespace BlueDragon.DuneLight.Infrastructure.Domain.Models.Appointments;
 /// Jedan Klijent na jednom Appointmentu — zamjenjuje nekadašnji AppointmentClient (individualni termini)
 /// i AppointmentAttendance (grupni termini), koji su bili dvije paralelne, djelomično redundantne
 /// strukture za istu stvar (Klijent↔Appointment veza). Appointment nosi samo okvir/resurs (usluga,
-/// vrijeme, trener, prostorija) — SVA komercijalna evidencija (Amount/SuggestedAmount, uz postojeće
-/// ClientPackageId/CoverageType/PackageCoverage*) je klijent-specifična i živi ovdje, što omogućuje
+/// vrijeme, trener, prostorija) — SVA komercijalna evidencija (cijena, potrošnja paketa, namirenje) je
+/// klijent-specifična i živi na Bookingu odnosno njegovom sudjelovanju, što omogućuje
 /// mješovito plaćanje na istom terminu (npr. duo: jedan klijent iz paketa, drugi karticom — vidi
 /// BookingService/AppointmentService).
 ///
@@ -23,8 +23,7 @@ namespace BlueDragon.DuneLight.Infrastructure.Domain.Models.Appointments;
 /// PaymentAllocation redci pokazuju stvaran plaćen iznos (vidi Checkout.cs/CheckoutItem.cs/PaymentAllocation.cs).
 /// Booking i dalje NE nosi PaymentMethod/IsPaid kao persistirana polja. "Je li plaćeno" se izvodi iz zbroja
 /// aktivnih (Payment.Status=Completed) alokacija preko svih CheckoutItems ovog Bookinga naspram Amount, ili
-/// iz paket-namirenja (ClientPackageId popunjen I PackageCoverageApplied I ne PackageCoverageReturned —
-/// vidi domensku napomenu na PackageCoverageApplied ispod, sam ClientPackageId NIJE dovoljan) — vidi
+/// iz paket-namirenja (AKTIVNA PackageConsumption njegovog sudjelovanja, Phase D3B3A) — vidi
 /// BookingFinancialsCalculator, jedini izvor istine za PaidAmount/OutstandingAmount/IsPaid.
 ///
 /// Za Form=Group, Booking se generira odmah za sve aktivne GroupMembere kad se termin generira (vidi
@@ -37,8 +36,9 @@ namespace BlueDragon.DuneLight.Infrastructure.Domain.Models.Appointments;
 /// Phase D3B1/D3B2: životni ciklus (status, StatusVersion, otkazivanje) i CIJENA (Amount, SuggestedAmount,
 /// IsAmountManuallyOverridden) više NISU na Bookingu — autoritativno ih nosi njegovo jedino sudjelovanje
 /// (BookingSegmentParticipation; čitanje BookingParticipations.AmountOf/..., pisanje BookingPrice/BookingLifecycle).
-/// "Amount" u tekstu iznad znači tu cijenu sudjelovanja. Booking ostaje identitet (termin + klijent) i nositelj
-/// paketnog stanja i namirenja (CheckoutItems).
+/// "Amount" u tekstu iznad znači tu cijenu sudjelovanja. Phase D3B3A: ni potrošnja paketa nije na Bookingu — nosi
+/// je povijest PackageConsumption sudjelovanja (Utils.PackageConsumptions). Booking ostaje identitet (termin +
+/// klijent) i granica novčanog namirenja (CheckoutItems) do D3B3B.
 /// </summary>
 [Table("bookings")]
 public class Booking
@@ -57,41 +57,6 @@ public class Booking
     [Column("client_id")]
     public Guid ClientId { get; set; }
 
-    /// <summary>Koji paket OVOG klijenta pokriva ovaj booking, ako je plaćeno/pokriveno iz paketa.</summary>
-    [Column("client_package_id")]
-    public Guid? ClientPackageId { get; set; }
-
-    /// <summary>Kako je booking pokriven — relevantno prvenstveno za Form=Group (vidi AttendanceCoverageType).
-    /// Za Form=Individual pokriće se izvodi iz OVOG Bookinga ClientPackageId, ovo polje ostaje null.</summary>
-    [Column("coverage_type")]
-    public AttendanceCoverageType? CoverageType { get; set; }
-
-    /// <summary>True znači: valjan ClientPackage entitlement je STVARNO PRIMIJENJEN na ovaj Booking — postavlja se
-    /// isključivo u trenutku completiona/check-ina (BookingService.ResolveCoverage, AppointmentService.CompleteNew/
-    /// CompleteExisting), NIKAD samo zato što je ClientPackageId odabran na budućem/Confirmed Bookingu. NE znači
-    /// nužno da je numerički brojač ulazaka smanjen — kod neograničenog (MonthlyPackage/SharedPool-neograničen)
-    /// paketa nema brojača za smanjiti, entitlement je svejedno "primijenjen" (booking je odrađen pokriven njime).
-    /// Kod ograničenog paketa (SessionPackage/SharedPool s brojem) prati stvarni ClientPackageEntryMutator.Deduct
-    /// poziv. Ovo polje je JEDINI izvor istine za "je li booking paket-namiren" (vidi BookingFinancialsCalculator)
-    /// — bilo koja putanja koja primjenjuje paket-pokriće MORA ga postaviti na true, neovisno o tome je li brojač
-    /// stvarno smanjen. Preimenovano iz PackageEntryDeducted (Migration_2026_09_16_RenamePackageCoverageFlags) jer
-    /// je staro ime sugeriralo da uvijek znači numeričko smanjenje, što nije bilo dosljedno između Individual i
-    /// Group putanje (Individual je uvijek postavljao true, Group ga je ostavljao false za neograničene pakete).</summary>
-    [Column("package_coverage_applied")]
-    public bool PackageCoverageApplied { get; set; }
-
-    /// <summary>True znači: prethodno primijenjeno pokriće više NE namiruje ovaj Booking (poništenje check-ina ili
-    /// eksplicitno vraćanje kod otkazivanja) — vidi BookingFinancialsCalculator (IsPackageSettled zahtijeva
-    /// PackageCoverageApplied &amp;&amp; !PackageCoverageReturned). Preimenovano iz PackageEntryReturned.</summary>
-    [Column("package_coverage_returned")]
-    public bool PackageCoverageReturned { get; set; }
-
-    [Column("package_coverage_returned_at")]
-    public DateTimeOffset? PackageCoverageReturnedAt { get; set; }
-
-    [Column("package_coverage_returned_by")]
-    public Guid? PackageCoverageReturnedBy { get; set; }
-
     [Column("note")]
     public string Note { get; set; }
 
@@ -106,7 +71,6 @@ public class Booking
 
     public Appointment Appointment { get; set; }
     public Client Client { get; set; }
-    public ClientPackage ClientPackage { get; set; }
 
     /// <summary>Povijesne CheckoutItem stavke koje referenciraju ovaj Booking (obično točno jedna, ali može biti
     /// više kroz vrijeme — npr. stavka je uklonjena iz otkazanog Checkouta pa je Booking kasnije dodan u drugi,

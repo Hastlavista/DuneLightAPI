@@ -39,6 +39,62 @@ public class ClientPackageHandler : IClientPackageHandler
         return GetByIdCore(uow.Context, organizationId, id);
     }
 
+    public async Task<ClientPackage> GetForUpdate(IUnitOfWork uow, Guid organizationId, Guid id)
+    {
+        await uow.Context.Database.ExecuteSqlInterpolatedAsync(
+            $"SELECT 1 FROM dunelight.client_packages WHERE organization_id = {organizationId} AND id = {id} FOR UPDATE");
+        ClientPackage clientPackage = await GetByIdCore(uow.Context, organizationId, id);
+        // Već praćen entitet (učitan ranije u istoj transakciji) bi bio stariji od zaključanog retka — osvježi ga.
+        if (clientPackage != null)
+        {
+            await uow.Context.Entry(clientPackage).ReloadAsync();
+            foreach (ClientPackageServiceEntry entry in clientPackage.ServiceEntries)
+                await uow.Context.Entry(entry).ReloadAsync();
+        }
+
+        return clientPackage;
+    }
+
+    public async Task AddConsumption(IUnitOfWork uow, PackageConsumption consumption)
+    {
+        uow.Context.PackageConsumptions.Add(consumption);
+        await uow.Context.SaveChangesAsync();
+    }
+
+    public Task<bool> HasActiveConsumption(IUnitOfWork uow, Guid participationId)
+    {
+        return uow.Context.PackageConsumptions.AnyAsync(c =>
+            c.BookingSegmentParticipationId == participationId && c.Status == PackageConsumptionStatus.Consumed);
+    }
+
+    public async Task<bool> TryMarkReversed(
+        IUnitOfWork uow, PackageConsumption consumption, Guid userId, PackageConsumptionReversalReason reason, DateTimeOffset at)
+    {
+        // Uvjetni UPDATE (WHERE status = 'Consumed') — atomarno i neovisno o (možda zastarjelom) praćenom entitetu.
+        int updated = await uow.Context.PackageConsumptions
+            .Where(c => c.Id == consumption.Id && c.Status == PackageConsumptionStatus.Consumed)
+            .ExecuteUpdateAsync(x => x
+                .SetProperty(c => c.Status, PackageConsumptionStatus.Reversed)
+                .SetProperty(c => c.ReversedAt, at)
+                .SetProperty(c => c.ReversedBy, userId)
+                .SetProperty(c => c.ReversalReason, reason));
+        if (updated == 0)
+            return false;
+
+        // Uskladi praćeni entitet s bazom (bez ponovnog pisanja).
+        consumption.Status = PackageConsumptionStatus.Reversed;
+        consumption.ReversedAt = at;
+        consumption.ReversedBy = userId;
+        consumption.ReversalReason = reason;
+        Microsoft.EntityFrameworkCore.ChangeTracking.EntityEntry<PackageConsumption> entry = uow.Context.Entry(consumption);
+        if (entry.State != EntityState.Detached)
+        {
+            entry.OriginalValues.SetValues(entry.CurrentValues);
+            entry.State = EntityState.Unchanged;
+        }
+        return true;
+    }
+
     private static Task<ClientPackage> GetByIdCore(DatabaseContext context, Guid organizationId, Guid id)
     {
         return context.ClientPackages
@@ -58,7 +114,7 @@ public class ClientPackageHandler : IClientPackageHandler
             .ToListAsync();
     }
 
-    public async Task<List<ClientPackage>> GetEligibleForService(Guid organizationId, Guid clientId, Guid serviceId, DateTimeOffset date)
+    public async Task<List<ClientPackage>> GetEligibleForService(Guid organizationId, Guid clientId, Guid serviceId, DateTimeOffset validityCutoff)
     {
         await using DatabaseContext context = DatabaseContext.GenerateContext(_databaseSettings.ConnectionString);
         return await context.ClientPackages
@@ -68,7 +124,7 @@ public class ClientPackageHandler : IClientPackageHandler
                 cp.OrganizationId == organizationId &&
                 cp.ClientId == clientId &&
                 cp.Status == ClientPackageStatus.Active &&
-                cp.ExpiryDate >= date &&
+                cp.ExpiryDate >= validityCutoff && // PackageValidity.IsValidOn, izraženo u SQL-u
                 cp.ServiceEntries.Any(se => se.ServiceId == serviceId) &&
                 (
                     (cp.EntryMode == PackageEntryMode.SharedPool && (cp.RemainingSharedEntries == null || cp.RemainingSharedEntries > 0)) ||

@@ -20,10 +20,12 @@ namespace BlueDragon.DuneLight.UnitTests.Scheduling;
 /// kept mutually exclusive with money.
 ///
 /// Rules observed:
-///  * Eligibility (ClientPackageHandler.GetEligibleForService) is evaluated against the APPOINTMENT DATE: status Active,
-///    ExpiryDate &gt;= date, the package covers the service, and a positive (or unlimited = null) remaining counter.
-///  * Consumption (ClientPackageEntryMutator.Deduct) happens inside the completion transaction and is judged against the
-///    REAL clock (a second, different notion of "expired").
+///  * Eligibility (ClientPackageHandler.GetEligibleForService) is evaluated against the SERVICE-PERFORMANCE DATE (the
+///    segment start's local date in the company calendar): status Active, valid on that date, the package covers the
+///    service, and a positive (or unlimited = null) remaining counter.
+///  * D3B3A (F-08 fixed): consumption is a PackageConsumption on the participation, written inside the completion
+///    transaction and judged against the SAME service-performance date — no second "now" clock any more.
+///    Reversal marks the consumption Reversed (never deleted); "coverage applied/returned" is derived from that ledger.
 ///  * Coverage never creates a Payment. Package coverage and money are mutually exclusive for one Booking (XOR),
 ///    enforced in code in several places — there is no database constraint.
 ///
@@ -257,19 +259,19 @@ public class PackageCoverageCharacterizationTests
     }
 
     [Fact]
-    public async Task Individual_APackageValidOnAPastAppointmentDateButExpiredToday_PassesEligibilityThenFailsAtDeduction()
+    public async Task Individual_APackageValidOnAPastAppointmentDateButExpiredToday_CoversThatAppointment()
     {
-        await using SchedulingWorld w = await SchedulingWorld.Create(nameof(Individual_APackageValidOnAPastAppointmentDateButExpiredToday_PassesEligibilityThenFailsAtDeduction));
+        await using SchedulingWorld w = await SchedulingWorld.Create(nameof(Individual_APackageValidOnAPastAppointmentDateButExpiredToday_CoversThatAppointment));
         // Expires 2021-01-01: valid on the 2020 appointment date, long expired on the real clock.
         ClientPackage package = await w.AddClientPackage(w.Client, w.Service, 5, new DateTimeOffset(2021, 1, 1, 0, 0, 0, TimeSpan.Zero));
 
-        // FINDING: two clocks. Eligibility uses the appointment date (passes), deduction uses "now" (fails), so back-dating a
-        // completion onto a package that has since expired is rejected at the last step — and the whole transaction rolls back.
-        await SchedulingAssert.BusinessRule(ErrorCodes.PackageNotEligible,
-            () => w.CompleteNew(w.CompleteRequest(SchedulingWorld.Past(10), clientPackageId: package.Id)));
+        // F-08 FIXED (D3B3A): eligibility AND consumption are judged on the service-performance date, so back-dating a
+        // completion onto a package that was valid on that date succeeds. (Before: eligibility passed, deduction used
+        // "now" and rejected it at the last step.)
+        AppointmentDto dto = await w.CompleteNew(w.CompleteRequest(SchedulingWorld.Past(10), clientPackageId: package.Id));
 
-        Assert.Equal(0, await w.CountAppointments());
-        Assert.Equal(5, (await w.LoadClientPackage(package.Id.Value)).ServiceEntries.Single().RemainingEntries);
+        Assert.True(Assert.Single(dto.Bookings).PackageCoverageApplied);
+        Assert.Equal(4, (await w.LoadClientPackage(package.Id.Value)).ServiceEntries.Single().RemainingEntries);
     }
 
     [Fact]
@@ -353,20 +355,26 @@ public class PackageCoverageCharacterizationTests
     }
 
     [Fact]
-    public async Task Xor_ACheckInPaymentCannotBeRecordedForABookingThatCarriesAPackage_EvenAfterTheCoverageWasReturned()
+    public async Task Xor_AfterTheCoverageWasReturned_ACashReCompletionIsAllowed_TheReturnedConsumptionNoLongerBlocksMoney()
     {
-        await using SchedulingWorld w = await SchedulingWorld.Create(nameof(Xor_ACheckInPaymentCannotBeRecordedForABookingThatCarriesAPackage_EvenAfterTheCoverageWasReturned));
+        await using SchedulingWorld w = await SchedulingWorld.Create(nameof(Xor_AfterTheCoverageWasReturned_ACashReCompletionIsAllowed_TheReturnedConsumptionNoLongerBlocksMoney));
         ClientPackage package = await w.AddClientPackage(w.Client, w.Service, 5, LongValid);
         AppointmentDto created = await w.CreateAppointment(SchedulingWorld.Future(10));
         await w.CompleteExisting(created.Id, w.CompleteRequest(SchedulingWorld.Future(10), clientPackageId: package.Id));
         await w.SetBookingStatus(created.Id, w.Client, BookingStatus.Confirmed); // correction: coverage returned, link kept
 
-        // FINDING: the returned coverage leaves Booking.ClientPackageId set, and the check-in payment guard tests only that
-        // column. Re-completing the same booking as a CASH sale is therefore refused although nothing settles it any more.
-        await SchedulingAssert.BusinessRule(ErrorCodes.PaymentNotAllowed,
-            () => w.CompleteExisting(created.Id, w.CompleteRequest(SchedulingWorld.Future(10), paymentMethod: PaymentMethod.Cash)));
+        // F-08 (link half) FIXED (D3B3A): the check-in payment guard asks "is an ACTIVE package consumption settling this
+        // participation?". The returned (Reversed) consumption stays as history but no longer blocks a cash re-completion.
+        // (Before: the stale Booking.ClientPackageId refused it with PAYMENT_NOT_ALLOWED although nothing settled it.)
+        AppointmentDto dto = await w.CompleteExisting(created.Id, w.CompleteRequest(SchedulingWorld.Future(10), paymentMethod: PaymentMethod.Cash));
 
-        Assert.Equal(BookingStatus.Confirmed, (await w.LoadBooking(created.Id, w.Client)).Status);
+        BookingDto b = Assert.Single(dto.Bookings);
+        Assert.Equal(BookingStatus.Completed, b.Status);
+        Assert.True(b.IsPaid);
+        Assert.Equal(50m, b.PaidAmount);
+        Assert.Equal(package.Id, b.ClientPackageId); // history: the package that was used (and returned) is still shown
+        Assert.True(b.PackageCoverageReturned);
+        Assert.Equal(5, (await w.LoadClientPackage(package.Id.Value)).ServiceEntries.Single().RemainingEntries);
     }
 
     [Fact]

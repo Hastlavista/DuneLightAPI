@@ -228,6 +228,9 @@ public class Startup
         services.AddScoped<IClientTagService, ClientTagService>();
         services.AddScoped<IClientService, ClientService>();
         services.AddScoped<IClientPackageService, ClientPackageService>();
+        // Phase D3B3A: isti ClientPackageService je i jedini ledger potrošnje paketa (poziv iz tuđe transakcije —
+        // completion/check-in/otkazivanje/korekcija), isti obrazac kao ICommissionLedgerService/IPaymentLedgerService.
+        services.AddScoped<IPackageConsumptionLedgerService, ClientPackageService>();
         services.AddScoped<IClientHistoryService, ClientHistoryService>();
         services.AddSingleton<IClientFutureActivityProvider, ClientFutureActivityProvider>();
 

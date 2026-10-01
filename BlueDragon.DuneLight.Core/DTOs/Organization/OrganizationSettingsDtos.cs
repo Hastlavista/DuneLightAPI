@@ -6,6 +6,9 @@ public class OrganizationSettingsDto
 {
     public int CancellationCutoffMinutes { get; set; }
 
+    /// <summary>Phase D3B3A — kad se paket troši; trenutno uvijek OnCompletion (jedino podržano ponašanje).</summary>
+    public Enums.PackageConsumptionTiming PackageConsumptionTiming { get; set; }
+
     /// <summary>IANA vremenska zona poslovnog kalendara organizacije (npr. "Europe/Zagreb").</summary>
     public string TimeZone { get; set; }
 }
@@ -22,4 +25,7 @@ public class OrganizationSettingsUpdateRequest
 {
     [Range(0, int.MaxValue, ErrorMessage = "Rok za otkazivanje ne smije biti negativan.")]
     public int CancellationCutoffMinutes { get; set; }
+
+    /// <summary>Phase D3B3A — kad se paket troši; trenutno uvijek OnCompletion (jedino podržano ponašanje).</summary>
+    public Enums.PackageConsumptionTiming PackageConsumptionTiming { get; set; }
 }

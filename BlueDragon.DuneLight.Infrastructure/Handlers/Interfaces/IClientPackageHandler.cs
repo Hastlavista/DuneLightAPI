@@ -14,10 +14,27 @@ public interface IClientPackageHandler
     /// <summary>Kao <see cref="GetById(Guid, Guid)"/>, ali unutar zajedničke transakcije — vidi IUnitOfWork.</summary>
     Task<ClientPackage> GetById(IUnitOfWork uow, Guid organizationId, Guid id);
 
+    /// <summary>Phase D3B3A: zaključava redak paketa (SELECT ... FOR UPDATE) u transakciji pa ga učitava sa
+    /// ServiceEntries — svaka potrošnja/povrat istog paketa time se serijalizira (zadnji ulazak ne mogu potrošiti dvije
+    /// transakcije). Null ako paket ne postoji u organizaciji.</summary>
+    Task<ClientPackage> GetForUpdate(IUnitOfWork uow, Guid organizationId, Guid id);
+
+    /// <summary>Phase D3B3A: dodaje zapis potrošnje paketa (ledger) unutar transakcije.</summary>
+    Task AddConsumption(IUnitOfWork uow, PackageConsumption consumption);
+
+    /// <summary>Phase D3B3A: postoji li (u bazi, unutar transakcije) aktivna potrošnja sudjelovanja.</summary>
+    Task<bool> HasActiveConsumption(IUnitOfWork uow, Guid participationId);
+
+    /// <summary>Phase D3B3A: Consumed -&gt; Reversed na istom retku (nikad brisanje) — uvjetno na trenutno stanje u bazi;
+    /// false ako je potrošnja već poništena (ponovljeno/konkurentno poništenje ne vraća ulazak dvaput).</summary>
+    Task<bool> TryMarkReversed(IUnitOfWork uow, PackageConsumption consumption, Guid userId,
+        Core.Enums.PackageConsumptionReversalReason reason, DateTimeOffset at);
+
     Task<List<ClientPackage>> GetByClient(Guid organizationId, Guid clientId);
 
-    /// <summary>Aktivni paketi klijenta koji pokrivaju uslugu i imaju preostalih ulazaka (ili su neograničeni) na dani datum.</summary>
-    Task<List<ClientPackage>> GetEligibleForService(Guid organizationId, Guid clientId, Guid serviceId, DateTimeOffset date);
+    /// <summary>Aktivni paketi klijenta koji pokrivaju uslugu i imaju preostalih ulazaka (ili su neograničeni), valjani
+    /// na datum izvođenja usluge — <paramref name="validityCutoff"/> je PackageValidity.ValidityCutoff tog datuma.</summary>
+    Task<List<ClientPackage>> GetEligibleForService(Guid organizationId, Guid clientId, Guid serviceId, DateTimeOffset validityCutoff);
 
     /// <summary>Sprema promjene na ClientPackage i njegovim ServiceEntries (koristi se za deduct/return ulaska).</summary>
     Task Update(ClientPackage clientPackage);

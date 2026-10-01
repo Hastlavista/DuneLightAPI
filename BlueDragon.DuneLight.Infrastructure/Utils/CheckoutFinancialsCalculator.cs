@@ -64,15 +64,15 @@ public readonly struct CheckoutFinancials
 /// </summary>
 public static class CheckoutFinancialsCalculator
 {
-    /// <summary>Booking stavka je paket-pokrivena (MonetaryDue=0) kad je njezin Booking.PackageCoverageApplied
-    /// I ne PackageCoverageReturned — isto pravilo kao BookingFinancialsCalculator.IsPackageSettled, ponovljeno
+    /// <summary>Booking stavka je paket-pokrivena (MonetaryDue=0) kad sudjelovanje njezinog Bookinga ima AKTIVNU
+    /// PackageConsumption (Phase D3B3A) — isto pravilo kao BookingFinancialsCalculator.IsPackageSettled, ponovljeno
     /// ovdje jer CheckoutItem ne nosi Booking uvijek učitan istim putem; pozivatelj mora proslijediti Booking
     /// entitet (vidi CalculateItem). Javno (ne privatno) jer je ovo i centralna provjera koju CheckoutService
     /// koristi da eksplicitno odbije eksplicitnu PaymentAllocation prema paket-namirenoj Booking stavci (vidi
     /// CheckoutService.BuildExplicitAllocations) — ista provjera, dva mjesta upotrebe, jedan izvor istine.</summary>
     public static bool IsBookingPackageSettled(Booking booking)
     {
-        return booking != null && booking.ClientPackageId.HasValue && booking.PackageCoverageApplied && !booking.PackageCoverageReturned;
+        return booking != null && PackageConsumptions.IsSettledByPackage(booking);
     }
 
     /// <summary>

@@ -14,6 +14,8 @@ namespace BlueDragon.DuneLight.Infrastructure.Utils;
 /// pravilo): samo dok sudjelovanje NEMA izvršnu povijest, tj. je "netaknuto" — Status == Confirmed, StatusVersion == 0,
 /// bez dolaska (ArrivedAt/ArrivedBy), bez razloga otkazivanja i bez klasifikacije kasnog otkazivanja. Sam trenutni status
 /// nije dovoljan: Confirmed → Completed → ispravak na Confirmed ima StatusVersion &gt; 0 i NIJE netaknuto.
+/// Phase D3B3A: ni sudjelovanje s BILO KAKVOM poviješću potrošnje paketa (aktivnom ili poništenom PackageConsumption)
+/// nije netaknuto — taj ledger se ne smije izgubiti brisanjem. Cijena (D3B2) NIJE izvršna povijest.
 ///
 /// Koriste ga sva tri postojeća toka fizičkog brisanja: izostavljeni Confirmed klijent kod Update i CompleteExisting
 /// (AppointmentHandler.UpdateWithBookingsCore) te brisanje termina istog dana (AppointmentHandler.Delete). Brisanje je
@@ -29,7 +31,8 @@ public static class ParticipationHistory
                && participation.ArrivedAt == null
                && participation.ArrivedBy == null
                && participation.CancellationReason == null
-               && participation.IsLateCancellation == null;
+               && participation.IsLateCancellation == null
+               && participation.PackageConsumptions.Count == 0;
     }
 
     /// <summary>Označava za brisanje (unutar pozivateljevog SaveChanges) svako sudjelovanje pa Booking — ili baca

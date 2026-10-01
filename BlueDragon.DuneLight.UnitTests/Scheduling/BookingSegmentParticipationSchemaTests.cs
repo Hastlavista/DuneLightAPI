@@ -116,7 +116,7 @@ public class BookingSegmentParticipationSchemaTests
             ["fk_bookings_organization_id"] = "FOREIGN KEY (organization_id) REFERENCES dunelight.organizations(id)",
             ["fk_bookings_appointment_id"] = "FOREIGN KEY (appointment_id) REFERENCES dunelight.appointments(id) ON DELETE CASCADE",
             ["fk_bookings_client_id"] = "FOREIGN KEY (client_id) REFERENCES dunelight.clients(id)",
-            ["fk_bookings_client_package_id"] = "FOREIGN KEY (client_package_id) REFERENCES dunelight.client_packages(id)",
+            // D3B3A: client_package_id (and its FK) is gone — package usage is the participation's PackageConsumption ledger.
         }, await ConstraintsOf("bookings"));
 
         Assert.Empty(await Query(@"

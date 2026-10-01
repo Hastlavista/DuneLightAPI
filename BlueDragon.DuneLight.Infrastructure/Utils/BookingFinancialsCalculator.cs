@@ -29,14 +29,12 @@ public static class BookingFinancialsCalculator
 
     /// <summary>
     /// Jedini izvor istine za "je li booking namiren paketom" — namjerno NEOVISNO o CoverageType (nema grananja
-    /// po SessionPackage/MonthlyPackage/SharedPool ovdje, vidi klasnu napomenu na Booking.PackageCoverageApplied).
-    /// Sam ClientPackageId NIJE dovoljan (paket može biti tek ODABRAN na budućem/Confirmed bookingu prije stvarnog
-    /// check-ina/completiona — vidi Booking.PackageCoverageApplied) — potrebno je da je entitlement STVARNO
-    /// primijenjen (PackageCoverageApplied) i da nije naknadno vraćen (PackageCoverageReturned).
+    /// po SessionPackage/MonthlyPackage/SharedPool ovdje). Phase D3B3A: entitlement je STVARNO primijenjen i nije
+    /// poništen = sudjelovanje ima AKTIVNU PackageConsumption (odabir paketa na Confirmed bookingu nije potrošnja).
     /// </summary>
     private static bool IsPackageSettled(Booking booking)
     {
-        return booking.ClientPackageId.HasValue && booking.PackageCoverageApplied && !booking.PackageCoverageReturned;
+        return PackageConsumptions.IsSettledByPackage(booking);
     }
 
     /// <summary>

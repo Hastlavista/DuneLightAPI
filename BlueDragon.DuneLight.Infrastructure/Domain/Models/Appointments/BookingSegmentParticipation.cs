@@ -1,8 +1,10 @@
 using System;
+using System.Collections.Generic;
 using System.ComponentModel.DataAnnotations;
 using System.ComponentModel.DataAnnotations.Schema;
 using BlueDragon.DuneLight.Core.DTOs.Catalog;
 using BlueDragon.DuneLight.Core.Enums;
+using BlueDragon.DuneLight.Infrastructure.Domain.Models.Clients;
 
 namespace BlueDragon.DuneLight.Infrastructure.Domain.Models.Appointments;
 
@@ -12,7 +14,8 @@ namespace BlueDragon.DuneLight.Infrastructure.Domain.Models.Appointments;
 /// svaki produkcijski Booking ima točno jedno sudjelovanje (BookingFactory), a čita/piše se kroz
 /// Utils.BookingParticipations/BookingLifecycle. Od Phase D3B2 je AUTORITATIVAN i za cijenu (Amount, SuggestedAmount,
 /// IsAmountManuallyOverridden — NOT NULL; Booking više nema cijenu), čita se kroz BookingParticipations.AmountOf/...,
-/// mijenja kroz BookingFactory (nastanak) i Utils.BookingPrice (re-cijenjenje). Paket i naplata ostaju na Bookingu.
+/// mijenja kroz BookingFactory (nastanak) i Utils.BookingPrice (re-cijenjenje). Od Phase D3B3A je i nositelj povijesti
+/// potrošnje paketa (PackageConsumptions). Novčano namirenje (CheckoutItem/PaymentAllocation) ostaje na Bookingu.
 ///
 /// Invarijante (provodi ih jedina write-putanja, IBookingSegmentParticipationHandler.Add): Booking i segment postoje u
 /// organizaciji sudjelovanja i pripadaju ISTOM terminu; (BookingId, AppointmentSegmentId) je jedinstven (i u bazi).
@@ -92,4 +95,8 @@ public class BookingSegmentParticipation
 
     public Booking Booking { get; set; }
     public AppointmentSegment Segment { get; set; }
+
+    /// <summary>Phase D3B3A: povijest potrošnje paketa ovog sudjelovanja (ledger, najviše jedan aktivan zapis) —
+    /// učitava se uvijek sa sudjelovanjem (AutoInclude); čitaj kroz Utils.PackageConsumptions.</summary>
+    public List<PackageConsumption> PackageConsumptions { get; set; } = new();
 }

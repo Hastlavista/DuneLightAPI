@@ -1,5 +1,6 @@
 using System;
 using System.Threading.Tasks;
+using BlueDragon.DuneLight.Core.Enums;
 using BlueDragon.DuneLight.Core.DTOs.Organization;
 using BlueDragon.DuneLight.Core.Interfaces.Organization;
 using BlueDragon.DuneLight.Core.Shared;
@@ -33,11 +34,21 @@ public class OrganizationSettingsService : IOrganizationSettingsService
         return settings?.CancellationCutoffMinutes ?? DefaultCancellationCutoffMinutes;
     }
 
+    /// <summary>Phase D3B3A — jedino trenutno podržano ponašanje (vidi PackageConsumptionTiming).</summary>
+    public const PackageConsumptionTiming DefaultPackageConsumptionTiming = PackageConsumptionTiming.OnCompletion;
+
+    public async Task<PackageConsumptionTiming> GetPackageConsumptionTiming(Guid organizationId)
+    {
+        OrganizationSettings settings = await _handler.GetByOrganizationId(organizationId);
+        return settings?.PackageConsumptionTiming ?? DefaultPackageConsumptionTiming;
+    }
+
     public async Task<OrganizationSettingsDto> GetSettings(Guid organizationId)
     {
         return new OrganizationSettingsDto
         {
             CancellationCutoffMinutes = await GetCancellationCutoffMinutes(organizationId),
+            PackageConsumptionTiming = await GetPackageConsumptionTiming(organizationId),
             TimeZone = await _handler.GetTimeZone(organizationId) ?? OrganizationTimeZones.Default
         };
     }

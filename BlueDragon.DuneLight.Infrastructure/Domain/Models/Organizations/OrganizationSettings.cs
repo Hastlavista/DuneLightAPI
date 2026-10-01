@@ -1,4 +1,5 @@
 using System;
+using BlueDragon.DuneLight.Core.Enums;
 using System.ComponentModel.DataAnnotations;
 using System.ComponentModel.DataAnnotations.Schema;
 
@@ -25,6 +26,11 @@ public class OrganizationSettings
     /// postaje "kasno" — vidi BookingCancellationPolicy.IsLateCancellation. Mora biti &gt;= 0.</summary>
     [Column("cancellation_cutoff_minutes")]
     public int CancellationCutoffMinutes { get; set; }
+
+    /// <summary>Phase D3B3A — kad se paket troši (vidi PackageConsumptionTiming; trenutno samo OnCompletion). Kad redak
+    /// ne postoji, vrijedi isti default (OrganizationSettingsService.DefaultPackageConsumptionTiming).</summary>
+    [Column("package_consumption_timing")]
+    public PackageConsumptionTiming PackageConsumptionTiming { get; set; } = PackageConsumptionTiming.OnCompletion;
 
     [Column("created_at")]
     public DateTimeOffset CreatedAt { get; set; }

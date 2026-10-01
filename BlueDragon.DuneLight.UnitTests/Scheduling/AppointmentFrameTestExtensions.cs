@@ -37,6 +37,16 @@ public static class AppointmentFrameTestExtensions
         public decimal Amount => BookingParticipations.AmountOf(booking);
         public decimal SuggestedAmount => BookingParticipations.SuggestedAmountOf(booking);
         public bool IsAmountManuallyOverridden => BookingParticipations.IsAmountManuallyOverriddenOf(booking);
+
+        // D3B3A: package usage is the participation's PackageConsumption history; the former Booking columns are
+        // derived through the PRODUCTION view (form from the loaded Appointment, Individual when it is not loaded).
+        private PackageCoverageView Coverage => PackageConsumptions.CoverageOf(booking, booking.Appointment?.Form ?? AppointmentForm.Individual);
+        public Guid? ClientPackageId => booking.Coverage.ClientPackageId;
+        public AttendanceCoverageType? CoverageType => booking.Coverage.CoverageType;
+        public bool PackageCoverageApplied => booking.Coverage.PackageCoverageApplied;
+        public bool PackageCoverageReturned => booking.Coverage.PackageCoverageReturned;
+        public DateTimeOffset? PackageCoverageReturnedAt => booking.Coverage.PackageCoverageReturnedAt;
+        public Guid? PackageCoverageReturnedBy => booking.Coverage.PackageCoverageReturnedBy;
     }
 
     /// <summary>D3B1: an in-memory Booking carrying its single participation (lifecycle) — for pure unit tests of the

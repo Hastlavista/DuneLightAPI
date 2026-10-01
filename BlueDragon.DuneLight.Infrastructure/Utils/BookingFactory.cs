@@ -23,14 +23,12 @@ public static class BookingFactory
     }
 
     /// <summary>CompleteNew — booking je odrađen u trenutku upisa (sudjelovanje odmah Completed, StatusVersion 0 — isto
-    /// kao prije na Bookingu, pinned F-07).</summary>
+    /// kao prije na Bookingu, pinned F-07). Phase D3B3A: paket se ovdje NE bilježi — pozivatelj ga troši kroz
+    /// IPackageConsumptionLedgerService (PackageConsumption na sudjelovanju) u istoj transakciji.</summary>
     public static Booking CreateCompletedAtCreation(
-        Guid organizationId, AppointmentSegment segment, Guid clientId, BookingPricing pricing, Guid? clientPackageId, DateTimeOffset createdAt)
+        Guid organizationId, AppointmentSegment segment, Guid clientId, BookingPricing pricing, DateTimeOffset createdAt)
     {
-        Booking booking = NewBooking(organizationId, segment, clientId, ParticipationStatus.Completed, pricing, createdAt);
-        booking.ClientPackageId = clientPackageId;
-        booking.PackageCoverageApplied = clientPackageId.HasValue;
-        return booking;
+        return NewBooking(organizationId, segment, clientId, ParticipationStatus.Completed, pricing, createdAt);
     }
 
     private static Booking NewBooking(

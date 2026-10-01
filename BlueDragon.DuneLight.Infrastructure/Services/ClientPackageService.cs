@@ -9,15 +9,22 @@ using BlueDragon.DuneLight.Core.Interfaces.Catalog;
 using BlueDragon.DuneLight.Core.Interfaces.Clients;
 using BlueDragon.DuneLight.Core.Shared;
 using BlueDragon.DuneLight.Core.Shared.Exceptions;
+using BlueDragon.DuneLight.Core.Interfaces.Organization;
+using BlueDragon.DuneLight.Infrastructure.Domain.Models.Appointments;
 using BlueDragon.DuneLight.Infrastructure.Domain.Models.Catalog;
 using BlueDragon.DuneLight.Infrastructure.Domain.Models.Clients;
 using BlueDragon.DuneLight.Infrastructure.Handlers.Interfaces;
+using BlueDragon.DuneLight.Infrastructure.UnitOfWork;
 using BlueDragon.DuneLight.Infrastructure.Utils;
 using Microsoft.EntityFrameworkCore;
 
 namespace BlueDragon.DuneLight.Infrastructure.Services;
 
-public class ClientPackageService : IClientPackageService
+/// <summary>
+/// Prodaja i pregled paketa klijenta te (Phase D3B3A) JEDINI ledger potrošnje paketa — vidi
+/// IPackageConsumptionLedgerService (isti obrazac kao CommissionService : ICommissionLedgerService).
+/// </summary>
+public class ClientPackageService : IClientPackageService, IPackageConsumptionLedgerService
 {
     private const int MaxConcurrencyRetries = 3;
 
@@ -26,14 +33,20 @@ public class ClientPackageService : IClientPackageService
     private readonly IPackageHandler _packageHandler;
     private readonly ICompanyHandler _companyHandler;
     private readonly IPricingService _pricingService;
+    private readonly IOrganizationCalendarService _organizationCalendarService;
+    private readonly IOrganizationSettingsService _organizationSettingsService;
 
     public ClientPackageService(
         IClientPackageHandler clientPackageHandler,
         IClientHandler clientHandler,
         IPackageHandler packageHandler,
         ICompanyHandler companyHandler,
-        IPricingService pricingService)
+        IPricingService pricingService,
+        IOrganizationCalendarService organizationCalendarService,
+        IOrganizationSettingsService organizationSettingsService)
     {
+        _organizationCalendarService = organizationCalendarService;
+        _organizationSettingsService = organizationSettingsService;
         _clientPackageHandler = clientPackageHandler;
         _clientHandler = clientHandler;
         _packageHandler = packageHandler;
@@ -123,22 +136,107 @@ public class ClientPackageService : IClientPackageService
         return packages.Select(ToDto).ToList();
     }
 
-    public async Task<List<ClientPackageDto>> GetEligibleForService(Guid organizationId, Guid clientId, Guid serviceId, DateTimeOffset date)
+    /// <remarks>Phase D3B3A (F-08): <paramref name="date"/> je trenutak izvođenja usluge; valjanost se procjenjuje na
+    /// njegov lokalni datum u kalendaru poslovnice (<paramref name="companyId"/>), odnosno organizacije kad poslovnica
+    /// nije poznata (javni /eligible upit) — vidi PackageValidity.</remarks>
+    public async Task<List<ClientPackageDto>> GetEligibleForService(
+        Guid organizationId, Guid clientId, Guid serviceId, DateTimeOffset date, Guid? companyId = null)
     {
-        List<ClientPackage> packages = await _clientPackageHandler.GetEligibleForService(organizationId, clientId, serviceId, date);
+        OrganizationCalendar calendar = companyId.HasValue
+            ? await _organizationCalendarService.GetCompanyCalendar(organizationId, companyId.Value)
+            : await _organizationCalendarService.GetCalendar(organizationId);
+        List<ClientPackage> packages = await _clientPackageHandler.GetEligibleForService(
+            organizationId, clientId, serviceId, PackageValidity.ValidityCutoff(calendar, date));
         return packages.Select(ToDto).ToList();
     }
 
-    public Task DeductEntry(Guid organizationId, Guid clientPackageId, Guid serviceId, Guid userId)
+    public async Task<PackageConsumption> Consume(
+        IUnitOfWork uow, Guid organizationId, Guid userId, Booking booking, BookingExecutionContext execution,
+        Guid clientPackageId, BookingStatus trigger)
     {
-        return MutateWithConcurrencyRetry(organizationId, clientPackageId, userId,
-            clientPackage => ClientPackageEntryMutator.Deduct(clientPackage, serviceId, DateTimeOffset.UtcNow));
+        PackageConsumptionTiming timing = await _organizationSettingsService.GetPackageConsumptionTiming(organizationId);
+        if (!PackageConsumptionPolicy.ConsumesOn(timing, trigger))
+            return null;
+
+        BookingSegmentParticipation participation = BookingParticipations.GetSingleParticipation(booking);
+        PackageConsumption active = PackageConsumptions.ActiveOf(booking);
+        if (active != null)
+        {
+            if (active.ClientPackageId == clientPackageId)
+                return active; // idempotentno: isto sudjelovanje se ne troši dvaput
+            throw new BusinessRuleException(ErrorCodes.PackageNotEligible, "Sudjelovanje je već pokriveno drugim paketom.");
+        }
+
+        // Zaključaj paket PRIJE čitanja brojača — konkurentna potrošnja istog (zadnjeg) ulaska čeka i vidi svježe stanje.
+        ClientPackage clientPackage = await _clientPackageHandler.GetForUpdate(uow, organizationId, clientPackageId);
+        if (clientPackage == null)
+            throw new NotFoundAppException("ClientPackage", clientPackageId);
+        if (clientPackage.ClientId != execution.ClientId)
+            throw new BusinessRuleException(ErrorCodes.PackageNotEligible, "Odabrani paket ne pripada klijentu ovog termina.");
+        if (await _clientPackageHandler.HasActiveConsumption(uow, participation.Id.GetValueOrDefault()))
+            throw new BusinessRuleException(ErrorCodes.ConcurrencyConflict,
+                "Sudjelovanje je upravo pokriveno paketom od strane drugog zahtjeva — pokušajte ponovno.");
+
+        // F-08: valjanost na DATUM IZVOĐENJA usluge (lokalni datum poslovnice), ne na trenutni sat.
+        OrganizationCalendar calendar = await _organizationCalendarService.GetCompanyCalendar(organizationId, execution.CompanyId);
+        bool counted = IsCounted(clientPackage, execution.ServiceId);
+        ClientPackageEntryMutator.Deduct(clientPackage, execution.ServiceId, PackageValidity.ValidityCutoff(calendar, execution.StartsAt));
+
+        DateTimeOffset now = DateTimeOffset.UtcNow;
+        clientPackage.UpdatedAt = now;
+        clientPackage.UpdatedBy = userId;
+        await _clientPackageHandler.Update(uow, clientPackage);
+
+        PackageConsumption consumption = new PackageConsumption
+        {
+            Id = Guid.NewGuid(),
+            OrganizationId = organizationId,
+            ClientPackageId = clientPackageId,
+            BookingSegmentParticipationId = participation.Id.GetValueOrDefault(),
+            ServiceId = execution.ServiceId,
+            Units = counted ? 1 : 0,
+            ServiceStartsAt = execution.StartsAt,
+            Status = PackageConsumptionStatus.Consumed,
+            CreatedAt = now,
+            CreatedBy = userId
+        };
+        if (!participation.PackageConsumptions.Contains(consumption))
+            participation.PackageConsumptions.Add(consumption);
+        await _clientPackageHandler.AddConsumption(uow, consumption);
+        return consumption;
     }
 
-    public Task ReturnEntry(Guid organizationId, Guid clientPackageId, Guid serviceId, Guid userId)
+    public async Task<bool> ReverseActive(
+        IUnitOfWork uow, Guid organizationId, Guid userId, Booking booking, PackageConsumptionReversalReason reason)
     {
-        return MutateWithConcurrencyRetry(organizationId, clientPackageId, userId,
-            clientPackage => ClientPackageEntryMutator.Return(clientPackage, serviceId, DateTimeOffset.UtcNow));
+        PackageConsumption active = PackageConsumptions.ActiveOf(booking);
+        if (active == null)
+            return false;
+
+        ClientPackage clientPackage = await _clientPackageHandler.GetForUpdate(uow, organizationId, active.ClientPackageId);
+        if (clientPackage == null)
+            throw new NotFoundAppException("ClientPackage", active.ClientPackageId);
+
+        // Pod lockom paketa: potrošnja je možda već poništena konkurentnim zahtjevom — tada ništa ne vraćamo (nikad dvaput).
+        if (!await _clientPackageHandler.TryMarkReversed(uow, active, userId, reason, DateTimeOffset.UtcNow))
+            return false;
+
+        DateTimeOffset now = DateTimeOffset.UtcNow;
+        ClientPackageEntryMutator.Return(clientPackage, active.ServiceId, now);
+        clientPackage.UpdatedAt = now;
+        clientPackage.UpdatedBy = userId;
+        await _clientPackageHandler.Update(uow, clientPackage);
+        return true;
+    }
+
+    /// <summary>Ima li paket brojač za ovu uslugu (potrošnja skida 1 jedinicu) ili je neograničen (0 jedinica).</summary>
+    private static bool IsCounted(ClientPackage clientPackage, Guid serviceId)
+    {
+        if (clientPackage.EntryMode == PackageEntryMode.SharedPool)
+            return clientPackage.RemainingSharedEntries.HasValue;
+
+        ClientPackageServiceEntry entry = clientPackage.ServiceEntries.FirstOrDefault(e => e.ServiceId == serviceId);
+        return entry?.RemainingEntries != null;
     }
 
     /// <summary>Active/Depleted/Expired -> Cancelled. Terminalno (nema "uncancel") — vidi ClientPackageEntryMutator.Return,

@@ -66,7 +66,9 @@ public class PaymentService : IPaymentService, IPaymentLedgerService
         if (amount <= 0m)
             throw new ValidationAppException(ErrorCodes.InvalidQuantity, "Iznos plaćanja mora biti veći od 0.");
 
-        if (booking.ClientPackageId.HasValue)
+        // Phase D3B3A (F-08, link dio): "pokriven paketom" = AKTIVNA potrošnja paketa; poništena potrošnja više ne
+        // blokira novčanu naplatu (prije je zaostali Booking.ClientPackageId blokirao i nakon vraćanja ulaska).
+        if (PackageConsumptions.IsSettledByPackage(booking))
             throw new BusinessRuleException(
                 ErrorCodes.PaymentNotAllowed, "Booking je pokriven paketom — dodatna novčana naplata nije dopuštena.");
 

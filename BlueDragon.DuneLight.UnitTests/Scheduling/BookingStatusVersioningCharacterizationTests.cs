@@ -10,6 +10,7 @@ using BlueDragon.DuneLight.Infrastructure.Domain.Models.Appointments;
 using BlueDragon.DuneLight.Infrastructure.Domain.Models.Commissions;
 using BlueDragon.DuneLight.Infrastructure.Domain.Models.Outbox;
 using BlueDragon.DuneLight.Infrastructure.Utils;
+using BlueDragon.DuneLight.Infrastructure.Domain.Models.Clients;
 
 namespace BlueDragon.DuneLight.UnitTests.Scheduling;
 
@@ -75,7 +76,10 @@ public class BookingStatusVersioningCharacterizationTests
         Booking booking = AppointmentFrameTestExtensions.InMemoryBooking(BookingStatus.Confirmed, cancellationReason: "r");
         BookingPrice.Apply(booking, new BookingPricing(50m, 50m, false)); // D3B2: price lives on the participation
         booking.Note = "n";
-        booking.PackageCoverageApplied = true;
+        BookingParticipations.GetSingleParticipation(booking).PackageConsumptions.Add(new PackageConsumption
+        {
+            Id = Guid.NewGuid(), Status = PackageConsumptionStatus.Consumed, Units = 1 // D3B3A: package usage is ledger state
+        });
 
         BookingLifecycle.TrySetStatus(booking, BookingStatus.Cancelled);
 

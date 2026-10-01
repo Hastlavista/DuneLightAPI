@@ -67,15 +67,20 @@ public class BookingSettlementCharacterizationTests
         Assert.DoesNotContain("payment_method", bookingColumns);
         Assert.DoesNotContain("paid_amount", bookingColumns);
         Assert.DoesNotContain("outstanding_amount", bookingColumns);
-        // The coverage state IS on the Booking; D3B2: the obligation (price) is on its single participation ...
+        // D3B2: the obligation (price) is on its single participation; D3B3A: package coverage is that participation's
+        // PackageConsumption ledger (not a payment, not a Booking column) ...
         string[] participationColumns = db.Model.FindEntityType(typeof(BookingSegmentParticipation))!.GetProperties().Select(p => p.GetColumnName()).ToArray();
         Assert.DoesNotContain("amount", bookingColumns);
         Assert.DoesNotContain("suggested_amount", bookingColumns);
         Assert.Contains("amount", participationColumns);
         Assert.Contains("suggested_amount", participationColumns);
         Assert.DoesNotContain(participationColumns, c => c.Contains("paid") || c.Contains("payment"));
-        Assert.Contains("client_package_id", bookingColumns);
-        Assert.Contains("package_coverage_applied", bookingColumns);
+        Assert.DoesNotContain("client_package_id", bookingColumns);
+        Assert.DoesNotContain("package_coverage_applied", bookingColumns);
+        string[] consumptionColumns = db.Model.FindEntityType(typeof(PackageConsumption))!.GetProperties().Select(p => p.GetColumnName()).ToArray();
+        Assert.Contains("client_package_id", consumptionColumns);
+        Assert.Contains("booking_segment_participation_id", consumptionColumns);
+        Assert.DoesNotContain(consumptionColumns, c => c.Contains("amount") || c.Contains("paid") || c.Contains("payment"));
         // ... and the Appointment carries no price at all.
         Assert.DoesNotContain(appointmentColumns, c => c.Contains("amount") || c.Contains("price") || c.Contains("paid"));
     }

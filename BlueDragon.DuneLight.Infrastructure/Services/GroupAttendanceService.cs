@@ -89,15 +89,16 @@ public class GroupAttendanceService : IGroupAttendanceService
             .Select(b =>
             {
                 decimal outstandingAmount = BookingFinancialsCalculator.CalculateOutstanding(b);
+                PackageCoverageView coverage = PackageConsumptions.CoverageOf(b, AppointmentForm.Group);
                 return new GroupAttendanceEntryDto
                 {
                     ClientId = b.ClientId,
                     ClientName = b.Client != null ? $"{b.Client.FirstName} {b.Client.LastName}" : null,
                     Attended = ToAttended(BookingParticipations.StatusOf(b)),
-                    CoverageType = b.CoverageType,
-                    ClientPackageId = b.ClientPackageId,
-                    PackageCoverageApplied = b.PackageCoverageApplied,
-                    PackageCoverageReturned = b.PackageCoverageReturned,
+                    CoverageType = coverage.CoverageType,
+                    ClientPackageId = coverage.ClientPackageId,
+                    PackageCoverageApplied = coverage.PackageCoverageApplied,
+                    PackageCoverageReturned = coverage.PackageCoverageReturned,
                     Amount = BookingParticipations.AmountOf(b),
                     SuggestedAmount = BookingParticipations.SuggestedAmountOf(b),
                     PaidAmount = BookingFinancialsCalculator.CalculatePaidAmount(b),

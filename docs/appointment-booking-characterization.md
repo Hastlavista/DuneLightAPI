@@ -72,6 +72,7 @@ dotnet test BlueDragon.DuneLight.UnitTests --filter "FullyQualifiedName~Scheduli
 | `BookingParticipationLifecycleCutoverMigrationTests` (project root) | D3B1 migration on a throw-away database: backfill, guards, rollback |
 | `BookingParticipationPricingTests` | D3B2 — price authoritative on `BookingSegmentParticipation`: every creation path, truthful resolution snapshot (BaseAmount/BaseAmountSource), manual override, repricing (Update, CompleteExisting, group un-check-in reset), pricing is not lifecycle history, checkout reads the participation price |
 | `BookingParticipationPricingCutoverMigrationTests` (project root) | D3B2 migration on a throw-away database: exact price copy, no fabricated history, guards, identical rollback |
+| `PackageConsumptionLedgerTests` | D3B3A — PackageConsumption ledger: eligibility (service, client, exhausted, expired), service-performance-date validity incl. company-local date (F-08), once-only/idempotent/concurrent consumption, reversal history (never twice, consume again), timing setting, history rule, schema |
 
 ## Current behaviour findings
 
@@ -117,11 +118,12 @@ Legend — **Test**: the characterization test(s) that pin it. **Later**: whethe
   `SourceVersion 0`) whereas the same booking completed through `CompleteExisting` is version 1.
   Test: `CompleteExisting_WithAnEligiblePackage_*`, `Individual_CompleteNew_CreatesTheBookingAlreadyCompleted_AtVersionZero`.
   Later: yes (notification/commission identity).
-* **F-08 Package clock and link inconsistencies.** Eligibility is judged at the *appointment date*, deduction at *now* — back-dating a
-  completion onto a package that expired since is rejected at the last step. After coverage is returned, `Booking.ClientPackageId`
-  stays set and the check-in payment guard tests only that column, so re-completing the same booking as a cash sale fails with
-  `PAYMENT_NOT_ALLOWED`. Test: `Individual_APackageValidOnAPastAppointmentDateButExpiredToday_*`,
-  `Xor_ACheckInPaymentCannotBeRecordedForABookingThatCarriesAPackage_*`. Later: yes (settlement redesign / mixed settlement).
+* **F-08 Package clock and link inconsistencies — FIXED in D3B3A.** Was: eligibility judged at the *appointment date*,
+  deduction at *now*; and a returned coverage left `Booking.ClientPackageId` set so a cash re-completion failed with
+  `PAYMENT_NOT_ALLOWED`. Now package usage is a `PackageConsumption` ledger on the participation; eligibility and
+  consumption are both judged on the service-performance date as a company-local date (`PackageValidity`), and the payment
+  guard asks for an ACTIVE consumption. Test: `Individual_APackageValidOnAPastAppointmentDateButExpiredToday_CoversThatAppointment`,
+  `Xor_AfterTheCoverageWasReturned_ACashReCompletionIsAllowed_*`, `PackageConsumptionLedgerTests`.
 * **F-09 Delete leaks a persistence error.** Same-day delete of an appointment whose booking already sits on a checkout item fails
   with a raw `DbUpdateException` (FK) instead of a business error. Test: `Delete_OfAnAppointmentWhoseBookingWasAddedToACheckout_*`.
 

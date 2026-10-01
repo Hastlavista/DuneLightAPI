@@ -946,11 +946,18 @@ public sealed class SchedulingWorld : IAsyncDisposable
     public async Task SeedCoverageApplied(Booking booking, ClientPackage package)
     {
         await using DatabaseContext db = NewDb();
-        Booking tracked = await db.Bookings.SingleAsync(b => b.Id == booking.Id);
-        tracked.ClientPackageId = package.Id;
-        tracked.PackageCoverageApplied = true;
+        // D3B3A: "coverage applied" is an ACTIVE PackageConsumption on the booking's participation (+ the counter).
+        Booking tracked = await db.Bookings.Include(b => b.Participations).ThenInclude(p => p.Segment).SingleAsync(b => b.Id == booking.Id);
+        BookingSegmentParticipation participation = BookingParticipations.GetSingleParticipation(tracked);
         ClientPackageServiceEntry entry = await db.ClientPackageServiceEntries.SingleAsync(e => e.ClientPackageId == package.Id);
         if (entry.RemainingEntries.HasValue) entry.RemainingEntries -= 1;
+        db.PackageConsumptions.Add(new PackageConsumption
+        {
+            Id = Guid.NewGuid(), OrganizationId = OrganizationId, ClientPackageId = package.Id.Value,
+            BookingSegmentParticipationId = participation.Id.Value, ServiceId = participation.Segment.ServiceId,
+            Units = entry.RemainingEntries.HasValue ? 1 : 0, ServiceStartsAt = participation.Segment.PlannedStart,
+            Status = PackageConsumptionStatus.Consumed, CreatedAt = DateTimeOffset.UtcNow
+        });
         await db.SaveChangesAsync();
     }
 
@@ -971,7 +978,9 @@ public sealed class SchedulingWorld : IAsyncDisposable
     public async Task<Booking> LoadBooking(Guid appointmentId, Client client)
     {
         await using DatabaseContext db = NewDb();
-        return await db.Bookings.AsNoTracking().SingleAsync(b => b.AppointmentId == appointmentId && b.ClientId == client.Id);
+        // D3B3A: with its Appointment, so the derived package view knows the appointment form.
+        return await db.Bookings.AsNoTracking().Include(b => b.Appointment)
+            .SingleAsync(b => b.AppointmentId == appointmentId && b.ClientId == client.Id);
     }
 
     public async Task<int> CountAppointments(Func<IQueryable<Appointment>, IQueryable<Appointment>> filter = null)

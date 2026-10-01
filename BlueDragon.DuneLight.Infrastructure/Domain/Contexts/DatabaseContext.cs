@@ -47,6 +47,7 @@ public class DatabaseContext : DbContext
     public DbSet<ClientTagAssignment> ClientTagAssignments { get; set; }
     public DbSet<ClientPackage> ClientPackages { get; set; }
     public DbSet<ClientPackageServiceEntry> ClientPackageServiceEntries { get; set; }
+    public DbSet<PackageConsumption> PackageConsumptions { get; set; }
 
     public DbSet<Appointment> Appointments { get; set; }
     public DbSet<Booking> Bookings { get; set; }
@@ -134,6 +135,9 @@ public class DatabaseContext : DbContext
 
         modelBuilder.Entity<OrganizationSettings>().HasKey(s => s.Id);
         modelBuilder.Entity<OrganizationSettings>().HasIndex(s => s.OrganizationId).IsUnique();
+        modelBuilder.Entity<OrganizationSettings>()
+            .Property(s => s.PackageConsumptionTiming)
+            .HasConversion(v => v.ToString(), v => Enum.Parse<PackageConsumptionTiming>(v));
 
         modelBuilder.Entity<User>().HasKey(u => new { u.Id });
         modelBuilder.Entity<User>().HasIndex(u => new { u.OrganizationId, u.Email }).IsUnique();
@@ -507,6 +511,42 @@ public class DatabaseContext : DbContext
             .WithMany(s => s.Participations)
             .HasForeignKey(p => p.AppointmentSegmentId)
             .OnDelete(DeleteBehavior.Restrict);
+        // Phase D3B3A: povijest potrošnje paketa se učitava uvijek sa sudjelovanjem (pa i s Bookingom), da nijedan upit
+        // ne vidi sudjelovanje "bez paketa" samo zato što je zaboravio Include.
+        modelBuilder.Entity<BookingSegmentParticipation>().Navigation(p => p.PackageConsumptions).AutoInclude();
+
+        // Phase D3B3A — PackageConsumption ledger. Restrict prema svemu: povijest potrošnje se nikad ne briše kaskadom.
+        // Najviše jedan aktivan (Consumed) zapis po sudjelovanju — idempotentnost potrošnje i poništenja u bazi.
+        modelBuilder.Entity<PackageConsumption>().HasKey(c => c.Id);
+        modelBuilder.Entity<PackageConsumption>().HasIndex(c => c.ClientPackageId);
+        modelBuilder.Entity<PackageConsumption>()
+            .HasIndex(c => c.BookingSegmentParticipationId)
+            .HasDatabaseName("ux_package_consumptions_active_participation")
+            .HasFilter("status = 'Consumed'")
+            .IsUnique();
+        modelBuilder.Entity<PackageConsumption>()
+            .Property(c => c.Status)
+            .HasConversion(v => v.ToString(), v => Enum.Parse<PackageConsumptionStatus>(v));
+        modelBuilder.Entity<PackageConsumption>()
+            .Property(c => c.ReversalReason)
+            .HasConversion(
+                v => v == null ? null : v.ToString(),
+                v => v == null ? (PackageConsumptionReversalReason?)null : Enum.Parse<PackageConsumptionReversalReason>(v));
+        modelBuilder.Entity<PackageConsumption>()
+            .HasOne(c => c.ClientPackage)
+            .WithMany()
+            .HasForeignKey(c => c.ClientPackageId)
+            .OnDelete(DeleteBehavior.Restrict);
+        modelBuilder.Entity<PackageConsumption>()
+            .HasOne(c => c.Participation)
+            .WithMany(p => p.PackageConsumptions)
+            .HasForeignKey(c => c.BookingSegmentParticipationId)
+            .OnDelete(DeleteBehavior.Restrict);
+        modelBuilder.Entity<PackageConsumption>()
+            .HasOne(c => c.Service)
+            .WithMany()
+            .HasForeignKey(c => c.ServiceId)
+            .OnDelete(DeleteBehavior.Restrict);
 
         modelBuilder.Entity<Booking>().HasKey(b => b.Id);
         // Phase D3B1: životni ciklus Bookinga živi na njegovom (jedinom) sudjelovanju — učitava se uvijek s Bookingom, pa
@@ -517,11 +557,6 @@ public class DatabaseContext : DbContext
             .HasIndex(b => new { b.AppointmentId, b.ClientId })
             .IsUnique();
         modelBuilder.Entity<Booking>()
-            .Property(b => b.CoverageType)
-            .HasConversion(
-                v => v == null ? null : v.ToString(),
-                v => v == null ? (AttendanceCoverageType?)null : Enum.Parse<AttendanceCoverageType>(v));
-        modelBuilder.Entity<Booking>()
             .HasOne(b => b.Appointment)
             .WithMany(a => a.Bookings)
             .HasForeignKey(b => b.AppointmentId)
@@ -530,11 +565,6 @@ public class DatabaseContext : DbContext
             .HasOne(b => b.Client)
             .WithMany()
             .HasForeignKey(b => b.ClientId)
-            .OnDelete(DeleteBehavior.Restrict);
-        modelBuilder.Entity<Booking>()
-            .HasOne(b => b.ClientPackage)
-            .WithMany()
-            .HasForeignKey(b => b.ClientPackageId)
             .OnDelete(DeleteBehavior.Restrict);
 
         modelBuilder.Entity<Payment>().HasKey(p => p.Id);
