@@ -9,7 +9,7 @@ namespace BlueDragon.DuneLight.Core.DTOs.Appointments;
 /// <summary>Jedan Klijent na jednom Appointmentu — vidi Booking.cs za domensku napomenu. Zamjenjuje
 /// nekadašnje AppointmentClientDto (individualni) i ClientAttendanceDto (grupni). Nosi klijent-specifičnu
 /// komercijalnu evidenciju (Amount/SuggestedAmount) — od 2026-09-15 više NIJE zajednička za cijeli termin.
-/// PaidAmount/OutstandingAmount/IsPaid su IZVEDENI iz Payment ledgera (vidi BookingFinancialsCalculator) —
+/// PaidAmount/OutstandingAmount/IsPaid su IZVEDENI iz Payment ledgera (vidi ParticipationSettlement) —
 /// od 2026-09-16 Booking više ne nosi persistirani PaymentMethod/IsPaid (vidi Payment.cs).</summary>
 public class BookingDto
 {
@@ -21,11 +21,11 @@ public class BookingDto
     public decimal SuggestedAmount { get; set; }
     public bool IsAmountManuallyOverridden { get; set; }
 
-    /// <summary>Zbroj aktivnih (ne-voidanih) Paymenta ovog Bookinga — vidi BookingFinancialsCalculator.</summary>
+    /// <summary>Zbroj aktivnih (ne-voidanih) Paymenta ovog Bookinga — vidi ParticipationSettlement.</summary>
     public decimal PaidAmount { get; set; }
 
     /// <summary>0 ako je Amount=0 ili je booking paket-pokriven (ClientPackageId), inače Amount-PaidAmount
-    /// (nikad negativno) — vidi BookingFinancialsCalculator.</summary>
+    /// (nikad negativno) — vidi ParticipationSettlement.</summary>
     public decimal OutstandingAmount { get; set; }
 
     /// <summary>Izvedeno: OutstandingAmount &lt;= 0 (uklj. paket-pokriće i besplatan termin).</summary>

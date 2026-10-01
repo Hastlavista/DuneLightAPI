@@ -320,19 +320,9 @@ public class AppointmentService : IAppointmentService
                 // sprječava ponovno pokriće — prije je zaostala zastavica PackageCoverageApplied tiho preskakala skidanje).
                 if (hasPackage && PackageConsumptions.ActiveOf(bookingRow) == null)
                 {
-                    // Paket-namirenje i novčano namirenje su međusobno isključivi dok nemamo surcharge/refund/
-                    // store-credit semantiku (vidi spec fix section 2) — bookingRow je POSTOJEĆI redak (Confirmed
-                    // termin koji se sad zatvara), mogao je već primiti djelomičnu novčanu uplatu preko POS
-                    // Checkouta prije ovog completiona. Ne "orphan-aj" taj novac tihom primjenom paketa.
-                    List<CheckoutItem> existingCheckoutItems = await _checkoutHandler.GetItemsForBooking(
-                        uow, organizationId, bookingRow.Id.GetValueOrDefault());
-                    decimal existingMonetaryPaid = BookingFinancialsCalculator.CalculatePaidAmount(existingCheckoutItems);
-                    if (existingMonetaryPaid > 0m)
-                        throw new BusinessRuleException(
-                            ErrorCodes.BookingAlreadyHasMonetaryPayment,
-                            "Booking već ima aktivnu novčanu uplatu — pokriće paketom se ne može primijeniti dok se ne poništi ta uplata.",
-                            new { bookingId = bookingRow.Id, existingMonetaryPaid });
-
+                    // Paket-namirenje i novčano namirenje su međusobno isključivi (bookingRow je POSTOJEĆI redak, mogao je
+                    // već primiti uplatu preko POS Checkouta) — Phase D3B3B: provjeru provodi ledger potrošnje kroz
+                    // jedino pravilo SettlementExclusivityPolicy, na granici sudjelovanja.
                     await _packageConsumptionLedgerService.Consume(
                         uow, organizationId, userId, bookingRow, execution, settlement.ClientPackageId.GetValueOrDefault(), BookingStatus.Completed);
                 }
@@ -1510,7 +1500,7 @@ public class AppointmentService : IAppointmentService
     private static ClientAppointmentHistoryDto ToClientHistoryDto(Appointment a, Guid clientId)
     {
         Booking booking = a.Bookings.First(b => b.ClientId == clientId);
-        decimal outstandingAmount = BookingFinancialsCalculator.CalculateOutstanding(booking);
+        decimal outstandingAmount = ParticipationSettlement.OfBooking(booking).OutstandingAmount;
         AppointmentFrameView frame = AppointmentFrameView.Of(a);
         PackageCoverageView coverage = PackageConsumptions.CoverageOf(booking, a.Form);
 
@@ -1531,7 +1521,7 @@ public class AppointmentService : IAppointmentService
             GroupId = a.GroupId,
             GroupName = a.Group?.Name,
             Amount = BookingParticipations.AmountOf(booking),
-            PaidAmount = BookingFinancialsCalculator.CalculatePaidAmount(booking),
+            PaidAmount = ParticipationSettlement.OfBooking(booking).SettledAmount,
             OutstandingAmount = outstandingAmount,
             IsPaid = outstandingAmount <= 0m,
             BookingId = booking.Id.GetValueOrDefault(),
@@ -1571,7 +1561,7 @@ public class AppointmentService : IAppointmentService
             RecurrenceGroupId = a.RecurrenceGroupId,
             Bookings = a.Bookings.Select(b =>
             {
-                decimal outstandingAmount = BookingFinancialsCalculator.CalculateOutstanding(b);
+                decimal outstandingAmount = ParticipationSettlement.OfBooking(b).OutstandingAmount;
                 PackageCoverageView coverage = PackageConsumptions.CoverageOf(b, a.Form);
                 return new BookingDto
                 {
@@ -1582,14 +1572,14 @@ public class AppointmentService : IAppointmentService
                     Amount = BookingParticipations.AmountOf(b),
                     SuggestedAmount = BookingParticipations.SuggestedAmountOf(b),
                     IsAmountManuallyOverridden = BookingParticipations.IsAmountManuallyOverriddenOf(b),
-                    PaidAmount = BookingFinancialsCalculator.CalculatePaidAmount(b),
+                    PaidAmount = ParticipationSettlement.OfBooking(b).SettledAmount,
                     OutstandingAmount = outstandingAmount,
                     IsPaid = outstandingAmount <= 0m,
                     ClientPackageId = coverage.ClientPackageId,
                     CoverageType = coverage.CoverageType,
                     PackageCoverageApplied = coverage.PackageCoverageApplied,
                     PackageCoverageReturned = coverage.PackageCoverageReturned,
-                    Payments = BookingFinancialsCalculator.GetPayments(b).Select(PaymentDtoFactory.ToDto).ToList(),
+                    Payments = ParticipationSettlement.PaymentsOfBooking(b).Select(PaymentDtoFactory.ToDto).ToList(),
                     Note = b.Note,
                     CancellationReason = BookingParticipations.CancellationReasonOf(b),
                     IsLateCancellation = BookingParticipations.IsLateCancellationOf(b)

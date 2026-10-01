@@ -17,14 +17,10 @@ namespace BlueDragon.DuneLight.Infrastructure.Domain.Models.Appointments;
 /// mješovito plaćanje na istom terminu (npr. duo: jedan klijent iz paketa, drugi karticom — vidi
 /// BookingService/AppointmentService).
 ///
-/// Booking = komercijalna OBVEZA (koliko klijent duguje za ovu uslugu). Stvarno primljen novac više NE živi
-/// izravno na Bookingu (staro Payment.BookingId je uklonjeno, vidi Migration_2026_09_17_CheckoutFoundation) —
-/// Booking se novčano namiruje preko CheckoutItem stavke(a) koje ga referenciraju (CheckoutItems ispod), čiji
-/// PaymentAllocation redci pokazuju stvaran plaćen iznos (vidi Checkout.cs/CheckoutItem.cs/PaymentAllocation.cs).
-/// Booking i dalje NE nosi PaymentMethod/IsPaid kao persistirana polja. "Je li plaćeno" se izvodi iz zbroja
-/// aktivnih (Payment.Status=Completed) alokacija preko svih CheckoutItems ovog Bookinga naspram Amount, ili
-/// iz paket-namirenja (AKTIVNA PackageConsumption njegovog sudjelovanja, Phase D3B3A) — vidi
-/// BookingFinancialsCalculator, jedini izvor istine za PaidAmount/OutstandingAmount/IsPaid.
+/// Phase D3B3B: novčano namirenje NIJE na Bookingu — CheckoutItem usluge referencira SUDJELOVANJE
+/// (BookingSegmentParticipation.CheckoutItems), a "koliko je plaćeno / duguje se" izvodi Utils.ParticipationSettlement
+/// (aktivne PaymentAllocation preko svih stavki sudjelovanja naspram cijene sudjelovanja, ili aktivna PackageConsumption).
+/// Booking nikad ne nosi PaymentMethod/IsPaid/PaidAmount.
 ///
 /// Za Form=Group, Booking se generira odmah za sve aktivne GroupMembere kad se termin generira (vidi
 /// GroupService.GenerateAppointments) — GroupMember je "tko normalno dolazi" (trajno članstvo), Booking
@@ -37,8 +33,8 @@ namespace BlueDragon.DuneLight.Infrastructure.Domain.Models.Appointments;
 /// IsAmountManuallyOverridden) više NISU na Bookingu — autoritativno ih nosi njegovo jedino sudjelovanje
 /// (BookingSegmentParticipation; čitanje BookingParticipations.AmountOf/..., pisanje BookingPrice/BookingLifecycle).
 /// "Amount" u tekstu iznad znači tu cijenu sudjelovanja. Phase D3B3A: ni potrošnja paketa nije na Bookingu — nosi
-/// je povijest PackageConsumption sudjelovanja (Utils.PackageConsumptions). Booking ostaje identitet (termin +
-/// klijent) i granica novčanog namirenja (CheckoutItems) do D3B3B.
+/// je povijest PackageConsumption sudjelovanja (Utils.PackageConsumptions). Phase D3B3B: ni namirenje. Booking je
+/// samo identitet (termin + klijent) i spremnik sudjelovanja tog klijenta.
 /// </summary>
 [Table("bookings")]
 public class Booking
@@ -71,12 +67,6 @@ public class Booking
 
     public Appointment Appointment { get; set; }
     public Client Client { get; set; }
-
-    /// <summary>Povijesne CheckoutItem stavke koje referenciraju ovaj Booking (obično točno jedna, ali može biti
-    /// više kroz vrijeme — npr. stavka je uklonjena iz otkazanog Checkouta pa je Booking kasnije dodan u drugi,
-    /// vidi spec section 29). Zbroj aktivnih (Payment.Status=Completed) PaymentAllocation redaka preko svih ovih
-    /// stavki je izvor istine za "koliko je plaćeno", ne persistirani boolean (vidi BookingFinancialsCalculator).</summary>
-    public List<CheckoutItem> CheckoutItems { get; set; } = new();
 
     /// <summary>Sudjelovanja ovog Bookinga u segmentima termina — u jednostrukom modelu točno jedno (BookingFactory).
     /// Autoritativno za životni ciklus (Phase D3B1) i cijenu (Phase D3B2); čitaj kroz Utils.BookingParticipations.</summary>

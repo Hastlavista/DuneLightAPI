@@ -149,8 +149,11 @@ public class CheckoutService : ICheckoutService
         if (BookingParticipations.StatusOf(booking) == BookingStatus.Cancelled)
             throw new BusinessRuleException(ErrorCodes.CheckoutItemNotEligible, "Otkazan booking se ne može dodati u checkout.");
 
+        // Phase D3B3B: stavka usluge namiruje SUDJELOVANJE — API i dalje adresira Booking (jednostruki model), a ovdje se
+        // razrješava njegovo jedino autoritativno sudjelovanje (perzistencijska granica namirenja).
+        BookingSegmentParticipation participation = BookingParticipations.GetSingleParticipation(booking);
         bool alreadyLocked = await uow.Context.CheckoutItems
-            .AnyAsync(i => i.OrganizationId == organizationId && i.BookingId == booking.Id && i.LocksBooking);
+            .AnyAsync(i => i.OrganizationId == organizationId && i.BookingSegmentParticipationId == participation.Id && i.LocksParticipation);
         if (alreadyLocked)
             throw new BusinessRuleException(
                 ErrorCodes.BookingAlreadyInOpenCheckout, "Booking je već aktivna stavka u drugom otvorenom checkoutu.");
@@ -163,11 +166,11 @@ public class CheckoutService : ICheckoutService
             CheckoutId = checkoutId,
             Type = CheckoutItemType.Booking,
             Description = execution.ServiceName ?? "Booking",
-            UnitPrice = BookingParticipations.AmountOf(booking),
+            UnitPrice = participation.Amount,
             Quantity = 1,
-            Amount = BookingParticipations.AmountOf(booking),
-            BookingId = booking.Id,
-            LocksBooking = true,
+            Amount = participation.Amount,
+            BookingSegmentParticipationId = participation.Id,
+            LocksParticipation = true,
             CreatedAt = now,
             CreatedBy = userId
         };
@@ -222,7 +225,7 @@ public class CheckoutService : ICheckoutService
             Quantity = 1,
             Amount = price,
             PackageId = package.Id,
-            LocksBooking = false,
+            LocksParticipation = false,
             CreatedAt = now,
             CreatedBy = userId
         };
@@ -298,7 +301,7 @@ public class CheckoutService : ICheckoutService
                 Quantity = newQuantity,
                 Amount = newAmount,
                 ProductId = product.Id,
-                LocksBooking = false,
+                LocksParticipation = false,
                 CreatedAt = now,
                 CreatedBy = userId
             };
@@ -379,10 +382,14 @@ public class CheckoutService : ICheckoutService
         await using IUnitOfWork uow = await _unitOfWorkFactory.Begin();
 
         await LockOpenCheckout(uow, organizationId, checkoutId);
+        // Phase D3B3B: zaključaj sudjelovanja stavki usluge PRIJE učitavanja grafa — svako novčano namirenje istog
+        // sudjelovanja (ovaj ili drugi checkout, check-in plaćanje) se serijalizira, pa izračun duga ispod vidi svježe stanje.
+        await _checkoutHandler.LockParticipations(
+            uow, organizationId, await _checkoutHandler.GetServiceParticipationIds(uow, organizationId, checkoutId));
         Checkout graph = await _checkoutHandler.GetGraph(uow, organizationId, checkoutId);
 
         List<CheckoutItem> orderedItems = graph.Items.OrderBy(i => i.CreatedAt).ToList();
-        List<CheckoutItemFinancials> financials = orderedItems.Select(i => CheckoutFinancialsCalculator.CalculateItem(i, i.Booking)).ToList();
+        List<CheckoutItemFinancials> financials = orderedItems.Select(CheckoutFinancialsCalculator.CalculateItem).ToList();
         decimal totalOutstanding = financials.Sum(f => f.OutstandingAmount);
 
         if (request.Amount > totalOutstanding)
@@ -477,13 +484,11 @@ public class CheckoutService : ICheckoutService
             if (index < 0)
                 throw new NotFoundAppException("CheckoutItem", kvp.Key);
 
-            // Eksplicitna provjera (uz već-ispravan MonetaryDue=0 izračun ispod) da alokacija ne smije ciljati
-            // Booking stavku čije je pokriće trenutno namireno paketom — mora ostati isključivo novčano ILI
-            // paket-namireno, nikad oboje (vidi spec fix section 2).
+            // Eksplicitna provjera (uz već-ispravan MonetaryDue=0 izračun ispod) da alokacija ne smije ciljati stavku
+            // usluge čije je sudjelovanje trenutno pokriveno paketom — jedino pravilo SettlementExclusivityPolicy.
             CheckoutItem targetItem = orderedItems[index];
-            if (targetItem.Type == CheckoutItemType.Booking && CheckoutFinancialsCalculator.IsBookingPackageSettled(targetItem.Booking))
-                throw new BusinessRuleException(
-                    ErrorCodes.PaymentNotAllowed, "Booking je pokriven paketom — dodatna novčana naplata nije dopuštena.");
+            if (targetItem.Type == CheckoutItemType.Booking && targetItem.Participation != null)
+                SettlementExclusivityPolicy.EnsureMoneyAllowed(targetItem.Participation);
 
             if (kvp.Value > financials[index].OutstandingAmount)
                 throw new BusinessRuleException(
@@ -568,8 +573,8 @@ public class CheckoutService : ICheckoutService
         graph.Status = CheckoutStatus.Completed;
         graph.CompletedAt = now;
         graph.CompletedBy = userId;
-        foreach (CheckoutItem item in graph.Items.Where(i => i.LocksBooking))
-            item.LocksBooking = false;
+        foreach (CheckoutItem item in graph.Items.Where(i => i.LocksParticipation))
+            item.LocksParticipation = false;
 
         await _checkoutHandler.Update(uow, graph);
 
@@ -608,8 +613,8 @@ public class CheckoutService : ICheckoutService
         graph.Status = CheckoutStatus.Cancelled;
         graph.CancelledAt = now;
         graph.CancelledBy = userId;
-        foreach (CheckoutItem item in graph.Items.Where(i => i.LocksBooking))
-            item.LocksBooking = false;
+        foreach (CheckoutItem item in graph.Items.Where(i => i.LocksParticipation))
+            item.LocksParticipation = false;
 
         await _checkoutHandler.Update(uow, graph);
 
@@ -724,7 +729,7 @@ public class CheckoutService : ICheckoutService
 
         List<CheckoutItemDto> items = orderedItems.Select(item =>
         {
-            CheckoutItemFinancials financials = CheckoutFinancialsCalculator.CalculateItem(item, item.Booking);
+            CheckoutItemFinancials financials = CheckoutFinancialsCalculator.CalculateItem(item);
             return new CheckoutItemDto
             {
                 Id = item.Id.GetValueOrDefault(),
@@ -736,7 +741,8 @@ public class CheckoutService : ICheckoutService
                 MonetaryDue = financials.MonetaryDue,
                 PaidAmount = financials.PaidAmount,
                 OutstandingAmount = financials.OutstandingAmount,
-                BookingId = item.BookingId,
+                // API ugovor nepromijenjen: stavka usluge i dalje prikazuje Booking (kroz sudjelovanje, jednostruki model).
+                BookingId = item.Participation?.BookingId,
                 PackageId = item.PackageId,
                 ProductId = item.ProductId,
                 ClientPackageId = item.ClientPackageId,

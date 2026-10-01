@@ -4,6 +4,7 @@ using System.ComponentModel.DataAnnotations;
 using System.ComponentModel.DataAnnotations.Schema;
 using BlueDragon.DuneLight.Core.DTOs.Catalog;
 using BlueDragon.DuneLight.Core.Enums;
+using BlueDragon.DuneLight.Infrastructure.Domain.Models.Checkouts;
 using BlueDragon.DuneLight.Infrastructure.Domain.Models.Clients;
 
 namespace BlueDragon.DuneLight.Infrastructure.Domain.Models.Appointments;
@@ -15,7 +16,8 @@ namespace BlueDragon.DuneLight.Infrastructure.Domain.Models.Appointments;
 /// Utils.BookingParticipations/BookingLifecycle. Od Phase D3B2 je AUTORITATIVAN i za cijenu (Amount, SuggestedAmount,
 /// IsAmountManuallyOverridden — NOT NULL; Booking više nema cijenu), čita se kroz BookingParticipations.AmountOf/...,
 /// mijenja kroz BookingFactory (nastanak) i Utils.BookingPrice (re-cijenjenje). Od Phase D3B3A je i nositelj povijesti
-/// potrošnje paketa (PackageConsumptions). Novčano namirenje (CheckoutItem/PaymentAllocation) ostaje na Bookingu.
+/// potrošnje paketa (PackageConsumptions), a od Phase D3B3B i GRANICA NOVČANOG NAMIRENJA (CheckoutItems -&gt;
+/// PaymentAllocation; izračun Utils.ParticipationSettlement).
 ///
 /// Invarijante (provodi ih jedina write-putanja, IBookingSegmentParticipationHandler.Add): Booking i segment postoje u
 /// organizaciji sudjelovanja i pripadaju ISTOM terminu; (BookingId, AppointmentSegmentId) je jedinstven (i u bazi).
@@ -99,4 +101,8 @@ public class BookingSegmentParticipation
     /// <summary>Phase D3B3A: povijest potrošnje paketa ovog sudjelovanja (ledger, najviše jedan aktivan zapis) —
     /// učitava se uvijek sa sudjelovanjem (AutoInclude); čitaj kroz Utils.PackageConsumptions.</summary>
     public List<PackageConsumption> PackageConsumptions { get; set; } = new();
+
+    /// <summary>Phase D3B3B: CheckoutItem stavke usluge koje namiruju OVO sudjelovanje (kroz vrijeme, svih checkouta).
+    /// Izvor istine za namirenje je Utils.ParticipationSettlement (aktivne alokacije preko ovih stavki).</summary>
+    public List<CheckoutItem> CheckoutItems { get; set; } = new();
 }

@@ -1002,7 +1002,7 @@ public sealed class SchedulingWorld : IAsyncDisposable
     {
         await using DatabaseContext db = NewDb();
         return await db.CheckoutItems.AsNoTracking()
-            .Where(i => i.BookingId == bookingId)
+            .Where(i => i.Participation.BookingId == bookingId) // D3B3B: service items settle the booking's participation
             .SelectMany(i => i.Allocations)
             .Select(a => a.Payment)
             .Distinct()
@@ -1015,7 +1015,7 @@ public sealed class SchedulingWorld : IAsyncDisposable
         await using DatabaseContext db = NewDb();
         return await db.CheckoutItems.AsNoTracking()
             .Include(i => i.Allocations).ThenInclude(a => a.Payment)
-            .Where(i => i.BookingId == bookingId)
+            .Where(i => i.Participation.BookingId == bookingId) // D3B3B: service items settle the booking's participation
             .ToListAsync();
     }
 

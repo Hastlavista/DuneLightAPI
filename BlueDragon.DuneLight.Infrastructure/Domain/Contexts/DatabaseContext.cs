@@ -611,14 +611,12 @@ public class DatabaseContext : DbContext
         // samo FK/navigacije.
         modelBuilder.Entity<CheckoutItem>().HasKey(ci => ci.Id);
         modelBuilder.Entity<CheckoutItem>().HasIndex(ci => new { ci.OrganizationId, ci.CheckoutId });
-        // Djelomični unique indeks (locks_booking = true) sprječava isti Booking u dva istovremeno Open
-        // checkouta — vidi CheckoutItem.LocksBooking domensku napomenu i spec section 29/60. Izražen kao raw
-        // SQL partial index u migraciji (EF fluent HasFilter podržava samo statičan SQL fragment, što je ovdje
-        // dovoljno — "locks_booking = true").
+        // Djelomični unique indeks (locks_participation = true) sprječava isto sudjelovanje u dva istovremeno Open
+        // checkouta — vidi CheckoutItem.LocksParticipation domensku napomenu i spec section 29/60.
         modelBuilder.Entity<CheckoutItem>()
-            .HasIndex(ci => ci.BookingId)
+            .HasIndex(ci => ci.BookingSegmentParticipationId)
             .IsUnique()
-            .HasFilter("locks_booking = true");
+            .HasFilter("locks_participation = true");
         modelBuilder.Entity<CheckoutItem>()
             .Property(ci => ci.Type)
             .HasConversion(v => v.ToString(), v => Enum.Parse<CheckoutItemType>(v));
@@ -627,10 +625,11 @@ public class DatabaseContext : DbContext
             .WithMany(c => c.Items)
             .HasForeignKey(ci => ci.CheckoutId)
             .OnDelete(DeleteBehavior.Cascade);
+        // Phase D3B3B: stavka usluge namiruje SUDJELOVANJE — Restrict: povijest namirenja nikad ne nestaje kaskadom.
         modelBuilder.Entity<CheckoutItem>()
-            .HasOne(ci => ci.Booking)
-            .WithMany(b => b.CheckoutItems)
-            .HasForeignKey(ci => ci.BookingId)
+            .HasOne(ci => ci.Participation)
+            .WithMany(p => p.CheckoutItems)
+            .HasForeignKey(ci => ci.BookingSegmentParticipationId)
             .OnDelete(DeleteBehavior.Restrict);
         modelBuilder.Entity<CheckoutItem>()
             .HasOne(ci => ci.Package)

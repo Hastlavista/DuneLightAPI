@@ -555,7 +555,7 @@ public class BookingService : IBookingService
     /// 4) cijena Bookinga (Amount/SuggestedAmount na sudjelovanju) se NAMJERNO NE resetiraju na 0 (za razliku od Group!) — Individual Booking
     ///    ima svoju cijenu popunjenu OD TRENUTKA KREIRANJA termina (ne tek od check-ina kao Group, vidi Booking.cs
     ///    domensku napomenu), pa bi brisanje na 0 privremeno prikazalo stvaran zakazan/naplativ termin kao
-    ///    besplatan. Booking financials (PaidAmount/OutstandingAmount) se ispravno PREPRAVLJAJU BookingFinancialsCalculator
+    ///    besplatan. Booking financials (PaidAmount/OutstandingAmount) se ispravno PREPRAVLJAJU ParticipationSettlement
     ///    izvedbom iz aktivnog (non-voided) stanja nakon Payment voida — Amount ostaje isti, OutstandingAmount se
     ///    vraća na puni iznos automatski (vidi "Do NOT simply copy Group behavior blindly", spec section 4).
     /// 5) CommissionEntry zarađen OVIM completionom prelazi Earned -&gt; Reversed (ICommissionLedgerService.
@@ -579,7 +579,9 @@ public class BookingService : IBookingService
     private async Task ApplyIndividualCompletionCorrection(
         IUnitOfWork uow, Guid organizationId, Guid userId, Appointment appointment, Booking booking)
     {
-        List<CheckoutItem> items = await _checkoutHandler.GetItemsForBooking(uow, organizationId, booking.Id.GetValueOrDefault());
+        // Phase D3B3B: namirenje je na sudjelovanju — sve stavke koje ga namiruju (kroz vrijeme, svih checkouta).
+        List<CheckoutItem> items = await _checkoutHandler.GetItemsForParticipation(
+            uow, organizationId, BookingParticipations.GetSingleParticipation(booking).Id.GetValueOrDefault());
 
         bool hasNonReversiblePayment = items
             .SelectMany(i => i.Allocations)
@@ -743,23 +745,14 @@ public class BookingService : IBookingService
             return null;
         }
 
-        // Paket-namirenje i novčano namirenje su MEĐUSOBNO ISKLJUČIVI za jednu Booking obvezu dok nemamo
-        // surcharge/refund/store-credit semantiku (vidi spec fix section 2) — ako booking VEĆ ima aktivnu
-        // (Payment.Status=Completed) novčanu alokaciju preko bilo koje svoje CheckoutItem stavke (npr. staff je
-        // djelomično naplatio kroz POS Checkout prije ovog check-ina), primjena paket-pokrića se odbija umjesto
-        // da tiho "osiroti" već primljen novac.
-        List<CheckoutItem> existingCheckoutItems = await _checkoutHandler.GetItemsForBooking(uow, organizationId, booking.Id.GetValueOrDefault());
-        decimal existingMonetaryPaid = BookingFinancialsCalculator.CalculatePaidAmount(existingCheckoutItems);
-        if (existingMonetaryPaid > 0m)
-            throw new BusinessRuleException(
-                ErrorCodes.BookingAlreadyHasMonetaryPayment,
-                "Booking već ima aktivnu novčanu uplatu — pokriće paketom se ne može primijeniti dok se ne poništi ta uplata.",
-                new { existingMonetaryPaid });
+        // Paket-namirenje i novčano namirenje su MEĐUSOBNO ISKLJUČIVI — Phase D3B3B: provjeru (već postojeća aktivna
+        // novčana alokacija sudjelovanja odbija primjenu paketa) provodi ledger potrošnje kroz jedino pravilo
+        // SettlementExclusivityPolicy, na granici sudjelovanja.
 
         // Paket podmiruje obvezu bez obzira na zatraženi PaymentMethod (spec section 32) — Amount i dalje nosi
         // redovnu/predloženu cijenu (retail vrijednost), ne 0 (isto ponašanje kao Individual complete). Paket
         // NIKAD ne stvara Payment (nije novac, vidi Payment.cs/spec section 3/40) — OutstandingAmount postaje 0
-        // preko aktivne potrošnje paketa u BookingFinancialsCalculator, ne preko Paymenta.
+        // preko aktivne potrošnje paketa u ParticipationSettlement, ne preko Paymenta.
         //
         // Phase D3B3A: entitlement se primjenjuje kroz ledger (PackageConsumption na sudjelovanju) u OBA slučaja —
         // paket s brojačem skida jedinicu (Units = 1, prikaz SessionPackage), neograničen paket nema brojača (Units = 0,
@@ -793,8 +786,8 @@ public class BookingService : IBookingService
     private static BookingDto ToDto(Booking booking, AppointmentForm form)
     {
         PackageCoverageView coverage = PackageConsumptions.CoverageOf(booking, form);
-        decimal paidAmount = BookingFinancialsCalculator.CalculatePaidAmount(booking);
-        decimal outstandingAmount = BookingFinancialsCalculator.CalculateOutstanding(booking);
+        decimal paidAmount = ParticipationSettlement.OfBooking(booking).SettledAmount;
+        decimal outstandingAmount = ParticipationSettlement.OfBooking(booking).OutstandingAmount;
 
         return new BookingDto
         {
@@ -814,7 +807,7 @@ public class BookingService : IBookingService
             CoverageType = coverage.CoverageType,
             PackageCoverageApplied = coverage.PackageCoverageApplied,
             PackageCoverageReturned = coverage.PackageCoverageReturned,
-            Payments = BookingFinancialsCalculator.GetPayments(booking).Select(PaymentDtoFactory.ToDto).ToList(),
+            Payments = ParticipationSettlement.PaymentsOfBooking(booking).Select(PaymentDtoFactory.ToDto).ToList(),
             Note = booking.Note,
             CancellationReason = BookingParticipations.CancellationReasonOf(booking),
             IsLateCancellation = BookingParticipations.IsLateCancellationOf(booking)

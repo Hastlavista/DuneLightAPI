@@ -80,7 +80,7 @@ public class IndividualCompletionCharacterizationTests
         CheckoutItem item = Assert.Single(await w.LoadCheckoutItems(b.Id.Value));
         Assert.Equal(CheckoutItemType.Booking, item.Type);
         Assert.Equal(50m, item.Amount);
-        Assert.False(item.LocksBooking);
+        Assert.False(item.LocksParticipation); // D3B3B: the marker is per participation
         Assert.Equal(50m, Assert.Single(item.Allocations).Amount);
         Checkout checkout = await w.LoadCheckout(item.CheckoutId);
         Assert.Equal(CheckoutStatus.Completed, checkout.Status);

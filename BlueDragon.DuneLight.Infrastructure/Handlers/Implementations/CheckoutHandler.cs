@@ -27,7 +27,11 @@ public class CheckoutHandler : ICheckoutHandler
         return query
             .Include(c => c.Company)
             .Include(c => c.Client)
-            .Include(c => c.Items).ThenInclude(i => i.Booking)
+            // Phase D3B3B: stavka usluge -> sudjelovanje (s potrošnjom paketa, AutoInclude) i SVE njegove stavke kroz
+            // vrijeme s alokacijama — namirenje se računa na granici sudjelovanja (ParticipationSettlement).
+            .Include(c => c.Items).ThenInclude(i => i.Participation).ThenInclude(p => p.CheckoutItems)
+                .ThenInclude(i => i.Allocations).ThenInclude(a => a.Payment)
+            .Include(c => c.Items).ThenInclude(i => i.Participation).ThenInclude(p => p.Booking)
             .Include(c => c.Items).ThenInclude(i => i.Allocations).ThenInclude(a => a.Payment)
             .Include(c => c.Payments);
     }
@@ -93,7 +97,7 @@ public class CheckoutHandler : ICheckoutHandler
     public Task<CheckoutItem> GetItem(IUnitOfWork uow, Guid organizationId, Guid checkoutId, Guid itemId)
     {
         return uow.Context.CheckoutItems
-            .Include(i => i.Booking)
+            .Include(i => i.Participation)
             .Include(i => i.Allocations).ThenInclude(a => a.Payment)
             .SingleOrDefaultAsync(i => i.OrganizationId == organizationId && i.CheckoutId == checkoutId && i.Id == itemId);
     }
@@ -116,20 +120,37 @@ public class CheckoutHandler : ICheckoutHandler
             .SingleOrDefaultAsync(p => p.OrganizationId == organizationId && p.CheckoutId == checkoutId && p.Id == paymentId);
     }
 
-    public async Task<List<CheckoutItem>> GetItemsForBooking(Guid organizationId, Guid bookingId)
+    public async Task<List<CheckoutItem>> GetItemsForParticipation(Guid organizationId, Guid participationId)
     {
         await using DatabaseContext context = DatabaseContext.GenerateContext(_databaseSettings.ConnectionString);
         return await context.CheckoutItems
             .Include(i => i.Allocations).ThenInclude(a => a.Payment)
-            .Where(i => i.OrganizationId == organizationId && i.BookingId == bookingId)
+            .Where(i => i.OrganizationId == organizationId && i.BookingSegmentParticipationId == participationId)
             .ToListAsync();
     }
 
-    public Task<List<CheckoutItem>> GetItemsForBooking(IUnitOfWork uow, Guid organizationId, Guid bookingId)
+    public Task<List<CheckoutItem>> GetItemsForParticipation(IUnitOfWork uow, Guid organizationId, Guid participationId)
     {
         return uow.Context.CheckoutItems
             .Include(i => i.Allocations).ThenInclude(a => a.Payment)
-            .Where(i => i.OrganizationId == organizationId && i.BookingId == bookingId)
+            .Where(i => i.OrganizationId == organizationId && i.BookingSegmentParticipationId == participationId)
+            .ToListAsync();
+    }
+
+    public async Task LockParticipations(IUnitOfWork uow, Guid organizationId, IEnumerable<Guid> participationIds)
+    {
+        // Stabilan redoslijed (po id) — dvije transakcije koje zaključavaju isti skup ne mogu se zaključati u krug.
+        foreach (Guid id in participationIds.Distinct().OrderBy(x => x))
+            await uow.Context.Database.ExecuteSqlInterpolatedAsync(
+                $"SELECT 1 FROM dunelight.booking_segment_participations WHERE organization_id = {organizationId} AND id = {id} FOR UPDATE");
+    }
+
+    public Task<List<Guid>> GetServiceParticipationIds(IUnitOfWork uow, Guid organizationId, Guid checkoutId)
+    {
+        return uow.Context.CheckoutItems
+            .Where(i => i.OrganizationId == organizationId && i.CheckoutId == checkoutId && i.BookingSegmentParticipationId != null)
+            .Select(i => i.BookingSegmentParticipationId.Value)
+            .Distinct()
             .ToListAsync();
     }
 

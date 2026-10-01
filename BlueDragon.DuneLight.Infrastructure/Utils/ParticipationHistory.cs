@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Threading.Tasks;
 using BlueDragon.DuneLight.Core.Enums;
 using BlueDragon.DuneLight.Core.Shared;
 using BlueDragon.DuneLight.Core.Shared.Exceptions;
@@ -15,7 +16,10 @@ namespace BlueDragon.DuneLight.Infrastructure.Utils;
 /// bez dolaska (ArrivedAt/ArrivedBy), bez razloga otkazivanja i bez klasifikacije kasnog otkazivanja. Sam trenutni status
 /// nije dovoljan: Confirmed → Completed → ispravak na Confirmed ima StatusVersion &gt; 0 i NIJE netaknuto.
 /// Phase D3B3A: ni sudjelovanje s BILO KAKVOM poviješću potrošnje paketa (aktivnom ili poništenom PackageConsumption)
-/// nije netaknuto — taj ledger se ne smije izgubiti brisanjem. Cijena (D3B2) NIJE izvršna povijest.
+/// nije netaknuto — taj ledger se ne smije izgubiti brisanjem. Phase D3B3B (F-09): ni sudjelovanje s BILO KOJOM
+/// stavkom checkouta (pa time i plaćanjem/alokacijom — svaka alokacija visi na stavci) — povijest namirenja se ne
+/// briše radi uređivanja termina, a pokušaj vraća REFERENCED_CANNOT_DELETE umjesto sirove FK greške baze. Cijena (D3B2)
+/// NIJE izvršna povijest.
 ///
 /// Koriste ga sva tri postojeća toka fizičkog brisanja: izostavljeni Confirmed klijent kod Update i CompleteExisting
 /// (AppointmentHandler.UpdateWithBookingsCore) te brisanje termina istog dana (AppointmentHandler.Delete). Brisanje je
@@ -32,14 +36,24 @@ public static class ParticipationHistory
                && participation.ArrivedBy == null
                && participation.CancellationReason == null
                && participation.IsLateCancellation == null
-               && participation.PackageConsumptions.Count == 0;
+               && participation.PackageConsumptions.Count == 0
+               && participation.CheckoutItems.Count == 0;
     }
 
     /// <summary>Označava za brisanje (unutar pozivateljevog SaveChanges) svako sudjelovanje pa Booking — ili baca
     /// REFERENCED_CANNOT_DELETE (i ne označava ništa) ako bilo koje sudjelovanje ima povijest.</summary>
-    public static void RemoveUntouched(DatabaseContext context, IReadOnlyCollection<Booking> bookings, string message)
+    public static async Task RemoveUntouched(DatabaseContext context, IReadOnlyCollection<Booking> bookings, string message)
     {
         List<BookingSegmentParticipation> participations = bookings.SelectMany(b => b.Participations).ToList();
+        // Povijest namirenja (CheckoutItems) se ne učitava automatski — učitaj je eksplicitno da pravilo ne bi tiho
+        // vidjelo "praznu" kolekciju (sudjelovanja su praćena u ovom kontekstu).
+        foreach (BookingSegmentParticipation participation in participations)
+        {
+            var checkoutItems = context.Entry(participation).Collection(p => p.CheckoutItems);
+            if (!checkoutItems.IsLoaded)
+                await checkoutItems.LoadAsync();
+        }
+
         if (participations.Any(p => !IsUntouched(p)))
             throw new BusinessRuleException(ErrorCodes.ReferencedCannotDelete, message);
 

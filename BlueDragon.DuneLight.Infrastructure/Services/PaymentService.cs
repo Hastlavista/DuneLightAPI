@@ -48,17 +48,19 @@ public class PaymentService : IPaymentService, IPaymentLedgerService
         if (booking == null)
             throw new NotFoundAppException("Booking", clientId);
 
-        List<CheckoutItem> items = await _checkoutHandler.GetItemsForBooking(organizationId, booking.Id.GetValueOrDefault());
+        List<CheckoutItem> items = await _checkoutHandler.GetItemsForParticipation(
+            organizationId, BookingParticipations.GetSingleParticipation(booking).Id.GetValueOrDefault());
         List<Payment> payments = DistinctActivePayments(items, includeVoided: true);
 
         return payments.Select(PaymentDtoFactory.ToDto).ToList();
     }
 
-    /// <summary>Interni check-in-generated put — uvijek naplaćuje TOČNO amount u jednom potezu (pozivatelj već
-    /// zna da je amount == puni dug, vidi AppointmentService/BookingService), pa se ovdje ne broje postojeći
-    /// Paymenti niti postoji parcijalno stanje: stvara se jedan jednostavačni Checkout (jedan Booking CheckoutItem,
-    /// jedan Payment, jedna PaymentAllocation), odmah Status=Completed — vidi Payment.cs klasnu napomenu i
-    /// IPaymentLedgerService domensku napomenu za zašto ovo NIJE isto što i redovan POS Checkout.</summary>
+    /// <summary>Interni check-in-generated put — naplaćuje TOČNO amount u jednom potezu: stvara se jedan jednostavačni
+    /// Checkout (jedna stavka usluge na SUDJELOVANJU, jedan Payment, jedna PaymentAllocation), odmah Status=Completed —
+    /// vidi Payment.cs klasnu napomenu i IPaymentLedgerService domensku napomenu za zašto ovo NIJE isto što i redovan POS
+    /// Checkout. Phase D3B3B: iznos ne smije premašiti PREOSTALI dug sudjelovanja (već postojeća namirenja, npr.
+    /// predujam kroz POS, se oduzimaju) — sudjelovanje se ne može preplatiti: check-in plaćanje naplaćuje najviše preostali
+    /// dug (null kad ništa ne preostaje), ostala plaćanja iznad preostalog duga se odbijaju.</summary>
     public async Task<Payment> RecordPayment(
         IUnitOfWork uow, Guid organizationId, Guid userId, Guid companyId, Booking booking, PaymentMethod method, decimal amount,
         string note, bool isCheckInGenerated = false)
@@ -66,20 +68,33 @@ public class PaymentService : IPaymentService, IPaymentLedgerService
         if (amount <= 0m)
             throw new ValidationAppException(ErrorCodes.InvalidQuantity, "Iznos plaćanja mora biti veći od 0.");
 
-        // Phase D3B3A (F-08, link dio): "pokriven paketom" = AKTIVNA potrošnja paketa; poništena potrošnja više ne
-        // blokira novčanu naplatu (prije je zaostali Booking.ClientPackageId blokirao i nakon vraćanja ulaska).
-        if (PackageConsumptions.IsSettledByPackage(booking))
-            throw new BusinessRuleException(
-                ErrorCodes.PaymentNotAllowed, "Booking je pokriven paketom — dodatna novčana naplata nije dopuštena.");
+        // Phase D3B3B: namirenje je na granici SUDJELOVANJA. Sudjelovanje se zaključava (kao i svaki drugi put
+        // novčanog namirenja) pa se dug računa svježe — dva konkurentna plaćanja ne mogu oba namiriti isti dug.
+        BookingSegmentParticipation participation = BookingParticipations.GetSingleParticipation(booking);
+        Guid participationId = participation.Id.GetValueOrDefault();
+        await _checkoutHandler.LockParticipations(uow, organizationId, new[] { participationId });
 
-        decimal bookingAmount = BookingParticipations.AmountOf(booking);
-        if (bookingAmount <= 0m)
+        // Jedino pravilo isključivosti paket/novac (F-08 link: samo AKTIVNA potrošnja paketa blokira novac).
+        SettlementExclusivityPolicy.EnsureMoneyAllowed(participation);
+
+        ParticipationSettlement settlement = ParticipationSettlement.Of(
+            participation, await _checkoutHandler.GetItemsForParticipation(uow, organizationId, participationId));
+        if (settlement.FinalPrice <= 0m)
             throw new BusinessRuleException(ErrorCodes.PaymentNotAllowed, "Booking je besplatan (iznos 0) — plaćanje nije potrebno.");
 
-        if (amount > bookingAmount)
+        // Check-in "plaćeno na licu mjesta" namiruje PREOSTALI dug sudjelovanja: već postojeći predujam (npr. ručna POS
+        // uplata) se oduzima umjesto da se sudjelovanje preplati; ako ništa ne preostaje, Payment se ne stvara.
+        if (isCheckInGenerated)
+        {
+            amount = Math.Min(amount, settlement.OutstandingAmount);
+            if (amount <= 0m)
+                return null;
+        }
+
+        if (amount > settlement.OutstandingAmount)
             throw new BusinessRuleException(
                 ErrorCodes.PaymentExceedsOutstandingAmount, "Iznos premašuje preostali dug za ovaj booking.",
-                new { outstanding = bookingAmount, requested = amount });
+                new { outstanding = settlement.OutstandingAmount, requested = amount });
 
         DateTimeOffset now = DateTimeOffset.UtcNow;
         Guid checkoutId = Guid.NewGuid();
@@ -109,8 +124,8 @@ public class PaymentService : IPaymentService, IPaymentLedgerService
             UnitPrice = amount,
             Quantity = 1,
             Amount = amount,
-            BookingId = booking.Id,
-            LocksBooking = false,
+            BookingSegmentParticipationId = participationId,
+            LocksParticipation = false,
             CreatedAt = now,
             CreatedBy = userId
         };
@@ -160,7 +175,8 @@ public class PaymentService : IPaymentService, IPaymentLedgerService
 
     public async Task VoidCheckInGeneratedPayments(IUnitOfWork uow, Guid organizationId, Guid userId, Booking booking, string reason)
     {
-        List<CheckoutItem> items = await _checkoutHandler.GetItemsForBooking(uow, organizationId, booking.Id.GetValueOrDefault());
+        List<CheckoutItem> items = await _checkoutHandler.GetItemsForParticipation(
+            uow, organizationId, BookingParticipations.GetSingleParticipation(booking).Id.GetValueOrDefault());
         List<Payment> payments = DistinctActivePayments(items, includeVoided: false)
             .Where(p => p.IsCheckInGenerated)
             .ToList();

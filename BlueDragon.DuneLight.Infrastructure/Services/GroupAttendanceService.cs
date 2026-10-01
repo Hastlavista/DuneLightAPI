@@ -88,7 +88,7 @@ public class GroupAttendanceService : IGroupAttendanceService
         List<GroupAttendanceEntryDto> recorded = appointment.Bookings
             .Select(b =>
             {
-                decimal outstandingAmount = BookingFinancialsCalculator.CalculateOutstanding(b);
+                decimal outstandingAmount = ParticipationSettlement.OfBooking(b).OutstandingAmount;
                 PackageCoverageView coverage = PackageConsumptions.CoverageOf(b, AppointmentForm.Group);
                 return new GroupAttendanceEntryDto
                 {
@@ -101,7 +101,7 @@ public class GroupAttendanceService : IGroupAttendanceService
                     PackageCoverageReturned = coverage.PackageCoverageReturned,
                     Amount = BookingParticipations.AmountOf(b),
                     SuggestedAmount = BookingParticipations.SuggestedAmountOf(b),
-                    PaidAmount = BookingFinancialsCalculator.CalculatePaidAmount(b),
+                    PaidAmount = ParticipationSettlement.OfBooking(b).SettledAmount,
                     OutstandingAmount = outstandingAmount,
                     IsPaid = outstandingAmount <= 0m,
                     Note = b.Note,

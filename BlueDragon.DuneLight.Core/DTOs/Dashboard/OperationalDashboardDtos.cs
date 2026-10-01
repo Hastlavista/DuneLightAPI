@@ -8,7 +8,7 @@ namespace BlueDragon.DuneLight.Core.DTOs.Dashboard;
 /// Operativna nadzorna ploča — jedan agregirani read-model za odabranu Company/Date (vidi
 /// IOperationalDashboardService). NIJE BI/reporting: ne perzistira ništa, ne mutira ništa, samo sažima
 /// postojeće stanje (Appointment/Booking/Group/Roster/Waitlist/Checkout/Payment/ProductStock) preko već
-/// postojećih izračuna (BookingFinancialsCalculator/CheckoutFinancialsCalculator/WorkingHoursCalculator).
+/// postojećih izračuna (ParticipationSettlement/CheckoutFinancialsCalculator/WorkingHoursCalculator).
 /// </summary>
 public class OperationalDashboardDto
 {
@@ -62,7 +62,7 @@ public class DashboardScheduleOccurrenceDto
 }
 
 /// <summary>Booking-razina sažetak jednog klijenta na Individual terminu — vidi spec section 7. Naplata je
-/// IZVEDENA preko BookingFinancialsCalculator, ne duplicirana aritmetika.</summary>
+/// IZVEDENA preko ParticipationSettlement, ne duplicirana aritmetika.</summary>
 public class DashboardBookingSummaryDto
 {
     public Guid BookingId { get; set; }
@@ -74,7 +74,7 @@ public class DashboardBookingSummaryDto
     public bool IsPaid { get; set; }
 
     /// <summary>True kad je booking stvarno paket-namiren (Booking.PackageCoverageApplied &amp;&amp; ne
-    /// PackageCoverageReturned) — isto pravilo kao BookingFinancialsCalculator.IsPackageSettled.</summary>
+    /// PackageCoverageReturned) — isto pravilo kao ParticipationSettlement (aktivna PackageConsumption).</summary>
     public bool PackageCovered { get; set; }
 }
 
@@ -150,7 +150,7 @@ public class DashboardFinancialDto
     /// Company — vidi spec section 15. Cash/payment aktivnost, NE profit/računovodstveni prihod.</summary>
     public decimal TodayRevenue { get; set; }
 
-    /// <summary>Zbroj BookingFinancialsCalculator.CalculateOutstanding preko svih Booking redaka na rasporedu
+    /// <summary>Zbroj ParticipationSettlement.OutstandingAmount (Phase D3B3B) preko svih Booking redaka na rasporedu
     /// odabranog dana (isključujući Cancelled — vidi spec section 17), ne novi izračun.</summary>
     public decimal OutstandingAmount { get; set; }
 

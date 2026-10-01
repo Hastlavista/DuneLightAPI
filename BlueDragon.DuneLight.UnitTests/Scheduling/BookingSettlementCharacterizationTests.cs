@@ -152,7 +152,7 @@ public class BookingSettlementCharacterizationTests
         CheckoutDto completed = await w.Checkouts.Complete(w.OrganizationId, w.ActorUserId, checkout.Id);
         Assert.Equal(CheckoutStatus.Completed, completed.Status);
         // Completing releases the "booking is locked in an open checkout" marker.
-        Assert.False(Assert.Single(await w.LoadCheckoutItems(bookingId)).LocksBooking);
+        Assert.False(Assert.Single(await w.LoadCheckoutItems(bookingId)).LocksParticipation); // D3B3B: the marker is per participation
     }
 
     [Fact]
@@ -350,14 +350,15 @@ public class BookingSettlementCharacterizationTests
         // A full Update re-prices the still-Confirmed booking to 30 ...
         await w.Appointments.Update(w.OrganizationId, w.ActorUserId, true, created.Id, w.UpdateRequest(created, r => r.Amount = 30m));
 
-        // FINDING: ... but the CheckoutItem snapshot (UnitPrice/Amount) stays 50. The booking says 10 outstanding, the
-        // checkout says 30 outstanding: two calculators reading two different "amount" sources for one obligation.
+        // ... but the CheckoutItem snapshot (UnitPrice/Amount) stays 50. D3B3B (changed): the item's outstanding is capped by
+        // the PARTICIPATION's remaining debt (one settlement boundary), so booking and checkout now agree on 10. Before: the
+        // checkout said 30 (two calculators, two "amount" sources for one obligation).
         BookingDto booking = await BookingDtoOf(w, created.Id);
         Assert.Equal(30m, booking.Amount);
         Assert.Equal(10m, booking.OutstandingAmount);
         CheckoutDto refreshed = await w.Checkouts.GetById(w.OrganizationId, checkout.Id);
         Assert.Equal(50m, refreshed.Items.Single().RetailAmount);
-        Assert.Equal(30m, refreshed.Totals.OutstandingAmount);
+        Assert.Equal(10m, refreshed.Totals.OutstandingAmount);
     }
 
     #endregion

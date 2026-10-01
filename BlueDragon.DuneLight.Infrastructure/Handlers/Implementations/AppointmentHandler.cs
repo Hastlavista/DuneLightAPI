@@ -107,7 +107,7 @@ public class AppointmentHandler : IAppointmentHandler
     {
         await using DatabaseContext context = DatabaseContext.GenerateContext(_databaseSettings.ConnectionString);
         return await IncludeGraph(context.Appointments)
-            .Include(a => a.Bookings).ThenInclude(b => b.CheckoutItems).ThenInclude(i => i.Allocations).ThenInclude(alloc => alloc.Payment)
+            .Include(a => a.Bookings).ThenInclude(b => b.Participations).ThenInclude(p => p.CheckoutItems).ThenInclude(i => i.Allocations).ThenInclude(alloc => alloc.Payment)
             .AsSplitQuery()
             .SingleOrDefaultAsync(a => a.OrganizationId == organizationId && a.Id == id);
     }
@@ -125,7 +125,7 @@ public class AppointmentHandler : IAppointmentHandler
         return await IncludeFrame(context.Appointments)
             .Include(a => a.Group).ThenInclude(g => g.Members.Where(m => m.IsActive)).ThenInclude(m => m.Client)
             .Include(a => a.Bookings).ThenInclude(b => b.Client)
-            .Include(a => a.Bookings).ThenInclude(b => b.CheckoutItems).ThenInclude(i => i.Allocations).ThenInclude(alloc => alloc.Payment)
+            .Include(a => a.Bookings).ThenInclude(b => b.Participations).ThenInclude(p => p.CheckoutItems).ThenInclude(i => i.Allocations).ThenInclude(alloc => alloc.Payment)
             .AsSplitQuery()
             .SingleOrDefaultAsync(a => a.OrganizationId == organizationId && a.Id == id);
     }
@@ -135,7 +135,7 @@ public class AppointmentHandler : IAppointmentHandler
         await using DatabaseContext context = DatabaseContext.GenerateContext(_databaseSettings.ConnectionString);
         return await context.Bookings
             .Include(b => b.Client)
-            .Include(b => b.CheckoutItems).ThenInclude(i => i.Allocations).ThenInclude(a => a.Payment)
+            .Include(b => b.Participations).ThenInclude(p => p.CheckoutItems).ThenInclude(i => i.Allocations).ThenInclude(a => a.Payment)
             .AsSplitQuery()
             .SingleOrDefaultAsync(b => b.AppointmentId == appointmentId && b.ClientId == clientId && b.OrganizationId == organizationId);
     }
@@ -143,7 +143,7 @@ public class AppointmentHandler : IAppointmentHandler
     public Task<Booking> GetBooking(IUnitOfWork uow, Guid organizationId, Guid appointmentId, Guid clientId)
     {
         return uow.Context.Bookings
-            .Include(b => b.CheckoutItems).ThenInclude(i => i.Allocations).ThenInclude(a => a.Payment)
+            .Include(b => b.Participations).ThenInclude(p => p.CheckoutItems).ThenInclude(i => i.Allocations).ThenInclude(a => a.Payment)
             .AsSplitQuery()
             .SingleOrDefaultAsync(b => b.AppointmentId == appointmentId && b.ClientId == clientId && b.OrganizationId == organizationId);
     }
@@ -264,7 +264,7 @@ public class AppointmentHandler : IAppointmentHandler
 
         // Phase D3B1: izostavljeni Confirmed Booking se fizički briše SAMO ako mu je sudjelovanje netaknuto (bez povijesti)
         // — eksplicitno sudjelovanje pa Booking kroz ParticipationHistory (nikad kaskadom); inače REFERENCED_CANNOT_DELETE.
-        ParticipationHistory.RemoveUntouched(context, toRemove,
+        await ParticipationHistory.RemoveUntouched(context, toRemove,
             "Klijent ima povijest sudjelovanja na ovom terminu i ne može se ukloniti — otkažite njegov booking umjesto toga.");
 
         // Re-cijenjenje se primjenjuje samo na preživjele retke koji NISU terminalni — već naplaćen/otkazan/
@@ -293,7 +293,7 @@ public class AppointmentHandler : IAppointmentHandler
             .Include(a => a.Bookings)
             .SingleAsync(a => a.Id == appointment.Id && a.OrganizationId == appointment.OrganizationId);
 
-        ParticipationHistory.RemoveUntouched(context, tracked.Bookings,
+        await ParticipationHistory.RemoveUntouched(context, tracked.Bookings,
             "Termin ima povijest sudjelovanja i ne može se trajno obrisati — otkažite ga umjesto toga.");
         context.Appointments.Remove(tracked);
         await context.SaveChangesAsync();
@@ -334,7 +334,7 @@ public class AppointmentHandler : IAppointmentHandler
         await using DatabaseContext context = DatabaseContext.GenerateContext(_databaseSettings.ConnectionString);
         return await IncludeGraph(context.Appointments)
             .Include(a => a.Group).ThenInclude(g => g.Members.Where(m => m.IsActive))
-            .Include(a => a.Bookings).ThenInclude(b => b.CheckoutItems).ThenInclude(i => i.Allocations).ThenInclude(alloc => alloc.Payment)
+            .Include(a => a.Bookings).ThenInclude(b => b.Participations).ThenInclude(p => p.CheckoutItems).ThenInclude(i => i.Allocations).ThenInclude(alloc => alloc.Payment)
             .AsSplitQuery()
             .Where(a => a.OrganizationId == organizationId && a.CompanyId == companyId &&
                 a.Segments.Any(s => s.PlannedStart >= dayStart && s.PlannedStart < dayEnd))
@@ -349,7 +349,7 @@ public class AppointmentHandler : IAppointmentHandler
         await using DatabaseContext context = DatabaseContext.GenerateContext(_databaseSettings.ConnectionString);
         IQueryable<Appointment> query = IncludeGraph(context.Appointments)
             .Include(a => a.Group)
-            .Include(a => a.Bookings).ThenInclude(b => b.CheckoutItems).ThenInclude(i => i.Allocations).ThenInclude(alloc => alloc.Payment)
+            .Include(a => a.Bookings).ThenInclude(b => b.Participations).ThenInclude(p => p.CheckoutItems).ThenInclude(i => i.Allocations).ThenInclude(alloc => alloc.Payment)
             .Where(a => a.OrganizationId == organizationId && a.Bookings.Any(b => b.ClientId == clientId));
 
         int totalCount = await query.CountAsync();
@@ -368,7 +368,7 @@ public class AppointmentHandler : IAppointmentHandler
         await using DatabaseContext context = DatabaseContext.GenerateContext(_databaseSettings.ConnectionString);
         IQueryable<Appointment> query = IncludeGraph(context.Appointments)
             .Include(a => a.Group)
-            .Include(a => a.Bookings).ThenInclude(b => b.CheckoutItems).ThenInclude(i => i.Allocations).ThenInclude(alloc => alloc.Payment)
+            .Include(a => a.Bookings).ThenInclude(b => b.Participations).ThenInclude(p => p.CheckoutItems).ThenInclude(i => i.Allocations).ThenInclude(alloc => alloc.Payment)
             .Where(a => a.OrganizationId == organizationId &&
                 a.Segments.Any(s => s.Employees.Any(e => e.EmployeeId == employeeId)) &&
                 a.Status == AppointmentStatus.Completed);

@@ -35,6 +35,7 @@ public class ClientPackageService : IClientPackageService, IPackageConsumptionLe
     private readonly IPricingService _pricingService;
     private readonly IOrganizationCalendarService _organizationCalendarService;
     private readonly IOrganizationSettingsService _organizationSettingsService;
+    private readonly ICheckoutHandler _checkoutHandler;
 
     public ClientPackageService(
         IClientPackageHandler clientPackageHandler,
@@ -43,8 +44,10 @@ public class ClientPackageService : IClientPackageService, IPackageConsumptionLe
         ICompanyHandler companyHandler,
         IPricingService pricingService,
         IOrganizationCalendarService organizationCalendarService,
-        IOrganizationSettingsService organizationSettingsService)
+        IOrganizationSettingsService organizationSettingsService,
+        ICheckoutHandler checkoutHandler)
     {
+        _checkoutHandler = checkoutHandler;
         _organizationCalendarService = organizationCalendarService;
         _organizationSettingsService = organizationSettingsService;
         _clientPackageHandler = clientPackageHandler;
@@ -181,6 +184,12 @@ public class ClientPackageService : IClientPackageService, IPackageConsumptionLe
             throw new NotFoundAppException("ClientPackage", clientPackageId);
         if (clientPackage.ClientId != execution.ClientId)
             throw new BusinessRuleException(ErrorCodes.PackageNotEligible, "Odabrani paket ne pripada klijentu ovog termina.");
+        // Phase D3B3B: jedino pravilo isključivosti paket/novac — sudjelovanje s aktivnim novčanim namirenjem (bilo kojim
+        // checkoutom) ne smije potrošiti paket. Sudjelovanje se zaključava kao i kod svakog novčanog namirenja, pa
+        // konkurentno plaćanje i potrošnja paketa ne mogu oboje proći.
+        await _checkoutHandler.LockParticipations(uow, organizationId, new[] { participation.Id.GetValueOrDefault() });
+        SettlementExclusivityPolicy.EnsurePackageAllowed(participation, ParticipationSettlement.SettledAmountOf(
+            await _checkoutHandler.GetItemsForParticipation(uow, organizationId, participation.Id.GetValueOrDefault())));
         if (await _clientPackageHandler.HasActiveConsumption(uow, participation.Id.GetValueOrDefault()))
             throw new BusinessRuleException(ErrorCodes.ConcurrencyConflict,
                 "Sudjelovanje je upravo pokriveno paketom od strane drugog zahtjeva — pokušajte ponovno.");

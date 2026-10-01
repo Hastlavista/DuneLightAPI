@@ -85,7 +85,7 @@ public interface IAppointmentHandler
 
     Task<List<Appointment>> GetForSchedule(Guid organizationId, AppointmentScheduleQuery query);
 
-    /// <summary>Termini jedne Company unutar [dayStart, dayEnd) s punim financijskim grafom (Bookings.CheckoutItems.
+    /// <summary>Termini jedne Company unutar [dayStart, dayEnd) s punim financijskim grafom (Bookings.Participations.CheckoutItems.
     /// Allocations.Payment) uz Group.Members(IsActive) — za OperationalDashboardService (vidi spec section 27/28,
     /// zaseban od GetForSchedule jer ta metoda namjerno NE učitava financijski graf za jeftinije kalendarske upite).</summary>
     Task<List<Appointment>> GetForDashboard(Guid organizationId, Guid companyId, DateTimeOffset dayStart, DateTimeOffset dayEnd);

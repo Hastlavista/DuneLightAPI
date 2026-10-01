@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using BlueDragon.DuneLight.Core.Enums;
@@ -18,7 +19,7 @@ public readonly struct CheckoutItemFinancials
     }
 
     /// <summary>Puna komercijalna vrijednost stavke bez obzira na način podmirenja (nikad se ne mijenja na 0
-    /// za paket-pokriven Booking — vidi spec section 22).</summary>
+    /// za paket-pokriveno sudjelovanje — vidi spec section 22).</summary>
     public decimal RetailAmount { get; }
 
     /// <summary>Koliko se OVE stavke stvarno duguje u novcu — 0 za paket-pokriven Booking ili Amount=0 Booking,
@@ -51,7 +52,7 @@ public readonly struct CheckoutFinancials
 
 /// <summary>
 /// Jedini izvor istine za Checkout/CheckoutItem financijske izračune — ne duplicirati ovu aritmetiku po
-/// servisima/kontrolerima (vidi spec section 57-58, isti princip kao BookingFinancialsCalculator). Namjerno
+/// servisima/kontrolerima (vidi spec section 57-58, isti princip kao ParticipationSettlement). Namjerno
 /// decimal svugdje, bez perzistiranog "IsPaid" (uvijek izvedeno, vidi spec section 58).
 ///
 /// Voided Checkout (vidi CheckoutStatus.Voided): ovaj izračun ne grana posebno po Checkout.Status — namjerno.
@@ -64,35 +65,34 @@ public readonly struct CheckoutFinancials
 /// </summary>
 public static class CheckoutFinancialsCalculator
 {
-    /// <summary>Booking stavka je paket-pokrivena (MonetaryDue=0) kad sudjelovanje njezinog Bookinga ima AKTIVNU
-    /// PackageConsumption (Phase D3B3A) — isto pravilo kao BookingFinancialsCalculator.IsPackageSettled, ponovljeno
-    /// ovdje jer CheckoutItem ne nosi Booking uvijek učitan istim putem; pozivatelj mora proslijediti Booking
-    /// entitet (vidi CalculateItem). Javno (ne privatno) jer je ovo i centralna provjera koju CheckoutService
-    /// koristi da eksplicitno odbije eksplicitnu PaymentAllocation prema paket-namirenoj Booking stavci (vidi
-    /// CheckoutService.BuildExplicitAllocations) — ista provjera, dva mjesta upotrebe, jedan izvor istine.</summary>
-    public static bool IsBookingPackageSettled(Booking booking)
-    {
-        return booking != null && PackageConsumptions.IsSettledByPackage(booking);
-    }
-
     /// <summary>
-    /// Izračun jedne stavke. `booking` se prosljeđuje eksplicitno (može biti null za Type=Package, ili kad
-    /// CheckoutItem.Booking nije učitan) — kad je null za Type=Booking, MonetaryDue pada natrag na puni Amount
-    /// (konzervativno: ne pretpostavlja paket-pokriće bez podataka).
+    /// Izračun jedne stavke. Stavka USLUGE (Type=Booking) od Phase D3B3B računa se na granici SUDJELOVANJA
+    /// (item.Participation, vidi ParticipationSettlement):
+    /// - MonetaryDue = 0 kad je sudjelovanje pokriveno paketom (aktivna PackageConsumption), inače snapshot Amount stavke;
+    /// - OutstandingAmount = min(MonetaryDue - aktivne alokacije OVE stavke, preostali dug SUDJELOVANJA preko svih njegovih
+    ///   stavki) — isto sudjelovanje se ne može preplatiti kroz više stavki/checkouta, a stavka čije je sudjelovanje već
+    ///   namireno drugdje nema dug.
+    /// Kad Participation nije učitan, MonetaryDue pada na puni Amount (konzervativno). Paket/proizvod: kao prije.
     /// </summary>
-    public static CheckoutItemFinancials CalculateItem(CheckoutItem item, Booking booking = null)
+    public static CheckoutItemFinancials CalculateItem(CheckoutItem item)
     {
         decimal retail = item.Amount;
-
-        decimal monetaryDue = item.Type == CheckoutItemType.Booking && IsBookingPackageSettled(booking)
-            ? 0m
-            : retail;
 
         decimal paid = item.Allocations
             .Where(a => a.Payment != null && a.Payment.Status == PaymentStatus.Completed)
             .Sum(a => a.Amount);
 
+        decimal monetaryDue = retail;
         decimal outstanding = monetaryDue - paid;
+
+        if (item.Type == CheckoutItemType.Booking && item.Participation != null)
+        {
+            ParticipationSettlement settlement = ParticipationSettlement.Of(item.Participation);
+            if (settlement.EntitlementCovered)
+                monetaryDue = 0m;
+            outstanding = Math.Min(monetaryDue - paid, settlement.OutstandingAmount);
+        }
+
         if (outstanding < 0m)
             outstanding = 0m;
 
@@ -100,14 +100,14 @@ public static class CheckoutFinancialsCalculator
     }
 
     /// <summary>Sažetak cijelog Checkouta — zbroj po-stavačnih izračuna (vidi CalculateItem). `checkout.Items`
-    /// i svaka stavka `.Booking`/`.Allocations.Payment` moraju biti učitani unaprijed (vidi ICheckoutHandler).</summary>
+    /// i svaka stavka `.Participation`/`.Allocations.Payment` moraju biti učitani unaprijed (vidi ICheckoutHandler).</summary>
     public static CheckoutFinancials Calculate(Checkout checkout)
     {
         decimal retailTotal = 0m, monetaryDue = 0m, paidAmount = 0m, outstandingAmount = 0m;
 
         foreach (CheckoutItem item in checkout.Items)
         {
-            CheckoutItemFinancials itemFinancials = CalculateItem(item, item.Booking);
+            CheckoutItemFinancials itemFinancials = CalculateItem(item);
             retailTotal += itemFinancials.RetailAmount;
             monetaryDue += itemFinancials.MonetaryDue;
             paidAmount += itemFinancials.PaidAmount;
@@ -119,6 +119,6 @@ public static class CheckoutFinancialsCalculator
 
     public static IReadOnlyList<CheckoutItemFinancials> CalculateItems(Checkout checkout)
     {
-        return checkout.Items.Select(item => CalculateItem(item, item.Booking)).ToList();
+        return checkout.Items.Select(item => CalculateItem(item)).ToList();
     }
 }

@@ -20,7 +20,7 @@ public interface ICheckoutHandler
     /// IAppointmentHandler.GetForUpdateWithGroup). Null ako ne postoji.</summary>
     Task<Checkout> GetForUpdate(IUnitOfWork uow, Guid organizationId, Guid id);
 
-    /// <summary>Puni graf (Company, Client, Items.Booking, Items.Allocations.Payment, Payments) unutar zajedničke
+    /// <summary>Puni graf (Company, Client, Items.Participation (+ sve njegove stavke s alokacijama), Items.Allocations.Payment, Payments) unutar zajedničke
     /// transakcije — poziva se NAKON GetForUpdate da izračun totala/validacija vidi svježe stanje.</summary>
     Task<Checkout> GetGraph(IUnitOfWork uow, Guid organizationId, Guid id);
 
@@ -33,8 +33,8 @@ public interface ICheckoutHandler
     /// <summary>Sprema skalarne promjene na Checkoutu (Status/CompletedAt/CancelledAt i sl.) — bez diranja Items/Payments.</summary>
     Task Update(IUnitOfWork uow, Checkout checkout);
 
-    /// <summary>Umeće novu stavku — može baciti DbUpdateException na povredu ux_checkout_items_locks_booking
-    /// (isti Booking već aktivan u drugom Open checkoutu, vidi CheckoutItem.LocksBooking), koju CheckoutService
+    /// <summary>Umeće novu stavku — može baciti DbUpdateException na povredu ux_checkout_items_locks_participation
+    /// (isto sudjelovanje već aktivno u drugom Open checkoutu, vidi CheckoutItem.LocksParticipation), koju CheckoutService
     /// hvata i pretvara u BOOKING_ALREADY_IN_OPEN_CHECKOUT.</summary>
     Task AddItem(IUnitOfWork uow, CheckoutItem item);
 
@@ -54,14 +54,20 @@ public interface ICheckoutHandler
 
     Task<Payment> GetPayment(IUnitOfWork uow, Guid organizationId, Guid checkoutId, Guid paymentId);
 
-    /// <summary>Sve CheckoutItem stavke (kroz vrijeme, svih Checkouta) koje referenciraju ovaj Booking, s
-    /// uključenim Allocations.Payment — izvor istine za BookingFinancialsCalculator kad Booking.CheckoutItems
-    /// nije unaprijed učitan preko Include lanca (vidi IPaymentService.GetForBooking).</summary>
-    Task<List<CheckoutItem>> GetItemsForBooking(Guid organizationId, Guid bookingId);
+    /// <summary>Phase D3B3B: sve CheckoutItem stavke (kroz vrijeme, svih Checkouta) koje namiruju ovo sudjelovanje, s
+    /// uključenim Allocations.Payment.</summary>
+    Task<List<CheckoutItem>> GetItemsForParticipation(Guid organizationId, Guid participationId);
 
-    /// <summary>Kao <see cref="GetItemsForBooking(Guid, Guid)"/>, ali unutar zajedničke transakcije — koristi
-    /// IPaymentLedgerService.VoidCheckInGeneratedPayments.</summary>
-    Task<List<CheckoutItem>> GetItemsForBooking(IUnitOfWork uow, Guid organizationId, Guid bookingId);
+    /// <summary>Kao <see cref="GetItemsForParticipation(Guid, Guid)"/>, ali unutar zajedničke transakcije.</summary>
+    Task<List<CheckoutItem>> GetItemsForParticipation(IUnitOfWork uow, Guid organizationId, Guid participationId);
+
+    /// <summary>Phase D3B3B: zaključava retke sudjelovanja (SELECT ... FOR UPDATE, stabilan redoslijed) — svako novčano
+    /// namirenje istog sudjelovanja (bilo kojim checkoutom ili check-in plaćanjem) se time serijalizira, pa dva
+    /// konkurentna plaćanja ne mogu oba namiriti isti preostali dug.</summary>
+    Task LockParticipations(IUnitOfWork uow, Guid organizationId, IEnumerable<Guid> participationIds);
+
+    /// <summary>Phase D3B3B: sudjelovanja koja namiruju stavke usluge ovog checkouta.</summary>
+    Task<List<Guid>> GetServiceParticipationIds(IUnitOfWork uow, Guid organizationId, Guid checkoutId);
 
     /// <summary>Svi TRENUTNO Open Checkouti ove Company, puni graf (za CheckoutFinancialsCalculator.Calculate)
     /// — za OperationalDashboardService.Financial (vidi spec section 18: uvijek trenutno stanje, bez obzira na

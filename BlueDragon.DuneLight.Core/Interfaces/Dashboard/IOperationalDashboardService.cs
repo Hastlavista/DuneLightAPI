@@ -8,7 +8,7 @@ namespace BlueDragon.DuneLight.Core.Interfaces.Dashboard;
 /// Glavni operativni read-model za reception/staff/manager — vidi OperationalDashboardDto. Čisto čitanje,
 /// ne mutira ništa (bez promocije liste čekanja, čekiranja, plaćanja, zalihe — sve to ide kroz postojeće
 /// module). Sve financijske/kapacitetne/dostupnostne izračune preuzima od već postojećih izvora istine
-/// (BookingFinancialsCalculator/CheckoutFinancialsCalculator/WorkingHoursCalculator) — ne duplicira ih.
+/// (ParticipationSettlement/CheckoutFinancialsCalculator/WorkingHoursCalculator) — ne duplicira ih.
 /// </summary>
 public interface IOperationalDashboardService
 {

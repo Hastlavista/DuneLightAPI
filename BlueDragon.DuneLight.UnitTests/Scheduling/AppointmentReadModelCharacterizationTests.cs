@@ -410,15 +410,17 @@ public class AppointmentReadModelCharacterizationTests
     }
 
     [Fact]
-    public async Task Delete_OfAnAppointmentWhoseBookingWasAddedToACheckout_FailsAtTheDatabase()
+    public async Task Delete_OfAnAppointmentWhoseBookingWasAddedToACheckout_IsRefusedWithADomainError()
     {
-        await using SchedulingWorld w = await SchedulingWorld.Create(nameof(Delete_OfAnAppointmentWhoseBookingWasAddedToACheckout_FailsAtTheDatabase));
+        await using SchedulingWorld w = await SchedulingWorld.Create(nameof(Delete_OfAnAppointmentWhoseBookingWasAddedToACheckout_IsRefusedWithADomainError));
         AppointmentDto created = await w.CreateAppointment(SchedulingWorld.Future(10));
         await w.PayBookingViaCheckout(created.Bookings.Single().Id, w.Client, 20m);
 
-        // FINDING: the same-day rule is the only guard. A same-day appointment that already has money attached hits the
-        // checkout_items -> bookings foreign key and surfaces as a raw persistence error rather than a business error.
-        await Assert.ThrowsAsync<DbUpdateException>(() => w.Appointments.Delete(w.OrganizationId, w.ActorUserId, created.Id));
+        // F-09 FIXED (D3B3B): settlement history (a checkout item / payment on the participation) is business history, so
+        // the participation is not "untouched" — the delete is refused with REFERENCED_CANNOT_DELETE instead of the raw
+        // checkout_items foreign-key error (before: DbUpdateException).
+        await SchedulingAssert.BusinessRule(ErrorCodes.ReferencedCannotDelete,
+            () => w.Appointments.Delete(w.OrganizationId, w.ActorUserId, created.Id));
 
         Assert.Equal(1, await w.CountAppointments());
     }

@@ -74,6 +74,7 @@ dotnet test BlueDragon.DuneLight.UnitTests --filter "FullyQualifiedName~Scheduli
 | `BookingParticipationPricingCutoverMigrationTests` (project root) | D3B2 migration on a throw-away database: exact price copy, no fabricated history, guards, identical rollback |
 | `PackageConsumptionLedgerTests` | D3B3A — PackageConsumption ledger: eligibility (service, client, exhausted, expired), service-performance-date validity incl. company-local date (F-08), once-only/idempotent/concurrent consumption, reversal history (never twice, consume again), timing setting, history rule, schema |
 | `PackageValidityCalendarTests` | D3B3A.1 — ValidUntilDate as a date, inclusive boundary, Zagreb/New York company boundaries, two companies per organization, sale-company business date, ledger uses the same rule, unlimited expiry, /eligible company context, clock-free reversal status |
+| `ParticipationSettlementTests` | D3B3B — participation is the settlement boundary: service item -> participation (tenant FK), derived settled/outstanding (partial, split, voided, prepaid, completed with debt), no over-settlement across checkouts or concurrently, check-in pays only the remainder, package is not money (single exclusivity policy), F-09 history rule, dashboard |
 
 ## Current behaviour findings
 
@@ -130,8 +131,11 @@ Legend — **Test**: the characterization test(s) that pin it. **Later**: whethe
   requires the Company; a reversal restores `Active` regardless of the clock. Test: `PackageValidityCalendarTests`.
   D3B3A.2: `Package.ValidityFixedDate` is a calendar date (PostgreSQL `date`, used as-is at sale); `/eligible` requires
   the service date (no fallback to "now"). Test: `PackageCatalogDateTests`.
-* **F-09 Delete leaks a persistence error.** Same-day delete of an appointment whose booking already sits on a checkout item fails
-  with a raw `DbUpdateException` (FK) instead of a business error. Test: `Delete_OfAnAppointmentWhoseBookingWasAddedToACheckout_*`.
+* **F-09 Delete leaks a persistence error — FIXED in D3B3B.** Was: same-day delete of an appointment whose booking sits on a
+  checkout item failed with a raw `DbUpdateException` (FK). Now settlement history (any checkout item on the participation, hence
+  any payment/allocation) makes the participation non-untouched (`ParticipationHistory`), and the delete / client removal fails
+  with `REFERENCED_CANNOT_DELETE`. Test: `Delete_OfAnAppointmentWhoseBookingWasAddedToACheckout_IsRefusedWithADomainError`,
+  `ParticipationSettlementTests.SettlementHistory_MakesAParticipationNonUntouched_WithADomainError`.
 
 ### Individual vs Group asymmetries (all pinned, none normalized)
 

@@ -157,15 +157,16 @@ public class BookingCorrectionCharacterizationTests
         AppointmentDto created = await w.CreateAppointment(SchedulingWorld.Future(10));
         Guid bookingId = created.Bookings.Single().Id;
         await w.PayBookingViaCheckout(bookingId, w.Client, 20m); // manual POS payment (IsCheckInGenerated = false)
-        // Completing with a cash settlement records a check-in payment for the FULL amount; it does not look at the manual one.
+        // D3B3B (changed): the check-in cash settlement pays only the participation's REMAINING 30 — the manual 20 is
+        // counted. Before: it charged the full 50 and over-settled the obligation (20 + 50 against 50).
         AppointmentDto completed = await w.CompleteExisting(created.Id, w.CompleteRequest(SchedulingWorld.Future(10), paymentMethod: PaymentMethod.Cash));
         List<Payment> before = await w.LoadPayments(bookingId);
         Assert.Equal(2, before.Count);
-        Assert.Equal(1, before.Count(p => p.IsCheckInGenerated));
+        Assert.Equal(30m, Assert.Single(before, p => p.IsCheckInGenerated).Amount);
         Assert.Equal(1, before.Count(p => !p.IsCheckInGenerated));
-        BookingDto overpaid = (await w.Appointments.GetById(w.OrganizationId, completed.Id)).Bookings.Single();
-        Assert.Equal(70m, overpaid.PaidAmount);      // FINDING: 20 manual + 50 check-in against a 50 obligation
-        Assert.Equal(0m, overpaid.OutstandingAmount);
+        BookingDto settled = (await w.Appointments.GetById(w.OrganizationId, completed.Id)).Bookings.Single();
+        Assert.Equal(50m, settled.PaidAmount);       // 20 manual + 30 check-in against a 50 obligation
+        Assert.Equal(0m, settled.OutstandingAmount);
 
         // The manual payment makes the correction non-reversible. The refusal happens BEFORE any void, so the reversible
         // check-in payment is not voided either: the correction is all-or-nothing.

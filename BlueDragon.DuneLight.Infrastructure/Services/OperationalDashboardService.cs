@@ -20,7 +20,7 @@ namespace BlueDragon.DuneLight.Infrastructure.Services;
 
 /// <summary>
 /// Vidi IOperationalDashboardService. Sastavlja se od već postojećih handler upita — ne uvodi novu poslovnu
-/// logiku, samo agregira (vidi BookingFinancialsCalculator/CheckoutFinancialsCalculator/WorkingHoursCalculator
+/// logiku, samo agregira (vidi ParticipationSettlement/CheckoutFinancialsCalculator/WorkingHoursCalculator
 /// za sve financijske/dostupnostne izračune). Datumska granica je [dayStart, dayEnd) po kalendarskom danu, isti
 /// obrazac implicitne DateTimeOffset konverzije kao AppointmentService.GetAvailableSlots/RosterEntryService
 /// (nema odvojene per-organizaciju timezone — vidi spec section 30).
@@ -160,14 +160,14 @@ public class OperationalDashboardService : IOperationalDashboardService
 
     private static DashboardBookingSummaryDto BuildBookingSummary(Booking booking)
     {
-        decimal outstanding = BookingFinancialsCalculator.CalculateOutstanding(booking);
+        decimal outstanding = ParticipationSettlement.OfBooking(booking).OutstandingAmount;
         return new DashboardBookingSummaryDto
         {
             BookingId = booking.Id.GetValueOrDefault(),
             ClientId = booking.ClientId,
             ClientName = booking.Client != null ? $"{booking.Client.FirstName} {booking.Client.LastName}" : null,
             BookingStatus = BookingParticipations.StatusOf(booking),
-            PaidAmount = BookingFinancialsCalculator.CalculatePaidAmount(booking),
+            PaidAmount = ParticipationSettlement.OfBooking(booking).SettledAmount,
             OutstandingAmount = outstanding,
             IsPaid = outstanding <= 0m,
             PackageCovered = PackageConsumptions.IsSettledByPackage(booking)
@@ -189,7 +189,7 @@ public class OperationalDashboardService : IOperationalDashboardService
         int unpaidBookingCount = 0;
         foreach (Booking booking in obligationBookings)
         {
-            decimal outstanding = BookingFinancialsCalculator.CalculateOutstanding(booking);
+            decimal outstanding = ParticipationSettlement.OfBooking(booking).OutstandingAmount;
             outstandingAmount += outstanding;
             if (outstanding > 0m)
                 unpaidBookingCount++;

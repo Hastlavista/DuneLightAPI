@@ -13,7 +13,7 @@ namespace BlueDragon.DuneLight.Infrastructure.Domain.Models.Checkouts;
 /// Zbroj Allocationa jednog Paymenta == Payment.Amount kod kreiranja (nema neraspoređenog novca u ovom MVP-u
 /// — vidi spec section 19). Alokacija se NE briše kad se Payment voida — jednostavno se isključuje iz
 /// izračuna jer roditeljski Payment.Status više nije Completed (vidi CheckoutFinancialsCalculator/
-/// BookingFinancialsCalculator, isti obrazac kao stari Payment Void).
+/// ParticipationSettlement, isti obrazac kao stari Payment Void).
 /// </summary>
 [Table("payment_allocations")]
 public class PaymentAllocation
