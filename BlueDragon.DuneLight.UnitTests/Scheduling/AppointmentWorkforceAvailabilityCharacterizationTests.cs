@@ -428,7 +428,7 @@ public class AppointmentWorkforceAvailabilityCharacterizationTests
         // Logging work already done is recording reality, not planning: absence AND outside-hours are both ignored.
         AppointmentDto dto = await w.CompleteNew(w.CompleteRequest(SchedulingWorld.Past(22)));
 
-        Assert.Equal(AppointmentStatus.Completed, dto.Status);
+        Assert.Equal(AppointmentStatus.Closed, dto.Status);
         SchedulingAssert.HasNoWarnings(dto);
     }
 
@@ -442,7 +442,7 @@ public class AppointmentWorkforceAvailabilityCharacterizationTests
         // Same request slot that Create/Update/Move would reject (absent AND 22:00 is outside hours).
         AppointmentDto completed = await w.CompleteExisting(created.Id, w.CompleteRequest(SchedulingWorld.Future(22)));
 
-        Assert.Equal(AppointmentStatus.Completed, completed.Status);
+        Assert.Equal(AppointmentStatus.Closed, completed.Status);
         Assert.Equal(SchedulingWorld.Future(22), (await w.LoadAppointment(created.Id)).StartsAt);
         SchedulingAssert.HasNoWarnings(completed);
     }

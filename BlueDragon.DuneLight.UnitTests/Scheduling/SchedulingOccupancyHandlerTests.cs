@@ -142,7 +142,7 @@ public class SchedulingOccupancyHandlerTests
     public async Task CompletedAppointments_StillOccupyTheSchedule()
     {
         await using SchedulingWorld w = await SchedulingWorld.Create(nameof(CompletedAppointments_StillOccupyTheSchedule));
-        await w.SeedAppointment(SchedulingWorld.Future(10), status: AppointmentStatus.Completed,
+        await w.SeedAppointment(SchedulingWorld.Future(10), status: AppointmentStatus.Closed,
             bookings: (w.Client, BookingStatus.Completed, 50m));
 
         Assert.Single(await Occupancy(w).GetOverlappingForEmployee(w.OrganizationId, w.Employee.Id.Value, SchedulingWorld.Future(10), 30, null));

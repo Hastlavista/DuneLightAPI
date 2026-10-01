@@ -26,19 +26,20 @@ public class AppointmentWriteSeamTests
     /// <summary>D3B1: bookings are created against the appointment's authoritative segment.</summary>
     private static AppointmentSegment NewSegment() =>
         AppointmentSegments.GetSingleExecutionSegment(
-            AppointmentFactory.CreateIndividual(Org, Company, Frame(), AppointmentStatus.Scheduled, null, null, User, CreatedAt));
+            AppointmentFactory.CreateIndividual(Org, Company, Frame(), null, null, User, CreatedAt));
 
     #region AppointmentFactory
 
-    [Theory]
-    [InlineData(AppointmentStatus.Scheduled)]
-    [InlineData(AppointmentStatus.Completed)]
-    public void CreateIndividual_MapsTheFrameAndTheAppointmentLevelFields(AppointmentStatus status)
+    // M1A: creation ALWAYS initializes Scheduled (the former Completed-at-creation input is gone — CompleteNew derives Closed
+    // from its Completed participations through AppointmentLifecycle).
+    [Fact]
+    public void CreateIndividual_MapsTheFrameAndTheAppointmentLevelFields()
     {
+        const AppointmentStatus status = AppointmentStatus.Scheduled;
         AppointmentFrame frame = Frame(Guid.NewGuid(), Guid.NewGuid());
         Guid recurrence = Guid.NewGuid();
 
-        Appointment a = AppointmentFactory.CreateIndividual(Org, Company, frame, status, "note", recurrence, User, CreatedAt);
+        Appointment a = AppointmentFactory.CreateIndividual(Org, Company, frame, "note", recurrence, User, CreatedAt);
 
         Assert.NotNull(a.Id);
         Assert.NotEqual(Guid.Empty, a.Id.Value);
@@ -69,7 +70,7 @@ public class AppointmentWriteSeamTests
     public void CreateIndividual_WithoutARoomOrRecurrence_KeepsThemNull()
     {
         Appointment a = AppointmentFactory.CreateIndividual(
-            Org, Company, Frame(Guid.NewGuid(), roomId: null), AppointmentStatus.Scheduled, null, null, User, CreatedAt);
+            Org, Company, Frame(Guid.NewGuid(), roomId: null), null, null, User, CreatedAt);
 
         Assert.Null(a.RoomId);
         Assert.Null(a.RecurrenceGroupId);
@@ -98,8 +99,8 @@ public class AppointmentWriteSeamTests
     [Fact]
     public void Factory_GivesEveryAppointmentItsOwnId()
     {
-        Appointment first = AppointmentFactory.CreateIndividual(Org, Company, Frame(), AppointmentStatus.Scheduled, null, null, User, CreatedAt);
-        Appointment second = AppointmentFactory.CreateIndividual(Org, Company, Frame(), AppointmentStatus.Scheduled, null, null, User, CreatedAt);
+        Appointment first = AppointmentFactory.CreateIndividual(Org, Company, Frame(), null, null, User, CreatedAt);
+        Appointment second = AppointmentFactory.CreateIndividual(Org, Company, Frame(), null, null, User, CreatedAt);
 
         Assert.NotEqual(first.Id, second.Id);
     }
@@ -112,7 +113,7 @@ public class AppointmentWriteSeamTests
     public void Apply_WritesExactlyTheFiveFrameFields_InMemory()
     {
         Appointment a = AppointmentFactory.CreateIndividual(
-            Org, Company, Frame(Guid.NewGuid(), Guid.NewGuid()), AppointmentStatus.Scheduled, "keep", null, User, CreatedAt);
+            Org, Company, Frame(Guid.NewGuid(), Guid.NewGuid()), "keep", null, User, CreatedAt);
         Guid id = a.Id.Value;
         AppointmentFrame next = new(Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), StartsAt.AddHours(3), 90);
 
@@ -132,7 +133,7 @@ public class AppointmentWriteSeamTests
     public void Apply_CanClearTheEmployeeAndTheRoom_NoNormalization()
     {
         Appointment a = AppointmentFactory.CreateIndividual(
-            Org, Company, Frame(Guid.NewGuid(), Guid.NewGuid()), AppointmentStatus.Scheduled, null, null, User, CreatedAt);
+            Org, Company, Frame(Guid.NewGuid(), Guid.NewGuid()), null, null, User, CreatedAt);
 
         AppointmentFrameMutator.Apply(a, AppointmentFrame.Of(a) with { EmployeeId = null, RoomId = null }, CreatedAt);
 
@@ -146,7 +147,7 @@ public class AppointmentWriteSeamTests
         // The Move shape: only the time and (optionally) employee/room change; service and duration are kept.
         Guid room = Guid.NewGuid(), employee = Guid.NewGuid();
         Appointment a = AppointmentFactory.CreateIndividual(
-            Org, Company, Frame(employee, room), AppointmentStatus.Scheduled, null, null, User, CreatedAt);
+            Org, Company, Frame(employee, room), null, null, User, CreatedAt);
         AppointmentFrame before = AppointmentFrame.Of(a);
 
         AppointmentFrameMutator.Apply(a, before with { StartsAt = StartsAt.AddDays(1) }, CreatedAt);

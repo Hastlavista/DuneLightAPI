@@ -54,9 +54,9 @@ public class BookingCorrectionCharacterizationTests
 
         Assert.Equal(BookingStatusSummary.Confirmed, dto.Status);
         Appointment a = await w.LoadAppointment(completed.Id);
-        Assert.Equal(AppointmentStatus.Scheduled, a.Status); // "Completed = nothing left unresolved" is re-opened
+        Assert.Equal(AppointmentStatus.Scheduled, a.Status); // M1A: a Confirmed participation re-derives Closed -> Scheduled
         Assert.Equal(2, a.Bookings.Single().StatusVersion);
-        Assert.Contains(await w.LoadAuditLog(completed.Id), l => l.ChangeType == "Status" && l.OldValue == "Completed" && l.NewValue == "Scheduled");
+        Assert.Contains(await w.LoadAuditLog(completed.Id), l => l.ChangeType == "Status" && l.OldValue == "Closed" && l.NewValue == "Scheduled");
         Assert.Contains(await w.LoadAuditLog(completed.Id), l => l.ChangeType == "BookingStatus" && l.OldValue == "Completed" && l.NewValue == "Confirmed" && l.StatusVersion == 2);
     }
 
@@ -143,7 +143,7 @@ public class BookingCorrectionCharacterizationTests
         Booking b = await w.LoadBooking(completed.Id, w.Client);
         Assert.Equal(BookingStatus.Completed, b.Status);
         Assert.Equal(1, b.StatusVersion);
-        Assert.Equal(AppointmentStatus.Completed, (await w.LoadAppointment(completed.Id)).Status);
+        Assert.Equal(AppointmentStatus.Closed, (await w.LoadAppointment(completed.Id)).Status);
         Assert.Equal(CommissionEntryStatus.Earned, Assert.Single(await w.LoadCommissionEntries()).Status);
         Assert.Equal(PaymentStatus.Completed, Assert.Single(await w.LoadPayments(bookingId)).Status);
     }
@@ -177,7 +177,7 @@ public class BookingCorrectionCharacterizationTests
         Assert.Equal(BookingStatus.Completed, b.Status);
         Assert.Equal(1, b.StatusVersion);
         Assert.Equal(50m, b.Amount);
-        Assert.Equal(AppointmentStatus.Completed, (await w.LoadAppointment(completed.Id)).Status);
+        Assert.Equal(AppointmentStatus.Closed, (await w.LoadAppointment(completed.Id)).Status);
         List<Payment> after = await w.LoadPayments(bookingId);
         Assert.Equal(2, after.Count);
         Assert.All(after, p => Assert.Equal(PaymentStatus.Completed, p.Status)); // neither payment was voided
@@ -275,15 +275,15 @@ public class BookingCorrectionCharacterizationTests
     }
 
     [Fact]
-    public async Task Individual_NoShowToConfirmed_ReopensACompletedAppointmentClosedByASibling()
+    public async Task Individual_NoShowToConfirmed_ReopensAnAppointmentClosedByASibling()
     {
-        await using SchedulingWorld w = await SchedulingWorld.Create(nameof(Individual_NoShowToConfirmed_ReopensACompletedAppointmentClosedByASibling));
+        await using SchedulingWorld w = await SchedulingWorld.Create(nameof(Individual_NoShowToConfirmed_ReopensAnAppointmentClosedByASibling));
         Client sibling = await w.AddClient("Sibling", "Client");
         // Shape produced by real flows: one booking no-showed, then a sibling was completed via CompleteExisting.
         AppointmentDto created = await w.CreateAppointment(SchedulingWorld.Future(10), extraClients: sibling);
         await w.SetBookingStatus(created.Id, w.Client, BookingStatus.NoShow);
         await w.CompleteExisting(created.Id, w.CompleteRequest(SchedulingWorld.Future(10), client: sibling));
-        Assert.Equal(AppointmentStatus.Completed, (await w.LoadAppointment(created.Id)).Status);
+        Assert.Equal(AppointmentStatus.Closed, (await w.LoadAppointment(created.Id)).Status);
 
         await w.SetBookingStatus(created.Id, w.Client, BookingStatus.Confirmed);
 
@@ -446,8 +446,9 @@ public class BookingCorrectionCharacterizationTests
         CommissionEntry entry = Assert.Single(await w.LoadCommissionEntries());
         Assert.Equal(CommissionSourceType.GroupService, entry.SourceType);
         Assert.Equal(CommissionEntryStatus.Earned, entry.Status);
-        // ... and the appointment frame stays Completed (only the Individual path re-opens it).
-        Assert.Equal(AppointmentStatus.Completed, (await w.LoadAppointment(occurrence.Id.Value)).Status);
+        // M1A: corrections re-open AUTOMATICALLY on every path — the member is Confirmed again, so the occurrence derives
+        // Scheduled (it used to stay "Completed" because only the Individual path re-opened). The commission is untouched.
+        Assert.Equal(AppointmentStatus.Scheduled, (await w.LoadAppointment(occurrence.Id.Value)).Status);
     }
 
     #endregion

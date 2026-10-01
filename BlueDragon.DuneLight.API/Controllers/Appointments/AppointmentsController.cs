@@ -97,7 +97,7 @@ public class AppointmentsController : ControllerBase
         return Ok(await _appointmentService.GetByClient(this.CurrentOrganizationId(), clientId, request));
     }
 
-    /// <summary>Povijest odrađenih termina po zaposleniku (samo Completed — usluge, individualni i grupni termini
+    /// <summary>Povijest odrađenih termina po zaposleniku (segment zaposlenika s barem jednim Completed sudjelovanjem — usluge, individualni i grupni termini
     /// koje je stvarno odradio), najnoviji prvi.</summary>
     [HttpGet("by-employee/{employeeId:guid}")]
     [RequireGrant(Grants.AppointmentsView)]

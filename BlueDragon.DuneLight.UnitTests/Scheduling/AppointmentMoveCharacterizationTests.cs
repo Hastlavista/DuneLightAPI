@@ -412,9 +412,9 @@ public class AppointmentMoveCharacterizationTests
         AppointmentDto moved = await Move(w, completed.Id, SchedulingWorld.Past(15));
 
         Appointment a = await w.LoadAppointment(completed.Id);
-        Assert.Equal(AppointmentStatus.Completed, a.Status);
+        Assert.Equal(AppointmentStatus.Closed, a.Status);
         Assert.Equal(SchedulingWorld.Past(15), a.StartsAt);
-        Assert.Equal(AppointmentStatus.Completed, moved.Status);
+        Assert.Equal(AppointmentStatus.Closed, moved.Status);
     }
 
     [Fact]

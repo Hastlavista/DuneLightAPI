@@ -133,18 +133,20 @@ public class BookingNoShowAndCancellationCharacterizationTests
     #region L. No-show — appointment-wide path
 
     [Fact]
-    public async Task MarkNoShow_OnTheAppointment_EndsTheAppointmentCancelled_AndEveryConfirmedBookingNoShow()
+    public async Task MarkNoShow_OnTheAppointment_EndsTheAppointmentClosed_AndEveryConfirmedBookingNoShow()
     {
-        await using SchedulingWorld w = await SchedulingWorld.Create(nameof(MarkNoShow_OnTheAppointment_EndsTheAppointmentCancelled_AndEveryConfirmedBookingNoShow));
+        await using SchedulingWorld w = await SchedulingWorld.Create(nameof(MarkNoShow_OnTheAppointment_EndsTheAppointmentClosed_AndEveryConfirmedBookingNoShow));
         Client partner = await w.AddClient("Partner", "Client");
         AppointmentDto created = await w.CreateAppointment(SchedulingWorld.Future(10), extraClients: partner);
 
         AppointmentDto dto = await w.Appointments.MarkNoShow(w.OrganizationId, w.ActorUserId, true, created.Id,
             new AppointmentCancelRequest { CancellationReason = "nobody came" });
 
-        Assert.Equal(AppointmentStatus.Cancelled, dto.Status);
+        // M1A: the appointment status is DERIVED — every participation NoShow is an operationally resolved (not cancelled)
+        // outcome, so the bulk no-show ends Closed (it used to be forced to Cancelled).
+        Assert.Equal(AppointmentStatus.Closed, dto.Status);
         Appointment a = await w.LoadAppointment(created.Id);
-        Assert.Equal(AppointmentStatus.Cancelled, a.Status);
+        Assert.Equal(AppointmentStatus.Closed, a.Status);
         Assert.Equal("nobody came", a.CancellationReason);
         Assert.All(a.Bookings, b =>
         {
@@ -154,7 +156,7 @@ public class BookingNoShowAndCancellationCharacterizationTests
             Assert.Null(b.IsLateCancellation);
         });
         Assert.Equal(2, (await w.LoadOutbox()).Count(m => m.Type == OutboxEventTypes.BookingNoShowV1));
-        Assert.Single(await w.LoadAuditLog(created.Id), l => l.ChangeType == "Status" && l.OldValue == "Scheduled" && l.NewValue == "Cancelled");
+        Assert.Single(await w.LoadAuditLog(created.Id), l => l.ChangeType == "Status" && l.OldValue == "Scheduled" && l.NewValue == "Closed");
         Assert.Equal(2, (await w.LoadAuditLog(created.Id)).Count(l => l.ChangeType == "BookingStatus"));
     }
 
@@ -188,7 +190,9 @@ public class BookingNoShowAndCancellationCharacterizationTests
     [Fact]
     public void TheAppointmentStatusEnum_HasNoNoShowMember()
     {
-        Assert.Equal(new[] { "Scheduled", "Completed", "Cancelled" }, Enum.GetNames<AppointmentStatus>());
+        // M1A: the lifecycle is exactly Scheduled / Cancelled / Closed — no NoShow and no Completed (execution belongs to
+        // the participation).
+        Assert.Equal(new[] { "Scheduled", "Cancelled", "Closed" }, Enum.GetNames<AppointmentStatus>());
     }
 
     #endregion
@@ -216,17 +220,19 @@ public class BookingNoShowAndCancellationCharacterizationTests
     }
 
     [Fact]
-    public async Task IndividualCancel_OfTheLastBooking_DoesNotCancelTheAppointmentFrame()
+    public async Task IndividualCancel_OfTheLastBooking_CancelsTheAppointment_AndFreesTheEmployee()
     {
-        await using SchedulingWorld w = await SchedulingWorld.Create(nameof(IndividualCancel_OfTheLastBooking_DoesNotCancelTheAppointmentFrame));
+        await using SchedulingWorld w = await SchedulingWorld.Create(nameof(IndividualCancel_OfTheLastBooking_CancelsTheAppointment_AndFreesTheEmployee));
         AppointmentDto created = await w.CreateAppointment(SchedulingWorld.Future(10));
 
         await w.SetBookingStatus(created.Id, w.Client, BookingStatus.Cancelled);
 
-        // The frame keeps blocking the employee: nothing collapses an appointment whose every booking is cancelled.
-        Assert.Equal(AppointmentStatus.Scheduled, (await w.LoadAppointment(created.Id)).Status);
+        // M1A: an appointment whose every participation is Cancelled IS Cancelled (derived) — it used to stay Scheduled and
+        // keep blocking the employee. A cancelled appointment does not occupy the employee, so the slot is free again.
+        Assert.Equal(AppointmentStatus.Cancelled, (await w.LoadAppointment(created.Id)).Status);
         Client other = await w.AddClient("Other", "Client");
-        await SchedulingAssert.BusinessRule(ErrorCodes.AppointmentOverlap, () => w.CreateAppointment(SchedulingWorld.Future(10), client: other));
+        AppointmentDto replacement = await w.CreateAppointment(SchedulingWorld.Future(10), client: other);
+        Assert.Equal(AppointmentStatus.Scheduled, replacement.Status);
     }
 
     [Fact]

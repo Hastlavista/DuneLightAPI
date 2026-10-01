@@ -261,7 +261,7 @@ public class AppointmentReadModelCharacterizationTests
         Assert.Equal(0m, item.OutstandingAmount);
         Assert.True(item.IsPaid);
         Assert.Equal(completed.Bookings.Single().Id, item.BookingId);
-        Assert.Equal(AppointmentStatus.Completed, item.Status);
+        Assert.Equal(AppointmentStatus.Closed, item.Status);
     }
 
     [Fact]

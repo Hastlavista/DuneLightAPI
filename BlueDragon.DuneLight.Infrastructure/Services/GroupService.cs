@@ -618,6 +618,11 @@ public class GroupService : IGroupService
                 // ista promocijska logika kao izravno otkazivanje Bookinga (BookingService), ne duplicirana ovdje.
                 await _waitlistPromotionService.PromoteEligibleWaiters(
                     uow, organizationId, futureAppointment.Id.GetValueOrDefault(), userId);
+
+                // Phase M1A: status occurrencea se izvodi NAKON otkazivanja i promocije (npr. zadnji član otkazan bez
+                // čekača → Cancelled; promoviran čekač → ostaje Scheduled).
+                await AppointmentLifecycle.Refresh(
+                    _appointmentHandler, _appointmentAuditLogHandler, uow, organizationId, futureAppointment.Id.GetValueOrDefault(), userId);
             }
 
             await uow.CommitAsync();

@@ -88,7 +88,7 @@ public interface IAppointmentHandler
 
     Task<(List<Appointment> Items, int TotalCount)> GetByClient(Guid organizationId, Guid clientId, PagedRequest request);
 
-    /// <summary>Povijest odrađenih termina po zaposleniku (samo Completed), najnoviji prvi — vidi GetByClient.</summary>
+    /// <summary>Povijest odrađenih termina po zaposleniku (Phase M1A: segment zaposlenika ima barem jedno Completed sudjelovanje), najnoviji prvi — vidi GetByClient.</summary>
     Task<(List<Appointment> Items, int TotalCount)> GetByEmployee(Guid organizationId, Guid employeeId, PagedRequest request);
 
     /// <summary>Budući, još neodržani termini grupe (Scheduled, StartsAt u budućnosti) s uključenim Bookings —

@@ -135,7 +135,7 @@ public class ClientAppointmentHistoryDto
     public Guid CompanyId { get; set; }
     public string CompanyName { get; set; }
 
-    /// <summary>Status termina (occurrence) — Scheduled/Completed/Cancelled itd., vidi AppointmentStatus.</summary>
+    /// <summary>Status termina (occurrence) — Scheduled/Cancelled/Closed, izveden iz sudjelovanja (vidi AppointmentStatus).</summary>
     public AppointmentStatus Status { get; set; }
 
     /// <summary>Popunjeno samo za Form=Group.</summary>

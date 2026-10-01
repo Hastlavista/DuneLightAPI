@@ -8,7 +8,7 @@ namespace BlueDragon.DuneLight.Core.Interfaces.Appointments;
 /// <summary>
 /// Upravlja Booking retcima (Klijent↔Appointment) neovisno o cijelom terminu — omogućuje npr. otkazivanje
 /// ili no-show JEDNOG klijenta na terminu s više Bookinga (duo/grupa) bez diranja ostalih. Appointment-
-/// razina operacija (cijeli termin Scheduled/Completed/Cancelled, uklj. kaskadno zatvaranje svih aktivnih
+/// razina operacija (cijeli termin; status Scheduled/Cancelled/Closed se izvodi iz sudjelovanja, uklj. kaskadno zatvaranje svih aktivnih
 /// Bookinga) ostaje na IAppointmentService — vidi Booking.cs za punu domensku napomenu.
 /// </summary>
 public interface IBookingService

@@ -323,14 +323,15 @@ public class ParticipationNativeAddressingTests
         OccupancySlot slot = Assert.Single(range);
         Assert.Equal(SchedulingWorld.Future(10), slot.Start);
 
-        // Flip: A cancelled, B confirmed => only B blocks.
-        await SetParticipation(w, first, BookingStatus.Cancelled);
+        // Flip: B confirmed (artificial seed), then A cancelled through the command (which re-derives the appointment from
+        // BOTH participations => still Scheduled) — only B blocks.
         await using (DatabaseContext db = w.NewDb())
         {
             BookingSegmentParticipation b = await db.BookingSegmentParticipations.SingleAsync(p => p.Id == second);
             b.Status = ParticipationStatus.Confirmed;
             await db.SaveChangesAsync();
         }
+        await SetParticipation(w, first, BookingStatus.Cancelled);
         Assert.Empty(await occupancy.GetOverlappingForClients(w.OrganizationId, clientIds, SchedulingWorld.Future(10), 30, null));
         Assert.Single(await occupancy.GetOverlappingForClients(w.OrganizationId, clientIds, SchedulingWorld.Future(14), 30, null));
     }

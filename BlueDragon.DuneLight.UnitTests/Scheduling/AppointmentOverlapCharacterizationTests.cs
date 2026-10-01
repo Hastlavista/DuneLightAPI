@@ -110,7 +110,7 @@ public class AppointmentOverlapCharacterizationTests
         await using SchedulingWorld w = await SchedulingWorld.Create(nameof(EmployeeOverlap_CompletedAppointmentStillBlocksTheEmployee));
         Client other = await w.AddClient("Other", "Client");
         // Only Cancelled is excluded from the employee overlap query; Completed remains a busy interval.
-        await w.SeedAppointment(SchedulingWorld.Future(10), AppointmentStatus.Completed, bookings: (w.Client, BookingStatus.Completed, 50m));
+        await w.SeedAppointment(SchedulingWorld.Future(10), AppointmentStatus.Closed, bookings: (w.Client, BookingStatus.Completed, 50m));
 
         await SchedulingAssert.BusinessRule(ErrorCodes.AppointmentOverlap,
             () => w.CreateAppointment(SchedulingWorld.Future(10), client: other));
@@ -260,7 +260,7 @@ public class AppointmentOverlapCharacterizationTests
     {
         await using SchedulingWorld w = await SchedulingWorld.Create(nameof(ClientOverlap_ACompletedBookingStillBlocksTheClient));
         Employee secondEmployee = await w.AddEmployee("Second");
-        await w.SeedAppointment(SchedulingWorld.Future(10), AppointmentStatus.Completed, bookings: (w.Client, BookingStatus.Completed, 50m));
+        await w.SeedAppointment(SchedulingWorld.Future(10), AppointmentStatus.Closed, bookings: (w.Client, BookingStatus.Completed, 50m));
 
         await SchedulingAssert.BusinessRule(ErrorCodes.AppointmentOverlap,
             () => w.CreateAppointment(SchedulingWorld.Future(10), employee: secondEmployee));

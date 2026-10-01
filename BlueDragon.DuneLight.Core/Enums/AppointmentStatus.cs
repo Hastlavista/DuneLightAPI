@@ -1,13 +1,17 @@
 namespace BlueDragon.DuneLight.Core.Enums;
 
 /// <summary>
-/// Statusi na razini termina (okvir/resurs), NE po klijentu — vidi BookingStatus za klijent-specifično
-/// stanje (Confirmed/Completed/Cancelled/NoShow po Booking retku). NoShow namjerno ne postoji ovdje:
-/// termin kao takav ne može "izostati", samo pojedini Booking na njemu (vidi Booking.cs).
+/// Phase M1A — AGREGATNI operativni životni ciklus termina, IZVEDEN iz statusa njegovih sudjelovanja
+/// (BookingSegmentParticipation je izvršna istina; vidi Infrastructure.Utils.AppointmentLifecycle):
+/// - <see cref="Scheduled"/>: barem jedno sudjelovanje je još Confirmed (posao nije razriješen);
+/// - <see cref="Cancelled"/>: SVA sudjelovanja su Cancelled (sav posao otkazan, ništa izvršeno/razriješeno drukčije);
+/// - <see cref="Closed"/>: nijedno Confirmed, a ishod nije "sve otkazano" (Completed/NoShow, bilo koja kombinacija).
+/// Closed znači operativno razriješeno — NE financijski namireno. Termin nema "Completed" (izvršenje je po sudjelovanju)
+/// ni NoShow; status se nikad ne postavlja ručno mimo izvođenja.
 /// </summary>
 public enum AppointmentStatus
 {
     Scheduled,
-    Completed,
-    Cancelled
+    Cancelled,
+    Closed
 }

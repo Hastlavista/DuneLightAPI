@@ -35,6 +35,12 @@ public class CommissionEntryHandler : ICommissionEntryHandler
             e.OrganizationId == organizationId && e.BookingSegmentParticipationId == participationId && e.Status == CommissionEntryStatus.Earned);
     }
 
+    public Task<bool> ExistsForGroupAppointment(IUnitOfWork uow, Guid organizationId, Guid appointmentId)
+    {
+        return uow.Context.CommissionEntries.AnyAsync(e =>
+            e.OrganizationId == organizationId && e.AppointmentId == appointmentId && e.SourceType == CommissionSourceType.GroupService);
+    }
+
     public async Task Update(IUnitOfWork uow, CommissionEntry entry)
     {
         uow.Context.CommissionEntries.Update(entry);

@@ -51,7 +51,7 @@ public class IndividualCompletionCharacterizationTests
         AppointmentDto dto = await CreateAndComplete(w);
 
         Appointment a = await w.LoadAppointment(dto.Id);
-        Assert.Equal(AppointmentStatus.Completed, a.Status);
+        Assert.Equal(AppointmentStatus.Closed, a.Status);
         Booking b = Assert.Single(a.Bookings);
         Assert.Equal(BookingStatus.Completed, b.Status);
         Assert.Equal(1, b.StatusVersion);
@@ -274,7 +274,7 @@ public class IndividualCompletionCharacterizationTests
         AppointmentDto dto = await w.CompleteNew(w.CompleteRequest(SchedulingWorld.Past(10), paymentMethod: PaymentMethod.Card));
 
         Appointment a = await w.LoadAppointment(dto.Id);
-        Assert.Equal(AppointmentStatus.Completed, a.Status);
+        Assert.Equal(AppointmentStatus.Closed, a.Status);
         Assert.Equal(AppointmentForm.Individual, a.Form);
         Assert.Equal(w.ActorUserId, a.CreatedBy);
         Booking b = Assert.Single(a.Bookings);
@@ -430,7 +430,7 @@ public class IndividualCompletionCharacterizationTests
         AppointmentDto dto = await w.CompleteExisting(created.Id, w.CompleteRequest(SchedulingWorld.Future(10)));
 
         Appointment a = await w.LoadAppointment(dto.Id);
-        Assert.Equal(AppointmentStatus.Completed, a.Status);
+        Assert.Equal(AppointmentStatus.Closed, a.Status);
         Assert.Equal(w.Client.Id, Assert.Single(a.Bookings).ClientId);
         Assert.Empty(await w.LoadOutbox()); // and the deletion emits nothing
     }
@@ -455,25 +455,31 @@ public class IndividualCompletionCharacterizationTests
     }
 
     [Fact]
-    public async Task CompleteGroupAppointment_WithUnresolvedConfirmedBookings_StillCompletes_AndOnlyWarns()
+    public async Task CompleteGroupAppointment_WithUnresolvedConfirmedBookings_IsRecorded_ButTheOccurrenceStaysScheduled_AndWarns()
     {
-        await using SchedulingWorld w = await SchedulingWorld.Create(nameof(CompleteGroupAppointment_WithUnresolvedConfirmedBookings_StillCompletes_AndOnlyWarns));
+        await using SchedulingWorld w = await SchedulingWorld.Create(nameof(CompleteGroupAppointment_WithUnresolvedConfirmedBookings_IsRecorded_ButTheOccurrenceStaysScheduled_AndWarns));
         Client second = await w.AddClient("Second", "Client");
         Appointment occurrence = await w.SeedAppointment(SchedulingWorld.Future(10), form: AppointmentForm.Group, employee: w.Employee,
             bookings: new[] { (w.Client, BookingStatus.Confirmed, 15m), (second, BookingStatus.Completed, 15m) });
 
         AppointmentDto dto = await w.Appointments.CompleteGroupAppointment(w.OrganizationId, w.ActorUserId, true, occurrence.Id.Value);
 
-        // The occurrence is closed although one Booking was never resolved; it stays Confirmed and a warning lists it.
+        // M1A: the close-out records that the session happened but does NOT set a status: one participation is still
+        // Confirmed, so the occurrence derives Scheduled (it used to be forced to Completed). The warning still lists it.
         Appointment a = await w.LoadAppointment(occurrence.Id.Value);
-        Assert.Equal(AppointmentStatus.Completed, a.Status);
+        Assert.Equal(AppointmentStatus.Scheduled, a.Status);
         Assert.Equal(BookingStatus.Confirmed, a.Bookings.Single(b => b.ClientId == w.Client.Id).Status);
         Assert.Equal(BookingStatus.Completed, a.Bookings.Single(b => b.ClientId == second.Id).Status);
         AppointmentDto warning = dto;
         WarningDto unresolved = Assert.Single(warning.Warnings, x => x.Code == WarningCodes.GroupAppointmentUnresolvedBookings);
         WarningUnresolvedBookingsDetails details = Assert.IsType<WarningUnresolvedBookingsDetails>(unresolved.Details);
         Assert.Equal(w.Client.Id.Value, Assert.Single(details.ClientIds));
-        Assert.Single(await w.LoadAuditLog(occurrence.Id.Value), l => l.ChangeType == "Status" && l.NewValue == "Completed");
+        Assert.DoesNotContain(await w.LoadAuditLog(occurrence.Id.Value), l => l.ChangeType == "Status");
+
+        // Resolving the last Confirmed participation closes the occurrence through derivation.
+        await w.SetBookingStatus(occurrence.Id.Value, w.Client, BookingStatus.NoShow);
+        Assert.Equal(AppointmentStatus.Closed, (await w.LoadAppointment(occurrence.Id.Value)).Status);
+        Assert.Single(await w.LoadAuditLog(occurrence.Id.Value), l => l.ChangeType == "Status" && l.OldValue == "Scheduled" && l.NewValue == "Closed");
     }
 
     [Fact]
@@ -504,14 +510,22 @@ public class IndividualCompletionCharacterizationTests
     }
 
     [Fact]
-    public async Task CompleteGroupAppointment_AlreadyCompleted_OrCancelled_IsRejected()
+    public async Task CompleteGroupAppointment_Repeated_IsIdempotent_AndACancelledOccurrenceIsRejected()
     {
-        await using SchedulingWorld w = await SchedulingWorld.Create(nameof(CompleteGroupAppointment_AlreadyCompleted_OrCancelled_IsRejected));
-        Appointment completed = await w.SeedAppointment(SchedulingWorld.Future(10), AppointmentStatus.Completed, AppointmentForm.Group, employee: w.Employee);
+        await using SchedulingWorld w = await SchedulingWorld.Create(nameof(CompleteGroupAppointment_Repeated_IsIdempotent_AndACancelledOccurrenceIsRejected));
+        await w.AddCommissionRule(w.Employee, w.Service, CommissionCalculationType.Fixed, 20m);
+        Appointment closed = await w.SeedAppointment(SchedulingWorld.Future(10), AppointmentStatus.Closed, AppointmentForm.Group, employee: w.Employee,
+            bookings: (w.Client, BookingStatus.Completed, 15m));
         Appointment cancelled = await w.SeedAppointment(SchedulingWorld.Future(12), AppointmentStatus.Cancelled, AppointmentForm.Group, employee: w.Employee);
 
-        await SchedulingAssert.BusinessRule(ErrorCodes.AlreadyCompleted,
-            () => w.Appointments.CompleteGroupAppointment(w.OrganizationId, w.ActorUserId, true, completed.Id.Value));
+        // M1A: there is no "Completed" appointment to refuse a second close-out (and a Closed occurrence — e.g. every member
+        // already NoShow — must still be closable, see the zero-attendee commission test). The close-out is idempotent:
+        // the per-occurrence commission is earned exactly once; the status stays derived (Closed).
+        await w.Appointments.CompleteGroupAppointment(w.OrganizationId, w.ActorUserId, true, closed.Id.Value);
+        await w.Appointments.CompleteGroupAppointment(w.OrganizationId, w.ActorUserId, true, closed.Id.Value);
+        Assert.Single(await w.LoadCommissionEntries());
+        Assert.Equal(AppointmentStatus.Closed, (await w.LoadAppointment(closed.Id.Value)).Status);
+
         await SchedulingAssert.BusinessRule(ErrorCodes.AppointmentNotMovable,
             () => w.Appointments.CompleteGroupAppointment(w.OrganizationId, w.ActorUserId, true, cancelled.Id.Value));
     }
@@ -529,13 +543,13 @@ public class IndividualCompletionCharacterizationTests
         AppointmentDto dto = await w.CompleteExisting(created.Id, w.CompleteRequest(SchedulingWorld.Future(10), paymentMethod: PaymentMethod.Cash));
 
         Appointment a = await w.LoadAppointment(created.Id);
-        Assert.Equal(AppointmentStatus.Completed, a.Status);
+        Assert.Equal(AppointmentStatus.Closed, a.Status);
         Booking b = a.Bookings.Single();
         Assert.Equal(BookingStatus.Completed, b.Status);
         Assert.Equal(2, b.StatusVersion);
         Assert.Single(await w.LoadPayments(b.Id.Value));
         Assert.Single(await w.LoadCommissionEntries());
-        Assert.Equal(AppointmentStatus.Completed, dto.Status);
+        Assert.Equal(AppointmentStatus.Closed, dto.Status);
     }
 
     #endregion

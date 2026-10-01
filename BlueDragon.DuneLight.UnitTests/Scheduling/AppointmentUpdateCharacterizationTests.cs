@@ -546,10 +546,10 @@ public class AppointmentUpdateCharacterizationTests
         });
 
         Appointment a = await w.LoadAppointment(completed.Id);
-        Assert.Equal(AppointmentStatus.Completed, a.Status);
+        Assert.Equal(AppointmentStatus.Closed, a.Status);
         Assert.Equal(SchedulingWorld.Past(14), a.StartsAt);
         Assert.Equal("edited after completion", a.Note);
-        Assert.Equal(AppointmentStatus.Completed, updated.Status);
+        Assert.Equal(AppointmentStatus.Closed, updated.Status);
     }
 
     [Fact]

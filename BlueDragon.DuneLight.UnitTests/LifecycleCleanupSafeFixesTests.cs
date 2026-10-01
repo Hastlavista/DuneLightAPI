@@ -155,7 +155,7 @@ public class LifecycleCleanupSafeFixesTests
                     Id = appointmentId,
                     OrganizationId = organizationId,
                     CompanyId = companyId,
-                    Status = AppointmentStatus.Completed,
+                    Status = AppointmentStatus.Closed,
                     CreatedAt = DateTimeOffset.UtcNow
                 };
                 // D3A: the execution frame lives on the appointment's single segment.

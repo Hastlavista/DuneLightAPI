@@ -146,6 +146,9 @@ public class BookingService : IBookingService
                 await EnsureGroupCapacityAvailable(uow, organizationId, appointmentId);
 
             await _appointmentHandler.AddBooking(uow, booking);
+
+            // Phase M1A: novo Confirmed sudjelovanje — termin se ponovno izvodi (npr. Closed -> Scheduled).
+            await AppointmentLifecycle.Refresh(_appointmentHandler, _auditLogHandler, uow, organizationId, appointmentId, userId);
             await uow.CommitAsync();
         }
 
@@ -490,6 +493,11 @@ public class BookingService : IBookingService
         // Confirmed->Cancelled (sudjelovanje koje je stvarno zauzimalo mjesto), ne za NoShow niti za Completed/poništenje.
         if (isGroup && oldStatus == ParticipationStatus.Confirmed && newStatus == ParticipationStatus.Cancelled)
             await _waitlistPromotionService.PromoteEligibleWaiters(uow, organizationId, appointmentId, userId);
+
+        // Phase M1A: životni ciklus termina se izvodi iz SVIH sudjelovanja tek NAKON prijelaza i svih nuspojava (uključujući
+        // promociju liste čekanja, koja može dodati Confirmed sudjelovanje — zato i dolazi prije izvođenja). Korekcija koja
+        // vrati sudjelovanje na Confirmed time automatski vraća Closed/Cancelled termin u Scheduled.
+        await AppointmentLifecycle.Refresh(_appointmentHandler, _auditLogHandler, uow, organizationId, appointmentId, userId);
     }
 
     /// <summary>Centralizira isti tenant/operational eligibility lanac koji koristi AddBooking i direct guest attendance.
@@ -650,16 +658,10 @@ public class BookingService : IBookingService
     ///    ReverseForIndividualServiceCorrection) — jedini dio ove korekcije bez Group ekvivalenta.
     /// 6) ParticipationLifecycle.TrySetStatus na kraju — jedina dozvoljena mutacijska putanja za Status, no-op
     ///    (bez inkrementa) ako je booking već Confirmed (idempotentan retry, vidi spec section 15/41).
-    /// 7) Appointment.Status Completed -&gt; Scheduled, SAMO ako je korekcija stvaran prijelaz (ne no-op) —
-    ///    BEZOVJETNO na sestrinske Booking statuse (vidi TryRevertAppointmentCompletion): Appointment=Completed
-    ///    znači "nema nerazriješenih Confirmed Bookinga", pa čim JEDAN Booking na terminu ponovno postane
-    ///    Confirmed, termin više nije potpuno odrađen bez obzira odrađuje li se neki SESTRINSKI Booking na istom
-    ///    terminu (duo/multi-klijent Individual) i dalje Completed — isto ponašanje kao GroupCapacityGuard koji
-    ///    dopušta Appointment=Scheduled uz sestrinski Booking bilo kojeg statusa. CompleteExisting je učinjen
-    ///    idempotentnim po retku (generira Payment/CommissionEntry SAMO za redak koji STVARNO mijenja status u
-    ///    OVOM pozivu) upravo da bi ponovni completion nakon ovoga (npr. ponovno slanje CIJELOG originalnog
-    ///    ClientIds popisa da se izbjegne UpdateWithBookingsCore hard-delete sestrinskih redaka izostavljenih iz
-    ///    popisa) mogao sigurno preskočiti već-Completed sestrinski redak bez duplog Paymenta/CommissionEntry.
+    /// 7) Phase M1A: termin se NE vraća ovdje — nakon prijelaza ga AppointmentLifecycle.Refresh izvodi iz SVIH
+    ///    sudjelovanja (ovo sudjelovanje je opet Confirmed, pa je termin Scheduled bez obzira na sestrinska sudjelovanja).
+    ///    CompleteExisting ostaje idempotentan po retku (Payment/CommissionEntry samo za redak koji STVARNO mijenja status),
+    ///    pa ponovni completion nakon korekcije sigurno preskače već-Completed sestrinski redak.
     ///
     /// Sve gornje pod-operacije su same po sebi idempotentne (guard po postojećem stanju, ne po ulaznom statusu),
     /// pa se ova metoda namjerno poziva BEZOVJETNO i za pravu korekciju (Completed-&gt;Confirmed) i za idempotentan
@@ -704,9 +706,8 @@ public class BookingService : IBookingService
 
         await _commissionLedgerService.ReverseForIndividualServiceCorrection(uow, organizationId, userId, participation);
 
-        bool wasRealTransition = ParticipationLifecycle.TrySetStatus(participation, ParticipationStatus.Confirmed);
-        if (wasRealTransition)
-            await TryRevertAppointmentCompletion(uow, organizationId, userId, appointment);
+        // Phase M1A: povratak termina u Scheduled nije zaseban korak — izvodi ga AppointmentLifecycle.Refresh nakon prijelaza.
+        ParticipationLifecycle.TrySetStatus(participation, ParticipationStatus.Confirmed);
     }
 
     /// <summary>Form=Individual, NoShow -&gt; Confirmed: uska administrativna korekcija pogrešno evidentiranog
@@ -724,59 +725,13 @@ public class BookingService : IBookingService
     ///
     /// 1) ParticipationLifecycle.TrySetStatus na kraju — jedina dozvoljena mutacijska putanja za Status, no-op
     ///    (bez inkrementa) ako je booking već Confirmed (idempotentan retry).
-    /// 2) Appointment.Status Completed -&gt; Scheduled, SAMO ako je korekcija stvaran prijelaz (ne no-op) I ako je
-    ///    Appointment stvarno Completed — isti TryRevertAppointmentCompletion poziv kao
-    ///    ApplyIndividualCompletionCorrection, potreban za multi-klijent rub-slučaj: ApplyIndividualTransition
-    ///    (Confirmed -&gt; NoShow) NIKAD ne dira Appointment.Status, pa Appointment ostaje Scheduled dok se izostanak
-    ///    evidentira — ALI ako je u međuvremenu SESTRINSKI Booking na istom terminu odradio cijeli termin kroz
-    ///    CompleteExisting (koji Appointment.Status postavlja na Completed bezuvjetno, neovisno o statusu bookinga
-    ///    izvan poslanog ClientIds popisa), Appointment može biti Completed dok je OVAJ Booking i dalje NoShow.
-    ///    Vraćanje na Confirmed tad mora ponovno probiti isti "Completed = nema nerazriješenih Confirmed
-    ///    Bookinga" invarijant kao i Completed-&gt;Confirmed korekcija.</summary>
+    /// 2) Phase M1A: termin (npr. Closed zbog ovog izostanka) vraća u Scheduled AppointmentLifecycle.Refresh nakon prijelaza —
+    ///    ne zaseban korak.</summary>
     private async Task ApplyIndividualNoShowCorrection(
         IUnitOfWork uow, Guid organizationId, Guid userId, Appointment appointment, BookingSegmentParticipation participation)
     {
-        bool wasRealTransition = ParticipationLifecycle.TrySetStatus(participation, ParticipationStatus.Confirmed);
-        if (wasRealTransition)
-            await TryRevertAppointmentCompletion(uow, organizationId, userId, appointment);
-    }
-
-    /// <summary>Vraća Appointment.Status Completed -&gt; Scheduled — oba pozivatelja (ApplyIndividualCompletionCorrection
-    /// za Completed-&gt;Confirmed, ApplyIndividualNoShowCorrection za NoShow-&gt;Confirmed) već su utvrdila da je OVAJ
-    /// poziv stvaran prijelaz na Confirmed (ne idempotentan retry) prije poziva. Namjerno BEZUVJETNO, bez obzira
-    /// ostaje li neki SESTRINSKI Booking na istom terminu (duo/multi-klijent Individual, vidi Booking.cs
-    /// "mješovito plaćanje na istom terminu") i dalje Completed — vidi Appointment.Status napomenu na
-    /// ApplyIndividualCompletionCorrection za obrazloženje invarijante ("Completed = nema nerazriješenih Confirmed
-    /// Bookinga"). Bez ovoga bi AppointmentService.CompleteExisting trajno odbijao ponovan completion istog
-    /// termina s ALREADY_COMPLETED nakon korekcije (vidi spec section 6/45).
-    ///
-    /// Zaključava Appointment redak (FOR UPDATE) — SetStatus je već zaključao Appointment PRIJE Bookinga na
-    /// ulazu u ovu transakciju (vidi tamo za puni opis redoslijeda), pa je ovo besplatan re-lock ISTOG retka
-    /// unutar iste transakcije, ne novo zaključavanje. Bare fetch (bez Include) je dovoljan jer više ne čitamo
-    /// sestrinske Bookinge ovdje.</summary>
-    private async Task TryRevertAppointmentCompletion(IUnitOfWork uow, Guid organizationId, Guid userId, Appointment appointment)
-    {
-        Appointment locked = await _appointmentHandler.GetForUpdate(uow, organizationId, appointment.Id.GetValueOrDefault());
-        if (locked == null || locked.Status != AppointmentStatus.Completed)
-            return;
-
-        AppointmentStatus oldStatus = locked.Status;
-        locked.Status = AppointmentStatus.Scheduled;
-        locked.UpdatedAt = DateTimeOffset.UtcNow;
-        locked.UpdatedBy = userId;
-
-        await _appointmentHandler.UpdateScalar(uow, locked);
-
-        await _auditLogHandler.Add(uow, new AppointmentAuditLog
-        {
-            Id = Guid.NewGuid(),
-            AppointmentId = appointment.Id.GetValueOrDefault(),
-            ChangeType = "Status",
-            OldValue = oldStatus.ToString(),
-            NewValue = locked.Status.ToString(),
-            ChangedAt = DateTimeOffset.UtcNow,
-            ChangedBy = userId
-        });
+        // Phase M1A: povratak termina u Scheduled nije zaseban korak — izvodi ga AppointmentLifecycle.Refresh nakon prijelaza.
+        ParticipationLifecycle.TrySetStatus(participation, ParticipationStatus.Confirmed);
     }
 
     /// <summary>Razrješava CoverageType/ClientPackageId za prvi (ili ponovljeni nakon vraćanja) check-in — skida

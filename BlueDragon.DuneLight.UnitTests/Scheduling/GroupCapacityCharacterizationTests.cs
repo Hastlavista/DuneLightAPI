@@ -357,9 +357,12 @@ public class GroupCapacityCharacterizationTests
     {
         (SchedulingWorld w, _, Appointment occurrence, Client[] members) = await Occurrence(nameof(ReturnToConfirmed_OnAFutureOccurrenceThatIsNowFull_IsRejected_AndTheBookingStaysCancelled), capacity: 1, members: 1);
         await using SchedulingWorld _w = w;
-        Client guest = await w.AddClient("Guest", "Client");
-        await w.SetBookingStatus(occurrence.Id.Value, members[0], BookingStatus.Cancelled, "changed my mind");
-        await w.AddGuest(occurrence, guest); // takes the freed seat
+        Client waiter = await w.AddClient("Waiter", "Client");
+        // M1A: the freed seat is taken through the waitlist (promotion runs BEFORE the occurrence is re-derived). A plain
+        // AddBooking after the only member cancelled is no longer possible: every participation Cancelled => the
+        // occurrence IS Cancelled, and a cancelled appointment does not accept new bookings (see the M1A report).
+        await w.Waitlist.Join(w.OrganizationId, w.ActorUserId, true, occurrence.Id.Value, new WaitlistJoinRequest { ClientId = waiter.Id.Value });
+        await w.SetBookingStatus(occurrence.Id.Value, members[0], BookingStatus.Cancelled, "changed my mind"); // waiter promoted
 
         await SchedulingAssert.BusinessRule(ErrorCodes.GroupCapacityReached,
             () => w.SetBookingStatus(occurrence.Id.Value, members[0], BookingStatus.Confirmed));

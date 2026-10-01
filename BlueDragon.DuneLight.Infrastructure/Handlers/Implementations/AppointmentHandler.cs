@@ -371,8 +371,10 @@ public class AppointmentHandler : IAppointmentHandler
             .Include(a => a.Group)
             .Include(a => a.Bookings).ThenInclude(b => b.Participations).ThenInclude(p => p.CheckoutItems).ThenInclude(i => i.Allocations).ThenInclude(alloc => alloc.Payment)
             .Where(a => a.OrganizationId == organizationId &&
-                a.Segments.Any(s => s.Employees.Any(e => e.EmployeeId == employeeId)) &&
-                a.Status == AppointmentStatus.Completed);
+                // Phase M1A: "odrađeni termin zaposlenika" = njegov SEGMENT ima barem jedno Completed sudjelovanje
+                // (izvršenje je po sudjelovanju; termin više nema Completed status).
+                a.Segments.Any(s => s.Employees.Any(e => e.EmployeeId == employeeId) &&
+                    s.Participations.Any(p => p.Status == ParticipationStatus.Completed)));
 
         int totalCount = await query.CountAsync();
 
@@ -429,13 +431,12 @@ public class AppointmentHandler : IAppointmentHandler
     {
         await using DatabaseContext context = DatabaseContext.GenerateContext(_databaseSettings.ConnectionString);
         DateTimeOffset now = DateTimeOffset.UtcNow;
-        // Phase M0: segmentno — Confirmed sudjelovanje na SEGMENTU koji je u budućnosti (termin Scheduled).
+        // Phase M0/M1A: segmentno — Confirmed sudjelovanje na budućem SEGMENTU (Confirmed sudjelovanje po izvođenju znači da je termin Scheduled).
         return await context.BookingSegmentParticipations.AnyAsync(p =>
             p.OrganizationId == organizationId &&
             p.Booking.ClientId == clientId &&
             p.Status == ParticipationStatus.Confirmed &&
-            p.Segment.PlannedStart >= now &&
-            p.Segment.Appointment.Status == AppointmentStatus.Scheduled);
+            p.Segment.PlannedStart >= now);
     }
 
     /// <summary>FOR UPDATE preko FromSqlInterpolated (parametrizirano, sigurno od SQL injection) — Postgres Read
@@ -528,8 +529,7 @@ public class AppointmentHandler : IAppointmentHandler
             .MaxAsync();
 
         DateTimeOffset? nextVisit = await participations
-            .Where(p => p.Status == ParticipationStatus.Confirmed && p.Segment.Appointment.Status == AppointmentStatus.Scheduled &&
-                p.Segment.PlannedStart > now)
+            .Where(p => p.Status == ParticipationStatus.Confirmed && p.Segment.PlannedStart > now)
             .Select(p => (DateTimeOffset?)p.Segment.PlannedStart)
             .MinAsync();
 

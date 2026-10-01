@@ -13,13 +13,14 @@ namespace BlueDragon.DuneLight.Infrastructure.Utils;
 /// </summary>
 public static class AppointmentFactory
 {
-    /// <summary>Individualni termin — Create i /recurring (Scheduled, uz RecurrenceGroupId za niz) te CompleteNew
-    /// ("upiši odrađeno": odmah Completed).</summary>
+    /// <summary>Individualni termin — Create i /recurring (uz RecurrenceGroupId za niz) te CompleteNew. Phase M1A: termin
+    /// UVIJEK nastaje kao Scheduled; daljnji status se izvodi iz sudjelovanja (AppointmentLifecycle) — CompleteNew ga
+    /// izvodi iz upravo stvorenih Completed sudjelovanja (→ Closed).</summary>
     public static Appointment CreateIndividual(
-        Guid organizationId, Guid companyId, AppointmentFrame frame, AppointmentStatus status, string note,
+        Guid organizationId, Guid companyId, AppointmentFrame frame, string note,
         Guid? recurrenceGroupId, Guid createdBy, DateTimeOffset createdAt)
     {
-        Appointment appointment = NewAppointment(organizationId, companyId, frame, AppointmentForm.Individual, status, createdBy, createdAt);
+        Appointment appointment = NewAppointment(organizationId, companyId, frame, AppointmentForm.Individual, createdBy, createdAt);
         appointment.Note = note;
         appointment.RecurrenceGroupId = recurrenceGroupId;
         return appointment;
@@ -29,16 +30,14 @@ public static class AppointmentFactory
     public static Appointment CreateGroupOccurrence(
         Guid organizationId, Guid companyId, AppointmentFrame frame, Guid groupId, Guid groupSlotId, Guid createdBy, DateTimeOffset createdAt)
     {
-        Appointment appointment = NewAppointment(
-            organizationId, companyId, frame, AppointmentForm.Group, AppointmentStatus.Scheduled, createdBy, createdAt);
+        Appointment appointment = NewAppointment(organizationId, companyId, frame, AppointmentForm.Group, createdBy, createdAt);
         appointment.GroupId = groupId;
         appointment.GroupSlotId = groupSlotId;
         return appointment;
     }
 
     private static Appointment NewAppointment(
-        Guid organizationId, Guid companyId, AppointmentFrame frame, AppointmentForm form, AppointmentStatus status,
-        Guid createdBy, DateTimeOffset createdAt)
+        Guid organizationId, Guid companyId, AppointmentFrame frame, AppointmentForm form, Guid createdBy, DateTimeOffset createdAt)
     {
         ArgumentNullException.ThrowIfNull(frame);
 
@@ -48,7 +47,7 @@ public static class AppointmentFactory
             OrganizationId = organizationId,
             Form = form,
             CompanyId = companyId,
-            Status = status,
+            Status = AppointmentStatus.Scheduled,
             CreatedAt = createdAt,
             CreatedBy = createdBy
         };

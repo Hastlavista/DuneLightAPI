@@ -116,7 +116,10 @@ public class WaitlistService : IWaitlistService, IWaitlistPromotionService
         await AppointmentOwnership.EnsureCallerIsAssigned(_employeeHandler, organizationId, userId, hasFullScope, appointment, NotOwnerMessage);
 
         DateTimeOffset now = DateTimeOffset.UtcNow;
-        if (appointment.Form != AppointmentForm.Group || appointment.Status != AppointmentStatus.Scheduled || AppointmentFrame.Of(appointment).StartsAt <= now)
+        // Phase M1A: lista čekanja je po occurrenceu/segmentu — NE ovisi o agregatnom statusu termina (occurrence čiji je
+        // jedini član otkazao/izostao izvodi se kao Cancelled/Closed, a segment i dalje ima kapacitet). Dostupnost =
+        // grupni, budući; "ima li mjesta" odlučuje provjera kapaciteta segmenta niže (CAPACITY_AVAILABLE).
+        if (appointment.Form != AppointmentForm.Group || AppointmentFrame.Of(appointment).StartsAt <= now)
             throw new BusinessRuleException(ErrorCodes.WaitlistNotAvailable, "Lista čekanja nije dostupna za ovaj termin.");
 
         Client client = await _clientHandler.GetByIdLight(organizationId, request.ClientId);
@@ -235,6 +238,9 @@ public class WaitlistService : IWaitlistService, IWaitlistPromotionService
             return;
 
         DateTimeOffset now = DateTimeOffset.UtcNow;
+        // Phase M1A: Scheduled = termin ima barem jedno Confirmed sudjelovanje ILI se tek izvodi — pozivatelji (otkazivanje
+        // sudjelovanja, uklanjanje člana) pozivaju promociju PRIJE ponovnog izvođenja statusa, pa occurrence čije je zadnje
+        // aktivno sudjelovanje upravo otkazano ovdje još vidi Scheduled i promovira (isto kao prije).
         if (appointment.Status != AppointmentStatus.Scheduled || AppointmentFrame.Of(appointment).StartsAt <= now)
             return;
 

@@ -52,6 +52,7 @@ public class AppointmentService : IAppointmentService
     private readonly IPaymentLedgerService _paymentLedgerService;
     private readonly ICheckoutHandler _checkoutHandler;
     private readonly IBookingSegmentParticipationHandler _participationHandler;
+    private readonly ICommissionEntryHandler _commissionEntryHandler;
     private readonly ICommissionLedgerService _commissionLedgerService;
     private readonly IOutboxWriter _outboxWriter;
     private readonly IUnitOfWorkFactory _unitOfWorkFactory;
@@ -79,6 +80,7 @@ public class AppointmentService : IAppointmentService
         IPaymentLedgerService paymentLedgerService,
         ICheckoutHandler checkoutHandler,
         IBookingSegmentParticipationHandler participationHandler,
+        ICommissionEntryHandler commissionEntryHandler,
         ICommissionLedgerService commissionLedgerService,
         IOutboxWriter outboxWriter,
         IUnitOfWorkFactory unitOfWorkFactory,
@@ -105,6 +107,7 @@ public class AppointmentService : IAppointmentService
         _paymentLedgerService = paymentLedgerService;
         _checkoutHandler = checkoutHandler;
         _participationHandler = participationHandler;
+        _commissionEntryHandler = commissionEntryHandler;
         _commissionLedgerService = commissionLedgerService;
         _outboxWriter = outboxWriter;
         _unitOfWorkFactory = unitOfWorkFactory;
@@ -132,7 +135,7 @@ public class AppointmentService : IAppointmentService
         Appointment appointment = AppointmentFactory.CreateIndividual(
             organizationId, request.CompanyId,
             new AppointmentFrame(request.ServiceId, request.EmployeeId, request.RoomId, request.StartsAt, service.DefaultDurationMinutes),
-            AppointmentStatus.Completed, request.Note, recurrenceGroupId: null, userId, DateTimeOffset.UtcNow);
+            request.Note, recurrenceGroupId: null, userId, DateTimeOffset.UtcNow);
         Guid appointmentId = appointment.Id.GetValueOrDefault();
 
         // Privremeni jednostruki NASTANAK (D): svaki Booking dobiva jedno sudjelovanje na izvršnom segmentu termina;
@@ -165,6 +168,10 @@ public class AppointmentService : IAppointmentService
             if (!hasPackage && settlement.PaymentMethod.HasValue && settlement.IsPaid && bookingAmount > 0m)
                 pendingPayments.Add((booking, participation, settlement.PaymentMethod.Value, bookingAmount));
         }
+
+        // Phase M1A: termin nastaje kao Scheduled, a početni status mu se IZVODI iz upravo stvorenih (Completed) sudjelovanja
+        // → Closed. Nema "Completed" termina; status nikad nije zasebna odluka.
+        appointment.Status = AppointmentLifecycle.Derive(appointment) ?? AppointmentStatus.Scheduled;
 
         // CompleteNew loguje odrađeno — provjera radne-snage dostupnosti vrijedi samo ako je StartsAt u budućnosti
         // (zakazuje se i odmah naplaćuje); za prošlost je ovo evidentiranje stvarnosti, ne planiranje (vidi FAZA 2).
@@ -248,7 +255,9 @@ public class AppointmentService : IAppointmentService
             throw new ValidationAppException(
                 "Grupni termin se odrađuje kroz complete-group, ne kroz complete-existing (naplata je po klijentu/Bookingu, ne po popisu klijenata termina).");
 
-        if (appointment.Status == AppointmentStatus.Completed)
+        // Phase M1A: "već odrađen" = termin je Closed (nijedno sudjelovanje nije Confirmed, a nije sve otkazano). Ponovni
+        // completion ide tek nakon korekcije sudjelovanja (koja termin automatski vraća u Scheduled).
+        if (appointment.Status == AppointmentStatus.Closed)
             throw new BusinessRuleException(ErrorCodes.AlreadyCompleted, "Termin je već označen kao odrađen.");
 
         await AppointmentOwnership.EnsureCallerIsAssigned(_employeeHandler, organizationId, userId, hasFullScope, appointment, NotOwnerMessage);
@@ -276,14 +285,13 @@ public class AppointmentService : IAppointmentService
             appointment = await _appointmentHandler.GetForUpdate(uow, organizationId, id);
             if (appointment == null)
                 throw new NotFoundAppException("Appointment", id);
-            if (appointment.Status == AppointmentStatus.Completed)
+            if (appointment.Status == AppointmentStatus.Closed)
                 throw new BusinessRuleException(ErrorCodes.AlreadyCompleted, "Termin je već označen kao odrađen.");
 
             AppointmentFrameMutator.Apply(appointment,
                 new AppointmentFrame(request.ServiceId, request.EmployeeId, request.RoomId, request.StartsAt, service.DefaultDurationMinutes),
                 DateTimeOffset.UtcNow);
             appointment.CompanyId = request.CompanyId;
-            appointment.Status = AppointmentStatus.Completed;
             appointment.Note = request.Note;
             appointment.UpdatedAt = DateTimeOffset.UtcNow;
             appointment.UpdatedBy = userId;
@@ -377,6 +385,10 @@ public class AppointmentService : IAppointmentService
                 }
             }
 
+            // Phase M1A: status termina se IZVODI iz svih sudjelovanja (zatraženi klijenti su sad Completed; sestrinsko
+            // sudjelovanje koje je još Confirmed drži termin Scheduled — prije je termin bezuvjetno postajao Completed).
+            await AppointmentLifecycle.Refresh(_appointmentHandler, _auditLogHandler, uow, organizationId, id, userId);
+
             await uow.CommitAsync();
         }
         catch (DbUpdateConcurrencyException)
@@ -388,12 +400,12 @@ public class AppointmentService : IAppointmentService
         return await GetByIdInternal(organizationId, id);
     }
 
-    /// <summary>Appointment-razina "odrađeno" za GRUPNI termin — jedina zadaća je prijelaz okvira Scheduled →
-    /// Completed. Namjerno NE dira nijedan Booking redak: svaki se već razrješava neovisno kroz
-    /// BookingService.SetStatus/GroupAttendanceService (check-in po klijentu), koji ostaje jedini put za
-    /// Booking.Status. Ako neki Booking ostane Confirmed (nerazrješen) u trenutku zatvaranja, zatvaranje se
-    /// SVEJEDNO dopušta (isto lijenije ponašanje kao ostatak ovog API-ja — upozorenje, ne blokada) uz
-    /// GROUP_APPOINTMENT_UNRESOLVED_BOOKINGS upozorenje koje nabraja pogođene ClientId-jeve.</summary>
+    /// <summary>Phase M1A — "zatvaranje grupne sesije" (close-out): bilježi da se sesija održala. Namjerno NE dira nijedno
+    /// sudjelovanje (prisutnost se razrješava po sudjelovanju kroz BookingService/GroupAttendanceService) i NE postavlja
+    /// status termina: status se IZVODI iz sudjelovanja (AppointmentLifecycle) — ako je neko sudjelovanje još Confirmed,
+    /// termin OSTAJE Scheduled (uz GROUP_APPOINTMENT_UNRESOLVED_BOOKINGS upozorenje), a postaje Closed/Cancelled tek kad
+    /// se ta sudjelovanja razriješe. Nuspojave close-outa ostaju: istek liste čekanja i provizija PO TERMINU (zarađuje se
+    /// najviše jednom — ponovljeni close-out je idempotentan). Otkazan termin se ne može zatvoriti.</summary>
     public async Task<AppointmentDto> CompleteGroupAppointment(Guid organizationId, Guid userId, bool hasFullScope, Guid id)
     {
         Appointment appointment;
@@ -401,9 +413,8 @@ public class AppointmentService : IAppointmentService
         await using (IUnitOfWork uow = await _unitOfWorkFactory.Begin())
         {
             // Zaključava Appointment redak (FOR UPDATE) i čita Form/Status/EmployeeId pod lockom PRIJE bilo kakve
-            // provjere/mutacije — sprječava utrku s konkurentnim drugim completion/cancel zahtjevom na ISTOM
-            // terminu (drugi zahtjev čeka na lock pa vidi svježe stanje nakon commita prvog, vidi spec section
-            // 8-11). Bookings su uključeni jer se čitaju i nakon commita (unresolvedClientIds upozorenje niže).
+            // provjere/mutacije — serijalizira close-out s konkurentnim cancel/close-out zahtjevom na ISTOM terminu.
+            // Bookings su uključeni jer se čitaju i nakon commita (unresolvedClientIds upozorenje niže).
             appointment = await _appointmentHandler.GetForUpdateWithBookings(uow, organizationId, id);
             if (appointment == null)
                 throw new NotFoundAppException("Appointment", id);
@@ -412,40 +423,24 @@ public class AppointmentService : IAppointmentService
                 throw new ValidationAppException(
                     "Individualni termin se odrađuje kroz complete/complete-existing, ne kroz complete-group.");
 
-            if (appointment.Status == AppointmentStatus.Completed)
-                throw new BusinessRuleException(ErrorCodes.AlreadyCompleted, "Termin je već označen kao odrađen.");
-
             if (appointment.Status == AppointmentStatus.Cancelled)
                 throw new BusinessRuleException(ErrorCodes.AppointmentNotMovable, "Otkazan termin se ne može označiti kao odrađen.");
 
             await AppointmentOwnership.EnsureCallerIsAssigned(_employeeHandler, organizationId, userId, hasFullScope, appointment, NotOwnerMessage);
-
-            AppointmentStatus oldStatus = appointment.Status;
-            appointment.Status = AppointmentStatus.Completed;
-            appointment.UpdatedAt = DateTimeOffset.UtcNow;
-            appointment.UpdatedBy = userId;
-
-            await _appointmentHandler.UpdateScalar(uow, appointment);
-
-            await _auditLogHandler.Add(uow, new AppointmentAuditLog
-            {
-                Id = Guid.NewGuid(),
-                AppointmentId = id,
-                ChangeType = "Status",
-                OldValue = oldStatus.ToString(),
-                NewValue = appointment.Status.ToString(),
-                ChangedAt = DateTimeOffset.UtcNow,
-                ChangedBy = userId
-            });
 
             // Occurrence je zatvoren — preostali Waiting retci više nisu smisleni (spec section 20), ne promovira se.
             await _waitlistPromotionService.ExpireWaitingForAppointment(
                 uow, organizationId, id, userId, WaitlistExpiredReasons.AppointmentCompleted);
 
             // Provizija se zarađuje PO CIJELOM odrađenom terminu, ne po sudioniku — vidi CommissionService
-            // domensku napomenu (spec section 14/27/28).
-            await _commissionLedgerService.GenerateForGroupServiceCompletion(
-                uow, organizationId, ExecutionContextResolver.ForAppointment(appointment));
+            // domensku napomenu (spec section 14/27/28). Phase M1A: close-out više nije zaštićen statusom termina
+            // ("Completed" ne postoji), pa pozivatelj pod lockom termina provjerava postoji li već zapis za termin.
+            if (!await _commissionEntryHandler.ExistsForGroupAppointment(uow, organizationId, id))
+                await _commissionLedgerService.GenerateForGroupServiceCompletion(
+                    uow, organizationId, ExecutionContextResolver.ForAppointment(appointment));
+
+            // Status se ne postavlja — izvodi se (no-op kad je već usklađen).
+            await AppointmentLifecycle.Refresh(_appointmentHandler, _auditLogHandler, uow, organizationId, id, userId);
 
             await uow.CommitAsync();
         }
@@ -522,7 +517,14 @@ public class AppointmentService : IAppointmentService
 
         await EnsureNoHardOverlap(organizationId, request.EmployeeId, clients, request.StartsAt, service.DefaultDurationMinutes, excludeId: id, room);
 
-        await _appointmentHandler.UpdateWithBookings(appointment, requestedClientIds, pricing);
+        // Phase M1A: Update može dodati Confirmed sudjelovanja (novi klijenti) ili ukloniti netaknuta — status termina se
+        // zatim IZVODI u istoj transakciji (npr. dodan klijent na Closed termin → Scheduled).
+        await using (IUnitOfWork uow = await _unitOfWorkFactory.Begin())
+        {
+            await _appointmentHandler.UpdateWithBookings(uow, appointment, requestedClientIds, pricing);
+            await AppointmentLifecycle.Refresh(_appointmentHandler, _auditLogHandler, uow, organizationId, id, userId);
+            await uow.CommitAsync();
+        }
 
         AppointmentDto dto = await GetByIdInternal(organizationId, id);
         dto.Warnings = warnings;
@@ -661,7 +663,7 @@ public class AppointmentService : IAppointmentService
             Appointment appointment = AppointmentFactory.CreateIndividual(
                 organizationId, request.CompanyId,
                 new AppointmentFrame(request.ServiceId, request.EmployeeId, request.RoomId, occurrence, service.DefaultDurationMinutes),
-                AppointmentStatus.Scheduled, request.Note, recurrenceGroupId, userId, DateTimeOffset.UtcNow);
+            request.Note, recurrenceGroupId, userId, DateTimeOffset.UtcNow);
             Guid appointmentId = appointment.Id.GetValueOrDefault();
 
             // /recurring namjerno ignorira ručni iznos (request nema Amount) — svaki occurrence po svojoj predloženoj cijeni.
@@ -968,7 +970,7 @@ public class AppointmentService : IAppointmentService
         Appointment appointment = AppointmentFactory.CreateIndividual(
             organizationId, request.CompanyId,
             new AppointmentFrame(request.ServiceId, request.EmployeeId, request.RoomId, request.StartsAt, service.DefaultDurationMinutes),
-            AppointmentStatus.Scheduled, request.Note, recurrenceGroupId, userId, DateTimeOffset.UtcNow);
+            request.Note, recurrenceGroupId, userId, DateTimeOffset.UtcNow);
         Guid appointmentId = appointment.Id.GetValueOrDefault();
 
         foreach (Client client in clients)
@@ -1014,35 +1016,21 @@ public class AppointmentService : IAppointmentService
 
             await AppointmentOwnership.EnsureCallerIsAssigned(_employeeHandler, organizationId, userId, hasFullScope, appointment, NotOwnerMessage);
 
-            // Completed je terminalno i za Cancel/MarkNoShow — već odrađen (i eventualno proviziran) termin se
-            // ne smije naknadno "otkazati" kroz ove putanje (vidi spec section 1/3, CommissionService domenska
-            // napomena o "poznatoj postojećoj praznini" koju ovo zatvara).
-            if (appointment.Status == AppointmentStatus.Completed)
+            // Phase M1A: termin bez ijednog Confirmed sudjelovanja koji NIJE "sve otkazano" (Closed — razriješen) nema što
+            // otkazati/označiti izostankom; isto pravilo kao prije za Completed (odrađen i eventualno proviziran termin se
+            // ne smije naknadno "otkazati"). Djelomično izvršen termin (npr. Completed + Confirmed) JEST dopušten: otkazuju
+            // se samo aktivna sudjelovanja, a termin se izvodi (→ Closed).
+            if (appointment.Status == AppointmentStatus.Closed)
                 throw new BusinessRuleException(
                     ErrorCodes.AlreadyCompleted,
-                    "Termin je već odrađen (Completed) i ne može se otkazati niti označiti kao izostanak.");
+                    "Termin je već razriješen (Closed) i ne može se otkazati niti označiti kao izostanak.");
 
-            AppointmentStatus oldStatus = appointment.Status;
-            appointment.Status = AppointmentStatus.Cancelled;
+            // Razlog otkazivanja termina je metapodatak termina; STATUS se ne postavlja ovdje nego izvodi niže.
             appointment.CancellationReason = request.CancellationReason;
             appointment.UpdatedAt = DateTimeOffset.UtcNow;
             appointment.UpdatedBy = userId;
 
             await _appointmentHandler.UpdateScalar(uow, appointment);
-
-            if (oldStatus != appointment.Status)
-            {
-                await _auditLogHandler.Add(uow, new AppointmentAuditLog
-                {
-                    Id = Guid.NewGuid(),
-                    AppointmentId = id,
-                    ChangeType = "Status",
-                    OldValue = oldStatus.ToString(),
-                    NewValue = appointment.Status.ToString(),
-                    ChangedAt = DateTimeOffset.UtcNow,
-                    ChangedBy = userId
-                });
-            }
 
             // Phase M0: appointment-wide prijelaz (A) — Booking nema status, pa se cijeli termin zatvara kontroliranim
             // prijelazom SVAKOG aktivnog (Confirmed) sudjelovanja svih Bookinga. Sudjelovanja se zaključavaju nakon
@@ -1112,8 +1100,19 @@ public class AppointmentService : IAppointmentService
                 }
             }
 
-            // Cijeli occurrence je zatvoren (otkazan ili bulk no-show, oboje završavaju na Appointment.Status =
-            // Cancelled) — preostali Waiting retci više nisu smisleni, ne promovira se (spec section 19/41/42).
+            // Phase M1A: status termina se IZVODI iz svih sudjelovanja: sve otkazano → Cancelled; bilo koji Completed/NoShow
+            // (uključujući bulk no-show) → Closed. Terminalna sudjelovanja (Completed/Cancelled/NoShow) nisu dirana.
+            bool hasParticipations = appointment.Bookings.Any(b => b.Participations.Count > 0);
+            await AppointmentLifecycle.Refresh(_appointmentHandler, _auditLogHandler, uow, organizationId, id, userId);
+
+            // JEDINA eksplicitna iznimka (otvoreno pitanje, vidi izvještaj M1A): termin BEZ ijednog sudjelovanja (grupni
+            // occurrence generiran za grupu bez članova) nema izvedeni status; eksplicitno otkazivanje termina zadržava
+            // dosadašnji ishod (Cancelled) umjesto da naredba postane tihi no-op.
+            if (!hasParticipations)
+                await AppointmentLifecycle.Apply(_appointmentHandler, _auditLogHandler, uow, appointment, AppointmentStatus.Cancelled, userId);
+
+            // Aktivni rad termina je otkazan/izostao — preostali Waiting retci više nisu smisleni, ne promovira se
+            // (spec section 19/41/42).
             if (appointment.Form == AppointmentForm.Group)
                 await _waitlistPromotionService.ExpireWaitingForAppointment(
                     uow, organizationId, id, userId, WaitlistExpiredReasons.AppointmentCancelled);

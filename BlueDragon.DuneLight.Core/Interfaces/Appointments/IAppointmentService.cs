@@ -44,7 +44,7 @@ public interface IAppointmentService
 
     Task<PagedResult<ClientAppointmentHistoryDto>> GetByClient(Guid organizationId, Guid clientId, PagedRequest request);
 
-    /// <summary>Povijest odrađenih termina po zaposleniku (samo Completed), najnoviji prvi — vidi GetByClient.</summary>
+    /// <summary>Povijest odrađenih termina po zaposleniku (Phase M1A: segment zaposlenika ima barem jedno Completed sudjelovanje), najnoviji prvi — vidi GetByClient.</summary>
     Task<PagedResult<AppointmentDto>> GetByEmployee(Guid organizationId, Guid employeeId, PagedRequest request);
 
     /// <summary>Gotovi, izrezani slobodni termini točne duljine usluge, za sve zaposlenike poslovnice koji smiju
