@@ -51,6 +51,7 @@ public class AppointmentService : IAppointmentService
     private readonly IWaitlistPromotionService _waitlistPromotionService;
     private readonly IPaymentLedgerService _paymentLedgerService;
     private readonly ICheckoutHandler _checkoutHandler;
+    private readonly IBookingSegmentParticipationHandler _participationHandler;
     private readonly ICommissionLedgerService _commissionLedgerService;
     private readonly IOutboxWriter _outboxWriter;
     private readonly IUnitOfWorkFactory _unitOfWorkFactory;
@@ -77,6 +78,7 @@ public class AppointmentService : IAppointmentService
         IWaitlistPromotionService waitlistPromotionService,
         IPaymentLedgerService paymentLedgerService,
         ICheckoutHandler checkoutHandler,
+        IBookingSegmentParticipationHandler participationHandler,
         ICommissionLedgerService commissionLedgerService,
         IOutboxWriter outboxWriter,
         IUnitOfWorkFactory unitOfWorkFactory,
@@ -102,6 +104,7 @@ public class AppointmentService : IAppointmentService
         _waitlistPromotionService = waitlistPromotionService;
         _paymentLedgerService = paymentLedgerService;
         _checkoutHandler = checkoutHandler;
+        _participationHandler = participationHandler;
         _commissionLedgerService = commissionLedgerService;
         _outboxWriter = outboxWriter;
         _unitOfWorkFactory = unitOfWorkFactory;
@@ -132,8 +135,12 @@ public class AppointmentService : IAppointmentService
             AppointmentStatus.Completed, request.Note, recurrenceGroupId: null, userId, DateTimeOffset.UtcNow);
         Guid appointmentId = appointment.Id.GetValueOrDefault();
 
+        // Privremeni jednostruki NASTANAK (D): svaki Booking dobiva jedno sudjelovanje na izvršnom segmentu termina;
+        // sve dalje (paket, plaćanje, provizija) adresira TO sudjelovanje (po segmentu), ne "Booking".
+        AppointmentSegment executionSegment = AppointmentSegments.GetSingleExecutionSegment(appointment);
         Dictionary<Guid, Guid> packageByClient = new Dictionary<Guid, Guid>();
-        List<(Booking Booking, PaymentMethod Method, decimal Amount)> pendingPayments = new List<(Booking, PaymentMethod, decimal)>();
+        List<(Booking Booking, BookingSegmentParticipation Participation, PaymentMethod Method, decimal Amount)> pendingPayments =
+            new List<(Booking, BookingSegmentParticipation, PaymentMethod, decimal)>();
 
         foreach (Client client in clients)
         {
@@ -147,15 +154,16 @@ public class AppointmentService : IAppointmentService
                 packageByClient[clientId] = settlement.ClientPackageId.GetValueOrDefault();
 
             Booking booking = BookingFactory.CreateCompletedAtCreation(
-                organizationId, AppointmentSegments.GetSingleExecutionSegment(appointment), clientId,
+                organizationId, executionSegment, clientId,
                 pricing,
                 DateTimeOffset.UtcNow);
             appointment.Bookings.Add(booking);
+            BookingSegmentParticipation participation = BookingParticipations.OnSegment(booking, executionSegment);
 
             // Paket namiruje obvezu bez Paymenta (vidi Payment.cs/spec section 3/40) — monetarni Payment se
             // stvara samo bez paketa, uz zatraženu metodu, IsPaid=true i stvaran pozitivan iznos.
             if (!hasPackage && settlement.PaymentMethod.HasValue && settlement.IsPaid && bookingAmount > 0m)
-                pendingPayments.Add((booking, settlement.PaymentMethod.Value, bookingAmount));
+                pendingPayments.Add((booking, participation, settlement.PaymentMethod.Value, bookingAmount));
         }
 
         // CompleteNew loguje odrađeno — provjera radne-snage dostupnosti vrijedi samo ako je StartsAt u budućnosti
@@ -176,17 +184,19 @@ public class AppointmentService : IAppointmentService
             foreach (KeyValuePair<Guid, Guid> kvp in packageByClient)
             {
                 Booking packageBooking = appointment.Bookings.First(b => b.ClientId == kvp.Key);
-                BookingExecutionContext packageExecution = ExecutionContextResolver.ForBooking(appointment, packageBooking);
+                BookingSegmentParticipation packageParticipation = BookingParticipations.OnSegment(packageBooking, executionSegment);
+                BookingExecutionContext packageExecution = ExecutionContextResolver.ForParticipation(appointment, packageBooking, packageParticipation);
 
                 // Phase D3B3A: potrošnja paketa = PackageConsumption na sudjelovanju (ledger), valjanost na datum usluge.
                 await _packageConsumptionLedgerService.Consume(
-                    uow, organizationId, userId, packageBooking, packageExecution, kvp.Value, BookingStatus.Completed);
+                    uow, organizationId, userId, packageParticipation, packageExecution, kvp.Value, BookingStatus.Completed);
 
                 await _auditLogHandler.Add(uow, new AppointmentAuditLog
                 {
                     Id = Guid.NewGuid(),
                     AppointmentId = appointmentId,
                     BookingId = packageBooking.Id,
+                    BookingSegmentParticipationId = packageParticipation.Id,
                     ChangeType = "BookingPackageCoverageApplied",
                     OldValue = null,
                     NewValue = kvp.Value.ToString(),
@@ -197,15 +207,18 @@ public class AppointmentService : IAppointmentService
 
             // Payment ide TEK nakon _appointmentHandler.Add (FK payments.booking_id) — Booking.Id je već
             // poznat (dodijeljen prije Add), pa je isti in-memory objekt (sad persistiran) siguran za referencu.
-            foreach ((Booking booking, PaymentMethod method, decimal amount) in pendingPayments)
+            foreach ((Booking booking, BookingSegmentParticipation participation, PaymentMethod method, decimal amount) in pendingPayments)
                 await _paymentLedgerService.RecordPayment(
-                    uow, organizationId, userId, appointment.CompanyId, booking, method, amount, note: null, isCheckInGenerated: true);
+                    uow, organizationId, userId, appointment.CompanyId, booking, participation, method, amount, note: null, isCheckInGenerated: true);
 
             // Provizija se zarađuje ISTOM transakcijom kao completion — svaki upravo odrađen Booking je jedan
             // izvor (vidi ICommissionLedgerService, spec section 27/28).
             foreach (Booking booking in appointment.Bookings)
+            {
+                BookingSegmentParticipation participation = BookingParticipations.OnSegment(booking, executionSegment);
                 await _commissionLedgerService.GenerateForIndividualServiceCompletion(
-                    uow, organizationId, ExecutionContextResolver.ForBooking(appointment, booking), booking);
+                    uow, organizationId, ExecutionContextResolver.ForParticipation(appointment, booking, participation), participation);
+            }
 
             await uow.CommitAsync();
         }
@@ -281,21 +294,30 @@ public class AppointmentService : IAppointmentService
 
             List<Booking> bookingRows = await _appointmentHandler.GetBookings(uow, organizationId, id, request.ClientIds.Distinct().ToList());
 
-            foreach (Booking bookingRow in bookingRows)
+            // Phase M0: completion adresira sudjelovanje svakog Bookinga NA IZVRŠNOM SEGMENTU termina (privremeni
+            // jednostruki raspored, D) — ne "jedino sudjelovanje Bookinga". Sudjelovanja se zaključavaju nakon termina,
+            // stabilnim redoslijedom (statusi su svježi: svaki prijelaz statusa prvo zaključava ovaj termin).
+            AppointmentSegment executionSegment = AppointmentSegments.GetSingleExecutionSegment(appointment);
+            List<(Booking Booking, BookingSegmentParticipation Participation)> rows = bookingRows
+                .Select(b => (b, BookingParticipations.OnSegment(b, executionSegment)))
+                .ToList();
+            await _participationHandler.LockForUpdate(uow, organizationId, rows.Select(r => r.Participation.Id.GetValueOrDefault()));
+
+            foreach ((Booking bookingRow, BookingSegmentParticipation participation) in rows)
             {
                 // appointment je gore već postavljen na zatraženu uslugu/trenera/vrijeme — kontekst čita te vrijednosti.
-                BookingExecutionContext execution = ExecutionContextResolver.ForBooking(appointment, bookingRow);
+                BookingExecutionContext execution = ExecutionContextResolver.ForParticipation(appointment, bookingRow, participation);
                 AppointmentClientSettlement settlement = settlementByClient[bookingRow.ClientId];
                 bool hasPackage = settlement.ClientPackageId.HasValue;
                 BookingPricing pricing = BookingPricing.FromResolution(resolvedPrice, settlement.Amount);
                 decimal bookingAmount = pricing.Amount;
-                decimal currentAmount = BookingParticipations.AmountOf(bookingRow);
+                decimal currentAmount = participation.Amount;
 
                 if (currentAmount != bookingAmount)
                     await LogAmountChangeInTransaction(uow, id, bookingRow.Id, currentAmount, bookingAmount, userId);
 
-                BookingStatus bookingOldStatus = BookingParticipations.StatusOf(bookingRow);
-                bool bookingStatusChanged = BookingLifecycle.TrySetStatus(bookingRow, BookingStatus.Completed);
+                ParticipationStatus bookingOldStatus = participation.Status;
+                bool bookingStatusChanged = ParticipationLifecycle.TrySetStatus(participation, ParticipationStatus.Completed);
                 if (bookingStatusChanged)
                 {
                     // Isti "BookingStatus" audit obrazac kao BookingService.SetStatus — bez ovoga bi individualni
@@ -306,25 +328,26 @@ public class AppointmentService : IAppointmentService
                         Id = Guid.NewGuid(),
                         AppointmentId = id,
                         BookingId = bookingRow.Id,
+                        BookingSegmentParticipationId = participation.Id,
                         ChangeType = "BookingStatus",
                         OldValue = bookingOldStatus.ToString(),
-                        NewValue = BookingParticipations.StatusOf(bookingRow).ToString(),
-                        StatusVersion = BookingParticipations.StatusVersionOf(bookingRow),
+                        NewValue = participation.Status.ToString(),
+                        StatusVersion = participation.StatusVersion,
                         ChangedAt = DateTimeOffset.UtcNow,
                         ChangedBy = userId
                     });
                 }
-                BookingPrice.Apply(bookingRow, pricing);
+                ParticipationPrice.Apply(participation, pricing);
 
                 // Phase D3B3A: "već pokriveno" = AKTIVNA potrošnja paketa (poništena potrošnja nakon korekcije više ne
                 // sprječava ponovno pokriće — prije je zaostala zastavica PackageCoverageApplied tiho preskakala skidanje).
-                if (hasPackage && PackageConsumptions.ActiveOf(bookingRow) == null)
+                if (hasPackage && PackageConsumptions.ActiveOf(participation) == null)
                 {
                     // Paket-namirenje i novčano namirenje su međusobno isključivi (bookingRow je POSTOJEĆI redak, mogao je
                     // već primiti uplatu preko POS Checkouta) — Phase D3B3B: provjeru provodi ledger potrošnje kroz
                     // jedino pravilo SettlementExclusivityPolicy, na granici sudjelovanja.
                     await _packageConsumptionLedgerService.Consume(
-                        uow, organizationId, userId, bookingRow, execution, settlement.ClientPackageId.GetValueOrDefault(), BookingStatus.Completed);
+                        uow, organizationId, userId, participation, execution, settlement.ClientPackageId.GetValueOrDefault(), BookingStatus.Completed);
                 }
 
                 await _appointmentHandler.UpdateBooking(uow, bookingRow);
@@ -346,11 +369,11 @@ public class AppointmentService : IAppointmentService
                     // Booking je već persistiran (postojeći redak, samo ažuriran) — Payment sigurno može odmah nakon.
                     if (!hasPackage && settlement.PaymentMethod.HasValue && settlement.IsPaid && bookingAmount > 0m)
                         await _paymentLedgerService.RecordPayment(
-                            uow, organizationId, userId, appointment.CompanyId, bookingRow, settlement.PaymentMethod.Value, bookingAmount,
+                            uow, organizationId, userId, appointment.CompanyId, bookingRow, participation, settlement.PaymentMethod.Value, bookingAmount,
                             note: null, isCheckInGenerated: true);
 
                     // Provizija se zarađuje ISTOM transakcijom kao completion — vidi CompleteNew.
-                    await _commissionLedgerService.GenerateForIndividualServiceCompletion(uow, organizationId, execution, bookingRow);
+                    await _commissionLedgerService.GenerateForIndividualServiceCompletion(uow, organizationId, execution, participation);
                 }
             }
 
@@ -427,8 +450,9 @@ public class AppointmentService : IAppointmentService
             await uow.CommitAsync();
         }
 
+        // Phase M0: nerazriješen = klijent s barem jednim još Confirmed sudjelovanjem (A, read-only upozorenje).
         List<Guid> unresolvedClientIds = appointment.Bookings
-            .Where(b => BookingParticipations.StatusOf(b) == BookingStatus.Confirmed)
+            .Where(b => b.Participations.Any(p => p.Status == ParticipationStatus.Confirmed))
             .Select(b => b.ClientId)
             .ToList();
 
@@ -442,8 +466,7 @@ public class AppointmentService : IAppointmentService
 
     /// <summary>Statusi koji ZAKLJUČUJU komercijalnu evidenciju bookinga — Update ih nikad ne repricinga
     /// (historijski Amount se ne smije mijenjati naknadno, vidi spec section 18/20).</summary>
-    private static readonly BookingStatus[] TerminalBookingStatuses =
-        { BookingStatus.Completed, BookingStatus.Cancelled, BookingStatus.NoShow };
+    private static bool IsTerminal(ParticipationStatus status) => status != ParticipationStatus.Confirmed;
 
     public async Task<AppointmentDto> Update(Guid organizationId, Guid userId, bool hasFullScope, Guid id, AppointmentUpdateRequest request)
     {
@@ -465,11 +488,16 @@ public class AppointmentService : IAppointmentService
 
         // Re-cijenjenje (persistira ga AppointmentHandler.UpdateWithBookings niže) se primjenjuje samo na
         // Bookinge koji NISU terminalni — historijski Amount na već odrađenom/otkazanom/izostalom Bookingu
-        // se ne dira (vidi TerminalBookingStatuses). Ovdje samo audit-logiramo promjenu za te retke.
+        // se ne dira (vidi IsTerminal). Ovdje samo audit-logiramo promjenu za te retke. Phase M0: cijena se mijenja na
+        // sudjelovanju Bookinga NA IZVRŠNOM SEGMENTU termina (segmentno adresiranje, vidi AppointmentHandler.UpdateWithBookings).
         List<Guid> requestedClientIds = request.ClientIds.Distinct().ToList();
-        foreach (Booking booking in appointment.Bookings.Where(b =>
-            requestedClientIds.Contains(b.ClientId) && !TerminalBookingStatuses.Contains(BookingParticipations.StatusOf(b)) && amount != BookingParticipations.AmountOf(b)))
-            await LogAmountChange(id, booking.Id, BookingParticipations.AmountOf(booking), amount, userId);
+        AppointmentSegment executionSegment = AppointmentSegments.GetSingleExecutionSegment(appointment);
+        foreach (Booking booking in appointment.Bookings.Where(b => requestedClientIds.Contains(b.ClientId)))
+        {
+            BookingSegmentParticipation participation = BookingParticipations.OnSegment(booking, executionSegment);
+            if (!IsTerminal(participation.Status) && amount != participation.Amount)
+                await LogAmountChange(id, booking.Id, participation.Amount, amount, userId);
+        }
 
         AppointmentFrame currentFrame = AppointmentFrame.Of(appointment);
         if (currentFrame.EmployeeId != request.EmployeeId)
@@ -525,7 +553,10 @@ public class AppointmentService : IAppointmentService
         Guid effectiveCompanyId = request.CompanyId ?? appointment.CompanyId;
 
         Appointment full = await _appointmentHandler.GetById(organizationId, id);
-        List<Client> clients = full.Bookings.Where(b => BookingParticipations.StatusOf(b) != BookingStatus.Cancelled && BookingParticipations.StatusOf(b) != BookingStatus.NoShow)
+        // Phase M0: klijenti čije sudjelovanje NA IZVRŠNOM SEGMENTU (koji se pomiče) zauzima raspored — centralno pravilo.
+        AppointmentSegment movedSegment = AppointmentSegments.GetSingleExecutionSegment(full);
+        List<Client> clients = full.Bookings
+            .Where(b => ParticipationOccupancy.Occupies(BookingParticipations.OnSegment(b, movedSegment).Status))
             .Select(b => b.Client).ToList();
 
         ServiceEntity service = await LoadServiceOrThrow(organizationId, currentFrame.ServiceId);
@@ -1013,20 +1044,32 @@ public class AppointmentService : IAppointmentService
                 });
             }
 
-            foreach (Booking booking in appointment.Bookings.Where(b => BookingParticipations.StatusOf(b) == BookingStatus.Confirmed))
+            // Phase M0: appointment-wide prijelaz (A) — Booking nema status, pa se cijeli termin zatvara kontroliranim
+            // prijelazom SVAKOG aktivnog (Confirmed) sudjelovanja svih Bookinga. Sudjelovanja se zaključavaju nakon
+            // termina, u stabilnom redoslijedu (po Id-u); statusi su već svježi jer svaki prijelaz statusa prvo zaključava
+            // ovaj isti termin.
+            ParticipationStatus target = BookingParticipations.ToParticipationStatus(targetBookingStatus);
+            await _participationHandler.LockForUpdate(
+                uow, organizationId, appointment.Bookings.SelectMany(b => b.Participations).Select(p => p.Id.GetValueOrDefault()));
+
+            foreach ((Booking booking, BookingSegmentParticipation participation) in appointment.Bookings
+                         .SelectMany(b => b.Participations.Select(p => (Booking: b, Participation: p)))
+                         .Where(x => x.Participation.Status == ParticipationStatus.Confirmed)
+                         .OrderBy(x => x.Participation.Id)
+                         .ToList())
             {
-                BookingStatus oldBookingStatus = BookingParticipations.StatusOf(booking);
-                BookingLifecycle.TrySetStatus(booking, targetBookingStatus);
-                BookingLifecycle.SetCancellationReason(booking, request.CancellationReason);
+                ParticipationStatus oldParticipationStatus = participation.Status;
+                ParticipationLifecycle.TrySetStatus(participation, target);
+                ParticipationLifecycle.SetCancellationReason(participation, request.CancellationReason);
                 booking.UpdatedAt = DateTimeOffset.UtcNow;
                 booking.UpdatedBy = userId;
                 // IsLateCancellation namjerno OSTAJE null ovdje (poslovno/appointment-wide otkazivanje, ne
                 // klijentska inicijativa) — vidi Booking.cs domensku napomenu i spec section 38.
 
-                // Phase D3B3A: povrat ulaska = poništenje AKTIVNE potrošnje paketa (ledger; no-op ako je nema).
+                // Phase D3B3A: povrat ulaska = poništenje AKTIVNE potrošnje paketa sudjelovanja (ledger; no-op ako je nema).
                 bool shouldReturn = returnClientIds.Contains(booking.ClientId) &&
                     await _packageConsumptionLedgerService.ReverseActive(
-                        uow, organizationId, userId, booking,
+                        uow, organizationId, userId, participation,
                         targetBookingStatus == BookingStatus.NoShow ? PackageConsumptionReversalReason.NoShow : PackageConsumptionReversalReason.Cancellation);
 
                 await _appointmentHandler.UpdateBooking(uow, booking);
@@ -1036,50 +1079,21 @@ public class AppointmentService : IAppointmentService
                     Id = Guid.NewGuid(),
                     AppointmentId = id,
                     BookingId = booking.Id,
+                    BookingSegmentParticipationId = participation.Id,
                     ChangeType = "BookingStatus",
-                    OldValue = oldBookingStatus.ToString(),
-                    NewValue = BookingParticipations.StatusOf(booking).ToString(),
-                    StatusVersion = BookingParticipations.StatusVersionOf(booking),
+                    OldValue = oldParticipationStatus.ToString(),
+                    NewValue = participation.Status.ToString(),
+                    StatusVersion = participation.StatusVersion,
                     ChangedAt = DateTimeOffset.UtcNow,
                     ChangedBy = userId
                 });
 
-                // Jedan booking.cancelled.v1/booking.no-show.v1 po STVARNO otkazanom/izostalom Bookingu (ne jedan
+                // Jedan booking.cancelled.v1/booking.no-show.v1 po STVARNO otkazanom/izostalom SUDJELOVANJU (ne jedan
                 // generički Appointment event) — vidi spec section 33. Ista uow transakcija kao mutacija iznad.
                 if (targetBookingStatus == BookingStatus.Cancelled)
-                {
-                    await _outboxWriter.Add(
-                        uow, organizationId, OutboxEventTypes.BookingCancelledV1,
-                        new BookingCancelledEvent
-                        {
-                            OrganizationId = organizationId,
-                            BookingId = booking.Id.GetValueOrDefault(),
-                            AppointmentId = id,
-                            ClientId = booking.ClientId,
-                            CompanyId = appointment.CompanyId,
-                            StatusVersion = BookingParticipations.StatusVersionOf(booking),
-                            OccurredAt = DateTimeOffset.UtcNow
-                        },
-                        DateTimeOffset.UtcNow,
-                        idempotencyKey: $"booking-cancelled:{booking.Id.GetValueOrDefault()}:{BookingParticipations.StatusVersionOf(booking)}");
-                }
+                    await ParticipationEvents.WriteCancelled(_outboxWriter, uow, organizationId, appointment, booking, participation);
                 else if (targetBookingStatus == BookingStatus.NoShow)
-                {
-                    await _outboxWriter.Add(
-                        uow, organizationId, OutboxEventTypes.BookingNoShowV1,
-                        new BookingNoShowEvent
-                        {
-                            OrganizationId = organizationId,
-                            BookingId = booking.Id.GetValueOrDefault(),
-                            AppointmentId = id,
-                            ClientId = booking.ClientId,
-                            CompanyId = appointment.CompanyId,
-                            StatusVersion = BookingParticipations.StatusVersionOf(booking),
-                            OccurredAt = DateTimeOffset.UtcNow
-                        },
-                        DateTimeOffset.UtcNow,
-                        idempotencyKey: $"booking-noshow:{booking.Id.GetValueOrDefault()}:{BookingParticipations.StatusVersionOf(booking)}");
-                }
+                    await ParticipationEvents.WriteNoShow(_outboxWriter, uow, organizationId, appointment, booking, participation);
 
                 if (shouldReturn)
                 {
@@ -1088,6 +1102,7 @@ public class AppointmentService : IAppointmentService
                         Id = Guid.NewGuid(),
                         AppointmentId = id,
                         BookingId = booking.Id,
+                        BookingSegmentParticipationId = participation.Id,
                         ChangeType = "BookingPackageCoverageReturned",
                         OldValue = "Applied",
                         NewValue = "Returned",
@@ -1487,7 +1502,7 @@ public class AppointmentService : IAppointmentService
             Form = a.Form,
             GroupId = a.GroupId,
             GroupName = isGroup ? a.Group?.Name : null,
-            AttendanceCount = isGroup ? a.Bookings.Count(b => BookingParticipations.StatusOf(b) == BookingStatus.Completed) : (int?)null,
+            AttendanceCount = isGroup ? a.Bookings.SelectMany(b => b.Participations).Count(p => p.Status == ParticipationStatus.Completed) : (int?)null,
             ExpectedCount = isGroup ? a.Group?.Members.Count(m => m.IsActive) : (int?)null
         };
     }
@@ -1500,9 +1515,9 @@ public class AppointmentService : IAppointmentService
     private static ClientAppointmentHistoryDto ToClientHistoryDto(Appointment a, Guid clientId)
     {
         Booking booking = a.Bookings.First(b => b.ClientId == clientId);
-        decimal outstandingAmount = ParticipationSettlement.OfBooking(booking).OutstandingAmount;
+        BookingCommercialSummary commercial = BookingCommercialSummary.Of(booking);
         AppointmentFrameView frame = AppointmentFrameView.Of(a);
-        PackageCoverageView coverage = PackageConsumptions.CoverageOf(booking, a.Form);
+        PackageCoverageView coverage = PackageConsumptions.CoverageOfBooking(booking, a.Form);
 
         return new ClientAppointmentHistoryDto
         {
@@ -1520,18 +1535,18 @@ public class AppointmentService : IAppointmentService
             Status = a.Status,
             GroupId = a.GroupId,
             GroupName = a.Group?.Name,
-            Amount = BookingParticipations.AmountOf(booking),
-            PaidAmount = ParticipationSettlement.OfBooking(booking).SettledAmount,
-            OutstandingAmount = outstandingAmount,
-            IsPaid = outstandingAmount <= 0m,
+            Amount = commercial.FinalPrice,
+            PaidAmount = commercial.MonetarySettled,
+            OutstandingAmount = commercial.Outstanding,
+            IsPaid = commercial.FullySettled,
             BookingId = booking.Id.GetValueOrDefault(),
-            BookingStatus = BookingParticipations.StatusOf(booking),
+            BookingStatus = BookingSummary.StatusOf(booking),
             ClientPackageId = coverage.ClientPackageId,
             CoverageType = coverage.CoverageType,
             PackageCoverageApplied = coverage.PackageCoverageApplied,
             PackageCoverageReturned = coverage.PackageCoverageReturned,
             BookingNote = booking.Note,
-            BookingCancellationReason = BookingParticipations.CancellationReasonOf(booking)
+            BookingCancellationReason = BookingSummary.Agreed(booking, p => p.CancellationReason)
         };
     }
 
@@ -1559,32 +1574,9 @@ public class AppointmentService : IAppointmentService
             GroupId = a.GroupId,
             GroupName = a.Group?.Name,
             RecurrenceGroupId = a.RecurrenceGroupId,
-            Bookings = a.Bookings.Select(b =>
-            {
-                decimal outstandingAmount = ParticipationSettlement.OfBooking(b).OutstandingAmount;
-                PackageCoverageView coverage = PackageConsumptions.CoverageOf(b, a.Form);
-                return new BookingDto
-                {
-                    Id = b.Id.GetValueOrDefault(),
-                    ClientId = b.ClientId,
-                    ClientName = b.Client != null ? $"{b.Client.FirstName} {b.Client.LastName}" : null,
-                    Status = BookingParticipations.StatusOf(b),
-                    Amount = BookingParticipations.AmountOf(b),
-                    SuggestedAmount = BookingParticipations.SuggestedAmountOf(b),
-                    IsAmountManuallyOverridden = BookingParticipations.IsAmountManuallyOverriddenOf(b),
-                    PaidAmount = ParticipationSettlement.OfBooking(b).SettledAmount,
-                    OutstandingAmount = outstandingAmount,
-                    IsPaid = outstandingAmount <= 0m,
-                    ClientPackageId = coverage.ClientPackageId,
-                    CoverageType = coverage.CoverageType,
-                    PackageCoverageApplied = coverage.PackageCoverageApplied,
-                    PackageCoverageReturned = coverage.PackageCoverageReturned,
-                    Payments = ParticipationSettlement.PaymentsOfBooking(b).Select(PaymentDtoFactory.ToDto).ToList(),
-                    Note = b.Note,
-                    CancellationReason = BookingParticipations.CancellationReasonOf(b),
-                    IsLateCancellation = BookingParticipations.IsLateCancellationOf(b)
-                };
-            }).ToList(),
+            Bookings = a.Bookings
+                .Select(b => BookingReadModel.ToDto(b, a.Form, b.Client != null ? $"{b.Client.FirstName} {b.Client.LastName}" : null))
+                .ToList(),
             CreatedAt = a.CreatedAt,
             CreatedBy = a.CreatedBy,
             UpdatedAt = a.UpdatedAt,

@@ -29,5 +29,17 @@ public interface IBookingService
     /// izostanka, vidi BookingService.ApplyIndividualNoShowCorrection) — Cancelled nema povratnu putanju za
     /// Individual — za Form=Group dopušteni su svi prijelazi uklj. povratak na Confirmed s bilo kojeg terminalnog
     /// statusa (poništenje check-ina/otkazivanja).</summary>
+    /// <remarks>Phase M0: PRIVREMENA kompatibilnost — (termin, klijent) adresira Booking, koji smije imati TOČNO JEDNO
+    /// sudjelovanje (inače BOOKING_PARTICIPATION_AMBIGUOUS); delegira na <see cref="SetParticipationStatus"/>. Novi kod
+    /// adresira sudjelovanje.</remarks>
     Task<BookingDto> SetStatus(Guid organizationId, Guid userId, bool hasFullScope, Guid appointmentId, Guid clientId, BookingSetStatusRequest request);
+
+    /// <summary>Phase M0 — participation-native prijelaz (check-in/Completed, Cancelled, NoShow, korekcija na Confirmed,
+    /// paket i check-in plaćanje kroz BookingSetStatusRequest) JEDNOG sudjelovanja; ostala sudjelovanja istog Bookinga
+    /// se ne diraju. Ista pravila prijelaza i vlasništva kao <see cref="SetStatus"/>.</summary>
+    Task<BookingDto> SetParticipationStatus(Guid organizationId, Guid userId, bool hasFullScope, Guid participationId, BookingSetStatusRequest request);
+
+    /// <summary>Phase M0 — Booking-wide otkazivanje: svako AKTIVNO (Confirmed) sudjelovanje Bookinga prelazi u Cancelled
+    /// (zasebno: StatusVersion, audit, Outbox pojava po sudjelovanju), terminalna ostaju netaknuta. Booking nema status.</summary>
+    Task<BookingDto> CancelBooking(Guid organizationId, Guid userId, bool hasFullScope, Guid appointmentId, Guid clientId, BookingCancelRequest request);
 }

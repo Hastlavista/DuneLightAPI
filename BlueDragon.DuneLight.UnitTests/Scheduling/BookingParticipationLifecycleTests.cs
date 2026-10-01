@@ -5,6 +5,7 @@ using System.Linq;
 using System.Threading.Tasks;
 using BlueDragon.DuneLight.Core.DTOs.Appointments;
 using BlueDragon.DuneLight.Core.Enums;
+using BlueDragon.DuneLight.Core.Shared.Exceptions;
 using BlueDragon.DuneLight.Core.Shared;
 using BlueDragon.DuneLight.Infrastructure.Domain.Contexts;
 using BlueDragon.DuneLight.Infrastructure.Domain.Models.Appointments;
@@ -122,7 +123,7 @@ public class BookingParticipationLifecycleTests
 
         AppointmentDto read = await w.Appointments.GetById(w.OrganizationId, created.Id);
         BookingDto booking = read.Bookings.Single();
-        Assert.Equal(BookingStatus.Cancelled, booking.Status);
+        Assert.Equal(BookingStatusSummary.Cancelled, booking.Status);
         Assert.Equal("changed plans", booking.CancellationReason);
     }
 
@@ -195,19 +196,20 @@ public class BookingParticipationLifecycleTests
         };
 
         Booking valid = Booking(id => On(id, own));
-        Assert.Equal(BookingStatus.Confirmed, BookingParticipations.StatusOf(valid));
+        Assert.Equal(BookingStatusSummary.Confirmed, BookingSummary.StatusOf(valid));
 
         Assert.Throws<InvalidBookingParticipationStateException>(() => BookingParticipations.GetSingleParticipation(Booking()));
-        Assert.Throws<InvalidBookingParticipationStateException>(() => BookingParticipations.GetSingleParticipation(
-            Booking(id => On(id, own), id => On(id, own))));
+        // M0: more than one participation is no longer an integrity error but an AMBIGUOUS BookingId-addressed command.
+        Assert.Equal(ErrorCodes.BookingParticipationAmbiguous, Assert.Throws<BusinessRuleException>(() => BookingParticipations.GetSingleParticipation(
+            Booking(id => On(id, own), id => On(id, own)))).Code);
         Assert.Throws<InvalidBookingParticipationStateException>(() => BookingParticipations.GetSingleParticipation(
             Booking(id => On(id, foreignSegment))));
         Assert.Throws<InvalidBookingParticipationStateException>(() => BookingParticipations.GetSingleParticipation(
             Booking(id => On(id, own, Guid.NewGuid()))));
         Assert.Throws<InvalidBookingParticipationStateException>(() => BookingParticipations.GetSingleParticipation(
             Booking(_ => On(Guid.NewGuid(), own))));
-        // Writes go through the same resolver.
-        Assert.Throws<InvalidBookingParticipationStateException>(() => BookingLifecycle.TrySetStatus(Booking(), BookingStatus.Cancelled));
+        // The derived summary never invents a status for a Booking without participations.
+        Assert.Throws<InvalidBookingParticipationStateException>(() => BookingSummary.StatusOf(Booking()));
     }
 
     #endregion

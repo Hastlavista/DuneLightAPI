@@ -29,13 +29,16 @@ public class PaymentService : IPaymentService, IPaymentLedgerService
     private readonly ICheckoutHandler _checkoutHandler;
     private readonly IAppointmentAuditLogHandler _auditLogHandler;
     private readonly ICheckoutAuditLogHandler _checkoutAuditLogHandler;
+    private readonly IBookingSegmentParticipationHandler _participationHandler;
 
     public PaymentService(
         IAppointmentHandler appointmentHandler,
         ICheckoutHandler checkoutHandler,
         IAppointmentAuditLogHandler auditLogHandler,
-        ICheckoutAuditLogHandler checkoutAuditLogHandler)
+        ICheckoutAuditLogHandler checkoutAuditLogHandler,
+        IBookingSegmentParticipationHandler participationHandler)
     {
+        _participationHandler = participationHandler;
         _appointmentHandler = appointmentHandler;
         _checkoutHandler = checkoutHandler;
         _auditLogHandler = auditLogHandler;
@@ -48,8 +51,10 @@ public class PaymentService : IPaymentService, IPaymentLedgerService
         if (booking == null)
             throw new NotFoundAppException("Booking", clientId);
 
-        List<CheckoutItem> items = await _checkoutHandler.GetItemsForParticipation(
-            organizationId, BookingParticipations.GetSingleParticipation(booking).Id.GetValueOrDefault());
+        // Booking-wide čitanje (A): povijest plaćanja SVIH sudjelovanja Bookinga.
+        List<CheckoutItem> items = new List<CheckoutItem>();
+        foreach (BookingSegmentParticipation participation in booking.Participations)
+            items.AddRange(await _checkoutHandler.GetItemsForParticipation(organizationId, participation.Id.GetValueOrDefault()));
         List<Payment> payments = DistinctActivePayments(items, includeVoided: true);
 
         return payments.Select(PaymentDtoFactory.ToDto).ToList();
@@ -62,17 +67,17 @@ public class PaymentService : IPaymentService, IPaymentLedgerService
     /// predujam kroz POS, se oduzimaju) — sudjelovanje se ne može preplatiti: check-in plaćanje naplaćuje najviše preostali
     /// dug (null kad ništa ne preostaje), ostala plaćanja iznad preostalog duga se odbijaju.</summary>
     public async Task<Payment> RecordPayment(
-        IUnitOfWork uow, Guid organizationId, Guid userId, Guid companyId, Booking booking, PaymentMethod method, decimal amount,
-        string note, bool isCheckInGenerated = false)
+        IUnitOfWork uow, Guid organizationId, Guid userId, Guid companyId, Booking booking, BookingSegmentParticipation participation,
+        PaymentMethod method, decimal amount, string note, bool isCheckInGenerated = false)
     {
         if (amount <= 0m)
             throw new ValidationAppException(ErrorCodes.InvalidQuantity, "Iznos plaćanja mora biti veći od 0.");
 
         // Phase D3B3B: namirenje je na granici SUDJELOVANJA. Sudjelovanje se zaključava (kao i svaki drugi put
         // novčanog namirenja) pa se dug računa svježe — dva konkurentna plaćanja ne mogu oba namiriti isti dug.
-        BookingSegmentParticipation participation = BookingParticipations.GetSingleParticipation(booking);
+        participation = BookingParticipations.ById(booking, participation.Id.GetValueOrDefault());
         Guid participationId = participation.Id.GetValueOrDefault();
-        await _checkoutHandler.LockParticipations(uow, organizationId, new[] { participationId });
+        await _participationHandler.LockForUpdate(uow, organizationId, new[] { participationId });
 
         // Jedino pravilo isključivosti paket/novac (F-08 link: samo AKTIVNA potrošnja paketa blokira novac).
         SettlementExclusivityPolicy.EnsureMoneyAllowed(participation);
@@ -163,6 +168,7 @@ public class PaymentService : IPaymentService, IPaymentLedgerService
             Id = Guid.NewGuid(),
             AppointmentId = booking.AppointmentId,
             BookingId = booking.Id,
+            BookingSegmentParticipationId = participationId,
             ChangeType = "PaymentCreated",
             OldValue = null,
             NewValue = $"{payment.Amount} {payment.Method}",
@@ -173,10 +179,11 @@ public class PaymentService : IPaymentService, IPaymentLedgerService
         return payment;
     }
 
-    public async Task VoidCheckInGeneratedPayments(IUnitOfWork uow, Guid organizationId, Guid userId, Booking booking, string reason)
+    public async Task VoidCheckInGeneratedPayments(
+        IUnitOfWork uow, Guid organizationId, Guid userId, Booking booking, BookingSegmentParticipation participation, string reason)
     {
-        List<CheckoutItem> items = await _checkoutHandler.GetItemsForParticipation(
-            uow, organizationId, BookingParticipations.GetSingleParticipation(booking).Id.GetValueOrDefault());
+        participation = BookingParticipations.ById(booking, participation.Id.GetValueOrDefault());
+        List<CheckoutItem> items = await _checkoutHandler.GetItemsForParticipation(uow, organizationId, participation.Id.GetValueOrDefault());
         List<Payment> payments = DistinctActivePayments(items, includeVoided: false)
             .Where(p => p.IsCheckInGenerated)
             .ToList();
@@ -191,6 +198,7 @@ public class PaymentService : IPaymentService, IPaymentLedgerService
                 Id = Guid.NewGuid(),
                 AppointmentId = booking.AppointmentId,
                 BookingId = booking.Id,
+                BookingSegmentParticipationId = participation.Id,
                 ChangeType = "PaymentVoided",
                 OldValue = $"{payment.Amount} {payment.Method}",
                 NewValue = "Voided",

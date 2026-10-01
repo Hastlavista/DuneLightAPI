@@ -241,7 +241,7 @@ public class AppointmentReadModelCharacterizationTests
 
         Assert.Equal(2, page.TotalCount);
         Assert.Equal(new[] { second.Id, first.Id }, page.Items.Select(i => i.Id).ToArray()); // newest StartsAt first
-        Assert.Equal(new[] { BookingStatus.Cancelled, BookingStatus.NoShow }, page.Items.Select(i => i.BookingStatus).ToArray());
+        Assert.Equal(new[] { BookingStatusSummary.Cancelled, BookingStatusSummary.NoShow }, page.Items.Select(i => i.BookingStatus).ToArray());
         Assert.All(page.Items, i => Assert.Equal(w.Client.Id.Value.ToString(), w.Client.Id.Value.ToString()));
         // The partner's booking on the shared appointment is not exposed through this client's history.
         Assert.DoesNotContain(page.Items, i => i.BookingId == first.Bookings.Single(b => b.ClientId == partner.Id).Id);

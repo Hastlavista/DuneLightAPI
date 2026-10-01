@@ -28,6 +28,11 @@ public class AppointmentAuditLog
     [Column("booking_id")]
     public Guid? BookingId { get; set; }
 
+    /// <summary>Phase M0: popunjeno za promjene na razini jednog SUDJELOVANJA (BookingStatus, paketno pokriće,
+    /// PaymentCreated/PaymentVoided) — StatusVersion je verzija OVOG sudjelovanja; BookingId ostaje spremnik.</summary>
+    [Column("booking_segment_participation_id")]
+    public Guid? BookingSegmentParticipationId { get; set; }
+
     /// <summary>Popunjeno samo za promjene na razini jednog WaitlistEntry retka ("WaitlistJoined"/
     /// "WaitlistCancelled"/"WaitlistPromoted"/"WaitlistExpired") — isti obrazac kao BookingId, jedna
     /// zajednička audit tablica umjesto zasebnog WaitlistAuditLog (vidi klasnu napomenu).</summary>
@@ -53,7 +58,7 @@ public class AppointmentAuditLog
     [Column("changed_by")]
     public Guid? ChangedBy { get; set; }
 
-    /// <summary>Popunjeno SAMO za ChangeType="BookingStatus" — Booking.StatusVersion NAKON ovog prijelaza (vidi
+    /// <summary>Popunjeno SAMO za ChangeType="BookingStatus" — StatusVersion SUDJELOVANJA (BookingSegmentParticipationId) NAKON ovog prijelaza (vidi
     /// BookingStatusVersioning). Veže ovaj audit redak na ISTU pojavu koju referenciraju Outbox idempotency key
     /// (booking-cancelled/booking-noshow:{id}:{version}) i Notification.SourceVersion, umjesto da se identitet
     /// pojave oslanja samo na ChangedAt redoslijed (vidi audit-cleanup spec section 51/57).</summary>

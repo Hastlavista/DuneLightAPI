@@ -44,7 +44,7 @@ namespace BlueDragon.DuneLight.Infrastructure.Services;
 /// INDIVIDUAL BOOKING REVERZIJA (ReverseForIndividualServiceCorrection, dodano uz P1 korekcijski tok): za razliku
 /// od Group, individualni Booking-completion IMA legitiman "undo" — BookingService.ApplyIndividualCompletionCorrection
 /// (Individual Booking Completed -> Confirmed, administrativna korekcija pogrešnog check-ina). Reverzija identificira
-/// izvor deterministički preko BookingId (ICommissionEntryHandler.GetActiveForBooking, Status=Earned), NE po
+/// izvor deterministički preko sudjelovanja (ICommissionEntryHandler.GetActiveForParticipation, Status=Earned), NE po
 /// iznosu/datumu/zaposleniku. CommissionEntry.SourceVersion (Booking.StatusVersion u trenutku zarade, vidi
 /// CommissionEntry.cs) daje svakoj completion-pojavi zasebni identitet, tako da ponovni completion istog Bookinga
 /// nakon korekcije zaradi NOVI Earned zapis bez sudara s (sad Reversed) starim — vidi Migration_2026_09_25.
@@ -332,8 +332,10 @@ public class CommissionService : ICommissionRuleService, ICommissionService, ICo
 
     #region Ledger generation (called from AppointmentService/CheckoutService within their own transaction)
 
-    public async Task GenerateForIndividualServiceCompletion(IUnitOfWork uow, Guid organizationId, BookingExecutionContext execution, Booking booking)
+    public async Task GenerateForIndividualServiceCompletion(
+        IUnitOfWork uow, Guid organizationId, BookingExecutionContext execution, BookingSegmentParticipation participation)
     {
+        ArgumentNullException.ThrowIfNull(participation);
         if (!execution.EmployeeId.HasValue)
             return;
 
@@ -342,7 +344,7 @@ public class CommissionService : ICommissionRuleService, ICommissionService, ICo
         if (rule == null)
             return;
 
-        decimal bookingAmount = BookingParticipations.AmountOf(booking);
+        decimal bookingAmount = participation.Amount;
         decimal commissionAmount = Calculate(rule.CalculationType, rule.Value, bookingAmount);
 
         await TryAdd(uow, new CommissionEntry
@@ -354,16 +356,17 @@ public class CommissionService : ICommissionRuleService, ICommissionService, ICo
             CommissionRuleId = rule.Id.GetValueOrDefault(),
             SourceType = CommissionSourceType.IndividualService,
             AppointmentId = execution.AppointmentId,
-            BookingId = booking.Id,
+            BookingId = participation.BookingId,
+            BookingSegmentParticipationId = participation.Id,
             BaseAmount = bookingAmount,
             CalculationType = rule.CalculationType,
             RuleValue = rule.Value,
             CommissionAmount = commissionAmount,
             Status = CommissionEntryStatus.Earned,
-            // Booking.StatusVersion NAKON prijelaza u Completed (pozivatelj TrySetStatus prije ovog poziva, vidi
-            // FK zahtjev u domenskoj napomeni) — daje ovoj completion-pojavi zaseban identitet naspram eventualnog
-            // narednog completiona nakon korekcije (vidi CommissionEntry.cs SourceVersion napomenu).
-            SourceVersion = BookingParticipations.StatusVersionOf(booking),
+            // StatusVersion IZVORNOG SUDJELOVANJA NAKON prijelaza u Completed (pozivatelj TrySetStatus prije ovog poziva)
+            // — daje ovoj completion-pojavi zaseban identitet naspram eventualnog narednog completiona nakon korekcije
+            // (vidi CommissionEntry.cs SourceVersion napomenu). Phase M0: eksplicitno sudjelovanje, ne "jedino" Bookinga.
+            SourceVersion = participation.StatusVersion,
             EarnedAt = DateTimeOffset.UtcNow,
             CreatedAt = DateTimeOffset.UtcNow
         });
@@ -473,9 +476,10 @@ public class CommissionService : ICommissionRuleService, ICommissionService, ICo
     /// <summary>Vidi ICommissionLedgerService za puni ugovor. Namjerno BEZ catch/throw na "nema što reverzirati" —
     /// no-op je ispravan odgovor i za "nikad nije bilo primjenjivog pravila" i za "već reverzirano" (idempotentan
     /// retry), pozivatelj (BookingService) ne treba razlikovati ta dva slučaja.</summary>
-    public async Task ReverseForIndividualServiceCorrection(IUnitOfWork uow, Guid organizationId, Guid userId, Booking booking)
+    public async Task ReverseForIndividualServiceCorrection(
+        IUnitOfWork uow, Guid organizationId, Guid userId, BookingSegmentParticipation participation)
     {
-        CommissionEntry entry = await _entryHandler.GetActiveForBooking(uow, organizationId, booking.Id.GetValueOrDefault());
+        CommissionEntry entry = await _entryHandler.GetActiveForParticipation(uow, organizationId, participation.Id.GetValueOrDefault());
         if (entry == null)
             return;
 

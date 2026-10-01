@@ -137,14 +137,6 @@ public class CheckoutHandler : ICheckoutHandler
             .ToListAsync();
     }
 
-    public async Task LockParticipations(IUnitOfWork uow, Guid organizationId, IEnumerable<Guid> participationIds)
-    {
-        // Stabilan redoslijed (po id) — dvije transakcije koje zaključavaju isti skup ne mogu se zaključati u krug.
-        foreach (Guid id in participationIds.Distinct().OrderBy(x => x))
-            await uow.Context.Database.ExecuteSqlInterpolatedAsync(
-                $"SELECT 1 FROM dunelight.booking_segment_participations WHERE organization_id = {organizationId} AND id = {id} FOR UPDATE");
-    }
-
     public Task<List<Guid>> GetServiceParticipationIds(IUnitOfWork uow, Guid organizationId, Guid checkoutId)
     {
         return uow.Context.CheckoutItems

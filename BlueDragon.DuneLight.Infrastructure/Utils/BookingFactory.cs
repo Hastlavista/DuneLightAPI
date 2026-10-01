@@ -54,7 +54,7 @@ public static class BookingFactory
             StatusVersion = 0,
             CreatedAt = createdAt
         };
-        BookingPrice.ApplyTo(participation, pricing);
+        ParticipationPrice.ApplyTo(participation, pricing);
         booking.Participations.Add(participation);
         return booking;
     }

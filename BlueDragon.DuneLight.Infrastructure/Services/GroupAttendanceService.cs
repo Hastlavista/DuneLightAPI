@@ -88,22 +88,24 @@ public class GroupAttendanceService : IGroupAttendanceService
         List<GroupAttendanceEntryDto> recorded = appointment.Bookings
             .Select(b =>
             {
-                decimal outstandingAmount = ParticipationSettlement.OfBooking(b).OutstandingAmount;
-                PackageCoverageView coverage = PackageConsumptions.CoverageOf(b, AppointmentForm.Group);
+                // Phase M0: unos prisutnosti je Booking read-model — izvedeni sažeci sudjelovanja (za jedno sudjelovanje
+                // identično dosadašnjem; Mixed status nije "prisutan/odsutan" → null).
+                BookingCommercialSummary commercial = BookingCommercialSummary.Of(b);
+                PackageCoverageView coverage = PackageConsumptions.CoverageOfBooking(b, AppointmentForm.Group);
                 return new GroupAttendanceEntryDto
                 {
                     ClientId = b.ClientId,
                     ClientName = b.Client != null ? $"{b.Client.FirstName} {b.Client.LastName}" : null,
-                    Attended = ToAttended(BookingParticipations.StatusOf(b)),
+                    Attended = ToAttended(BookingSummary.StatusOf(b)),
                     CoverageType = coverage.CoverageType,
                     ClientPackageId = coverage.ClientPackageId,
                     PackageCoverageApplied = coverage.PackageCoverageApplied,
                     PackageCoverageReturned = coverage.PackageCoverageReturned,
-                    Amount = BookingParticipations.AmountOf(b),
-                    SuggestedAmount = BookingParticipations.SuggestedAmountOf(b),
-                    PaidAmount = ParticipationSettlement.OfBooking(b).SettledAmount,
-                    OutstandingAmount = outstandingAmount,
-                    IsPaid = outstandingAmount <= 0m,
+                    Amount = commercial.FinalPrice,
+                    SuggestedAmount = commercial.SuggestedPrice,
+                    PaidAmount = commercial.MonetarySettled,
+                    OutstandingAmount = commercial.Outstanding,
+                    IsPaid = commercial.FullySettled,
                     Note = b.Note,
                     IsMember = activeMembers.Any(m => m.ClientId == b.ClientId)
                 };
@@ -116,11 +118,11 @@ public class GroupAttendanceService : IGroupAttendanceService
     /// <summary>Confirmed (još nije čekiran) mapira se na null (isto kao staro Attended=null prije prvog
     /// čekiranja) — Completed/NoShow mapiraju se na true/false, Cancelled (booking-razina otkazivanje
     /// izvan ovog ugovora, npr. buduća per-booking funkcionalnost) tretira se kao "nije prisutan".</summary>
-    private static bool? ToAttended(BookingStatus status) => status switch
+    private static bool? ToAttended(BookingStatusSummary status) => status switch
     {
-        BookingStatus.Completed => true,
-        BookingStatus.NoShow => false,
-        BookingStatus.Cancelled => false,
+        BookingStatusSummary.Completed => true,
+        BookingStatusSummary.NoShow => false,
+        BookingStatusSummary.Cancelled => false,
         _ => null
     };
 }

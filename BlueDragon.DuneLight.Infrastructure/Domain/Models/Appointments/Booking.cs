@@ -31,7 +31,9 @@ namespace BlueDragon.DuneLight.Infrastructure.Domain.Models.Appointments;
 ///
 /// Phase D3B1/D3B2: životni ciklus (status, StatusVersion, otkazivanje) i CIJENA (Amount, SuggestedAmount,
 /// IsAmountManuallyOverridden) više NISU na Bookingu — autoritativno ih nosi njegovo jedino sudjelovanje
-/// (BookingSegmentParticipation; čitanje BookingParticipations.AmountOf/..., pisanje BookingPrice/BookingLifecycle).
+/// (BookingSegmentParticipation; pisanje ParticipationPrice/ParticipationLifecycle). Phase M0: Booking nema status,
+/// cijenu, namirenje ni verziju — Booking read-model polja su IZVEDENI sažeci (Utils.BookingSummary/
+/// BookingCommercialSummary); naredbe adresiraju sudjelovanje (BookingId samo kao privremena kompatibilnost).
 /// "Amount" u tekstu iznad znači tu cijenu sudjelovanja. Phase D3B3A: ni potrošnja paketa nije na Bookingu — nosi
 /// je povijest PackageConsumption sudjelovanja (Utils.PackageConsumptions). Phase D3B3B: ni namirenje. Booking je
 /// samo identitet (termin + klijent) i spremnik sudjelovanja tog klijenta.

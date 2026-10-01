@@ -24,23 +24,25 @@ public static class AppointmentFrameTestExtensions
         public Guid? RoomId => AppointmentFrame.Of(appointment).RoomId;
     }
 
-    /// <summary>D3B1: the Booking lifecycle lives on its single authoritative participation; tests read it through the
-    /// PRODUCTION resolver (<see cref="BookingParticipations"/>). Read-only, in-memory only.</summary>
+    /// <summary>D3B1/M0: single-participation characterization tests read the lifecycle/price of a Booking's ONLY
+    /// participation through the PRODUCTION compatibility resolver (<see cref="BookingParticipations.GetSingleParticipation"/>,
+    /// which rejects more than one). Read-only, in-memory only. Multi-participation tests address participations directly.</summary>
     extension(Booking booking)
     {
-        public BookingStatus Status => BookingParticipations.StatusOf(booking);
-        public int StatusVersion => BookingParticipations.StatusVersionOf(booking);
-        public string CancellationReason => BookingParticipations.CancellationReasonOf(booking);
-        public bool? IsLateCancellation => BookingParticipations.IsLateCancellationOf(booking);
+        private BookingSegmentParticipation SingleParticipation => BookingParticipations.GetSingleParticipation(booking);
+        public BookingStatus Status => BookingParticipations.ToBookingStatus(booking.SingleParticipation.Status);
+        public int StatusVersion => booking.SingleParticipation.StatusVersion;
+        public string CancellationReason => booking.SingleParticipation.CancellationReason;
+        public bool? IsLateCancellation => booking.SingleParticipation.IsLateCancellation;
 
-        // D3B2: price likewise lives on the single participation (BookingParticipations.AmountOf/...).
-        public decimal Amount => BookingParticipations.AmountOf(booking);
-        public decimal SuggestedAmount => BookingParticipations.SuggestedAmountOf(booking);
-        public bool IsAmountManuallyOverridden => BookingParticipations.IsAmountManuallyOverriddenOf(booking);
+        // D3B2: price likewise lives on the participation.
+        public decimal Amount => booking.SingleParticipation.Amount;
+        public decimal SuggestedAmount => booking.SingleParticipation.SuggestedAmount;
+        public bool IsAmountManuallyOverridden => booking.SingleParticipation.IsAmountManuallyOverridden;
 
         // D3B3A: package usage is the participation's PackageConsumption history; the former Booking columns are
         // derived through the PRODUCTION view (form from the loaded Appointment, Individual when it is not loaded).
-        private PackageCoverageView Coverage => PackageConsumptions.CoverageOf(booking, booking.Appointment?.Form ?? AppointmentForm.Individual);
+        private PackageCoverageView Coverage => PackageConsumptions.CoverageOf(booking.SingleParticipation, booking.Appointment?.Form ?? AppointmentForm.Individual);
         public Guid? ClientPackageId => booking.Coverage.ClientPackageId;
         public AttendanceCoverageType? CoverageType => booking.Coverage.CoverageType;
         public bool PackageCoverageApplied => booking.Coverage.PackageCoverageApplied;

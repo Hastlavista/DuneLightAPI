@@ -379,7 +379,7 @@ public class PackageCoverageCharacterizationTests
         AppointmentDto dto = await w.CompleteExisting(created.Id, w.CompleteRequest(SchedulingWorld.Future(10), paymentMethod: PaymentMethod.Cash));
 
         BookingDto b = Assert.Single(dto.Bookings);
-        Assert.Equal(BookingStatus.Completed, b.Status);
+        Assert.Equal(BookingStatusSummary.Completed, b.Status);
         Assert.True(b.IsPaid);
         Assert.Equal(50m, b.PaidAmount);
         Assert.Equal(package.Id, b.ClientPackageId); // history: the package that was used (and returned) is still shown

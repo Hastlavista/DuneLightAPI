@@ -329,7 +329,7 @@ public class BookingSettlementCharacterizationTests
         await w.PayBookingViaCheckout(bookingId, w.Client, 50m);
 
         BookingDto derived = await BookingDtoOf(w, created.Id);
-        Assert.Equal(BookingStatus.Confirmed, derived.Status);
+        Assert.Equal(BookingStatusSummary.Confirmed, derived.Status);
         Assert.True(derived.IsPaid); // settlement is independent of the participation/completion status
     }
 

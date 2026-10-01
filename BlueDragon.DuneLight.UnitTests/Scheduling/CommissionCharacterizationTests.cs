@@ -160,7 +160,7 @@ public class CommissionCharacterizationTests
 
         BookingDto dto = await w.SetBookingStatus(created.Id, w.Client, BookingStatus.Confirmed);
 
-        Assert.Equal(BookingStatus.Confirmed, dto.Status);
+        Assert.Equal(BookingStatusSummary.Confirmed, dto.Status);
         Assert.Empty(await w.LoadCommissionEntries());
     }
 

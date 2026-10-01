@@ -40,13 +40,6 @@ public interface IAppointmentHandler
     /// <summary>Kao <see cref="GetBooking(Guid, Guid, Guid)"/>, ali unutar zajedničke transakcije — vidi IUnitOfWork.</summary>
     Task<Booking> GetBooking(IUnitOfWork uow, Guid organizationId, Guid appointmentId, Guid clientId);
 
-    /// <summary>Zaključava JEDAN Booking redak (SELECT ... FOR UPDATE) po vlastitom Id-u, unutar zajedničke
-    /// transakcije — koristi BookingService.SetStatus (korekcija NoShow/Cancelled -&gt; Confirmed) i
-    /// BookingNoShowNotificationHandler/BookingCancelledNotificationHandler da PostgreSQL serijalizira
-    /// konkurentnu Outbox obradu s administrativnom korekcijom ISTOG Bookinga (vidi spec section 2-4/39). Null
-    /// ako redak ne postoji. Namjerno bez ikakvih navigacija/Include — najuži lock, ne dira Appointment/Client.</summary>
-    Task<Booking> GetBookingForUpdate(IUnitOfWork uow, Guid organizationId, Guid bookingId, CancellationToken cancellationToken = default);
-
     /// <summary>Batch verzija za listu klijenata u jednom upitu (izbjegava N+1) — unutar zajedničke transakcije.</summary>
     Task<List<Booking>> GetBookings(IUnitOfWork uow, Guid organizationId, Guid appointmentId, List<Guid> clientIds);
 
@@ -71,7 +64,7 @@ public interface IAppointmentHandler
     /// (kritično za CompleteExisting koji zna reconcilirati samo PODSKUP klijenata nakon P1 korekcije, vidi
     /// BookingService.ApplyIndividualCompletionCorrection — pozivatelj koji šalje samo klijente koje trenutno
     /// uređuje/odrađuje ne izražava "obriši sve ostale"). `pricing` se primjenjuje (Phase D3B2: na sudjelovanje, kroz
-    /// BookingPrice/BookingFactory) na SVE preživjele Booking retke (postojeće I nove) čiji status NIJE terminalan
+    /// ParticipationPrice/BookingFactory) na SVE preživjele Booking retke (postojeće I nove) čiji status NIJE terminalan
     /// (Completed/Cancelled/NoShow) — re-cijenjenje termina prije naplate (vidi spec section 18/20); već
     /// naplaćeni/otkazani/izostali retci se ne diraju. BookingPricing.Zero kad pozivatelj svejedno odmah nakon
     /// prepisuje sve retke (CompleteExisting).</summary>
@@ -108,11 +101,12 @@ public interface IAppointmentHandler
 
     Task<bool> HasAnyForClient(Guid organizationId, Guid clientId);
 
-    /// <summary>Ima li klijent ijedan budući termin statusa Scheduled s aktivnim Bookingom — koristi ClientService.Anonymize.</summary>
+    /// <summary>Ima li klijent ijedno Confirmed sudjelovanje na budućem segmentu termina statusa Scheduled — koristi
+    /// ClientService.Anonymize.</summary>
     Task<bool> HasFutureScheduledForClient(Guid organizationId, Guid clientId);
 
-    /// <summary>Batch broj Booking redaka statusa NoShow po klijentu, u jednom upitu (GROUP BY) — izbjegava N+1 kod liste/detalja klijenata.
-    /// Klijent bez ijednog NoShow bookinga izostaje iz rezultata.</summary>
+    /// <summary>Batch broj NoShow SUDJELOVANJA po klijentu (Phase M0: izvršna jedinica, ne Booking), u jednom upitu (GROUP
+    /// BY) — izbjegava N+1 kod liste/detalja klijenata. Klijent bez ijednog NoShow sudjelovanja izostaje iz rezultata.</summary>
     Task<Dictionary<Guid, int>> GetNoShowCountsByClientIds(Guid organizationId, List<Guid> clientIds);
 
     /// <summary>Zaključava Appointment redak (SELECT ... FOR UPDATE) unutar zajedničke transakcije, s uključenim
@@ -131,15 +125,16 @@ public interface IAppointmentHandler
     /// vidi AppointmentService). Null ako termin ne postoji.</summary>
     Task<Appointment> GetForUpdateWithBookings(IUnitOfWork uow, Guid organizationId, Guid appointmentId);
 
-    /// <summary>Broj Booking redaka statusa Confirmed na terminu — jedini izvor istine za "koliko je mjesta
-    /// zauzeto" na grupnom occurrenceu (vidi IWaitlistService, ne duplicirati ovu logiku drugdje).</summary>
-    Task<int> CountConfirmedBookings(Guid organizationId, Guid appointmentId);
+    /// <summary>Phase M0: broj sudjelovanja statusa Confirmed na SEGMENTU — jedini izvor istine za "koliko je mjesta
+    /// zauzeto" na grupnom occurrenceu (vidi IWaitlistService, ne duplicirati ovu logiku drugdje). Segmentno, ne po
+    /// Bookingu: Booking s više sudjelovanja zauzima mjesto samo na segmentima na kojima sudjeluje.</summary>
+    Task<int> CountConfirmedOnSegment(Guid organizationId, Guid appointmentSegmentId);
 
-    /// <summary>Kao <see cref="CountConfirmedBookings(Guid, Guid)"/>, ali čita iz uow.Context unutar zajedničke
+    /// <summary>Kao <see cref="CountConfirmedOnSegment(Guid, Guid)"/>, ali čita iz uow.Context unutar zajedničke
     /// transakcije (npr. odmah nakon <see cref="GetForUpdateWithGroup"/> zaključavanja) umjesto da otvara drugi
     /// DbContext usred transakcije — koristi WaitlistService.PromoteEligibleWaiters i BookingService (ad-hoc/
     /// check-in guest Booking) da ne dupliciraju istu COUNT logiku.</summary>
-    Task<int> CountConfirmedBookings(IUnitOfWork uow, Guid organizationId, Guid appointmentId);
+    Task<int> CountConfirmedOnSegment(IUnitOfWork uow, Guid organizationId, Guid appointmentSegmentId);
 
     /// <summary>Agregirane brojke dolazaka jednog klijenta za Povijest klijenta — jedan upit nad Booking (nakon
     /// uvođenja Bookinga individualni i grupni termini dijele istu tablicu, za razliku od stare podjele

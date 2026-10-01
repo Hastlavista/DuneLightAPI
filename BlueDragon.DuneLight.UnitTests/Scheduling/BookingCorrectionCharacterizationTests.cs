@@ -52,7 +52,7 @@ public class BookingCorrectionCharacterizationTests
 
         BookingDto dto = await w.SetBookingStatus(completed.Id, w.Client, BookingStatus.Confirmed);
 
-        Assert.Equal(BookingStatus.Confirmed, dto.Status);
+        Assert.Equal(BookingStatusSummary.Confirmed, dto.Status);
         Appointment a = await w.LoadAppointment(completed.Id);
         Assert.Equal(AppointmentStatus.Scheduled, a.Status); // "Completed = nothing left unresolved" is re-opened
         Assert.Equal(2, a.Bookings.Single().StatusVersion);
@@ -236,7 +236,7 @@ public class BookingCorrectionCharacterizationTests
 
         BookingDto dto = await w.SetBookingStatus(created.Id, w.Client, BookingStatus.Confirmed);
 
-        Assert.Equal(BookingStatus.Confirmed, dto.Status);
+        Assert.Equal(BookingStatusSummary.Confirmed, dto.Status);
         Assert.Equal(0, (await w.LoadBooking(created.Id, w.Client)).StatusVersion);
         Assert.Empty(await w.LoadAuditLog(created.Id));
     }
@@ -267,7 +267,7 @@ public class BookingCorrectionCharacterizationTests
 
         BookingDto dto = await w.SetBookingStatus(created.Id, w.Client, BookingStatus.Confirmed);
 
-        Assert.Equal(BookingStatus.Confirmed, dto.Status);
+        Assert.Equal(BookingStatusSummary.Confirmed, dto.Status);
         Booking b = await w.LoadBooking(created.Id, w.Client);
         Assert.Equal(2, b.StatusVersion);
         Assert.Equal("absent", b.CancellationReason); // the previous reason is not cleared
@@ -301,7 +301,7 @@ public class BookingCorrectionCharacterizationTests
 
         BookingDto dto = await w.SetBookingStatus(created.Id, w.Client, BookingStatus.Confirmed);
 
-        Assert.Equal(BookingStatus.Confirmed, dto.Status);
+        Assert.Equal(BookingStatusSummary.Confirmed, dto.Status);
         Assert.Equal(PaymentStatus.Completed, Assert.Single(await w.LoadPayments(bookingId)).Status);
     }
 

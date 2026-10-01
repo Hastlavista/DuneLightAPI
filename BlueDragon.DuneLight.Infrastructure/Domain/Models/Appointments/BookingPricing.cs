@@ -4,7 +4,7 @@ namespace BlueDragon.DuneLight.Infrastructure.Domain.Models.Appointments;
 
 /// <summary>
 /// Cjenovno stanje jednog (jedinog) sudjelovanja Bookinga — vidi <see cref="Utils.BookingFactory"/> (nastanak) i
-/// <see cref="Utils.BookingPrice"/> (re-cijenjenje). Vrijednosti razrješava pozivatelj (IPricingService + eventualni
+/// <see cref="Utils.ParticipationPrice"/> (re-cijenjenje). Vrijednosti razrješava pozivatelj (IPricingService + eventualni
 /// ručni iznos); ovaj tip ih samo prenosi, ne računa.
 ///
 /// Phase D3B2: BaseAmount/BaseAmountSource su ISTINIT snapshot razrješavanja cjenika (ResolvePriceResponse.Price/Source)

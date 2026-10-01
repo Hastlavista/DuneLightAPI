@@ -17,17 +17,17 @@ namespace BlueDragon.DuneLight.Infrastructure.Outbox.Handlers;
 /// <summary>Pretvara booking.cancelled.v1 u logičan Notification (vidi spec section 41). Isti zaključavanje-pa-
 /// odluči obrazac i isto occurrence-svjesno rasuđivanje kao BookingNoShowNotificationHandler (vidi tamo za punu
 /// napomenu) — serijalizira se s BookingService.SetStatus korekcijom (Cancelled -&gt; Confirmed, vidi spec section
-/// 13) preko FOR UPDATE na istom Booking retku, i razlikuje OVU konkretnu Cancelled pojavu (SourceVersion =
-/// Booking.StatusVersion u trenutku emitiranja) od bilo koje kasnije pojave na istom (grupnom, ciklirajućem)
-/// Bookingu.</summary>
+/// 13) preko FOR UPDATE na istom retku SUDJELOVANJA (Phase M0), i razlikuje OVU konkretnu Cancelled pojavu (SourceVersion =
+/// StatusVersion sudjelovanja u trenutku emitiranja) od bilo koje kasnije pojave na istom (grupnom, ciklirajućem)
+/// sudjelovanju.</summary>
 public class BookingCancelledNotificationHandler : IOutboxMessageHandler
 {
-    private readonly IAppointmentHandler _appointmentHandler;
+    private readonly IBookingSegmentParticipationHandler _participationHandler;
     private readonly INotificationHandler _notificationHandler;
 
-    public BookingCancelledNotificationHandler(IAppointmentHandler appointmentHandler, INotificationHandler notificationHandler)
+    public BookingCancelledNotificationHandler(IBookingSegmentParticipationHandler participationHandler, INotificationHandler notificationHandler)
     {
-        _appointmentHandler = appointmentHandler;
+        _participationHandler = participationHandler;
         _notificationHandler = notificationHandler;
     }
 
@@ -40,7 +40,7 @@ public class BookingCancelledNotificationHandler : IOutboxMessageHandler
             throw new InvalidOperationException($"Prazan/nevaljan payload za {Type}.");
 
         bool exists = await _notificationHandler.ExistsForSource(
-            uow, @event.OrganizationId, NotificationType.BookingCancelled, NotificationSourceType.Booking, @event.BookingId, @event.StatusVersion);
+            uow, @event.OrganizationId, NotificationType.BookingCancelled, NotificationSourceType.Participation, @event.ParticipationId, @event.StatusVersion);
         if (exists)
             return;
 
@@ -49,15 +49,18 @@ public class BookingCancelledNotificationHandler : IOutboxMessageHandler
         if (client == null)
             throw new InvalidOperationException($"Client {@event.ClientId} nije pronađen za organizaciju {@event.OrganizationId}.");
 
-        Booking booking = await _appointmentHandler.GetBookingForUpdate(uow, @event.OrganizationId, @event.BookingId, cancellationToken);
+        // Phase M0: zaključava SUDJELOVANJE (ne Booking redak) — serijalizira se s korekcijom istog sudjelovanja.
+        Booking booking = await _participationHandler.GetBookingWithLockedParticipation(
+            uow, @event.OrganizationId, @event.ParticipationId, cancellationToken);
         if (booking == null)
-            throw new InvalidOperationException($"Booking {@event.BookingId} nije pronađen za organizaciju {@event.OrganizationId}.");
+            throw new InvalidOperationException($"Sudjelovanje {@event.ParticipationId} nije pronađeno za organizaciju {@event.OrganizationId}.");
+        BookingSegmentParticipation participation = BookingParticipations.ById(booking, @event.ParticipationId);
 
         // Pending SAMO ako je booking JOŠ na TOČNO ovoj Cancelled pojavi (isti StatusVersion kao event) —
         // korigiran (Cancelled -> Confirmed) ILI odavno prošao kroz noviju pojavu, oboje daju Cancelled (vidi
         // spec section 14/37/42).
         NotificationStatus status = client.IsAnonymized ||
-            BookingParticipations.StatusOf(booking) != BookingStatus.Cancelled || BookingParticipations.StatusVersionOf(booking) != @event.StatusVersion
+            participation.Status != ParticipationStatus.Cancelled || participation.StatusVersion != @event.StatusVersion
                 ? NotificationStatus.Cancelled
                 : NotificationStatus.Pending;
 
@@ -65,6 +68,7 @@ public class BookingCancelledNotificationHandler : IOutboxMessageHandler
         {
             appointmentId = @event.AppointmentId,
             bookingId = @event.BookingId,
+            participationId = @event.ParticipationId,
             companyId = @event.CompanyId
         }, OutboxJsonOptions.Instance);
 
@@ -74,8 +78,8 @@ public class BookingCancelledNotificationHandler : IOutboxMessageHandler
             OrganizationId = @event.OrganizationId,
             ClientId = @event.ClientId,
             Type = NotificationType.BookingCancelled,
-            SourceType = NotificationSourceType.Booking,
-            SourceId = @event.BookingId,
+            SourceType = NotificationSourceType.Participation,
+            SourceId = @event.ParticipationId,
             SourceVersion = @event.StatusVersion,
             Status = status,
             Data = data,

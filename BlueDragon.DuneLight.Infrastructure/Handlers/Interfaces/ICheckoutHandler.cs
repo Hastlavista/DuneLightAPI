@@ -16,7 +16,7 @@ public interface ICheckoutHandler
 
     /// <summary>Zaključava Checkout redak (SELECT ... FOR UPDATE), bare redak bez includa — koristi CheckoutService
     /// prije svake mutacije (item/payment/complete/cancel) da konkurentni zahtjevi nad ISTIM checkoutom čekaju na
-    /// lock pa svježe čitaju nakon commita prvog (isti obrazac kao IPaymentHandler.GetBookingForUpdate/
+    /// lock pa svježe čitaju nakon commita prvog (isti obrazac kao IBookingSegmentParticipationHandler.LockForUpdate/
     /// IAppointmentHandler.GetForUpdateWithGroup). Null ako ne postoji.</summary>
     Task<Checkout> GetForUpdate(IUnitOfWork uow, Guid organizationId, Guid id);
 
@@ -60,11 +60,6 @@ public interface ICheckoutHandler
 
     /// <summary>Kao <see cref="GetItemsForParticipation(Guid, Guid)"/>, ali unutar zajedničke transakcije.</summary>
     Task<List<CheckoutItem>> GetItemsForParticipation(IUnitOfWork uow, Guid organizationId, Guid participationId);
-
-    /// <summary>Phase D3B3B: zaključava retke sudjelovanja (SELECT ... FOR UPDATE, stabilan redoslijed) — svako novčano
-    /// namirenje istog sudjelovanja (bilo kojim checkoutom ili check-in plaćanjem) se time serijalizira, pa dva
-    /// konkurentna plaćanja ne mogu oba namiriti isti preostali dug.</summary>
-    Task LockParticipations(IUnitOfWork uow, Guid organizationId, IEnumerable<Guid> participationIds);
 
     /// <summary>Phase D3B3B: sudjelovanja koja namiruju stavke usluge ovog checkouta.</summary>
     Task<List<Guid>> GetServiceParticipationIds(IUnitOfWork uow, Guid organizationId, Guid checkoutId);

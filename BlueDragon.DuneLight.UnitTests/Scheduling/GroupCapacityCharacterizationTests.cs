@@ -171,7 +171,7 @@ public class GroupCapacityCharacterizationTests
         AppointmentAuditLog audit = Assert.Single(await w.LoadAuditLog(occurrence.Id.Value), l => l.ChangeType == "BookingStatus");
         Assert.Equal("Confirmed", audit.OldValue);
         Assert.Equal("Cancelled", audit.NewValue);
-        OutboxMessage_Assert.SingleCancelled(await w.LoadOutbox(), b.Id.Value, expectedVersion: 1);
+        OutboxMessage_Assert.SingleCancelled(await w.LoadOutbox(), b.Id.Value, b.Participations.Single().Id.Value, expectedVersion: 1);
         // The other member is untouched.
         Assert.Equal(BookingStatus.Confirmed, (await w.LoadAppointment(occurrence.Id.Value)).Bookings.Single(x => x.ClientId == members[1].Id).Status);
     }
@@ -189,7 +189,7 @@ public class GroupCapacityCharacterizationTests
 
         BookingDto dto = await w.AddGuest(occurrence, guest);
 
-        Assert.Equal(BookingStatus.Confirmed, dto.Status);
+        Assert.Equal(BookingStatusSummary.Confirmed, dto.Status);
         Booking b = (await w.LoadAppointment(occurrence.Id.Value)).Bookings.Single(x => x.ClientId == guest.Id);
         Assert.Equal(15m, b.Amount);
         Assert.Equal(0, b.StatusVersion);
@@ -217,7 +217,7 @@ public class GroupCapacityCharacterizationTests
 
         BookingDto dto = await w.AddGuest(occurrence, members[0]);
 
-        Assert.Equal(BookingStatus.Confirmed, dto.Status);
+        Assert.Equal(BookingStatusSummary.Confirmed, dto.Status);
         Assert.Single((await w.LoadAppointment(occurrence.Id.Value)).Bookings);
     }
 
@@ -238,7 +238,7 @@ public class GroupCapacityCharacterizationTests
 
         BookingDto dto = await w.AddGuest(occurrence, guest);
 
-        Assert.Equal(BookingStatus.Confirmed, dto.Status);
+        Assert.Equal(BookingStatusSummary.Confirmed, dto.Status);
         Assert.Equal(3, (await w.LoadAppointment(occurrence.Id.Value)).Bookings.Count); // 3 Bookings > capacity 2, 1 Confirmed
     }
 
@@ -264,7 +264,7 @@ public class GroupCapacityCharacterizationTests
             DefaultTrainerId = group.DefaultTrainerId, DefaultRoomId = group.DefaultRoomId
         });
         BookingDto dto = await w.AddGuest(occurrence, guest2);
-        Assert.Equal(BookingStatus.Confirmed, dto.Status);
+        Assert.Equal(BookingStatusSummary.Confirmed, dto.Status);
     }
 
     [Fact]
@@ -378,7 +378,7 @@ public class GroupCapacityCharacterizationTests
 
         BookingDto dto = await w.SetBookingStatus(occurrence.Id.Value, members[0], BookingStatus.Confirmed);
 
-        Assert.Equal(BookingStatus.Confirmed, dto.Status);
+        Assert.Equal(BookingStatusSummary.Confirmed, dto.Status);
         Assert.Equal(2, (await w.LoadBooking(occurrence.Id.Value, members[0])).StatusVersion);
     }
 
@@ -390,7 +390,7 @@ public class GroupCapacityCharacterizationTests
 
         BookingDto dto = await w.SetBookingStatus(occurrence.Id.Value, members[0], BookingStatus.Confirmed);
 
-        Assert.Equal(BookingStatus.Confirmed, dto.Status);
+        Assert.Equal(BookingStatusSummary.Confirmed, dto.Status);
         Assert.Equal(0, (await w.LoadBooking(occurrence.Id.Value, members[0])).StatusVersion);
     }
 
@@ -409,7 +409,7 @@ public class GroupCapacityCharacterizationTests
         // Capacity is only enforced for FUTURE occurrences: a historical correction may exceed the nominal capacity.
         BookingDto dto = await w.SetBookingStatus(past.Id.Value, returning, BookingStatus.Confirmed);
 
-        Assert.Equal(BookingStatus.Confirmed, dto.Status);
+        Assert.Equal(BookingStatusSummary.Confirmed, dto.Status);
         Assert.Equal(2, (await w.LoadAppointment(past.Id.Value)).Bookings.Count(b => b.Status == BookingStatus.Confirmed));
     }
 
@@ -420,10 +420,12 @@ public class GroupCapacityCharacterizationTests
 internal static class OutboxMessage_Assert
 {
     public static void SingleCancelled(
-        List<BlueDragon.DuneLight.Infrastructure.Domain.Models.Outbox.OutboxMessage> outbox, Guid bookingId, int expectedVersion)
+        List<BlueDragon.DuneLight.Infrastructure.Domain.Models.Outbox.OutboxMessage> outbox, Guid bookingId, Guid participationId, int expectedVersion)
     {
+        // M0: the occurrence belongs to the PARTICIPATION (key = participation + its StatusVersion); the Booking is context.
         var message = Assert.Single(outbox, m => m.Type == OutboxEventTypes.BookingCancelledV1);
-        Assert.Equal($"booking-cancelled:{bookingId}:{expectedVersion}", message.IdempotencyKey);
+        Assert.Equal($"booking-cancelled:{participationId}:{expectedVersion}", message.IdempotencyKey);
         Assert.Contains(bookingId.ToString(), message.Payload, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains(participationId.ToString(), message.Payload, StringComparison.OrdinalIgnoreCase);
     }
 }

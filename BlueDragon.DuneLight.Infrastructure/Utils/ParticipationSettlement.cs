@@ -45,9 +45,6 @@ public readonly record struct ParticipationSettlement(
         return new ParticipationSettlement(price, covered, monetaryDue, settled, outstanding < 0m ? 0m : outstanding);
     }
 
-    /// <summary>Kompatibilni jednostruki model: namirenje Bookinga = namirenje njegovog jedinog sudjelovanja.</summary>
-    public static ParticipationSettlement OfBooking(Booking booking) => Of(BookingParticipations.GetSingleParticipation(booking));
-
     /// <summary>Zbroj aktivnih alokacija (voidan Payment se ne broji) preko zadanih stavki, bez dvostrukog brojanja.</summary>
     public static decimal SettledAmountOf(IEnumerable<CheckoutItem> items) => items
         .SelectMany(i => i.Allocations)
@@ -56,7 +53,11 @@ public readonly record struct ParticipationSettlement(
         .Sum(g => g.First().Amount);
 
     /// <summary>Puna povijest Paymenta sudjelovanja (uklj. voidane), distinct, najnoviji prvi.</summary>
-    public static List<Payment> PaymentsOf(BookingSegmentParticipation participation) => participation.CheckoutItems
+    public static List<Payment> PaymentsOf(BookingSegmentParticipation participation) => PaymentsOf(new[] { participation });
+
+    /// <summary>Phase M0: ista povijest preko više sudjelovanja (npr. Booking read-model), distinct, najnoviji prvi.</summary>
+    public static List<Payment> PaymentsOf(IEnumerable<BookingSegmentParticipation> participations) => participations
+        .SelectMany(p => p.CheckoutItems)
         .SelectMany(i => i.Allocations)
         .Select(a => a.Payment)
         .Where(p => p != null)
@@ -64,8 +65,6 @@ public readonly record struct ParticipationSettlement(
         .Select(g => g.First())
         .OrderByDescending(p => p.CreatedAt)
         .ToList();
-
-    public static List<Payment> PaymentsOfBooking(Booking booking) => PaymentsOf(BookingParticipations.GetSingleParticipation(booking));
 }
 
 /// <summary>

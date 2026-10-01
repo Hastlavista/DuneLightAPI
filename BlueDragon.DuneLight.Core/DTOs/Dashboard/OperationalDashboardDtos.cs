@@ -68,7 +68,7 @@ public class DashboardBookingSummaryDto
     public Guid BookingId { get; set; }
     public Guid ClientId { get; set; }
     public string ClientName { get; set; }
-    public BookingStatus BookingStatus { get; set; }
+    public BookingStatusSummary BookingStatus { get; set; }
     public decimal PaidAmount { get; set; }
     public decimal OutstandingAmount { get; set; }
     public bool IsPaid { get; set; }

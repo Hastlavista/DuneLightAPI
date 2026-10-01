@@ -36,6 +36,7 @@ public class ClientPackageService : IClientPackageService, IPackageConsumptionLe
     private readonly IOrganizationCalendarService _organizationCalendarService;
     private readonly IOrganizationSettingsService _organizationSettingsService;
     private readonly ICheckoutHandler _checkoutHandler;
+    private readonly IBookingSegmentParticipationHandler _participationHandler;
 
     public ClientPackageService(
         IClientPackageHandler clientPackageHandler,
@@ -45,9 +46,11 @@ public class ClientPackageService : IClientPackageService, IPackageConsumptionLe
         IPricingService pricingService,
         IOrganizationCalendarService organizationCalendarService,
         IOrganizationSettingsService organizationSettingsService,
-        ICheckoutHandler checkoutHandler)
+        ICheckoutHandler checkoutHandler,
+        IBookingSegmentParticipationHandler participationHandler)
     {
         _checkoutHandler = checkoutHandler;
+        _participationHandler = participationHandler;
         _organizationCalendarService = organizationCalendarService;
         _organizationSettingsService = organizationSettingsService;
         _clientPackageHandler = clientPackageHandler;
@@ -162,15 +165,15 @@ public class ClientPackageService : IClientPackageService, IPackageConsumptionLe
     }
 
     public async Task<PackageConsumption> Consume(
-        IUnitOfWork uow, Guid organizationId, Guid userId, Booking booking, BookingExecutionContext execution,
+        IUnitOfWork uow, Guid organizationId, Guid userId, BookingSegmentParticipation participation, BookingExecutionContext execution,
         Guid clientPackageId, BookingStatus trigger)
     {
         PackageConsumptionTiming timing = await _organizationSettingsService.GetPackageConsumptionTiming(organizationId);
         if (!PackageConsumptionPolicy.ConsumesOn(timing, trigger))
             return null;
 
-        BookingSegmentParticipation participation = BookingParticipations.GetSingleParticipation(booking);
-        PackageConsumption active = PackageConsumptions.ActiveOf(booking);
+        ArgumentNullException.ThrowIfNull(participation);
+        PackageConsumption active = PackageConsumptions.ActiveOf(participation);
         if (active != null)
         {
             if (active.ClientPackageId == clientPackageId)
@@ -187,7 +190,7 @@ public class ClientPackageService : IClientPackageService, IPackageConsumptionLe
         // Phase D3B3B: jedino pravilo isključivosti paket/novac — sudjelovanje s aktivnim novčanim namirenjem (bilo kojim
         // checkoutom) ne smije potrošiti paket. Sudjelovanje se zaključava kao i kod svakog novčanog namirenja, pa
         // konkurentno plaćanje i potrošnja paketa ne mogu oboje proći.
-        await _checkoutHandler.LockParticipations(uow, organizationId, new[] { participation.Id.GetValueOrDefault() });
+        await _participationHandler.LockForUpdate(uow, organizationId, new[] { participation.Id.GetValueOrDefault() });
         SettlementExclusivityPolicy.EnsurePackageAllowed(participation, ParticipationSettlement.SettledAmountOf(
             await _checkoutHandler.GetItemsForParticipation(uow, organizationId, participation.Id.GetValueOrDefault())));
         if (await _clientPackageHandler.HasActiveConsumption(uow, participation.Id.GetValueOrDefault()))
@@ -226,9 +229,9 @@ public class ClientPackageService : IClientPackageService, IPackageConsumptionLe
     }
 
     public async Task<bool> ReverseActive(
-        IUnitOfWork uow, Guid organizationId, Guid userId, Booking booking, PackageConsumptionReversalReason reason)
+        IUnitOfWork uow, Guid organizationId, Guid userId, BookingSegmentParticipation participation, PackageConsumptionReversalReason reason)
     {
-        PackageConsumption active = PackageConsumptions.ActiveOf(booking);
+        PackageConsumption active = PackageConsumptions.ActiveOf(participation);
         if (active == null)
             return false;
 

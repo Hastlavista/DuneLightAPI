@@ -76,7 +76,7 @@ public class AppointmentCreateCharacterizationTests
         Assert.Equal(w.Service.Id, dto.ServiceId);
         Assert.Equal(SchedulingWorld.DefaultServiceDuration, dto.DurationMinutes);
         BookingDto booking = Assert.Single(dto.Bookings);
-        Assert.Equal(BookingStatus.Confirmed, booking.Status);
+        Assert.Equal(BookingStatusSummary.Confirmed, booking.Status);
         Assert.Equal(SchedulingWorld.DefaultServicePrice, booking.OutstandingAmount);
         Assert.False(booking.IsPaid);
         SchedulingAssert.HasNoWarnings(dto);

@@ -29,10 +29,10 @@ public class CommissionEntryHandler : ICommissionEntryHandler
         await uow.Context.SaveChangesAsync();
     }
 
-    public Task<CommissionEntry> GetActiveForBooking(IUnitOfWork uow, Guid organizationId, Guid bookingId)
+    public Task<CommissionEntry> GetActiveForParticipation(IUnitOfWork uow, Guid organizationId, Guid participationId)
     {
         return uow.Context.CommissionEntries.FirstOrDefaultAsync(e =>
-            e.OrganizationId == organizationId && e.BookingId == bookingId && e.Status == CommissionEntryStatus.Earned);
+            e.OrganizationId == organizationId && e.BookingSegmentParticipationId == participationId && e.Status == CommissionEntryStatus.Earned);
     }
 
     public async Task Update(IUnitOfWork uow, CommissionEntry entry)

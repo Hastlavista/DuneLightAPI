@@ -183,7 +183,7 @@ public class PackageValidityCalendarTests
             .SingleAsync(a => a.Id == appointmentId);
         Booking booking = appointment.Bookings.Single(b => b.ClientId == client.Id);
         PackageConsumption consumption = await w.Resolve<IPackageConsumptionLedgerService>().Consume(
-            uow, w.OrganizationId, w.ActorUserId, booking, ExecutionContextResolver.ForBooking(appointment, booking), package.Id.Value,
+            uow, w.OrganizationId, w.ActorUserId, booking.Participations.Single(), ExecutionContextResolver.ForBooking(appointment, booking), package.Id.Value,
             BookingStatus.Completed);
         await uow.CommitAsync();
         return consumption;

@@ -20,14 +20,14 @@ namespace BlueDragon.DuneLight.Infrastructure.Services;
 /// </summary>
 public interface IPackageConsumptionLedgerService
 {
-    /// <summary>Troši paket za jedino sudjelovanje Bookinga na datum izvođenja usluge (F-08) — ako postavka organizacije
+    /// <summary>Phase M0: adresira se SUDJELOVANJE (izvršna jedinica), nikad Booking. Troši paket za to sudjelovanje na datum izvođenja usluge (F-08) — ako postavka organizacije
     /// (PackageConsumptionTiming) predviđa potrošnju na <paramref name="trigger"/> prijelazu; inače null bez ikakve
     /// promjene. Vraća aktivnu potrošnju (novu ili postojeću za isti paket).</summary>
     Task<PackageConsumption> Consume(
-        IUnitOfWork uow, Guid organizationId, Guid userId, Booking booking, BookingExecutionContext execution,
+        IUnitOfWork uow, Guid organizationId, Guid userId, BookingSegmentParticipation participation, BookingExecutionContext execution,
         Guid clientPackageId, BookingStatus trigger);
 
     /// <summary>Poništava aktivnu potrošnju sudjelovanja (vraća ulazak u paket) — false ako aktivne potrošnje nema.</summary>
     Task<bool> ReverseActive(
-        IUnitOfWork uow, Guid organizationId, Guid userId, Booking booking, PackageConsumptionReversalReason reason);
+        IUnitOfWork uow, Guid organizationId, Guid userId, BookingSegmentParticipation participation, PackageConsumptionReversalReason reason);
 }

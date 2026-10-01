@@ -48,6 +48,7 @@ public class GroupService : IGroupService
     private readonly IUnitOfWorkFactory _unitOfWorkFactory;
 
     private readonly IOrganizationCalendarService _organizationCalendarService;
+    private readonly IBookingSegmentParticipationHandler _participationHandler;
 
     public GroupService(
         IGroupHandler groupHandler,
@@ -69,9 +70,11 @@ public class GroupService : IGroupService
         IWaitlistPromotionService waitlistPromotionService,
         IOutboxWriter outboxWriter,
         IUnitOfWorkFactory unitOfWorkFactory,
-        IOrganizationCalendarService organizationCalendarService)
+        IOrganizationCalendarService organizationCalendarService,
+        IBookingSegmentParticipationHandler participationHandler)
     {
         _organizationCalendarService = organizationCalendarService;
+        _participationHandler = participationHandler;
         _groupHandler = groupHandler;
         _auditLogHandler = auditLogHandler;
         _appointmentAuditLogHandler = appointmentAuditLogHandler;
@@ -568,49 +571,48 @@ public class GroupService : IGroupService
             List<Appointment> futureAppointments = await _appointmentHandler.GetFutureScheduledForGroup(uow, organizationId, groupId);
             foreach (Appointment futureAppointment in futureAppointments)
             {
-                Booking booking = futureAppointment.Bookings.FirstOrDefault(b => b.ClientId == member.ClientId && BookingParticipations.StatusOf(b) == BookingStatus.Confirmed);
+                // Phase M0: Booking-wide otkazivanje bivšeg člana (A) — svako AKTIVNO (Confirmed) sudjelovanje njegovog
+                // Bookinga prelazi u Cancelled (zaključano, redoslijed po Id-u); terminalna sudjelovanja ostaju povijest.
+                Booking booking = futureAppointment.Bookings.FirstOrDefault(b =>
+                    b.ClientId == member.ClientId && b.Participations.Any(p => p.Status == ParticipationStatus.Confirmed));
                 if (booking == null)
                     continue;
 
-                BookingStatus oldBookingStatus = BookingParticipations.StatusOf(booking);
-                BookingLifecycle.TrySetStatus(booking, BookingStatus.Cancelled);
-                BookingLifecycle.SetCancellationReason(booking, "Klijent uklonjen iz grupe");
-                booking.UpdatedAt = now;
-                booking.UpdatedBy = userId;
-                await _appointmentHandler.UpdateBooking(uow, booking);
+                List<BookingSegmentParticipation> active = booking.Participations
+                    .Where(p => p.Status == ParticipationStatus.Confirmed)
+                    .OrderBy(p => p.Id)
+                    .ToList();
+                await _participationHandler.LockForUpdate(uow, organizationId, active.Select(p => p.Id.GetValueOrDefault()));
 
-                // Isti obrazac kao BookingService.SetStatus/AppointmentService.ChangeToTerminalStatus — bez ovoga
-                // bi ovaj SUSTAVOM izveden (iz GroupMember odjave) Booking prijelaz ostao bez traga tko/kada/zašto
-                // (vidi audit-cleanup spec section 20/60, "GroupService.RemoveMember bypassing history").
-                await _appointmentAuditLogHandler.Add(uow, new AppointmentAuditLog
+                foreach (BookingSegmentParticipation participation in active)
                 {
-                    Id = Guid.NewGuid(),
-                    AppointmentId = futureAppointment.Id.GetValueOrDefault(),
-                    BookingId = booking.Id,
-                    ChangeType = "BookingStatus",
-                    OldValue = oldBookingStatus.ToString(),
-                    NewValue = BookingParticipations.StatusOf(booking).ToString(),
-                    StatusVersion = BookingParticipations.StatusVersionOf(booking),
-                    ChangedAt = now,
-                    ChangedBy = userId
-                });
+                    ParticipationStatus oldStatus = participation.Status;
+                    ParticipationLifecycle.TrySetStatus(participation, ParticipationStatus.Cancelled);
+                    ParticipationLifecycle.SetCancellationReason(participation, "Klijent uklonjen iz grupe");
+                    booking.UpdatedAt = now;
+                    booking.UpdatedBy = userId;
+                    await _appointmentHandler.UpdateBooking(uow, booking);
 
-                // Isti booking.cancelled.v1 event kao izravno otkazivanje Bookinga — izvor (GroupMember odjava)
-                // ne mijenja event-tip/handler (vidi spec section 34). Ista uow transakcija kao mutacija iznad.
-                await _outboxWriter.Add(
-                    uow, organizationId, OutboxEventTypes.BookingCancelledV1,
-                    new BookingCancelledEvent
+                    // Isti obrazac kao BookingService/AppointmentService.ChangeToTerminalStatus — bez ovoga bi ovaj SUSTAVOM
+                    // izveden (iz GroupMember odjave) prijelaz ostao bez traga tko/kada/zašto.
+                    await _appointmentAuditLogHandler.Add(uow, new AppointmentAuditLog
                     {
-                        OrganizationId = organizationId,
-                        BookingId = booking.Id.GetValueOrDefault(),
+                        Id = Guid.NewGuid(),
                         AppointmentId = futureAppointment.Id.GetValueOrDefault(),
-                        ClientId = booking.ClientId,
-                        CompanyId = futureAppointment.CompanyId,
-                        StatusVersion = BookingParticipations.StatusVersionOf(booking),
-                        OccurredAt = now
-                    },
-                    now,
-                    idempotencyKey: $"booking-cancelled:{booking.Id.GetValueOrDefault()}:{BookingParticipations.StatusVersionOf(booking)}");
+                        BookingId = booking.Id,
+                        BookingSegmentParticipationId = participation.Id,
+                        ChangeType = "BookingStatus",
+                        OldValue = oldStatus.ToString(),
+                        NewValue = participation.Status.ToString(),
+                        StatusVersion = participation.StatusVersion,
+                        ChangedAt = now,
+                        ChangedBy = userId
+                    });
+
+                    // Isti booking.cancelled.v1 event kao izravno otkazivanje — izvor (GroupMember odjava) ne mijenja
+                    // event-tip/handler (vidi spec section 34). Ista uow transakcija kao mutacija iznad.
+                    await ParticipationEvents.WriteCancelled(_outboxWriter, uow, organizationId, futureAppointment, booking, participation);
+                }
 
                 // Oslobođeno mjesto -> pokušaj promocije liste čekanja za OVAJ occurrence (spec section 39) —
                 // ista promocijska logika kao izravno otkazivanje Bookinga (BookingService), ne duplicirana ovdje.
@@ -1397,7 +1399,7 @@ public class GroupService : IGroupService
             Form = AppointmentForm.Group,
             GroupId = a.GroupId,
             GroupName = groupName,
-            AttendanceCount = a.Bookings.Count(b => BookingParticipations.StatusOf(b) == BookingStatus.Completed),
+            AttendanceCount = a.Bookings.SelectMany(b => b.Participations).Count(p => p.Status == ParticipationStatus.Completed),
             ExpectedCount = expectedCount
         };
     }

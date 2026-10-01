@@ -14,7 +14,7 @@ namespace BlueDragon.DuneLight.Infrastructure.Utils;
 /// GroupService.AddMember (sinkronizacija članstva na već generirane buduće termine), tako da ne postoje dvije
 /// implementacije "confirmedCount &lt; capacity" s različitim locking semantikama. Zaključava Appointment redak
 /// (FOR UPDATE) i broji Confirmed Bookinge POD tim lockom — isti lock i izvor istine
-/// (IAppointmentHandler.CountConfirmedBookings) kao WaitlistService.PromoteEligibleWaiters, tako da dva
+/// (IAppointmentHandler.CountConfirmedOnSegment) kao WaitlistService.PromoteEligibleWaiters, tako da dva
 /// konkurentna zahtjeva za posljednje slobodno mjesto (bilo AddBooking, korekcija, ili AddMember sinkronizacija)
 /// ne mogu oba proći — drugi poziv čeka na lock pa svježe broji nakon commita/rollbacka prvog. No-op za termine
 /// koji nisu Form=Group (ili grupa nedostaje). Poziva se SAMO za buduće occurrence — pozivatelj je odgovoran
@@ -29,7 +29,9 @@ public static class GroupCapacityGuard
         if (locked == null || locked.Form != AppointmentForm.Group || locked.Group == null)
             return;
 
-        int confirmedCount = await appointmentHandler.CountConfirmedBookings(uow, organizationId, appointmentId);
+        // Phase M0: kapacitet je po (jedinom grupnom) segmentu — broje se Confirmed sudjelovanja tog segmenta.
+        int confirmedCount = await appointmentHandler.CountConfirmedOnSegment(
+            uow, organizationId, AppointmentSegments.GetSingleExecutionSegment(locked).Id.GetValueOrDefault());
         if (confirmedCount >= locked.Group.Capacity)
             throw new BusinessRuleException(
                 ErrorCodes.GroupCapacityReached, "Grupa je popunjena — kapacitet je dosegnut.",

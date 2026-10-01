@@ -41,7 +41,7 @@ public class BookingNoShowAndCancellationCharacterizationTests
 
         BookingDto dto = await w.SetBookingStatus(created.Id, w.Client, BookingStatus.NoShow, "did not show");
 
-        Assert.Equal(BookingStatus.NoShow, dto.Status);
+        Assert.Equal(BookingStatusSummary.NoShow, dto.Status);
         Appointment a = await w.LoadAppointment(created.Id);
         Assert.Equal(AppointmentStatus.Scheduled, a.Status); // the frame does not follow a single-booking no-show
         Booking b = a.Bookings.Single(x => x.ClientId == w.Client.Id);
@@ -81,7 +81,7 @@ public class BookingNoShowAndCancellationCharacterizationTests
         Booking b = await w.LoadBooking(created.Id, w.Client);
         OutboxMessage message = Assert.Single(await w.LoadOutbox());
         Assert.Equal(OutboxEventTypes.BookingNoShowV1, message.Type);
-        Assert.Equal($"booking-noshow:{b.Id}:1", message.IdempotencyKey);
+        Assert.Equal($"booking-noshow:{b.Participations.Single().Id}:1", message.IdempotencyKey); // M0: participation occurrence
         Assert.Equal(OutboxMessageStatus.Pending, message.Status);
     }
 
@@ -204,7 +204,7 @@ public class BookingNoShowAndCancellationCharacterizationTests
 
         BookingDto dto = await w.SetBookingStatus(created.Id, w.Client, BookingStatus.Cancelled, "client cancelled");
 
-        Assert.Equal(BookingStatus.Cancelled, dto.Status);
+        Assert.Equal(BookingStatusSummary.Cancelled, dto.Status);
         Appointment a = await w.LoadAppointment(created.Id);
         Assert.Equal(AppointmentStatus.Scheduled, a.Status);
         Booking b = a.Bookings.Single(x => x.ClientId == w.Client.Id);
@@ -240,11 +240,12 @@ public class BookingNoShowAndCancellationCharacterizationTests
         Booking b = await w.LoadBooking(created.Id, w.Client);
         OutboxMessage message = Assert.Single(await w.LoadOutbox());
         Assert.Equal(OutboxEventTypes.BookingCancelledV1, message.Type);
-        Assert.Equal($"booking-cancelled:{b.Id}:1", message.IdempotencyKey);
+        Assert.Equal($"booking-cancelled:{b.Participations.Single().Id}:1", message.IdempotencyKey); // M0: participation occurrence
         AppointmentAuditLog audit = Assert.Single(await w.LoadAuditLog(created.Id), l => l.ChangeType == "BookingStatus");
         Assert.Equal("Confirmed", audit.OldValue);
         Assert.Equal("Cancelled", audit.NewValue);
         Assert.Equal(b.Id, audit.BookingId);
+        Assert.Equal(b.Participations.Single().Id, audit.BookingSegmentParticipationId);
     }
 
     [Fact]
@@ -451,8 +452,8 @@ public class BookingNoShowAndCancellationCharacterizationTests
 
         Notification n = Assert.Single(await w.LoadNotifications());
         Assert.Equal(NotificationType.BookingCancelled, n.Type);
-        Assert.Equal(NotificationSourceType.Booking, n.SourceType);
-        Assert.Equal(created.Bookings.Single().Id, n.SourceId);
+        Assert.Equal(NotificationSourceType.Participation, n.SourceType); // M0: the occurrence source is the participation
+        Assert.Equal(created.Bookings.Single().Participations.Single().Id, n.SourceId);
         Assert.Equal(1, n.SourceVersion);
         Assert.Equal(NotificationStatus.Pending, n.Status);
         Assert.Equal(w.Client.Id, n.ClientId);

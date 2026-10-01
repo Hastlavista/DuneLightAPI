@@ -14,22 +14,22 @@ using Microsoft.EntityFrameworkCore;
 
 namespace BlueDragon.DuneLight.Infrastructure.Outbox.Handlers;
 
-/// <summary>Pretvara booking.no-show.v1 u logičan Notification (vidi spec section 41). Zaključava Booking redak
-/// (FOR UPDATE) PRIJE donošenja Notification odluke — serijalizira ovaj handler s BookingService.SetStatus
+/// <summary>Pretvara booking.no-show.v1 u logičan Notification (vidi spec section 41). Zaključava redak SUDJELOVANJA
+/// (FOR UPDATE, Phase M0) PRIJE donošenja Notification odluke — serijalizira ovaj handler s BookingService.SetStatus
 /// administrativnom korekcijom (NoShow -&gt; Confirmed) na ISTOM retku umjesto nesigurnog read-then-decide (vidi
 /// spec section 2-4/39), tako da PostgreSQL row-lock garantira JEDAN od dva ishoda bez obzira koji konkurent prvi
 /// stigne. Idempotentan preko INotificationHandler.ExistsForSource po (SourceId, SourceVersion) — SourceVersion =
-/// Booking.StatusVersion u trenutku emitiranja ovog eventa, ne samog Bookinga (koji na grupnim terminima
-/// legitimno ciklira, vidi spec section 5-18), pa zakasnjeli event za STARIJU pojavu (nakon koje je Booking
+/// StatusVersion sudjelovanja u trenutku emitiranja ovog eventa, ne samog sudjelovanja (koje na grupnim terminima
+/// legitimno ciklira, vidi spec section 5-18), pa zakasnjeli event za STARIJU pojavu (nakon koje je sudjelovanje
 /// otad prošao kroz noviju NoShow pojavu) NIKAD ne "oživi" staru pojavu kao Pending (vidi spec section 14/42).</summary>
 public class BookingNoShowNotificationHandler : IOutboxMessageHandler
 {
-    private readonly IAppointmentHandler _appointmentHandler;
+    private readonly IBookingSegmentParticipationHandler _participationHandler;
     private readonly INotificationHandler _notificationHandler;
 
-    public BookingNoShowNotificationHandler(IAppointmentHandler appointmentHandler, INotificationHandler notificationHandler)
+    public BookingNoShowNotificationHandler(IBookingSegmentParticipationHandler participationHandler, INotificationHandler notificationHandler)
     {
-        _appointmentHandler = appointmentHandler;
+        _participationHandler = participationHandler;
         _notificationHandler = notificationHandler;
     }
 
@@ -42,7 +42,7 @@ public class BookingNoShowNotificationHandler : IOutboxMessageHandler
             throw new InvalidOperationException($"Prazan/nevaljan payload za {Type}.");
 
         bool exists = await _notificationHandler.ExistsForSource(
-            uow, @event.OrganizationId, NotificationType.BookingNoShow, NotificationSourceType.Booking, @event.BookingId, @event.StatusVersion);
+            uow, @event.OrganizationId, NotificationType.BookingNoShow, NotificationSourceType.Participation, @event.ParticipationId, @event.StatusVersion);
         if (exists)
             return;
 
@@ -53,15 +53,18 @@ public class BookingNoShowNotificationHandler : IOutboxMessageHandler
         if (client == null)
             throw new InvalidOperationException($"Client {@event.ClientId} nije pronađen za organizaciju {@event.OrganizationId}.");
 
-        Booking booking = await _appointmentHandler.GetBookingForUpdate(uow, @event.OrganizationId, @event.BookingId, cancellationToken);
+        // Phase M0: zaključava SUDJELOVANJE (ne Booking redak) — serijalizira se s korekcijom istog sudjelovanja.
+        Booking booking = await _participationHandler.GetBookingWithLockedParticipation(
+            uow, @event.OrganizationId, @event.ParticipationId, cancellationToken);
         if (booking == null)
-            throw new InvalidOperationException($"Booking {@event.BookingId} nije pronađen za organizaciju {@event.OrganizationId}.");
+            throw new InvalidOperationException($"Sudjelovanje {@event.ParticipationId} nije pronađeno za organizaciju {@event.OrganizationId}.");
+        BookingSegmentParticipation participation = BookingParticipations.ById(booking, @event.ParticipationId);
 
         // Pending SAMO ako je booking JOŠ na TOČNO ovoj NoShow pojavi (isti StatusVersion kao event) — korigiran
         // (NoShow -> Confirmed) ILI odavno prošao kroz noviju pojavu, oboje daju Cancelled (vidi spec section
         // 14/37/42, isto ponašanje kao anonimizacija: "ne treba se dogoditi komunikacija", samo drugi razlog).
         NotificationStatus status = client.IsAnonymized ||
-            BookingParticipations.StatusOf(booking) != BookingStatus.NoShow || BookingParticipations.StatusVersionOf(booking) != @event.StatusVersion
+            participation.Status != ParticipationStatus.NoShow || participation.StatusVersion != @event.StatusVersion
                 ? NotificationStatus.Cancelled
                 : NotificationStatus.Pending;
 
@@ -69,6 +72,7 @@ public class BookingNoShowNotificationHandler : IOutboxMessageHandler
         {
             appointmentId = @event.AppointmentId,
             bookingId = @event.BookingId,
+            participationId = @event.ParticipationId,
             companyId = @event.CompanyId
         }, OutboxJsonOptions.Instance);
 
@@ -78,8 +82,8 @@ public class BookingNoShowNotificationHandler : IOutboxMessageHandler
             OrganizationId = @event.OrganizationId,
             ClientId = @event.ClientId,
             Type = NotificationType.BookingNoShow,
-            SourceType = NotificationSourceType.Booking,
-            SourceId = @event.BookingId,
+            SourceType = NotificationSourceType.Participation,
+            SourceId = @event.ParticipationId,
             SourceVersion = @event.StatusVersion,
             Status = status,
             Data = data,

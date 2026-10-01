@@ -16,7 +16,13 @@ public class BookingDto
     public Guid Id { get; set; }
     public Guid ClientId { get; set; }
     public string ClientName { get; set; }
-    public BookingStatus Status { get; set; }
+
+    /// <summary>Phase M0: IZVEDENI sažetak statusa sudjelovanja (sva ista → taj status, inače Mixed) — read-model, nije
+    /// ciljni status prijelaza. Za jedno sudjelovanje identičan statusu tog sudjelovanja.</summary>
+    public BookingStatusSummary Status { get; set; }
+
+    /// <summary>Phase M0: komercijalni sažetak — zbroj cijena sudjelovanja (FinalPrice); SuggestedAmount je zbroj
+    /// predloženih, IsAmountManuallyOverridden = barem jedno sudjelovanje ručno.</summary>
     public decimal Amount { get; set; }
     public decimal SuggestedAmount { get; set; }
     public bool IsAmountManuallyOverridden { get; set; }
@@ -44,6 +50,29 @@ public class BookingDto
 
     /// <summary>Klasifikacija trenutka otkazivanja naspram OrganizationSettings.CancellationCutoffMinutes — vidi
     /// Booking.cs domensku napomenu za točan opseg (null osim za klijentsko/booking-razina otkazivanje).</summary>
+    public bool? IsLateCancellation { get; set; }
+
+    /// <summary>Phase M0: sudjelovanja Bookinga (izvršne/komercijalne jedinice) — adresa za participation-native naredbe
+    /// (ParticipationId). Polja Bookinga iznad su IZVEDENI sažeci ovih redaka.</summary>
+    public List<BookingParticipationDto> Participations { get; set; } = new();
+}
+
+/// <summary>Phase M0: jedno sudjelovanje Bookinga u segmentu termina — životni ciklus, cijena i namirenje.</summary>
+public class BookingParticipationDto
+{
+    public Guid Id { get; set; }
+    public Guid AppointmentSegmentId { get; set; }
+    public BookingStatus Status { get; set; }
+    public int StatusVersion { get; set; }
+    public decimal Amount { get; set; }
+    public decimal SuggestedAmount { get; set; }
+    public bool IsAmountManuallyOverridden { get; set; }
+    public decimal PaidAmount { get; set; }
+    public decimal OutstandingAmount { get; set; }
+    public bool IsPaid { get; set; }
+    public bool PackageCovered { get; set; }
+    public Guid? ClientPackageId { get; set; }
+    public string CancellationReason { get; set; }
     public bool? IsLateCancellation { get; set; }
 }
 
@@ -123,7 +152,9 @@ public class ClientAppointmentHistoryDto
 
     /// <summary>Booking ID zahtjevanog klijenta — NE Appointment.Bookings (to bi otkrilo druge klijente).</summary>
     public Guid BookingId { get; set; }
-    public BookingStatus BookingStatus { get; set; }
+
+    /// <summary>Phase M0: izvedeni sažetak statusa sudjelovanja vlastitog Bookinga (vidi BookingStatusSummary).</summary>
+    public BookingStatusSummary BookingStatus { get; set; }
     public Guid? ClientPackageId { get; set; }
     public AttendanceCoverageType? CoverageType { get; set; }
     public bool PackageCoverageApplied { get; set; }

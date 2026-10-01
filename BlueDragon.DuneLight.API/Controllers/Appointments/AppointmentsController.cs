@@ -205,23 +205,21 @@ public class AppointmentsController : ControllerBase
     }
 
     /// <summary>Otkazuje SAMO jednog klijenta na terminu (npr. jedan od dvoje na duo terminu) bez otkazivanja
-    /// cijelog termina — za cijeli termin koristiti POST {id}/cancel.</summary>
+    /// cijelog termina — za cijeli termin koristiti POST {id}/cancel. Phase M0: Booking-wide naredba — svako aktivno
+    /// sudjelovanje klijenta na terminu prelazi u Cancelled (IBookingService.CancelBooking); za jedno sudjelovanje
+    /// adresirati /api/participations/{participationId}/cancel.</summary>
     [HttpPatch("{appointmentId:guid}/bookings/{clientId:guid}/cancel")]
     [RequireGrant(Grants.AppointmentsWriteOwn, Grants.AppointmentsWriteAll)]
     public async Task<ActionResult<BookingDto>> CancelBooking(Guid appointmentId, Guid clientId, [FromBody] BookingCancelRequest request)
     {
-        return Ok(await _bookingService.SetStatus(
-            this.CurrentOrganizationId(), this.CurrentUserId(), this.HasGrant(Grants.AppointmentsWriteAll), appointmentId, clientId,
-            new BookingSetStatusRequest
-            {
-                Status = BookingStatus.Cancelled,
-                ReturnPackageEntry = request.ReturnPackageEntry,
-                CancellationReason = request.CancellationReason
-            }));
+        return Ok(await _bookingService.CancelBooking(
+            this.CurrentOrganizationId(), this.CurrentUserId(), this.HasGrant(Grants.AppointmentsWriteAll), appointmentId, clientId, request));
     }
 
     /// <summary>Izostanak SAMO jednog klijenta na terminu (npr. jedan od dvoje na duo terminu) bez da cijeli
-    /// termin postane izostao — za cijeli termin koristiti POST {id}/no-show.</summary>
+    /// termin postane izostao — za cijeli termin koristiti POST {id}/no-show. Phase M0: PRIVREMENA kompatibilnost —
+    /// Booking mora imati točno jedno sudjelovanje (inače BOOKING_PARTICIPATION_AMBIGUOUS); participation-native:
+    /// /api/participations/{participationId}/no-show.</summary>
     [HttpPatch("{appointmentId:guid}/bookings/{clientId:guid}/no-show")]
     [RequireGrant(Grants.AppointmentsWriteOwn, Grants.AppointmentsWriteAll)]
     public async Task<ActionResult<BookingDto>> MarkBookingNoShow(Guid appointmentId, Guid clientId, [FromBody] BookingCancelRequest request)
@@ -245,7 +243,8 @@ public class AppointmentsController : ControllerBase
     /// BookingService.ApplyIndividualNoShowCorrection); Cancelled nema povratnu putanju. Oba puta uklj. povratak
     /// Appointment.Status na Scheduled ako je Appointment u međuvremenu postao Completed preko sestrinskog
     /// Bookinga na multi-klijent terminu (vidi TryRevertAppointmentCompletion). Storniranje pripadajuće
-    /// Notification pojave rješava isključivo BookingService.SetStatus.</summary>
+    /// Notification pojave rješava isključivo BookingService.SetStatus. Phase M0: PRIVREMENA kompatibilnost (točno jedno
+    /// sudjelovanje); participation-native: /api/participations/{participationId}/confirm.</summary>
     [HttpPatch("{appointmentId:guid}/bookings/{clientId:guid}/confirm")]
     [RequireGrant(Grants.AppointmentsWriteOwn, Grants.AppointmentsWriteAll)]
     public async Task<ActionResult<BookingDto>> ConfirmBooking(Guid appointmentId, Guid clientId)

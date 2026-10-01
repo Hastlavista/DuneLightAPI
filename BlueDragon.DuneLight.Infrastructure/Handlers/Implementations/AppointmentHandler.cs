@@ -167,13 +167,6 @@ public class AppointmentHandler : IAppointmentHandler
             .SingleOrDefaultAsync(b => b.OrganizationId == organizationId && b.Id == id);
     }
 
-    public Task<Booking> GetBookingForUpdate(IUnitOfWork uow, Guid organizationId, Guid bookingId, CancellationToken cancellationToken = default)
-    {
-        return uow.Context.Bookings
-            .FromSqlInterpolated($"SELECT * FROM dunelight.bookings WHERE organization_id = {organizationId} AND id = {bookingId} FOR UPDATE")
-            .SingleOrDefaultAsync(cancellationToken);
-    }
-
     public Task<List<Booking>> GetBookings(IUnitOfWork uow, Guid organizationId, Guid appointmentId, List<Guid> clientIds)
     {
         return uow.Context.Bookings
@@ -226,8 +219,7 @@ public class AppointmentHandler : IAppointmentHandler
         await uow.Context.SaveChangesAsync();
     }
 
-    private static bool IsTerminalBookingStatus(BookingStatus status) =>
-        status == BookingStatus.Completed || status == BookingStatus.Cancelled || status == BookingStatus.NoShow;
+    private static bool IsTerminal(ParticipationStatus status) => status != ParticipationStatus.Confirmed;
 
     private static async Task UpdateWithBookingsCore(
         DatabaseContext context, Appointment appointment, List<Guid> clientIds, BookingPricing pricing)
@@ -258,8 +250,10 @@ public class AppointmentHandler : IAppointmentHandler
         // repriciran, ne obrisan), ne "izbačen". Fizički obrisan smije biti SAMO Confirmed redak bez ikakve
         // poslovne povijesti (buduća, još neodržana rezervacija) — isto ponašanje kao prije ove izmjene za taj
         // slučaj (vidi spec section 2/6, AppointmentService.Update komentar o TerminalBookingStatuses).
+        // Phase M0: Booking je povijest čim BILO KOJE njegovo sudjelovanje ima terminalni status — briše se samo Booking
+        // čija su SVA sudjelovanja još Confirmed (i, niže, netaknuta).
         List<Booking> toRemove = existing
-            .Where(b => !clientIds.Contains(b.ClientId) && !IsTerminalBookingStatus(BookingParticipations.StatusOf(b)))
+            .Where(b => !clientIds.Contains(b.ClientId) && !b.Participations.Any(p => IsTerminal(p.Status)))
             .ToList();
 
         // Phase D3B1: izostavljeni Confirmed Booking se fizički briše SAMO ako mu je sudjelovanje netaknuto (bez povijesti)
@@ -269,8 +263,15 @@ public class AppointmentHandler : IAppointmentHandler
 
         // Re-cijenjenje se primjenjuje samo na preživjele retke koji NISU terminalni — već naplaćen/otkazan/
         // izostao Booking čuva svoj povijesni Amount (vidi spec section 18/20).
-        foreach (Booking survivor in existing.Where(b => clientIds.Contains(b.ClientId) && !IsTerminalBookingStatus(BookingParticipations.StatusOf(b))))
-            BookingPrice.Apply(survivor, pricing);
+        // Phase M0: okvir termina je JEDAN izvršni segment (privremeni jednostruki raspored) — re-cijeni se sudjelovanje
+        // preživjelog Bookinga NA TOM segmentu, adresirano segmentom (ne "jedino sudjelovanje Bookinga").
+        AppointmentSegment executionSegment = AppointmentSegments.GetSingleExecutionSegment(appointment);
+        foreach (Booking survivor in existing.Where(b => clientIds.Contains(b.ClientId)))
+        {
+            BookingSegmentParticipation participation = BookingParticipations.OnSegment(survivor, executionSegment);
+            if (!IsTerminal(participation.Status))
+                ParticipationPrice.Apply(participation, pricing);
+        }
 
         List<Guid> existingClientIds = existing.Select(b => b.ClientId).ToList();
         foreach (Guid clientId in clientIds.Where(id => !existingClientIds.Contains(id)))
@@ -428,14 +429,13 @@ public class AppointmentHandler : IAppointmentHandler
     {
         await using DatabaseContext context = DatabaseContext.GenerateContext(_databaseSettings.ConnectionString);
         DateTimeOffset now = DateTimeOffset.UtcNow;
-        return await context.Bookings.AnyAsync(b =>
-            b.ClientId == clientId &&
-            b.OrganizationId == organizationId &&
-            b.Participations.Any(p => p.Status == ParticipationStatus.Confirmed) &&
-            context.Appointments.Any(a =>
-                a.Id == b.AppointmentId &&
-                a.Status == AppointmentStatus.Scheduled &&
-                a.Segments.Any(s => s.PlannedStart >= now)));
+        // Phase M0: segmentno — Confirmed sudjelovanje na SEGMENTU koji je u budućnosti (termin Scheduled).
+        return await context.BookingSegmentParticipations.AnyAsync(p =>
+            p.OrganizationId == organizationId &&
+            p.Booking.ClientId == clientId &&
+            p.Status == ParticipationStatus.Confirmed &&
+            p.Segment.PlannedStart >= now &&
+            p.Segment.Appointment.Status == AppointmentStatus.Scheduled);
     }
 
     /// <summary>FOR UPDATE preko FromSqlInterpolated (parametrizirano, sigurno od SQL injection) — Postgres Read
@@ -468,17 +468,17 @@ public class AppointmentHandler : IAppointmentHandler
             .SingleOrDefaultAsync();
     }
 
-    public async Task<int> CountConfirmedBookings(Guid organizationId, Guid appointmentId)
+    public async Task<int> CountConfirmedOnSegment(Guid organizationId, Guid appointmentSegmentId)
     {
         await using DatabaseContext context = DatabaseContext.GenerateContext(_databaseSettings.ConnectionString);
-        return await context.Bookings.CountAsync(b =>
-            b.OrganizationId == organizationId && b.AppointmentId == appointmentId && b.Participations.Any(p => p.Status == ParticipationStatus.Confirmed));
+        return await context.BookingSegmentParticipations.CountAsync(p =>
+            p.OrganizationId == organizationId && p.AppointmentSegmentId == appointmentSegmentId && p.Status == ParticipationStatus.Confirmed);
     }
 
-    public Task<int> CountConfirmedBookings(IUnitOfWork uow, Guid organizationId, Guid appointmentId)
+    public Task<int> CountConfirmedOnSegment(IUnitOfWork uow, Guid organizationId, Guid appointmentSegmentId)
     {
-        return uow.Context.Bookings.CountAsync(b =>
-            b.OrganizationId == organizationId && b.AppointmentId == appointmentId && b.Participations.Any(p => p.Status == ParticipationStatus.Confirmed));
+        return uow.Context.BookingSegmentParticipations.CountAsync(p =>
+            p.OrganizationId == organizationId && p.AppointmentSegmentId == appointmentSegmentId && p.Status == ParticipationStatus.Confirmed);
     }
 
     public async Task<Dictionary<Guid, int>> GetNoShowCountsByClientIds(Guid organizationId, List<Guid> clientIds)
@@ -487,12 +487,12 @@ public class AppointmentHandler : IAppointmentHandler
             return new Dictionary<Guid, int>();
 
         await using DatabaseContext context = DatabaseContext.GenerateContext(_databaseSettings.ConnectionString);
-        return await context.Bookings
-            .Where(b =>
-                clientIds.Contains(b.ClientId) &&
-                b.OrganizationId == organizationId &&
-                b.Participations.Any(p => p.Status == ParticipationStatus.NoShow))
-            .GroupBy(b => b.ClientId)
+        return await context.BookingSegmentParticipations
+            .Where(p =>
+                clientIds.Contains(p.Booking.ClientId) &&
+                p.OrganizationId == organizationId &&
+                p.Status == ParticipationStatus.NoShow)
+            .GroupBy(p => p.Booking.ClientId)
             .Select(g => new { ClientId = g.Key, Count = g.Count() })
             .ToDictionaryAsync(g => g.ClientId, g => g.Count);
     }
@@ -514,22 +514,23 @@ public class AppointmentHandler : IAppointmentHandler
         await using DatabaseContext context = DatabaseContext.GenerateContext(_databaseSettings.ConnectionString);
         DateTimeOffset now = DateTimeOffset.UtcNow;
 
-        IQueryable<Booking> bookings = context.Bookings
-            .Where(b => b.ClientId == clientId && b.OrganizationId == organizationId);
+        // Phase M0: povijest klijenta broji IZVRŠNE jedinice (sudjelovanja) i čita vrijeme njihovog segmenta.
+        IQueryable<BookingSegmentParticipation> participations = context.BookingSegmentParticipations
+            .Where(p => p.Booking.ClientId == clientId && p.OrganizationId == organizationId);
 
-        int completed = await bookings.CountAsync(b => b.Participations.Any(p => p.Status == ParticipationStatus.Completed));
-        int noShow = await bookings.CountAsync(b => b.Participations.Any(p => p.Status == ParticipationStatus.NoShow));
-        int cancelled = await bookings.CountAsync(b => b.Participations.Any(p => p.Status == ParticipationStatus.Cancelled));
+        int completed = await participations.CountAsync(p => p.Status == ParticipationStatus.Completed);
+        int noShow = await participations.CountAsync(p => p.Status == ParticipationStatus.NoShow);
+        int cancelled = await participations.CountAsync(p => p.Status == ParticipationStatus.Cancelled);
 
-        DateTimeOffset? lastVisit = await bookings
-            .Where(b => b.Participations.Any(p => p.Status == ParticipationStatus.Completed))
-            .Select(b => (DateTimeOffset?)b.Appointment.Segments.Min(s => s.PlannedStart))
+        DateTimeOffset? lastVisit = await participations
+            .Where(p => p.Status == ParticipationStatus.Completed)
+            .Select(p => (DateTimeOffset?)p.Segment.PlannedStart)
             .MaxAsync();
 
-        DateTimeOffset? nextVisit = await bookings
-            .Where(b => b.Participations.Any(p => p.Status == ParticipationStatus.Confirmed) && b.Appointment.Status == AppointmentStatus.Scheduled &&
-                b.Appointment.Segments.Any(s => s.PlannedStart > now))
-            .Select(b => (DateTimeOffset?)b.Appointment.Segments.Min(s => s.PlannedStart))
+        DateTimeOffset? nextVisit = await participations
+            .Where(p => p.Status == ParticipationStatus.Confirmed && p.Segment.Appointment.Status == AppointmentStatus.Scheduled &&
+                p.Segment.PlannedStart > now)
+            .Select(p => (DateTimeOffset?)p.Segment.PlannedStart)
             .MinAsync();
 
         return new ClientAppointmentStatsDto

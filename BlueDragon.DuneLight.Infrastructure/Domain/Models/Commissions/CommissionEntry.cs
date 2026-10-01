@@ -23,7 +23,10 @@ namespace BlueDragon.DuneLight.Infrastructure.Domain.Models.Commissions;
 /// migraciju) — svaka poslovna pojava (COMPLETION-OCCURRENCE za IndividualService, ne samo booking) može
 /// proizvesti najviše jedan CommissionEntry, čak i pod konkurentnim/ponovljenim zahtjevima.
 ///
-/// SourceVersion (samo za SourceType=IndividualService, inače uvijek 0) je Booking.StatusVersion snapshotan u
+/// Phase M0: za IndividualService izvor je SUDJELOVANJE (BookingSegmentParticipationId), unique indeks je na
+/// (BookingSegmentParticipationId, SourceVersion); BookingId ostaje kontekst.
+///
+/// SourceVersion (samo za SourceType=IndividualService, inače uvijek 0) je StatusVersion sudjelovanja snapshotan u
 /// TRENUTKU zarade — daje stabilan identitet JEDNOJ konkretnoj completion-pojavi istog Bookinga (isti obrazac kao
 /// Booking.StatusVersion/Notification.SourceVersion), jer se Individual Booking legitimno može vratiti na
 /// Confirmed nakon Completed (BookingService.ApplyIndividualCompletionCorrection — poništenje pogrešnog
@@ -69,6 +72,13 @@ public class CommissionEntry
     [Column("booking_id")]
     public Guid? BookingId { get; set; }
 
+    /// <summary>Phase M0: IZVOR IndividualService provizije je SUDJELOVANJE (izvršna jedinica) — idempotencija i reverzija
+    /// po (BookingSegmentParticipationId, SourceVersion), gdje je SourceVersion StatusVersion OVOG sudjelovanja.
+    /// BookingId/AppointmentId ostaju kontekst (spremnik/termin) za izvještaje; složeni FK jamči da sudjelovanje pripada
+    /// tom Bookingu. Null za ostale izvore.</summary>
+    [Column("booking_segment_participation_id")]
+    public Guid? BookingSegmentParticipationId { get; set; }
+
     [Column("checkout_item_id")]
     public Guid? CheckoutItemId { get; set; }
 
@@ -91,8 +101,8 @@ public class CommissionEntry
     [Column("status")]
     public CommissionEntryStatus Status { get; set; }
 
-    /// <summary>Booking.StatusVersion u trenutku zarade (samo SourceType=IndividualService, inače uvijek 0) —
-    /// vidi klasnu napomenu za puno obrazloženje. Dio unique indeksa uz BookingId (Migration_2026_09_25).</summary>
+    /// <summary>StatusVersion izvornog SUDJELOVANJA u trenutku zarade (samo SourceType=IndividualService, inače uvijek 0)
+    /// — vidi klasnu napomenu. Dio unique indeksa uz BookingSegmentParticipationId (Phase M0).</summary>
     [Column("source_version")]
     public int SourceVersion { get; set; }
 

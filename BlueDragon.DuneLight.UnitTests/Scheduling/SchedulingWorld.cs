@@ -968,6 +968,48 @@ public sealed class SchedulingWorld : IAsyncDisposable
         await db.SaveChangesAsync();
     }
 
+    /// <summary>
+    /// M0: ARTIFICIAL multi-participation data. Production flows still create exactly one segment and one participation per
+    /// Booking (multi-segment creation is not enabled); this seeds an extra segment on the SAME appointment (same service,
+    /// the default employee) plus a participation of the client's existing Booking on it — so participation-native
+    /// addressing, aggregation, locking and segment-scoped scheduling can be exercised. Returns the new participation id.
+    /// </summary>
+    public async Task<Guid> AddArtificialSegmentParticipation(
+        Guid appointmentId, Client client, DateTimeOffset plannedStart, decimal amount,
+        ParticipationStatus status = ParticipationStatus.Confirmed, int durationMinutes = DefaultServiceDuration)
+    {
+        await using DatabaseContext db = NewDb();
+        Booking booking = await db.Bookings.SingleAsync(b => b.AppointmentId == appointmentId && b.ClientId == client.Id);
+        AppointmentSegment existing = await db.AppointmentSegments.AsNoTracking().FirstAsync(s => s.AppointmentId == appointmentId);
+
+        AppointmentSegment segment = new()
+        {
+            Id = Guid.NewGuid(), OrganizationId = OrganizationId, AppointmentId = appointmentId, ServiceId = existing.ServiceId,
+            PlannedStart = plannedStart, PlannedEnd = plannedStart.AddMinutes(durationMinutes), CreatedAt = DateTimeOffset.UtcNow
+        };
+        segment.Employees.Add(new AppointmentSegmentEmployee { AppointmentSegmentId = segment.Id.Value, EmployeeId = Employee.Id.Value });
+        db.AppointmentSegments.Add(segment);
+
+        BookingSegmentParticipation participation = new()
+        {
+            Id = Guid.NewGuid(), OrganizationId = OrganizationId, BookingId = booking.Id.Value, AppointmentSegmentId = segment.Id.Value,
+            Status = status, StatusVersion = 0, SuggestedAmount = amount, Amount = amount, CreatedAt = DateTimeOffset.UtcNow
+        };
+        db.BookingSegmentParticipations.Add(participation);
+        await db.SaveChangesAsync();
+        return participation.Id.Value;
+    }
+
+    /// <summary>The participations of a client's Booking (fresh, no tracking), ordered by segment start.</summary>
+    public async Task<List<BookingSegmentParticipation>> LoadParticipations(Guid appointmentId, Client client)
+    {
+        await using DatabaseContext db = NewDb();
+        return await db.BookingSegmentParticipations.AsNoTracking().Include(p => p.Segment)
+            .Where(p => p.Booking.AppointmentId == appointmentId && p.Booking.ClientId == client.Id)
+            .OrderBy(p => p.Segment.PlannedStart)
+            .ToListAsync();
+    }
+
     #endregion
 
     #region Persisted-state readers

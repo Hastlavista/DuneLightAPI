@@ -101,6 +101,7 @@ public class BookingSegmentParticipationSchemaTests
         {
             "ix_booking_segment_participations_appointment_segment_id", "pk_booking_segment_participations",
             "ux_booking_segment_participations_booking_segment",
+            "ux_booking_segment_participations_id_booking_organization", // M0: target of the commission source FK
             "ux_booking_segment_participations_id_organization" // D3B3B: target of the tenant-safe checkout_items FK
         }, indexes.Keys.OrderBy(k => k).ToArray());
         Assert.StartsWith("CREATE UNIQUE INDEX", indexes["ux_booking_segment_participations_booking_segment"]);

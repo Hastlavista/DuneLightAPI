@@ -150,7 +150,7 @@ public class AppointmentOwnershipCharacterizationTests
         Assert.Equal("Trener smije upravljati samo bookinzima na svojim vlastitim terminima.", ex.Message);
 
         BookingDto cancelled = await w.SetBookingStatus(created.Id, w.Client, BookingStatus.Cancelled, hasFullScope: false, userId: w.Employee.UserId);
-        Assert.Equal(BookingStatus.Cancelled, cancelled.Status);
+        Assert.Equal(BookingStatusSummary.Cancelled, cancelled.Status);
     }
 
     [Fact]
@@ -164,7 +164,7 @@ public class AppointmentOwnershipCharacterizationTests
             () => w.SetBookingStatus(occurrence.Id.Value, w.Client, BookingStatus.Cancelled, hasFullScope: false, userId: w.Employee.UserId));
 
         BookingDto withFullScope = await w.SetBookingStatus(occurrence.Id.Value, w.Client, BookingStatus.Cancelled, hasFullScope: true);
-        Assert.Equal(BookingStatus.Cancelled, withFullScope.Status);
+        Assert.Equal(BookingStatusSummary.Cancelled, withFullScope.Status);
     }
 
     [Fact]

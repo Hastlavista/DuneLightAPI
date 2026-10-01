@@ -138,7 +138,7 @@ public class ParticipationSettlementTests
         ParticipationSettlement full = await SettlementOf(w, bookingId);
         Assert.True(full.FullySettled);
         BookingDto booking = await BookingOf(w, created.Id);
-        Assert.Equal((BookingStatus.Confirmed, 50m, 0m, true), (booking.Status, booking.PaidAmount, booking.OutstandingAmount, booking.IsPaid));
+        Assert.Equal((BookingStatusSummary.Confirmed, 50m, 0m, true), (booking.Status, booking.PaidAmount, booking.OutstandingAmount, booking.IsPaid));
 
         // A voided payment no longer counts as settled.
         await w.Checkouts.VoidPayment(w.OrganizationId, w.ActorUserId, checkout.Id, split.Payments.First(p => p.Amount == 10m).Id,
@@ -175,7 +175,7 @@ public class ParticipationSettlementTests
         AppointmentDto completed = await w.CompleteExisting(created.Id, w.CompleteRequest(Z(10), isPaid: false));
 
         BookingDto booking = Assert.Single(completed.Bookings);
-        Assert.Equal((BookingStatus.Completed, 0m, 50m, false), (booking.Status, booking.PaidAmount, booking.OutstandingAmount, booking.IsPaid));
+        Assert.Equal((BookingStatusSummary.Completed, 0m, 50m, false), (booking.Status, booking.PaidAmount, booking.OutstandingAmount, booking.IsPaid));
     }
 
     [Fact]

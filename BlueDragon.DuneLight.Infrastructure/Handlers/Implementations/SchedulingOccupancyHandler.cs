@@ -54,7 +54,7 @@ public class SchedulingOccupancyHandler : ISchedulingOccupancyHandler
         List<OccupancySlot> candidates = await Project(ActiveSegments(context, organizationId)
             .Where(s =>
                 s.PlannedStart >= windowStart && s.PlannedStart <= windowEnd &&
-                s.Appointment.Bookings.Any(b => clientIds.Contains(b.ClientId) && b.Participations.Any(p => p.Status != ParticipationStatus.Cancelled && p.Status != ParticipationStatus.NoShow)) &&
+                s.Participations.AsQueryable().Where(ParticipationOccupancy.OccupiesSchedule).Any(p => clientIds.Contains(p.Booking.ClientId)) &&
                 (excludeId == null || s.AppointmentId != excludeId)));
 
         return candidates.Where(s => s.Overlaps(startsAt, newEnd)).ToList();
@@ -114,7 +114,7 @@ public class SchedulingOccupancyHandler : ISchedulingOccupancyHandler
         return await Project(ActiveSegments(context, organizationId)
             .Where(s =>
                 s.PlannedStart >= rangeFrom && s.PlannedStart <= rangeTo &&
-                s.Appointment.Bookings.Any(b => clientIds.Contains(b.ClientId) && b.Participations.Any(p => p.Status != ParticipationStatus.Cancelled && p.Status != ParticipationStatus.NoShow))));
+                s.Participations.AsQueryable().Where(ParticipationOccupancy.OccupiesSchedule).Any(p => clientIds.Contains(p.Booking.ClientId))));
     }
 
     /// <summary>Segmenti ne-otkazanih termina organizacije — status je i dalje na razini termina.</summary>
@@ -123,7 +123,9 @@ public class SchedulingOccupancyHandler : ISchedulingOccupancyHandler
             s.OrganizationId == organizationId &&
             s.Appointment.Status != AppointmentStatus.Cancelled);
 
-    /// <summary>Phase D3A: jedan OccupancySlot po segmentu (danas točno jedan po terminu). Segment s više zaposlenika se
+    /// <summary>Phase M0: zauzetost klijenta je SEGMENTNA — segment zauzima klijenta samo kroz VLASTITA sudjelovanja
+    /// (ParticipationOccupancy.OccupiesSchedule: Confirmed/Completed), nikad kroz "bilo koje" sudjelovanje Bookinga na
+    /// terminu. Phase D3A: jedan OccupancySlot po segmentu (danas točno jedan po terminu). Segment s više zaposlenika se
     /// NE sažima u jednog — OccupancySlot nosi jednog zaposlenika, pa se takav segment eksplicitno odbija
     /// (<see cref="AppointmentSegments.GetSingleEmployeeId"/>) dok višezaposlenička zauzetost ne bude definirana.</summary>
     private static async Task<List<OccupancySlot>> Project(IQueryable<AppointmentSegment> query)
@@ -137,9 +139,11 @@ public class SchedulingOccupancyHandler : ISchedulingOccupancyHandler
                 s.PlannedEnd,
                 s.RoomId,
                 EmployeeIds = s.Employees.Select(e => e.EmployeeId).ToList(),
-                ActiveClientIds = s.Appointment.Bookings
-                    .Where(b => b.Participations.Any(p => p.Status != ParticipationStatus.Cancelled && p.Status != ParticipationStatus.NoShow))
-                    .Select(b => b.ClientId)
+                // Phase M0: klijenti koje zauzima OVAJ segment — sudjelovanja tog segmenta po centralnom pravilu.
+                ActiveClientIds = s.Participations.AsQueryable()
+                    .Where(ParticipationOccupancy.OccupiesSchedule)
+                    .Select(p => p.Booking.ClientId)
+                    .Distinct()
                     .ToList()
             })
             .ToListAsync();

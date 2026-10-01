@@ -1,4 +1,5 @@
 using System;
+using System.Linq;
 using BlueDragon.DuneLight.Infrastructure.Domain.Models.Appointments;
 
 namespace BlueDragon.DuneLight.Infrastructure.Utils;
@@ -48,6 +49,35 @@ public static class ExecutionContextResolver
         if (booking.AppointmentId != execution.AppointmentId)
             throw new InvalidOperationException("Booking ne pripada zadanom terminu.");
 
+        return new BookingExecutionContext(execution, booking.Id.Value, booking.ClientId);
+    }
+
+    /// <summary>Phase M0 — izvršni kontekst ADRESIRANOG sudjelovanja: okvir (usluga, zaposlenik, početak) čita se iz
+    /// SEGMENTA tog sudjelovanja (ne iz "jedinog" segmenta termina), pa kontekst ostaje točan i kad termin ima više
+    /// segmenata. Sudjelovanje mora pripadati Bookingu, a Booking terminu (programska greška inače).</summary>
+    public static BookingExecutionContext ForParticipation(Appointment appointment, Booking booking, BookingSegmentParticipation participation)
+    {
+        ArgumentNullException.ThrowIfNull(appointment);
+        ArgumentNullException.ThrowIfNull(booking);
+        ArgumentNullException.ThrowIfNull(participation);
+        if (!appointment.Id.HasValue || !booking.Id.HasValue)
+            throw new InvalidOperationException("Izvršni kontekst zahtijeva termin i booking s dodijeljenim Id-em.");
+        if (booking.OrganizationId != appointment.OrganizationId || booking.AppointmentId != appointment.Id.Value)
+            throw new InvalidOperationException("Booking ne pripada zadanom terminu.");
+        if (participation.BookingId != booking.Id.Value || participation.OrganizationId != booking.OrganizationId)
+            throw new InvalidOperationException("Sudjelovanje ne pripada zadanom Bookingu.");
+
+        AppointmentSegment segment = appointment.Segments.SingleOrDefault(s => s.Id == participation.AppointmentSegmentId)
+            ?? throw new InvalidOperationException("Segment sudjelovanja nije učitan na terminu (ili ne pripada terminu).");
+
+        AppointmentExecutionContext execution = new AppointmentExecutionContext(
+            appointment.OrganizationId,
+            appointment.Id.Value,
+            appointment.CompanyId,
+            segment.ServiceId,
+            segment.Service?.Name,
+            AppointmentSegments.GetSingleEmployeeId(segment),
+            segment.PlannedStart);
         return new BookingExecutionContext(execution, booking.Id.Value, booking.ClientId);
     }
 }

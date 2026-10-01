@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
 using BlueDragon.DuneLight.Core.Shared;
 using BlueDragon.DuneLight.Core.Shared.Exceptions;
@@ -8,6 +9,7 @@ using BlueDragon.DuneLight.Infrastructure.Domain.Contexts;
 using BlueDragon.DuneLight.Infrastructure.Domain.Models.Appointments;
 using BlueDragon.DuneLight.Infrastructure.Domain.Settings;
 using BlueDragon.DuneLight.Infrastructure.Handlers.Interfaces;
+using BlueDragon.DuneLight.Infrastructure.UnitOfWork;
 using Microsoft.EntityFrameworkCore;
 using Npgsql;
 
@@ -72,6 +74,63 @@ public class BookingSegmentParticipationHandler : IBookingSegmentParticipationHa
         await using DatabaseContext context = DatabaseContext.GenerateContext(_databaseSettings.ConnectionString);
         return await context.BookingSegmentParticipations.AsNoTracking()
             .SingleOrDefaultAsync(p => p.OrganizationId == organizationId && p.Id == id);
+    }
+
+    public async Task<Guid?> GetAppointmentIdOf(Guid organizationId, Guid participationId)
+    {
+        await using DatabaseContext context = DatabaseContext.GenerateContext(_databaseSettings.ConnectionString);
+        return await context.BookingSegmentParticipations
+            .Where(p => p.OrganizationId == organizationId && p.Id == participationId)
+            .Select(p => (Guid?)p.Booking.AppointmentId)
+            .SingleOrDefaultAsync();
+    }
+
+    /// <summary>Phase M0: JEDINI redoslijed zaključavanja sudjelovanja — distinct, uzlazno po Id-u. Dvije transakcije
+    /// koje zaključavaju preklapajuće skupove uvijek čekaju istim redom, pa se ne mogu zaključati u krug.</summary>
+    public static IReadOnlyList<Guid> LockOrder(IEnumerable<Guid> participationIds) =>
+        participationIds.Distinct().OrderBy(x => x).ToList();
+
+    public async Task LockForUpdate(IUnitOfWork uow, Guid organizationId, IEnumerable<Guid> participationIds, CancellationToken cancellationToken = default)
+    {
+        foreach (Guid id in LockOrder(participationIds))
+            await uow.Context.Database.ExecuteSqlInterpolatedAsync(
+                $"SELECT 1 FROM dunelight.booking_segment_participations WHERE organization_id = {organizationId} AND id = {id} FOR UPDATE",
+                cancellationToken);
+    }
+
+    public async Task<Booking> GetBookingWithLockedParticipation(
+        IUnitOfWork uow, Guid organizationId, Guid participationId, CancellationToken cancellationToken = default)
+    {
+        Guid? bookingId = await uow.Context.BookingSegmentParticipations
+            .Where(p => p.OrganizationId == organizationId && p.Id == participationId)
+            .Select(p => (Guid?)p.BookingId)
+            .SingleOrDefaultAsync(cancellationToken);
+        if (bookingId == null)
+            return null;
+
+        await LockForUpdate(uow, organizationId, new[] { participationId }, cancellationToken);
+        return await LoadBookingGraph(uow, organizationId, bookingId.Value, cancellationToken);
+    }
+
+    public async Task<Booking> GetBookingWithLockedParticipations(
+        IUnitOfWork uow, Guid organizationId, Guid bookingId, CancellationToken cancellationToken = default)
+    {
+        List<Guid> ids = await uow.Context.BookingSegmentParticipations
+            .Where(p => p.OrganizationId == organizationId && p.BookingId == bookingId)
+            .Select(p => p.Id.Value)
+            .ToListAsync(cancellationToken);
+
+        await LockForUpdate(uow, organizationId, ids, cancellationToken);
+        return await LoadBookingGraph(uow, organizationId, bookingId, cancellationToken);
+    }
+
+    /// <summary>Svježe čitanje NAKON locka (Read Committed: novi statement vidi commitano stanje). Učitava samo Booking i
+    /// (AutoInclude) njegova sudjelovanja s potrošnjama paketa — isti praćeni graf kao bivši Booking FOR UPDATE, tako da
+    /// pozivateljev UpdateBooking ne dira stavke namirenja (one se čitaju zasebno, npr. GetItemsForParticipation).</summary>
+    private static Task<Booking> LoadBookingGraph(IUnitOfWork uow, Guid organizationId, Guid bookingId, CancellationToken cancellationToken)
+    {
+        return uow.Context.Bookings
+            .SingleOrDefaultAsync(b => b.OrganizationId == organizationId && b.Id == bookingId, cancellationToken);
     }
 
     public async Task<List<BookingSegmentParticipation>> GetForBooking(Guid organizationId, Guid bookingId)

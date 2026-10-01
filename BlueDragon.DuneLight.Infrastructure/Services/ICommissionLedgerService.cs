@@ -25,9 +25,12 @@ public interface ICommissionLedgerService
 {
     /// <summary>Individualna usluga — jedan odrađen Booking (Status upravo postavljen na Completed od
     /// pozivatelja, PRIJE poziva ovoj metodi jer FK commission_entries.booking_id zahtijeva već persistiran
-    /// redak) = jedan izvor. Employee = execution.EmployeeId, osnovica = BookingParticipations.AmountOf(booking) (retail vrijednost
-    /// izvedenog rada, neovisno o paket-pokriću/nenaplaćenosti — vidi spec section 15/51).</summary>
-    Task GenerateForIndividualServiceCompletion(IUnitOfWork uow, Guid organizationId, BookingExecutionContext execution, Booking booking);
+    /// redak) = jedan izvor. Employee = execution.EmployeeId, osnovica = participation.Amount (retail vrijednost
+    /// izvedenog rada, neovisno o paket-pokriću/nenaplaćenosti — vidi spec section 15/51).
+    /// Phase M0: izvor je EKSPLICITNO <paramref name="participation"/> (SourceVersion = njegov StatusVersion); Booking
+    /// samo kontekst (BookingId stupac). Atribucija zaposlenika ostaje execution.EmployeeId (jedan zaposlenik).</summary>
+    Task GenerateForIndividualServiceCompletion(
+        IUnitOfWork uow, Guid organizationId, BookingExecutionContext execution, BookingSegmentParticipation participation);
 
     /// <summary>Grupna usluga — jedan odrađen grupni termin (Appointment.Status upravo postavljen na Completed)
     /// = jedan izvor, PO TERMINU ne po sudioniku (vidi CommissionSourceType.GroupService domensku napomenu za
@@ -44,13 +47,13 @@ public interface ICommissionLedgerService
 
     /// <summary>Reverzira (Earned -&gt; Reversed) CommissionEntry zarađen TOČNO OVIM completionom individualnog
     /// Bookinga, kao dio BookingService.ApplyIndividualCompletionCorrection (Individual Booking Completed -&gt;
-    /// Confirmed administrativna korekcija) — poziva se PRIJE nego BookingParticipations.StatusOf(booking) stvarno prijeđe na Confirmed
+    /// Confirmed administrativna korekcija) — poziva se PRIJE nego sudjelovanje stvarno prijeđe na Confirmed
     /// (pozivatelj još drži Booking pod FOR UPDATE lockom iz iste transakcije). No-op ako aktivan (Earned) zapis
     /// ne postoji (nikad nije bilo primjenjivog CommissionRule kod completiona, ili je već reverziran — idempotentan
-    /// retry, vidi spec section 15/41). Identificira izvor isključivo preko BookingId + Status=Earned
-    /// (ICommissionEntryHandler.GetActiveForBooking), nikad po iznosu/datumu/zaposleniku. NE dira BaseAmount/
+    /// retry, vidi spec section 15/41). Identificira izvor isključivo preko sudjelovanja + Status=Earned
+    /// (ICommissionEntryHandler.GetActiveForParticipation), nikad po iznosu/datumu/zaposleniku. NE dira BaseAmount/
     /// CalculationType/RuleValue/CommissionAmount (povijesni snapshot ostaje netaknut, vidi spec section 33) — samo
     /// Status/ReversedAt/ReversedBy. Sljedeći completion istog Bookinga (nakon korekcije) zarađuje NOVI Earned
     /// zapis s NOVIM SourceVersion (vidi CommissionEntry.cs), bez sudara sa ovim (sad Reversed) zapisom.</summary>
-    Task ReverseForIndividualServiceCorrection(IUnitOfWork uow, Guid organizationId, Guid userId, Booking booking);
+    Task ReverseForIndividualServiceCorrection(IUnitOfWork uow, Guid organizationId, Guid userId, BookingSegmentParticipation participation);
 }

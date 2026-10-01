@@ -41,6 +41,7 @@ public class CheckoutService : ICheckoutService
     private readonly ICommissionLedgerService _commissionLedgerService;
     private readonly IUnitOfWorkFactory _unitOfWorkFactory;
     private readonly IOrganizationCalendarService _organizationCalendarService;
+    private readonly IBookingSegmentParticipationHandler _participationHandler;
 
     public CheckoutService(
         ICheckoutHandler checkoutHandler,
@@ -54,9 +55,11 @@ public class CheckoutService : ICheckoutService
         IPricingService pricingService,
         ICommissionLedgerService commissionLedgerService,
         IUnitOfWorkFactory unitOfWorkFactory,
-        IOrganizationCalendarService organizationCalendarService)
+        IOrganizationCalendarService organizationCalendarService,
+        IBookingSegmentParticipationHandler participationHandler)
     {
         _organizationCalendarService = organizationCalendarService;
+        _participationHandler = participationHandler;
         _checkoutHandler = checkoutHandler;
         _auditLogHandler = auditLogHandler;
         _appointmentHandler = appointmentHandler;
@@ -134,24 +137,53 @@ public class CheckoutService : ICheckoutService
 
         Checkout locked = await LockOpenCheckout(uow, organizationId, checkoutId);
 
-        Booking booking = await _appointmentHandler.GetBookingById(uow, organizationId, request.BookingId);
+        // Phase M0: stavka usluge cilja SUDJELOVANJE. ParticipationId je ugovor; sam BookingId je privremena kompatibilnost
+        // (Booking s točno jednim sudjelovanjem). Jedan zahtjev nikad ne cilja sva sudjelovanja Bookinga.
+        Guid bookingId;
+        if (request.ParticipationId.HasValue)
+        {
+            Guid? owningBookingId = await uow.Context.BookingSegmentParticipations
+                .Where(p => p.OrganizationId == organizationId && p.Id == request.ParticipationId.Value)
+                .Select(p => (Guid?)p.BookingId)
+                .SingleOrDefaultAsync();
+            if (owningBookingId == null)
+                throw new NotFoundAppException("Participation", request.ParticipationId.Value);
+            if (request.BookingId.HasValue && request.BookingId.Value != owningBookingId.Value)
+                throw new BusinessRuleException(ErrorCodes.ParticipationBookingMismatch,
+                    "Sudjelovanje ne pripada zadanom Bookingu.",
+                    new { bookingId = request.BookingId.Value, participationId = request.ParticipationId.Value });
+            bookingId = owningBookingId.Value;
+        }
+        else if (request.BookingId.HasValue)
+        {
+            bookingId = request.BookingId.Value;
+        }
+        else
+        {
+            throw new ValidationAppException("Stavka usluge zahtijeva ParticipationId (ili, privremeno, BookingId).");
+        }
+
+        Booking booking = await _appointmentHandler.GetBookingById(uow, organizationId, bookingId);
         if (booking == null)
-            throw new NotFoundAppException("Booking", request.BookingId);
+            throw new NotFoundAppException("Booking", bookingId);
+
+        BookingSegmentParticipation participation = request.ParticipationId.HasValue
+            ? BookingParticipations.ById(booking, request.ParticipationId.Value)
+            : BookingParticipations.GetSingleParticipation(booking);
 
         if (booking.ClientId != locked.ClientId)
             throw new BusinessRuleException(ErrorCodes.CheckoutItemClientMismatch, "Booking pripada drugom klijentu.");
 
-        BookingExecutionContext execution = ExecutionContextResolver.ForBooking(booking.Appointment, booking);
+        BookingExecutionContext execution = ExecutionContextResolver.ForParticipation(booking.Appointment, booking, participation);
 
         if (execution.CompanyId != locked.CompanyId)
             throw new BusinessRuleException(ErrorCodes.CheckoutItemCompanyMismatch, "Booking pripada drugoj tvrtki.");
 
-        if (BookingParticipations.StatusOf(booking) == BookingStatus.Cancelled)
+        if (participation.Status == ParticipationStatus.Cancelled)
             throw new BusinessRuleException(ErrorCodes.CheckoutItemNotEligible, "Otkazan booking se ne može dodati u checkout.");
 
-        // Phase D3B3B: stavka usluge namiruje SUDJELOVANJE — API i dalje adresira Booking (jednostruki model), a ovdje se
-        // razrješava njegovo jedino autoritativno sudjelovanje (perzistencijska granica namirenja).
-        BookingSegmentParticipation participation = BookingParticipations.GetSingleParticipation(booking);
+        // Zaključaj ciljno sudjelovanje (isti lock kao svako drugo namirenje) prije provjere "već u otvorenom checkoutu".
+        await _participationHandler.LockForUpdate(uow, organizationId, new[] { participation.Id.GetValueOrDefault() });
         bool alreadyLocked = await uow.Context.CheckoutItems
             .AnyAsync(i => i.OrganizationId == organizationId && i.BookingSegmentParticipationId == participation.Id && i.LocksParticipation);
         if (alreadyLocked)
@@ -190,7 +222,7 @@ public class CheckoutService : ICheckoutService
             Id = Guid.NewGuid(),
             CheckoutId = checkoutId,
             ChangeType = "ItemAdded",
-            NewValue = $"Booking:{booking.Id}",
+            NewValue = $"Booking:{booking.Id}/Participation:{participation.Id}",
             ChangedAt = now,
             ChangedBy = userId
         });
@@ -384,7 +416,7 @@ public class CheckoutService : ICheckoutService
         await LockOpenCheckout(uow, organizationId, checkoutId);
         // Phase D3B3B: zaključaj sudjelovanja stavki usluge PRIJE učitavanja grafa — svako novčano namirenje istog
         // sudjelovanja (ovaj ili drugi checkout, check-in plaćanje) se serijalizira, pa izračun duga ispod vidi svježe stanje.
-        await _checkoutHandler.LockParticipations(
+        await _participationHandler.LockForUpdate(
             uow, organizationId, await _checkoutHandler.GetServiceParticipationIds(uow, organizationId, checkoutId));
         Checkout graph = await _checkoutHandler.GetGraph(uow, organizationId, checkoutId);
 
@@ -741,8 +773,9 @@ public class CheckoutService : ICheckoutService
                 MonetaryDue = financials.MonetaryDue,
                 PaidAmount = financials.PaidAmount,
                 OutstandingAmount = financials.OutstandingAmount,
-                // API ugovor nepromijenjen: stavka usluge i dalje prikazuje Booking (kroz sudjelovanje, jednostruki model).
+                // Stavka usluge prikazuje sudjelovanje i njegov Booking (spremnik).
                 BookingId = item.Participation?.BookingId,
+                ParticipationId = item.BookingSegmentParticipationId,
                 PackageId = item.PackageId,
                 ProductId = item.ProductId,
                 ClientPackageId = item.ClientPackageId,

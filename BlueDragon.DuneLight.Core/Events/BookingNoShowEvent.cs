@@ -11,11 +11,14 @@ public class BookingNoShowEvent
 {
     public Guid OrganizationId { get; set; }
     public Guid BookingId { get; set; }
+
+    /// <summary>Phase M0: sudjelovanje čiji je prijelaz ovo — identitet pojave je (ParticipationId, StatusVersion).</summary>
+    public Guid ParticipationId { get; set; }
     public Guid AppointmentId { get; set; }
     public Guid ClientId { get; set; }
     public Guid CompanyId { get; set; }
 
-    /// <summary>Booking.StatusVersion NAKON ovog prijelaza (vidi Booking.cs) — identitet ove KONKRETNE NoShow
+    /// <summary>StatusVersion SUDJELOVANJA (ParticipationId) NAKON ovog prijelaza — identitet ove KONKRETNE NoShow
     /// pojave, ne samog Bookinga (koji na grupnim terminima može ponovno postati Confirmed i kasnije opet
     /// NoShow). Nosi ga i Outbox idempotency-key i Notification.SourceVersion.</summary>
     public int StatusVersion { get; set; }

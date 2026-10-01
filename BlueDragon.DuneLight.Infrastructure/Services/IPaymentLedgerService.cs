@@ -29,10 +29,12 @@ public interface IPaymentLedgerService
     /// Payment.IsCheckInGenerated i VoidCheckInGeneratedPayments) — pozivatelji IZ check-in/completion tokova
     /// (BookingService.ResolveCoverage, AppointmentService.CompleteNew/CompleteExisting) prosljeđuju true.
     /// Phase D3B3B: namirenje je na sudjelovanju (zaključanom) — check-in plaćanje naplaćuje najviše PREOSTALI dug
-    /// sudjelovanja i vraća null kad ništa ne preostaje; iznos iznad preostalog duga se inače odbija.</summary>
+    /// sudjelovanja i vraća null kad ništa ne preostaje; iznos iznad preostalog duga se inače odbija.
+    /// Phase M0: CILJ je eksplicitno <paramref name="participation"/> (mora pripadati <paramref name="booking"/>, koji je samo
+    /// kontekst: klijent checkouta, termin za audit) — Booking nikad ne identificira izvršnu jedinicu.</summary>
     Task<Payment> RecordPayment(
-        IUnitOfWork uow, Guid organizationId, Guid userId, Guid companyId, Booking booking, PaymentMethod method, decimal amount,
-        string note, bool isCheckInGenerated = false);
+        IUnitOfWork uow, Guid organizationId, Guid userId, Guid companyId, Booking booking, BookingSegmentParticipation participation,
+        PaymentMethod method, decimal amount, string note, bool isCheckInGenerated = false);
 
     /// <summary>Poništava SAMO Payment(e) koje je automatski stvorio check-in (IsCheckInGenerated=true, još
     /// Completed) — koristi se isključivo kad se poništava pogrešan check-in (Completed -&gt; natrag na
@@ -43,5 +45,6 @@ public interface IPaymentLedgerService
     /// Completed — vidi Payment.cs klasnu napomenu za obrazloženje ove namjerne iznimke od "Void samo dok je
     /// Checkout Open" pravila koje vrijedi za redovan POS endpoint (ICheckoutService.VoidPayment). Stanje-mašina
     /// jamči najviše jedan aktivan check-in-generated Payment u danom trenutku. No-op ako takav Payment ne postoji.</summary>
-    Task VoidCheckInGeneratedPayments(IUnitOfWork uow, Guid organizationId, Guid userId, Booking booking, string reason);
+    Task VoidCheckInGeneratedPayments(
+        IUnitOfWork uow, Guid organizationId, Guid userId, Booking booking, BookingSegmentParticipation participation, string reason);
 }

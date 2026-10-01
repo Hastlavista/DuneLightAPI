@@ -127,8 +127,11 @@ public class WaitlistService : IWaitlistService, IWaitlistPromotionService
         if (client.IsAnonymized)
             throw new BusinessRuleException(ErrorCodes.ClientAnonymized, "Klijent je anonimiziran.");
 
+        // Phase M0: "već rezerviran" = klijentovo sudjelovanje na (jedinom grupnom) segmentu zauzima raspored.
+        AppointmentSegment segment = AppointmentSegments.GetSingleExecutionSegment(appointment);
         Booking existingBooking = await _appointmentHandler.GetBooking(organizationId, appointmentId, request.ClientId);
-        if (existingBooking != null && (BookingParticipations.StatusOf(existingBooking) == BookingStatus.Confirmed || BookingParticipations.StatusOf(existingBooking) == BookingStatus.Completed))
+        if (existingBooking != null && existingBooking.Participations.Any(p =>
+                p.AppointmentSegmentId == segment.Id && ParticipationOccupancy.Occupies(p.Status)))
             throw new BusinessRuleException(ErrorCodes.AlreadyBooked, "Klijent već ima rezervaciju na ovom terminu.");
 
         WaitlistEntry activeEntry = await _waitlistHandler.GetActiveForClient(organizationId, appointmentId, request.ClientId);
@@ -139,7 +142,7 @@ public class WaitlistService : IWaitlistService, IWaitlistPromotionService
         if (group == null)
             throw new NotFoundAppException("Group", appointment.GroupId.GetValueOrDefault());
 
-        int confirmedCount = await _appointmentHandler.CountConfirmedBookings(organizationId, appointmentId);
+        int confirmedCount = await _appointmentHandler.CountConfirmedOnSegment(organizationId, segment.Id.GetValueOrDefault());
         if (confirmedCount < group.Capacity)
             throw new BusinessRuleException(
                 ErrorCodes.CapacityAvailable,
@@ -235,7 +238,8 @@ public class WaitlistService : IWaitlistService, IWaitlistPromotionService
         if (appointment.Status != AppointmentStatus.Scheduled || AppointmentFrame.Of(appointment).StartsAt <= now)
             return;
 
-        int confirmedCount = await _appointmentHandler.CountConfirmedBookings(uow, organizationId, appointmentId);
+        int confirmedCount = await _appointmentHandler.CountConfirmedOnSegment(
+            uow, organizationId, AppointmentSegments.GetSingleExecutionSegment(appointment).Id.GetValueOrDefault());
         int freeSeats = appointment.Group.Capacity - confirmedCount;
         if (freeSeats <= 0)
             return;
@@ -338,9 +342,10 @@ public class WaitlistService : IWaitlistService, IWaitlistPromotionService
         if (client.IsAnonymized)
             return WaitlistExpiredReasons.ClientAnonymized;
 
-        bool alreadyBooked = await uow.Context.Bookings.AnyAsync(b =>
-            b.AppointmentId == appointment.Id && b.ClientId == entry.ClientId &&
-            b.Participations.Any(p => p.Status != ParticipationStatus.Cancelled && p.Status != ParticipationStatus.NoShow));
+        Guid segmentId = AppointmentSegments.GetSingleExecutionSegment(appointment).Id.GetValueOrDefault();
+        bool alreadyBooked = await uow.Context.BookingSegmentParticipations
+            .Where(p => p.AppointmentSegmentId == segmentId && p.Booking.ClientId == entry.ClientId)
+            .AnyAsync(ParticipationOccupancy.OccupiesSchedule);
         if (alreadyBooked)
             return WaitlistExpiredReasons.AppointmentNoLongerAvailable;
 

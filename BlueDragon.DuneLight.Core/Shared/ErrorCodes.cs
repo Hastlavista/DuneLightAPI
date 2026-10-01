@@ -61,6 +61,11 @@ public static class ErrorCodes
     public const string ParticipationAppointmentMismatch = "PARTICIPATION_APPOINTMENT_MISMATCH";
     /// <summary>Phase D2: Booking već sudjeluje u tom segmentu.</summary>
     public const string DuplicateParticipation = "DUPLICATE_PARTICIPATION";
+    /// <summary>Phase M0: naredba adresirana Bookingom (privremena kompatibilnost) cilja Booking s više sudjelovanja —
+    /// treba adresirati sudjelovanje (ParticipationId).</summary>
+    public const string BookingParticipationAmbiguous = "BOOKING_PARTICIPATION_AMBIGUOUS";
+    /// <summary>Phase M0: zadani BookingId i ParticipationId se ne odnose na isto sudjelovanje.</summary>
+    public const string ParticipationBookingMismatch = "PARTICIPATION_BOOKING_MISMATCH";
     public const string EmployeeMissingPrimaryCompany = "EMPLOYEE_MISSING_PRIMARY_COMPANY";
     public const string EmployeeNotAssignedToCompany = "EMPLOYEE_NOT_ASSIGNED_TO_COMPANY";
     public const string EmployeeNotAssignedToService = "EMPLOYEE_NOT_ASSIGNED_TO_SERVICE";

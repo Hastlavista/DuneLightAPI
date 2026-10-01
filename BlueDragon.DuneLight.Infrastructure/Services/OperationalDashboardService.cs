@@ -134,20 +134,21 @@ public class OperationalDashboardService : IOperationalDashboardService
 
         if (appointment.Form == AppointmentForm.Group)
         {
-            List<Booking> bookings = appointment.Bookings;
-            int confirmedCount = bookings.Count(b => BookingParticipations.StatusOf(b) == BookingStatus.Confirmed);
+            // Phase M0: grupni sažetak broji SUDJELOVANJA (izvršne jedinice) termina, ne Bookinge.
+            List<BookingSegmentParticipation> participations = appointment.Bookings.SelectMany(b => b.Participations).ToList();
+            int confirmedCount = participations.Count(p => p.Status == ParticipationStatus.Confirmed);
             int capacity = appointment.Group?.Capacity ?? 0;
 
             dto.GroupSummary = new DashboardGroupSummaryDto
             {
                 Capacity = capacity,
                 ConfirmedCount = confirmedCount,
-                CompletedCount = bookings.Count(b => BookingParticipations.StatusOf(b) == BookingStatus.Completed),
-                NoShowCount = bookings.Count(b => BookingParticipations.StatusOf(b) == BookingStatus.NoShow),
-                CancelledCount = bookings.Count(b => BookingParticipations.StatusOf(b) == BookingStatus.Cancelled),
+                CompletedCount = participations.Count(p => p.Status == ParticipationStatus.Completed),
+                NoShowCount = participations.Count(p => p.Status == ParticipationStatus.NoShow),
+                CancelledCount = participations.Count(p => p.Status == ParticipationStatus.Cancelled),
                 WaitingCount = waiting.Count(w => w.AppointmentId == appointment.Id),
                 AvailableReservationSeats = Math.Max(0, capacity - confirmedCount),
-                HasUnresolvedAttendance = frame.StartsAt <= now && bookings.Any(b => BookingParticipations.StatusOf(b) == BookingStatus.Confirmed)
+                HasUnresolvedAttendance = frame.StartsAt <= now && confirmedCount > 0
             };
         }
         else
@@ -160,17 +161,18 @@ public class OperationalDashboardService : IOperationalDashboardService
 
     private static DashboardBookingSummaryDto BuildBookingSummary(Booking booking)
     {
-        decimal outstanding = ParticipationSettlement.OfBooking(booking).OutstandingAmount;
+        BookingCommercialSummary commercial = BookingCommercialSummary.Of(booking);
         return new DashboardBookingSummaryDto
         {
             BookingId = booking.Id.GetValueOrDefault(),
             ClientId = booking.ClientId,
             ClientName = booking.Client != null ? $"{booking.Client.FirstName} {booking.Client.LastName}" : null,
-            BookingStatus = BookingParticipations.StatusOf(booking),
-            PaidAmount = ParticipationSettlement.OfBooking(booking).SettledAmount,
-            OutstandingAmount = outstanding,
-            IsPaid = outstanding <= 0m,
-            PackageCovered = PackageConsumptions.IsSettledByPackage(booking)
+            BookingStatus = BookingSummary.StatusOf(booking),
+            PaidAmount = commercial.MonetarySettled,
+            OutstandingAmount = commercial.Outstanding,
+            IsPaid = commercial.FullySettled,
+            // Phase M0: "pokriveno paketom" = SVA sudjelovanja Bookinga namirena paketom.
+            PackageCovered = commercial.PackageCoveredCount == commercial.ParticipationCount
         };
     }
 
@@ -180,16 +182,15 @@ public class OperationalDashboardService : IOperationalDashboardService
         // Obveze se izvode SAMO iz Bookinga na rasporedu odabranog dana ove Company (već učitano) — Cancelled
         // isključen jer trenutna poslovna pravila ne zadržavaju novčanu obvezu nad otkazanim bookingom (vidi
         // spec section 17, Booking.IsLateCancellation je trenutno samo klasifikacijska priprema, ne naplata).
-        List<Booking> obligationBookings = appointments
-            .SelectMany(a => a.Bookings)
-            .Where(b => BookingParticipations.StatusOf(b) != BookingStatus.Cancelled)
-            .ToList();
-
+        // Phase M0: obveza je po SUDJELOVANJU (Cancelled sudjelovanje nema obvezu); "neplaćen Booking" = Booking s barem
+        // jednim ne-otkazanim sudjelovanjem koje još duguje.
         decimal outstandingAmount = 0m;
         int unpaidBookingCount = 0;
-        foreach (Booking booking in obligationBookings)
+        foreach (Booking booking in appointments.SelectMany(a => a.Bookings))
         {
-            decimal outstanding = ParticipationSettlement.OfBooking(booking).OutstandingAmount;
+            decimal outstanding = booking.Participations
+                .Where(p => p.Status != ParticipationStatus.Cancelled)
+                .Sum(p => ParticipationSettlement.Of(p).OutstandingAmount);
             outstandingAmount += outstanding;
             if (outstanding > 0m)
                 unpaidBookingCount++;
@@ -213,15 +214,15 @@ public class OperationalDashboardService : IOperationalDashboardService
     private async Task<DashboardAlertsDto> BuildAlerts(
         Guid organizationId, Guid companyId, List<Appointment> appointments, List<WaitlistEntry> waiting, int unpaidBookingCount)
     {
-        List<Booking> allBookings = appointments.SelectMany(a => a.Bookings).ToList();
+        List<BookingSegmentParticipation> allParticipations = appointments.SelectMany(a => a.Bookings).SelectMany(b => b.Participations).ToList();
 
         List<DashboardOutOfStockProductDto> outOfStock = await BuildOutOfStockProducts(organizationId, companyId);
 
         return new DashboardAlertsDto
         {
             WaitingCount = waiting.Count,
-            NoShowCount = allBookings.Count(b => BookingParticipations.StatusOf(b) == BookingStatus.NoShow),
-            CancelledBookingCount = allBookings.Count(b => BookingParticipations.StatusOf(b) == BookingStatus.Cancelled),
+            NoShowCount = allParticipations.Count(p => p.Status == ParticipationStatus.NoShow),
+            CancelledBookingCount = allParticipations.Count(p => p.Status == ParticipationStatus.Cancelled),
             CancelledAppointmentCount = appointments.Count(a => a.Status == AppointmentStatus.Cancelled),
             UnpaidBookingCount = unpaidBookingCount,
             OutOfStockCount = outOfStock.Count,

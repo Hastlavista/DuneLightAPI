@@ -13,9 +13,9 @@ namespace BlueDragon.DuneLight.Infrastructure.Domain.Models.Appointments;
 /// Klijent Bookinga sudjeluje u JEDNOM segmentu istog termina (ciljna izvršna i cjenovna jedinica). Od Phase D3B1 je
 /// AUTORITATIVAN izvor izvršnog životnog ciklusa (Status, StatusVersion, dolazak, razlog/klasifikacija otkazivanja) —
 /// svaki produkcijski Booking ima točno jedno sudjelovanje (BookingFactory), a čita/piše se kroz
-/// Utils.BookingParticipations/BookingLifecycle. Od Phase D3B2 je AUTORITATIVAN i za cijenu (Amount, SuggestedAmount,
+/// Utils.ParticipationLifecycle (Phase M0: adresirano sudjelovanjem). Od Phase D3B2 je AUTORITATIVAN i za cijenu (Amount, SuggestedAmount,
 /// IsAmountManuallyOverridden — NOT NULL; Booking više nema cijenu), čita se kroz BookingParticipations.AmountOf/...,
-/// mijenja kroz BookingFactory (nastanak) i Utils.BookingPrice (re-cijenjenje). Od Phase D3B3A je i nositelj povijesti
+/// mijenja kroz BookingFactory (nastanak) i Utils.ParticipationPrice (re-cijenjenje). Od Phase D3B3A je i nositelj povijesti
 /// potrošnje paketa (PackageConsumptions), a od Phase D3B3B i GRANICA NOVČANOG NAMIRENJA (CheckoutItems -&gt;
 /// PaymentAllocation; izračun Utils.ParticipationSettlement).
 ///

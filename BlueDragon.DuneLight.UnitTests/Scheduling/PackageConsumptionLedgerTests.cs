@@ -140,8 +140,8 @@ public class PackageConsumptionLedgerTests
         (PackageConsumption first, PackageConsumption second) = await InLedger(w, created.Id, w.Client, async (ledger, uow, a, b) =>
         {
             BookingExecutionContext execution = ExecutionContextResolver.ForBooking(a, b);
-            PackageConsumption one = await ledger.Consume(uow, w.OrganizationId, w.ActorUserId, b, execution, package.Id.Value, BookingStatus.Completed);
-            PackageConsumption two = await ledger.Consume(uow, w.OrganizationId, w.ActorUserId, b, execution, package.Id.Value, BookingStatus.Completed);
+            PackageConsumption one = await ledger.Consume(uow, w.OrganizationId, w.ActorUserId, b.Participations.Single(), execution, package.Id.Value, BookingStatus.Completed);
+            PackageConsumption two = await ledger.Consume(uow, w.OrganizationId, w.ActorUserId, b.Participations.Single(), execution, package.Id.Value, BookingStatus.Completed);
             return (one, two);
         });
 
@@ -287,10 +287,10 @@ public class PackageConsumptionLedgerTests
         await w.SeedCoverageApplied(await w.LoadBooking(created.Id, w.Client), package); // 5 -> 4, active consumption
 
         (bool first, bool second) = await InLedger(w, created.Id, w.Client, async (ledger, uow, a, b) =>
-            (await ledger.ReverseActive(uow, w.OrganizationId, w.ActorUserId, b, PackageConsumptionReversalReason.Cancellation),
-             await ledger.ReverseActive(uow, w.OrganizationId, w.ActorUserId, b, PackageConsumptionReversalReason.Cancellation)));
+            (await ledger.ReverseActive(uow, w.OrganizationId, w.ActorUserId, b.Participations.Single(), PackageConsumptionReversalReason.Cancellation),
+             await ledger.ReverseActive(uow, w.OrganizationId, w.ActorUserId, b.Participations.Single(), PackageConsumptionReversalReason.Cancellation)));
         bool third = await InLedger(w, created.Id, w.Client, (ledger, uow, a, b) =>
-            ledger.ReverseActive(uow, w.OrganizationId, w.ActorUserId, b, PackageConsumptionReversalReason.Cancellation));
+            ledger.ReverseActive(uow, w.OrganizationId, w.ActorUserId, b.Participations.Single(), PackageConsumptionReversalReason.Cancellation));
 
         Assert.Equal((true, false, false), (first, second, third));
         Assert.Equal(5, await Remaining(w, package));
@@ -330,7 +330,7 @@ public class PackageConsumptionLedgerTests
         Assert.Equal(PackageConsumptionTiming.OnCompletion, settings.PackageConsumptionTiming);
 
         PackageConsumption none = await InLedger(w, created.Id, w.Client, (ledger, uow, a, b) =>
-            ledger.Consume(uow, w.OrganizationId, w.ActorUserId, b, ExecutionContextResolver.ForBooking(a, b), package.Id.Value, BookingStatus.Confirmed));
+            ledger.Consume(uow, w.OrganizationId, w.ActorUserId, b.Participations.Single(), ExecutionContextResolver.ForBooking(a, b), package.Id.Value, BookingStatus.Confirmed));
 
         Assert.Null(none);
         Assert.Empty(await ConsumptionsOf(w, created.Id, w.Client));
@@ -357,7 +357,7 @@ public class PackageConsumptionLedgerTests
 
         // A REVERSED consumption is history too.
         await InLedger(w, created.Id, second, (ledger, uow, a, b) =>
-            ledger.ReverseActive(uow, w.OrganizationId, w.ActorUserId, b, PackageConsumptionReversalReason.Cancellation));
+            ledger.ReverseActive(uow, w.OrganizationId, w.ActorUserId, b.Participations.Single(), PackageConsumptionReversalReason.Cancellation));
         Booking b = await w.LoadBooking(created.Id, second);
         Assert.Equal((BookingStatus.Confirmed, 0), (b.Status, b.StatusVersion));
         await SchedulingAssert.BusinessRule(ErrorCodes.ReferencedCannotDelete,

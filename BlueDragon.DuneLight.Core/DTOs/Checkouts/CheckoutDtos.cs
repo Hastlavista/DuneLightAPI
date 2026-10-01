@@ -21,8 +21,13 @@ public class CheckoutCreateRequest
 /// (vidi spec section 72).</summary>
 public class CheckoutAddBookingItemRequest
 {
-    [Required]
-    public Guid BookingId { get; set; }
+    /// <summary>Phase M0: CILJ stavke usluge — sudjelovanje (izvršna jedinica) koje se namiruje. Preferirani ugovor.</summary>
+    public Guid? ParticipationId { get; set; }
+
+    /// <summary>PRIVREMENA kompatibilnost: sam BookingId je dopušten samo kad Booking ima TOČNO JEDNO sudjelovanje (inače
+    /// BOOKING_PARTICIPATION_AMBIGUOUS — jedan zahtjev nikad ne cilja sva sudjelovanja). Uz ParticipationId mora se
+    /// odnositi na isti Booking (inače PARTICIPATION_BOOKING_MISMATCH).</summary>
+    public Guid? BookingId { get; set; }
 }
 
 /// <summary>Dodaje kupnju Paketa kao stavku — cijena se razrješava preko IPricingService u trenutku dodavanja
@@ -106,6 +111,10 @@ public class CheckoutItemDto
     public decimal OutstandingAmount { get; set; }
 
     public Guid? BookingId { get; set; }
+
+    /// <summary>Phase M0: sudjelovanje koje stavka usluge namiruje (BookingId je njegov spremnik).</summary>
+    public Guid? ParticipationId { get; set; }
+
     public Guid? PackageId { get; set; }
     public Guid? ProductId { get; set; }
     public Guid? ClientPackageId { get; set; }
