@@ -43,6 +43,30 @@ public class Appointment
     [Column("cancellation_reason")]
     public string CancellationReason { get; set; }
 
+    /// <summary>Phase M1A.1 — TRENUTNA eksplicitna otkazanost TERMINA (AppointmentService.Cancel/MarkNoShow na razini
+    /// termina): kada/tko. Razlikuje "sesija je otkazana" od "svi klijenti su pojedinačno otkazali" (to drugo ostavlja
+    /// termin Scheduled). Ulaz je u AppointmentLifecycle.Derive; nikad se ne izvodi iz statusa sudjelovanja. Korekcija
+    /// koja vrati sudjelovanje na Confirmed briše TRENUTNI učinak (CancelledAt/By/CancellationReason → null), a povijest
+    /// ostaje u audit logu ("AppointmentCancelled"/"AppointmentCancellationCleared").</summary>
+    [Column("cancelled_at")]
+    public DateTimeOffset? CancelledAt { get; set; }
+
+    [Column("cancelled_by")]
+    public Guid? CancelledBy { get; set; }
+
+    /// <summary>Phase M1A.1 — poslovna činjenica "grupna sesija je zatvorena (close-out)" (CompleteGroupAppointment):
+    /// kada/tko. NIJE životni ciklus termina (Closed se izvodi iz sudjelovanja) — identitet close-outa za idempotenciju
+    /// (istek liste čekanja i provizija po sesiji samo jednom), neovisno o postojanju CommissionEntry. Samo Form=Group.</summary>
+    [Column("closed_out_at")]
+    public DateTimeOffset? ClosedOutAt { get; set; }
+
+    [Column("closed_out_by")]
+    public Guid? ClosedOutBy { get; set; }
+
+    /// <summary>Je li termin TRENUTNO eksplicitno otkazan (vidi <see cref="CancelledAt"/>).</summary>
+    [NotMapped]
+    public bool IsExplicitlyCancelled => CancelledAt.HasValue;
+
     [Column("group_id")]
     public Guid? GroupId { get; set; }
 

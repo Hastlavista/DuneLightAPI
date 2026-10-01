@@ -19,9 +19,6 @@ public interface ICommissionEntryHandler
     /// PRIJE nego Booking uopće može ponovno zaraditi novi, vidi CommissionEntry.cs SourceVersion napomenu).</summary>
     Task<CommissionEntry> GetActiveForParticipation(IUnitOfWork uow, Guid organizationId, Guid participationId);
 
-    /// <summary>Phase M1A: postoji li već GroupService zapis za termin (provizija po terminu se zarađuje najviše jednom)
-    /// — pozivatelj (close-out grupne sesije) provjerava pod lockom termina.</summary>
-    Task<bool> ExistsForGroupAppointment(IUnitOfWork uow, Guid organizationId, Guid appointmentId);
 
     /// <summary>Sprema promjene na postojećem zapisu (isključivo Status/ReversedAt/ReversedBy — sve ostalo je
     /// nepromjenjiv snapshot, vidi CommissionEntry.cs) unutar pozivateljeve transakcije.</summary>

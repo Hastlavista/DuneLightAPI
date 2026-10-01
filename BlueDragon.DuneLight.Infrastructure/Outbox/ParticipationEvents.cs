@@ -11,6 +11,12 @@ namespace BlueDragon.DuneLight.Infrastructure.Outbox;
 /// AppointmentService i GroupService). Pojava pripada SUDJELOVANJU: identitet (i Outbox idempotency-key) je
 /// (ParticipationId, StatusVersion NAKON prijelaza) — Booking nema vlastitu verziju, pa Booking-wide naredba daje po
 /// jednu pojavu za svako sudjelovanje koje je stvarno prešlo. BookingId/AppointmentId/ClientId su kontekst.
+///
+/// Phase M1A.1 — PRAVILO ZA KASNIJE (multi-segment, nije implementirano): interni Outbox događaji ostaju po sudjelovanju
+/// (identitet izvršne pojave), ali jedna Booking-wide ili Appointment-wide poslovna naredba treba proizvesti NAJVIŠE JEDNU
+/// klijentu namijenjenu namjeru obavijesti po Bookingu/klijentu (ne identične poruke po sudjelovanju). Grupiranje se radi
+/// na razini obrade obavijesti (npr. po naredbi/Bookingu), ne promjenom identiteta ovih događaja. Danas (jedno sudjelovanje
+/// po Bookingu u produkciji) je to isto.
 /// </summary>
 public static class ParticipationEvents
 {

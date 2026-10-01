@@ -116,10 +116,11 @@ public class WaitlistService : IWaitlistService, IWaitlistPromotionService
         await AppointmentOwnership.EnsureCallerIsAssigned(_employeeHandler, organizationId, userId, hasFullScope, appointment, NotOwnerMessage);
 
         DateTimeOffset now = DateTimeOffset.UtcNow;
-        // Phase M1A: lista čekanja je po occurrenceu/segmentu — NE ovisi o agregatnom statusu termina (occurrence čiji je
-        // jedini član otkazao/izostao izvodi se kao Cancelled/Closed, a segment i dalje ima kapacitet). Dostupnost =
-        // grupni, budući; "ima li mjesta" odlučuje provjera kapaciteta segmenta niže (CAPACITY_AVAILABLE).
-        if (appointment.Form != AppointmentForm.Group || AppointmentFrame.Of(appointment).StartsAt <= now)
+        // Phase M1A/M1A.1: lista čekanja je po occurrenceu/segmentu. Nedostupna je za EKSPLICITNO otkazanu sesiju
+        // (Cancelled); occurrence čiji su članovi pojedinačno otkazali ostaje Scheduled, a onaj čiji je jedini član izostao
+        // (Closed) i dalje odlučuje provjera kapaciteta segmenta niže (CAPACITY_AVAILABLE) — kao i prije.
+        if (appointment.Form != AppointmentForm.Group || appointment.Status == AppointmentStatus.Cancelled ||
+            AppointmentFrame.Of(appointment).StartsAt <= now)
             throw new BusinessRuleException(ErrorCodes.WaitlistNotAvailable, "Lista čekanja nije dostupna za ovaj termin.");
 
         Client client = await _clientHandler.GetByIdLight(organizationId, request.ClientId);

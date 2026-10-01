@@ -220,19 +220,18 @@ public class BookingNoShowAndCancellationCharacterizationTests
     }
 
     [Fact]
-    public async Task IndividualCancel_OfTheLastBooking_CancelsTheAppointment_AndFreesTheEmployee()
+    public async Task IndividualCancel_OfTheLastBooking_DoesNotCancelTheAppointmentFrame()
     {
-        await using SchedulingWorld w = await SchedulingWorld.Create(nameof(IndividualCancel_OfTheLastBooking_CancelsTheAppointment_AndFreesTheEmployee));
+        await using SchedulingWorld w = await SchedulingWorld.Create(nameof(IndividualCancel_OfTheLastBooking_DoesNotCancelTheAppointmentFrame));
         AppointmentDto created = await w.CreateAppointment(SchedulingWorld.Future(10));
 
         await w.SetBookingStatus(created.Id, w.Client, BookingStatus.Cancelled);
 
-        // M1A: an appointment whose every participation is Cancelled IS Cancelled (derived) — it used to stay Scheduled and
-        // keep blocking the employee. A cancelled appointment does not occupy the employee, so the slot is free again.
-        Assert.Equal(AppointmentStatus.Cancelled, (await w.LoadAppointment(created.Id)).Status);
+        // M1A.1: only an explicit Appointment cancellation cancels the session — a participation cancellation (even of the
+        // last one) leaves it Scheduled, so the frame keeps blocking the employee (the pre-M1A behaviour again).
+        Assert.Equal(AppointmentStatus.Scheduled, (await w.LoadAppointment(created.Id)).Status);
         Client other = await w.AddClient("Other", "Client");
-        AppointmentDto replacement = await w.CreateAppointment(SchedulingWorld.Future(10), client: other);
-        Assert.Equal(AppointmentStatus.Scheduled, replacement.Status);
+        await SchedulingAssert.BusinessRule(ErrorCodes.AppointmentOverlap, () => w.CreateAppointment(SchedulingWorld.Future(10), client: other));
     }
 
     [Fact]

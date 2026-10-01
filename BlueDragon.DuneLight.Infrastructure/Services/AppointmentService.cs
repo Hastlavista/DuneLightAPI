@@ -52,7 +52,6 @@ public class AppointmentService : IAppointmentService
     private readonly IPaymentLedgerService _paymentLedgerService;
     private readonly ICheckoutHandler _checkoutHandler;
     private readonly IBookingSegmentParticipationHandler _participationHandler;
-    private readonly ICommissionEntryHandler _commissionEntryHandler;
     private readonly ICommissionLedgerService _commissionLedgerService;
     private readonly IOutboxWriter _outboxWriter;
     private readonly IUnitOfWorkFactory _unitOfWorkFactory;
@@ -80,7 +79,6 @@ public class AppointmentService : IAppointmentService
         IPaymentLedgerService paymentLedgerService,
         ICheckoutHandler checkoutHandler,
         IBookingSegmentParticipationHandler participationHandler,
-        ICommissionEntryHandler commissionEntryHandler,
         ICommissionLedgerService commissionLedgerService,
         IOutboxWriter outboxWriter,
         IUnitOfWorkFactory unitOfWorkFactory,
@@ -107,7 +105,6 @@ public class AppointmentService : IAppointmentService
         _paymentLedgerService = paymentLedgerService;
         _checkoutHandler = checkoutHandler;
         _participationHandler = participationHandler;
-        _commissionEntryHandler = commissionEntryHandler;
         _commissionLedgerService = commissionLedgerService;
         _outboxWriter = outboxWriter;
         _unitOfWorkFactory = unitOfWorkFactory;
@@ -171,7 +168,7 @@ public class AppointmentService : IAppointmentService
 
         // Phase M1A: termin nastaje kao Scheduled, a početni status mu se IZVODI iz upravo stvorenih (Completed) sudjelovanja
         // → Closed. Nema "Completed" termina; status nikad nije zasebna odluka.
-        appointment.Status = AppointmentLifecycle.Derive(appointment) ?? AppointmentStatus.Scheduled;
+        appointment.Status = AppointmentLifecycle.Derive(appointment);
 
         // CompleteNew loguje odrađeno — provjera radne-snage dostupnosti vrijedi samo ako je StartsAt u budućnosti
         // (zakazuje se i odmah naplaćuje); za prošlost je ovo evidentiranje stvarnosti, ne planiranje (vidi FAZA 2).
@@ -400,12 +397,13 @@ public class AppointmentService : IAppointmentService
         return await GetByIdInternal(organizationId, id);
     }
 
-    /// <summary>Phase M1A — "zatvaranje grupne sesije" (close-out): bilježi da se sesija održala. Namjerno NE dira nijedno
-    /// sudjelovanje (prisutnost se razrješava po sudjelovanju kroz BookingService/GroupAttendanceService) i NE postavlja
-    /// status termina: status se IZVODI iz sudjelovanja (AppointmentLifecycle) — ako je neko sudjelovanje još Confirmed,
-    /// termin OSTAJE Scheduled (uz GROUP_APPOINTMENT_UNRESOLVED_BOOKINGS upozorenje), a postaje Closed/Cancelled tek kad
-    /// se ta sudjelovanja razriješe. Nuspojave close-outa ostaju: istek liste čekanja i provizija PO TERMINU (zarađuje se
-    /// najviše jednom — ponovljeni close-out je idempotentan). Otkazan termin se ne može zatvoriti.</summary>
+    /// <summary>Phase M1A.1 — "zatvaranje grupne sesije" (close-out) je POSLOVNA ČINJENICA (Appointment.ClosedOutAt/By),
+    /// ne životni ciklus termina: namjerno NE dira nijedno sudjelovanje i NE postavlja status (status se izvodi iz
+    /// sudjelovanja — sesija s još Confirmed članom ostaje Scheduled uz GROUP_APPOINTMENT_UNRESOLVED_BOOKINGS upozorenje).
+    /// Prvi close-out bilježi činjenicu i izvodi nuspojave TOČNO JEDNOM: istek liste čekanja i provizija po sesiji (prema
+    /// pravilu primjenjivom u tom trenutku). Ponovljeni close-out je idempotentan: ne bilježi novi close-out, ne zarađuje
+    /// proviziju (ni ako je pravilo dodano naknadno) i ne ponavlja istek liste čekanja — vraća stanje i upozorenje.
+    /// Identitet close-outa je ClosedOutAt, NIKAD postojanje CommissionEntry. Otkazan termin se ne može zatvoriti.</summary>
     public async Task<AppointmentDto> CompleteGroupAppointment(Guid organizationId, Guid userId, bool hasFullScope, Guid id)
     {
         Appointment appointment;
@@ -428,16 +426,35 @@ public class AppointmentService : IAppointmentService
 
             await AppointmentOwnership.EnsureCallerIsAssigned(_employeeHandler, organizationId, userId, hasFullScope, appointment, NotOwnerMessage);
 
-            // Occurrence je zatvoren — preostali Waiting retci više nisu smisleni (spec section 20), ne promovira se.
-            await _waitlistPromotionService.ExpireWaitingForAppointment(
-                uow, organizationId, id, userId, WaitlistExpiredReasons.AppointmentCompleted);
+            if (appointment.ClosedOutAt == null)
+            {
+                DateTimeOffset now = DateTimeOffset.UtcNow;
+                appointment.ClosedOutAt = now;
+                appointment.ClosedOutBy = userId;
+                appointment.UpdatedAt = now;
+                appointment.UpdatedBy = userId;
+                await _appointmentHandler.UpdateScalar(uow, appointment);
 
-            // Provizija se zarađuje PO CIJELOM odrađenom terminu, ne po sudioniku — vidi CommissionService
-            // domensku napomenu (spec section 14/27/28). Phase M1A: close-out više nije zaštićen statusom termina
-            // ("Completed" ne postoji), pa pozivatelj pod lockom termina provjerava postoji li već zapis za termin.
-            if (!await _commissionEntryHandler.ExistsForGroupAppointment(uow, organizationId, id))
+                await _auditLogHandler.Add(uow, new AppointmentAuditLog
+                {
+                    Id = Guid.NewGuid(),
+                    AppointmentId = id,
+                    ChangeType = "GroupClosedOut",
+                    OldValue = null,
+                    NewValue = now.ToString("O"),
+                    ChangedAt = now,
+                    ChangedBy = userId
+                });
+
+                // Occurrence je zatvoren — preostali Waiting retci više nisu smisleni (spec section 20), ne promovira se.
+                await _waitlistPromotionService.ExpireWaitingForAppointment(
+                    uow, organizationId, id, userId, WaitlistExpiredReasons.AppointmentCompleted);
+
+                // Provizija se zarađuje PO CIJELOM odrađenom terminu, ne po sudioniku — vidi CommissionService domensku
+                // napomenu (spec section 14/27/28). Jednom: zaštićena close-out činjenicom iznad (pod lockom termina).
                 await _commissionLedgerService.GenerateForGroupServiceCompletion(
                     uow, organizationId, ExecutionContextResolver.ForAppointment(appointment));
+            }
 
             // Status se ne postavlja — izvodi se (no-op kad je već usklađen).
             await AppointmentLifecycle.Refresh(_appointmentHandler, _auditLogHandler, uow, organizationId, id, userId);
@@ -1025,10 +1042,19 @@ public class AppointmentService : IAppointmentService
                     ErrorCodes.AlreadyCompleted,
                     "Termin je već razriješen (Closed) i ne može se otkazati niti označiti kao izostanak.");
 
-            // Razlog otkazivanja termina je metapodatak termina; STATUS se ne postavlja ovdje nego izvodi niže.
-            appointment.CancellationReason = request.CancellationReason;
-            appointment.UpdatedAt = DateTimeOffset.UtcNow;
-            appointment.UpdatedBy = userId;
+            // Phase M1A.1: otkazivanje TERMINA je zasebna, eksplicitna činjenica (CancelledAt/By + "AppointmentCancelled"
+            // audit) — ulaz u izvođenje statusa, nikad izveden iz sudjelovanja. Bulk no-show NIJE otkazivanje termina: samo
+            // bilježi razlog (metapodatak, kao i prije). STATUS se ne postavlja ovdje nego izvodi niže.
+            if (targetBookingStatus == BookingStatus.Cancelled)
+            {
+                await AppointmentLifecycle.MarkExplicitlyCancelled(_auditLogHandler, uow, appointment, request.CancellationReason, userId);
+            }
+            else
+            {
+                appointment.CancellationReason = request.CancellationReason;
+                appointment.UpdatedAt = DateTimeOffset.UtcNow;
+                appointment.UpdatedBy = userId;
+            }
 
             await _appointmentHandler.UpdateScalar(uow, appointment);
 
@@ -1100,16 +1126,10 @@ public class AppointmentService : IAppointmentService
                 }
             }
 
-            // Phase M1A: status termina se IZVODI iz svih sudjelovanja: sve otkazano → Cancelled; bilo koji Completed/NoShow
-            // (uključujući bulk no-show) → Closed. Terminalna sudjelovanja (Completed/Cancelled/NoShow) nisu dirana.
-            bool hasParticipations = appointment.Bookings.Any(b => b.Participations.Count > 0);
+            // Phase M1A.1: status se IZVODI iz sudjelovanja + eksplicitne otkazanosti: otkazan termin bez izvršenog rada
+            // (uključujući prazan termin) → Cancelled; bilo koji Completed/NoShow (uključujući bulk no-show) → Closed.
+            // Terminalna sudjelovanja (Completed/Cancelled/NoShow) nisu dirana.
             await AppointmentLifecycle.Refresh(_appointmentHandler, _auditLogHandler, uow, organizationId, id, userId);
-
-            // JEDINA eksplicitna iznimka (otvoreno pitanje, vidi izvještaj M1A): termin BEZ ijednog sudjelovanja (grupni
-            // occurrence generiran za grupu bez članova) nema izvedeni status; eksplicitno otkazivanje termina zadržava
-            // dosadašnji ishod (Cancelled) umjesto da naredba postane tihi no-op.
-            if (!hasParticipations)
-                await AppointmentLifecycle.Apply(_appointmentHandler, _auditLogHandler, uow, appointment, AppointmentStatus.Cancelled, userId);
 
             // Aktivni rad termina je otkazan/izostao — preostali Waiting retci više nisu smisleni, ne promovira se
             // (spec section 19/41/42).
@@ -1570,6 +1590,8 @@ public class AppointmentService : IAppointmentService
             Status = a.Status,
             Note = a.Note,
             CancellationReason = a.CancellationReason,
+            CancelledAt = a.CancelledAt,
+            ClosedOutAt = a.ClosedOutAt,
             GroupId = a.GroupId,
             GroupName = a.Group?.Name,
             RecurrenceGroupId = a.RecurrenceGroupId,

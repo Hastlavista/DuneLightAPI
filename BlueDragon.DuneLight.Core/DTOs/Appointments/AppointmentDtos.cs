@@ -94,8 +94,15 @@ public class AppointmentDto
     public AppointmentStatus Status { get; set; }
     public string Note { get; set; }
 
-    /// <summary>Popunjeno samo kad je Status Cancelled (uklj. bulk no-show — vidi AppointmentStatus.cs).</summary>
+    /// <summary>Razlog otkazivanja termina (eksplicitno otkazivanje) ili bulk no-showa — metapodatak termina.</summary>
     public string CancellationReason { get; set; }
+
+    /// <summary>Phase M1A.1: kada je termin EKSPLICITNO otkazan (trenutno; null ako nije ili je korekcija vratila rad).</summary>
+    public DateTimeOffset? CancelledAt { get; set; }
+
+    /// <summary>Phase M1A.1: kada je grupna sesija zatvorena (close-out) — poslovna činjenica, ne status termina.</summary>
+    public DateTimeOffset? ClosedOutAt { get; set; }
+
     public Guid? GroupId { get; set; }
 
     /// <summary>Popunjeno samo za Form=Group, kad je grupa učitana (npr. GetByClient).</summary>
