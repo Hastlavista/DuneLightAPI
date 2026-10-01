@@ -70,13 +70,14 @@ public class PaymentService : IPaymentService, IPaymentLedgerService
             throw new BusinessRuleException(
                 ErrorCodes.PaymentNotAllowed, "Booking je pokriven paketom — dodatna novčana naplata nije dopuštena.");
 
-        if (booking.Amount <= 0m)
+        decimal bookingAmount = BookingParticipations.AmountOf(booking);
+        if (bookingAmount <= 0m)
             throw new BusinessRuleException(ErrorCodes.PaymentNotAllowed, "Booking je besplatan (iznos 0) — plaćanje nije potrebno.");
 
-        if (amount > booking.Amount)
+        if (amount > bookingAmount)
             throw new BusinessRuleException(
                 ErrorCodes.PaymentExceedsOutstandingAmount, "Iznos premašuje preostali dug za ovaj booking.",
-                new { outstanding = booking.Amount, requested = amount });
+                new { outstanding = bookingAmount, requested = amount });
 
         DateTimeOffset now = DateTimeOffset.UtcNow;
         Guid checkoutId = Guid.NewGuid();

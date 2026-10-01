@@ -21,9 +21,9 @@ namespace BlueDragon.DuneLight.UnitTests.Scheduling;
 /// Phase D2 — BookingSegmentParticipation persistence foundation: a Booking's client participating in one segment of the
 /// SAME appointment, with lifecycle status/version, arrival and cancellation metadata and a pricing snapshot.
 /// D3B1: every production Booking now owns exactly one (authoritative) participation on its appointment's segment, created
-/// by BookingFactory with no pricing snapshot. These foundation tests therefore attach their EXTRA participations
-/// (IBookingSegmentParticipationHandler.Add, always with a pricing snapshot) to additional segments, and ParticipationCount
-/// counts only those extra rows.
+/// by BookingFactory (D3B2: carrying the booking's authoritative price). These foundation tests therefore attach their
+/// EXTRA participations (IBookingSegmentParticipationHandler.Add) to additional segments, and ParticipationCount counts
+/// only those extra rows (all participations minus the one production participation per booking).
 /// </summary>
 public class BookingSegmentParticipationTests
 {
@@ -72,11 +72,12 @@ public class BookingSegmentParticipationTests
         CreatedAt = DateTimeOffset.UtcNow
     };
 
-    /// <summary>Participations added by these tests (they carry a pricing snapshot; D3B1 production ones do not).</summary>
+    /// <summary>Participations added by these tests: every production booking owns exactly one, the rest are extra.</summary>
     private static async Task<int> ParticipationCount(SchedulingWorld w)
     {
         await using DatabaseContext db = w.NewDb();
-        return await db.BookingSegmentParticipations.CountAsync(p => p.OrganizationId == w.OrganizationId && p.Amount != null);
+        return await db.BookingSegmentParticipations.CountAsync(p => p.OrganizationId == w.OrganizationId)
+               - await db.Bookings.CountAsync(b => b.OrganizationId == w.OrganizationId);
     }
 
     /// <summary>Gives the production participation of the booking lifecycle history without changing its status
@@ -614,7 +615,9 @@ public class BookingSegmentParticipationTests
         Assert.True(await db.Bookings.CountAsync(b => b.OrganizationId == w.OrganizationId) >= 9);
         Assert.Contains(await db.Bookings.Where(b => b.AppointmentId == occurrence.Id).Select(b => b.ClientId).ToListAsync(), c => c == waiter.Id);
         Assert.Contains(await db.Bookings.Where(b => b.AppointmentId == roomyOccurrence.Id).Select(b => b.ClientId).ToListAsync(), c => c == lateMember.Id);
-        Assert.Equal(0, await ParticipationCount(w)); // none carries a pricing snapshot (Booking stays price-authoritative)
+        Assert.Equal(0, await ParticipationCount(w)); // no participation beyond the one per booking
+        // D3B2: every participation carries its booking's price (the Booking has none).
+        Assert.False(await db.BookingSegmentParticipations.AnyAsync(p => p.OrganizationId == w.OrganizationId && p.SuggestedAmount <= 0m));
         // D3A: every appointment has exactly one (production) segment; D3B1: every booking has exactly one participation on it.
         List<Guid> appointmentIds = await db.Appointments.Where(a => a.OrganizationId == w.OrganizationId).Select(a => a.Id.Value).ToListAsync();
         Assert.All(appointmentIds, id => Assert.Equal(1, db.AppointmentSegments.Count(x => x.AppointmentId == id)));

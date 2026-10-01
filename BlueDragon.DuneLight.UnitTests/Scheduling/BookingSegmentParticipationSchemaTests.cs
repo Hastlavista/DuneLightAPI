@@ -59,9 +59,9 @@ public class BookingSegmentParticipationSchemaTests
             ["base_amount"] = ("numeric", "YES"),
             ["base_amount_source"] = ("character varying", "YES"),
             ["adjustment_amount"] = ("numeric", "YES"),
-            ["suggested_amount"] = ("numeric", "YES"),
-            ["amount"] = ("numeric", "YES"),
-            ["is_amount_manually_overridden"] = ("boolean", "YES"),
+            ["suggested_amount"] = ("numeric", "NO"),
+            ["amount"] = ("numeric", "NO"),
+            ["is_amount_manually_overridden"] = ("boolean", "NO"),
             ["created_at"] = ("timestamp with time zone", "NO"),
             ["updated_at"] = ("timestamp with time zone", "YES"),
         }, columns);

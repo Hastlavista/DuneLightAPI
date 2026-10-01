@@ -67,9 +67,13 @@ public class BookingSettlementCharacterizationTests
         Assert.DoesNotContain("payment_method", bookingColumns);
         Assert.DoesNotContain("paid_amount", bookingColumns);
         Assert.DoesNotContain("outstanding_amount", bookingColumns);
-        // The obligation and the coverage state ARE on the Booking ...
-        Assert.Contains("amount", bookingColumns);
-        Assert.Contains("suggested_amount", bookingColumns);
+        // The coverage state IS on the Booking; D3B2: the obligation (price) is on its single participation ...
+        string[] participationColumns = db.Model.FindEntityType(typeof(BookingSegmentParticipation))!.GetProperties().Select(p => p.GetColumnName()).ToArray();
+        Assert.DoesNotContain("amount", bookingColumns);
+        Assert.DoesNotContain("suggested_amount", bookingColumns);
+        Assert.Contains("amount", participationColumns);
+        Assert.Contains("suggested_amount", participationColumns);
+        Assert.DoesNotContain(participationColumns, c => c.Contains("paid") || c.Contains("payment"));
         Assert.Contains("client_package_id", bookingColumns);
         Assert.Contains("package_coverage_applied", bookingColumns);
         // ... and the Appointment carries no price at all.

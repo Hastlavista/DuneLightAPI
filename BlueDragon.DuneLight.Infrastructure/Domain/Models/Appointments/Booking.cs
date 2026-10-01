@@ -33,6 +33,12 @@ namespace BlueDragon.DuneLight.Infrastructure.Domain.Models.Appointments;
 /// članova dobiva ad-hoc Booking (BookingService.AddBooking) tek kad se pojavi/čekira. SuggestedAmount se
 /// snapshotta odmah kod generiranja/dodavanja (isti IPricingService poziv kao za Individual), no naplata
 /// ostaje neriješena do stvarnog check-ina (BookingService.ResolveCoverage).
+///
+/// Phase D3B1/D3B2: životni ciklus (status, StatusVersion, otkazivanje) i CIJENA (Amount, SuggestedAmount,
+/// IsAmountManuallyOverridden) više NISU na Bookingu — autoritativno ih nosi njegovo jedino sudjelovanje
+/// (BookingSegmentParticipation; čitanje BookingParticipations.AmountOf/..., pisanje BookingPrice/BookingLifecycle).
+/// "Amount" u tekstu iznad znači tu cijenu sudjelovanja. Booking ostaje identitet (termin + klijent) i nositelj
+/// paketnog stanja i namirenja (CheckoutItems).
 /// </summary>
 [Table("bookings")]
 public class Booking
@@ -50,22 +56,6 @@ public class Booking
 
     [Column("client_id")]
     public Guid ClientId { get; set; }
-
-    /// <summary>Cijena OVOG klijenta za ovaj booking (uvijek popunjeno od trenutka kreiranja, prije bilo kakve
-    /// naplate) — vrijednost usluge bez obzira na način podmirenja: kod paket-pokrića (ClientPackageId) ovo i
-    /// dalje nosi redovnu/predloženu cijenu (ne 0), OutstandingAmount=0 samo znači da je obveza podmirena
-    /// entitlementom, ne da je iznos naplaćen u novcu. Amount &gt;= 0 (nula je valjana — promocija/gratis termin).</summary>
-    [Column("amount")]
-    public decimal Amount { get; set; }
-
-    /// <summary>Snapshot predložene cijene iz IPricingService (usluga/poslovnica/početak segmenta termina) u trenutku
-    /// kreiranja/naplate ovog Bookinga — ne mijenja se retroaktivno kasnijim promjenama cjenika (vidi domensku
-    /// napomenu na klasi).</summary>
-    [Column("suggested_amount")]
-    public decimal SuggestedAmount { get; set; }
-
-    [Column("is_amount_manually_overridden")]
-    public bool IsAmountManuallyOverridden { get; set; }
 
     /// <summary>Koji paket OVOG klijenta pokriva ovaj booking, ako je plaćeno/pokriveno iz paketa.</summary>
     [Column("client_package_id")]
@@ -124,7 +114,7 @@ public class Booking
     /// stavki je izvor istine za "koliko je plaćeno", ne persistirani boolean (vidi BookingFinancialsCalculator).</summary>
     public List<CheckoutItem> CheckoutItems { get; set; } = new();
 
-    /// <summary>Phase D2 ciljni model: sudjelovanja ovog Bookinga u segmentima termina. NIJE autoritativno — status,
-    /// cijena, paket, otkazivanje i dolazak i dalje žive na Bookingu; nijedan tok ne kreira ove retke.</summary>
+    /// <summary>Sudjelovanja ovog Bookinga u segmentima termina — u jednostrukom modelu točno jedno (BookingFactory).
+    /// Autoritativno za životni ciklus (Phase D3B1) i cijenu (Phase D3B2); čitaj kroz Utils.BookingParticipations.</summary>
     public List<BookingSegmentParticipation> Participations { get; set; } = new();
 }

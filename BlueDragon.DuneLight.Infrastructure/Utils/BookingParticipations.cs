@@ -47,6 +47,13 @@ public static class BookingParticipations
 
     public static bool? IsLateCancellationOf(Booking booking) => GetSingleParticipation(booking).IsLateCancellation;
 
+    /// <summary>Phase D3B2: autoritativna (konačna) cijena Bookinga = cijena njegovog jedinog sudjelovanja.</summary>
+    public static decimal AmountOf(Booking booking) => GetSingleParticipation(booking).Amount;
+
+    public static decimal SuggestedAmountOf(Booking booking) => GetSingleParticipation(booking).SuggestedAmount;
+
+    public static bool IsAmountManuallyOverriddenOf(Booking booking) => GetSingleParticipation(booking).IsAmountManuallyOverridden;
+
     public static bool HasStatus(Booking booking, BookingStatus status) => StatusOf(booking) == status;
 
     public static bool IsActive(Booking booking)
@@ -106,6 +113,32 @@ public static class BookingLifecycle
         BookingSegmentParticipation participation = BookingParticipations.GetSingleParticipation(booking);
         participation.IsLateCancellation = isLateCancellation;
         participation.UpdatedAt = DateTimeOffset.UtcNow;
+    }
+}
+
+/// <summary>
+/// Phase D3B2 — JEDINA putanja koja mijenja cijenu postojećeg Bookinga, tj. njegovog jedinog sudjelovanja
+/// (re-cijenjenje kod Update/CompleteExisting/check-ina, poništenje grupnog check-ina). Cijena NIJE izvršna povijest:
+/// ne dira Status/StatusVersion niti ParticipationHistory (netaknuto sudjelovanje ostaje netaknuto).
+/// AdjustmentAmount se ne piše — trenutni cjenovni model nema eksplicitnu prilagodbu.
+/// </summary>
+public static class BookingPrice
+{
+    public static void Apply(Booking booking, BookingPricing pricing)
+    {
+        BookingSegmentParticipation participation = BookingParticipations.GetSingleParticipation(booking);
+        ApplyTo(participation, pricing);
+        participation.UpdatedAt = DateTimeOffset.UtcNow;
+    }
+
+    /// <summary>Upis cjenovnog stanja na sudjelovanje — dijele ga Apply i BookingFactory (nastanak).</summary>
+    internal static void ApplyTo(BookingSegmentParticipation participation, BookingPricing pricing)
+    {
+        participation.Amount = pricing.Amount;
+        participation.SuggestedAmount = pricing.SuggestedAmount;
+        participation.IsAmountManuallyOverridden = pricing.IsAmountManuallyOverridden;
+        participation.BaseAmount = pricing.BaseAmount;
+        participation.BaseAmountSource = pricing.BaseAmountSource;
     }
 }
 

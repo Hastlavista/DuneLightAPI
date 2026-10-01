@@ -10,8 +10,9 @@ namespace BlueDragon.DuneLight.Infrastructure.Domain.Models.Appointments;
 /// Klijent Bookinga sudjeluje u JEDNOM segmentu istog termina (ciljna izvršna i cjenovna jedinica). Od Phase D3B1 je
 /// AUTORITATIVAN izvor izvršnog životnog ciklusa (Status, StatusVersion, dolazak, razlog/klasifikacija otkazivanja) —
 /// svaki produkcijski Booking ima točno jedno sudjelovanje (BookingFactory), a čita/piše se kroz
-/// Utils.BookingParticipations/BookingLifecycle. Cjenovni snapshot NIJE još autoritativan: u D3B1 ostaje NULL (cijena,
-/// paket i naplata su i dalje na Bookingu) i postaje autoritativan tek u D3B2.
+/// Utils.BookingParticipations/BookingLifecycle. Od Phase D3B2 je AUTORITATIVAN i za cijenu (Amount, SuggestedAmount,
+/// IsAmountManuallyOverridden — NOT NULL; Booking više nema cijenu), čita se kroz BookingParticipations.AmountOf/...,
+/// mijenja kroz BookingFactory (nastanak) i Utils.BookingPrice (re-cijenjenje). Paket i naplata ostaju na Bookingu.
 ///
 /// Invarijante (provodi ih jedina write-putanja, IBookingSegmentParticipationHandler.Add): Booking i segment postoje u
 /// organizaciji sudjelovanja i pripadaju ISTOM terminu; (BookingId, AppointmentSegmentId) je jedinstven (i u bazi).
@@ -20,9 +21,11 @@ namespace BlueDragon.DuneLight.Infrastructure.Domain.Models.Appointments;
 /// sudjelovanje počinje sa StatusVersion = 0 bez obzira na početni status (nastanak nije prijelaz); legacy Booking
 /// ponašanje (F-07) se ne dira.
 ///
-/// Cijena (snapshot, bez nove logike prvenstva): BaseAmount + BaseAmountSource (postojeći PriceSource razrješavanja
-/// cjenika) → SuggestedAmount (AdjustmentAmount = opcionalna razlika zbog prilagodbe; IZVOR prilagodbe namjerno nije
-/// modeliran — prvenstvo članarina/oznaka/promocija je otvorena odluka) → Amount (konačna) + IsAmountManuallyOverridden.
+/// Cijena (bez nove logike prvenstva): BaseAmount + BaseAmountSource (postojeći PriceSource razrješavanja cjenika) →
+/// SuggestedAmount (AdjustmentAmount = opcionalna razlika zbog prilagodbe; IZVOR prilagodbe namjerno nije modeliran —
+/// prvenstvo članarina/oznaka/promocija je otvorena odluka) → Amount (konačna) + IsAmountManuallyOverridden.
+/// BaseAmount/BaseAmountSource su popunjeni samo kad je cijena STVARNO razriješena iz cjenika (inače NULL — npr.
+/// poništen grupni check-in); AdjustmentAmount se trenutno nikad ne piše (ne postoji eksplicitna prilagodba).
 /// Nazivi prate Booking (Amount/SuggestedAmount/IsAmountManuallyOverridden). Paket/namirenje namjerno nisu ovdje.
 ///
 /// Otkazivanje: CancellationReason i IsLateCancellation isti su koncepti kao na Bookingu — kasno otkazivanje je
@@ -73,13 +76,13 @@ public class BookingSegmentParticipation
     public decimal? AdjustmentAmount { get; set; }
 
     [Column("suggested_amount")]
-    public decimal? SuggestedAmount { get; set; }
+    public decimal SuggestedAmount { get; set; }
 
     [Column("amount")]
-    public decimal? Amount { get; set; }
+    public decimal Amount { get; set; }
 
     [Column("is_amount_manually_overridden")]
-    public bool? IsAmountManuallyOverridden { get; set; }
+    public bool IsAmountManuallyOverridden { get; set; }
 
     [Column("created_at")]
     public DateTimeOffset CreatedAt { get; set; }

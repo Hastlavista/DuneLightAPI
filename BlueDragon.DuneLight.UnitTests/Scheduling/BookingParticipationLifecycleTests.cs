@@ -56,9 +56,9 @@ public class BookingParticipationLifecycleTests
     #region Creation seam
 
     [Fact]
-    public async Task Create_PairsTheBookingWithOneUntouchedParticipationOnTheSegment_AndMoneyStaysOnTheBooking()
+    public async Task Create_PairsTheBookingWithOneUntouchedParticipationOnTheSegment_CarryingItsPrice()
     {
-        await using SchedulingWorld w = await SchedulingWorld.Create(nameof(Create_PairsTheBookingWithOneUntouchedParticipationOnTheSegment_AndMoneyStaysOnTheBooking));
+        await using SchedulingWorld w = await SchedulingWorld.Create(nameof(Create_PairsTheBookingWithOneUntouchedParticipationOnTheSegment_CarryingItsPrice));
 
         AppointmentDto created = await w.CreateAppointment(Z(10));
 
@@ -68,10 +68,9 @@ public class BookingParticipationLifecycleTests
         Assert.Equal(ParticipationStatus.Confirmed, p.Status);
         Assert.Equal(0, p.StatusVersion);
         Assert.True(ParticipationHistory.IsUntouched(p));
-        Assert.Null(p.Amount); // no pricing snapshot in D3B1
-        Assert.Null(p.BaseAmount);
-        Booking booking = await w.LoadBooking(created.Id, w.Client);
-        Assert.Equal(created.Bookings.Single().Amount, booking.Amount);
+        // D3B2: the price is the participation's — and pricing alone is not lifecycle history (still untouched above).
+        Assert.Equal(created.Bookings.Single().Amount, p.Amount);
+        Assert.Equal(created.Bookings.Single().SuggestedAmount, p.SuggestedAmount);
     }
 
     [Fact]

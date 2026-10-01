@@ -213,19 +213,16 @@ public class AppointmentHandler : IAppointmentHandler
         await uow.Context.SaveChangesAsync();
     }
 
-    public async Task UpdateWithBookings(
-        Appointment appointment, List<Guid> clientIds, decimal amount = 0, decimal suggestedAmount = 0, bool overridden = false)
+    public async Task UpdateWithBookings(Appointment appointment, List<Guid> clientIds, BookingPricing pricing)
     {
         await using DatabaseContext context = DatabaseContext.GenerateContext(_databaseSettings.ConnectionString);
-        await UpdateWithBookingsCore(context, appointment, clientIds, amount, suggestedAmount, overridden);
+        await UpdateWithBookingsCore(context, appointment, clientIds, pricing);
         await context.SaveChangesAsync();
     }
 
-    public async Task UpdateWithBookings(
-        IUnitOfWork uow, Appointment appointment, List<Guid> clientIds,
-        decimal amount = 0, decimal suggestedAmount = 0, bool overridden = false)
+    public async Task UpdateWithBookings(IUnitOfWork uow, Appointment appointment, List<Guid> clientIds, BookingPricing pricing)
     {
-        await UpdateWithBookingsCore(uow.Context, appointment, clientIds, amount, suggestedAmount, overridden);
+        await UpdateWithBookingsCore(uow.Context, appointment, clientIds, pricing);
         await uow.Context.SaveChangesAsync();
     }
 
@@ -233,8 +230,7 @@ public class AppointmentHandler : IAppointmentHandler
         status == BookingStatus.Completed || status == BookingStatus.Cancelled || status == BookingStatus.NoShow;
 
     private static async Task UpdateWithBookingsCore(
-        DatabaseContext context, Appointment appointment, List<Guid> clientIds,
-        decimal amount, decimal suggestedAmount, bool overridden)
+        DatabaseContext context, Appointment appointment, List<Guid> clientIds, BookingPricing pricing)
     {
         // Pozivatelj (AppointmentService.Update) ovamo prosljeđuje appointment učitan preko
         // GetWithBookingsForMutation — TAJ poziv već uključuje appointment.Bookings (druga, RANIJA DatabaseContext
@@ -274,18 +270,14 @@ public class AppointmentHandler : IAppointmentHandler
         // Re-cijenjenje se primjenjuje samo na preživjele retke koji NISU terminalni — već naplaćen/otkazan/
         // izostao Booking čuva svoj povijesni Amount (vidi spec section 18/20).
         foreach (Booking survivor in existing.Where(b => clientIds.Contains(b.ClientId) && !IsTerminalBookingStatus(BookingParticipations.StatusOf(b))))
-        {
-            survivor.Amount = amount;
-            survivor.SuggestedAmount = suggestedAmount;
-            survivor.IsAmountManuallyOverridden = overridden;
-        }
+            BookingPrice.Apply(survivor, pricing);
 
         List<Guid> existingClientIds = existing.Select(b => b.ClientId).ToList();
         foreach (Guid clientId in clientIds.Where(id => !existingClientIds.Contains(id)))
         {
             context.Bookings.Add(BookingFactory.CreateConfirmed(
                 appointment.OrganizationId, AppointmentSegments.GetSingleExecutionSegment(appointment), clientId,
-                new BookingPricing(amount, suggestedAmount, overridden), DateTimeOffset.UtcNow));
+                pricing, DateTimeOffset.UtcNow));
         }
 
         await PrepareForSave(context, appointment);

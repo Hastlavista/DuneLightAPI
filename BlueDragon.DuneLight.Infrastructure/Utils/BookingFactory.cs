@@ -7,9 +7,9 @@ namespace BlueDragon.DuneLight.Infrastructure.Utils;
 /// <summary>
 /// JEDINO mjesto koje konstruira novi Booking — od Phase D3B1 uvijek Booking + točno JEDNO sudjelovanje
 /// (<see cref="BookingSegmentParticipation"/>) na autoritativnom segmentu termina, oboje u istom grafu (sprema ih isti
-/// SaveChanges pozivatelja, tj. jedna transakcija). Booking nosi identitet i komercijalno stanje (cijena/paket);
-/// početni životni ciklus (status, StatusVersion = 0) nosi sudjelovanje. Cjenovni snapshot sudjelovanja se u D3B1 NE
-/// popunjava (ostaje NULL — cijena je i dalje autoritativno na Bookingu, vidi Migration_2026_10_10). Samo sastavlja
+/// SaveChanges pozivatelja, tj. jedna transakcija). Booking nosi identitet i paketno stanje; početni životni ciklus
+/// (status, StatusVersion = 0) i, od Phase D3B2, cijena (<see cref="BookingPricing"/> → Amount/SuggestedAmount/ručna
+/// promjena + istinit snapshot razrješavanja) nosi sudjelovanje — Booking nema kopiju cijene. Samo sastavlja
 /// perzistencijski oblik; validacija ostaje kod pozivatelja.
 /// </summary>
 public static class BookingFactory
@@ -44,12 +44,9 @@ public static class BookingFactory
             OrganizationId = organizationId,
             AppointmentId = segment.AppointmentId,
             ClientId = clientId,
-            Amount = pricing.Amount,
-            SuggestedAmount = pricing.SuggestedAmount,
-            IsAmountManuallyOverridden = pricing.IsAmountManuallyOverridden,
             CreatedAt = createdAt
         };
-        booking.Participations.Add(new BookingSegmentParticipation
+        BookingSegmentParticipation participation = new BookingSegmentParticipation
         {
             Id = Guid.NewGuid(),
             OrganizationId = organizationId,
@@ -58,7 +55,9 @@ public static class BookingFactory
             Status = status,
             StatusVersion = 0,
             CreatedAt = createdAt
-        });
+        };
+        BookingPrice.ApplyTo(participation, pricing);
+        booking.Participations.Add(participation);
         return booking;
     }
 }

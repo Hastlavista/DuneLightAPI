@@ -889,7 +889,8 @@ public sealed class SchedulingWorld : IAsyncDisposable
             durationMinutes ?? svc.DefaultDurationMinutes));
         foreach ((Client client, BookingStatus bookingStatus, decimal amount) in bookings)
         {
-            // D3B1: the lifecycle lives on the booking's single participation on the appointment's segment.
+            // D3B1/D3B2: lifecycle and price live on the booking's single participation on the appointment's segment.
+            // Seeded state has no price-list resolution, so the resolution snapshot (BaseAmount/Source) stays NULL.
             Guid bookingId = Guid.NewGuid();
             Booking booking = new()
             {
@@ -897,8 +898,6 @@ public sealed class SchedulingWorld : IAsyncDisposable
                 OrganizationId = OrganizationId,
                 AppointmentId = appointmentId,
                 ClientId = client.Id.Value,
-                Amount = amount,
-                SuggestedAmount = amount,
                 CreatedAt = DateTimeOffset.UtcNow
             };
             booking.Participations.Add(new BookingSegmentParticipation
@@ -908,6 +907,8 @@ public sealed class SchedulingWorld : IAsyncDisposable
                 BookingId = bookingId,
                 AppointmentSegmentId = appointment.Segments[0].Id.Value,
                 Status = BookingParticipations.ToParticipationStatus(bookingStatus),
+                Amount = amount,
+                SuggestedAmount = amount,
                 CreatedAt = booking.CreatedAt
             });
             appointment.Bookings.Add(booking);

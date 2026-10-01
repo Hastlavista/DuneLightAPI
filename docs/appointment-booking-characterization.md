@@ -70,6 +70,8 @@ dotnet test BlueDragon.DuneLight.UnitTests --filter "FullyQualifiedName~Scheduli
 | `CompanyTimeZoneTests` | Company timezone override: inheritance/override/clearing via the Company API, validation, org change vs overridden companies, Company-local hours, absences, holidays, slots, recurring appointments/breaks and group occurrences across DST, dashboard day boundaries |
 | `BookingParticipationLifecycleTests` | D3B1 — lifecycle authoritative on `BookingSegmentParticipation`: creation seam, lifecycle writes, single-participation resolver failures, read model, dropped booking columns, the "untouched = deletable" rule for Update / CompleteExisting omission and same-day Delete |
 | `BookingParticipationLifecycleCutoverMigrationTests` (project root) | D3B1 migration on a throw-away database: backfill, guards, rollback |
+| `BookingParticipationPricingTests` | D3B2 — price authoritative on `BookingSegmentParticipation`: every creation path, truthful resolution snapshot (BaseAmount/BaseAmountSource), manual override, repricing (Update, CompleteExisting, group un-check-in reset), pricing is not lifecycle history, checkout reads the participation price |
+| `BookingParticipationPricingCutoverMigrationTests` (project root) | D3B2 migration on a throw-away database: exact price copy, no fabricated history, guards, identical rollback |
 
 ## Current behaviour findings
 

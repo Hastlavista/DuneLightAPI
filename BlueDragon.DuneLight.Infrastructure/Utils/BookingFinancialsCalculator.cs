@@ -45,10 +45,11 @@ public static class BookingFinancialsCalculator
     /// </summary>
     public static decimal CalculateOutstanding(Booking booking, IEnumerable<CheckoutItem> checkoutItems)
     {
-        if (booking.Amount <= 0m || IsPackageSettled(booking))
+        decimal amount = BookingParticipations.AmountOf(booking);
+        if (amount <= 0m || IsPackageSettled(booking))
             return 0m;
 
-        decimal outstanding = booking.Amount - CalculatePaidAmount(checkoutItems);
+        decimal outstanding = amount - CalculatePaidAmount(checkoutItems);
         return outstanding < 0m ? 0m : outstanding;
     }
 

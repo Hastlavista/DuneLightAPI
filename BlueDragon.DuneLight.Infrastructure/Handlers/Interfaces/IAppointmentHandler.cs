@@ -70,18 +70,16 @@ public interface IAppointmentHandler
     /// izostavljen iz `clientIds` NIKAD se ne briše, ostaje netaknut na terminu bez obzira spominje li ga pozivatelj
     /// (kritično za CompleteExisting koji zna reconcilirati samo PODSKUP klijenata nakon P1 korekcije, vidi
     /// BookingService.ApplyIndividualCompletionCorrection — pozivatelj koji šalje samo klijente koje trenutno
-    /// uređuje/odrađuje ne izražava "obriši sve ostale"). Amount/suggestedAmount/overridden se primjenjuju na SVE
-    /// preživjele Booking retke (postojeće I nove) čiji status NIJE terminalan (Completed/Cancelled/NoShow) —
-    /// re-cijenjenje termina prije naplate (vidi spec section 18/20); već naplaćeni/otkazani/izostali retci se ne
-    /// diraju. Izostavi (0/0/false) kad pozivatelj svejedno odmah nakon prepisuje sve retke (npr. CompleteExisting).</summary>
-    Task UpdateWithBookings(
-        Appointment appointment, List<Guid> clientIds, decimal amount = 0, decimal suggestedAmount = 0, bool overridden = false);
+    /// uređuje/odrađuje ne izražava "obriši sve ostale"). `pricing` se primjenjuje (Phase D3B2: na sudjelovanje, kroz
+    /// BookingPrice/BookingFactory) na SVE preživjele Booking retke (postojeće I nove) čiji status NIJE terminalan
+    /// (Completed/Cancelled/NoShow) — re-cijenjenje termina prije naplate (vidi spec section 18/20); već
+    /// naplaćeni/otkazani/izostali retci se ne diraju. BookingPricing.Zero kad pozivatelj svejedno odmah nakon
+    /// prepisuje sve retke (CompleteExisting).</summary>
+    Task UpdateWithBookings(Appointment appointment, List<Guid> clientIds, BookingPricing pricing);
 
-    /// <summary>Kao <see cref="UpdateWithBookings(Appointment, List{Guid}, decimal, decimal, bool)"/>, ali unutar
+    /// <summary>Kao <see cref="UpdateWithBookings(Appointment, List{Guid}, BookingPricing)"/>, ali unutar
     /// zajedničke transakcije — vidi IUnitOfWork.</summary>
-    Task UpdateWithBookings(
-        IUnitOfWork uow, Appointment appointment, List<Guid> clientIds,
-        decimal amount = 0, decimal suggestedAmount = 0, bool overridden = false);
+    Task UpdateWithBookings(IUnitOfWork uow, Appointment appointment, List<Guid> clientIds, BookingPricing pricing);
 
     Task Delete(Appointment appointment);
 

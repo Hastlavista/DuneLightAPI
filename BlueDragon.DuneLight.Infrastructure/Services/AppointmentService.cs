@@ -121,7 +121,7 @@ public class AppointmentService : IAppointmentService
         Room room = await EnsureRoomExists(organizationId, request.CompanyId, request.RoomId);
         List<Client> clients = await EnsureClientsExist(organizationId, request.ClientIds);
 
-        decimal suggestedAmount = await ResolveSuggestedAmount(organizationId, request.ServiceId, request.CompanyId, request.StartsAt);
+        ResolvePriceResponse resolvedPrice = await ResolveServicePrice(organizationId, request.ServiceId, request.CompanyId, request.StartsAt);
 
         Dictionary<Guid, AppointmentClientSettlement> settlementByClient = await ValidateSettlements(
             organizationId, clients.Select(c => c.Id.GetValueOrDefault()).ToList(), request.ServiceId, request.StartsAt, request.Settlements);
@@ -140,14 +140,15 @@ public class AppointmentService : IAppointmentService
             Guid clientId = client.Id.GetValueOrDefault();
             AppointmentClientSettlement settlement = settlementByClient[clientId];
             bool hasPackage = settlement.ClientPackageId.HasValue;
-            decimal bookingAmount = settlement.Amount ?? suggestedAmount;
+            BookingPricing pricing = BookingPricing.FromResolution(resolvedPrice, settlement.Amount);
+            decimal bookingAmount = pricing.Amount;
 
             if (hasPackage)
                 packageByClient[clientId] = settlement.ClientPackageId.GetValueOrDefault();
 
             Booking booking = BookingFactory.CreateCompletedAtCreation(
                 organizationId, AppointmentSegments.GetSingleExecutionSegment(appointment), clientId,
-                new BookingPricing(bookingAmount, suggestedAmount, settlement.Amount.HasValue && settlement.Amount.Value != suggestedAmount),
+                pricing,
                 hasPackage ? settlement.ClientPackageId : (Guid?)null,
                 DateTimeOffset.UtcNow);
             appointment.Bookings.Add(booking);
@@ -243,7 +244,7 @@ public class AppointmentService : IAppointmentService
         Room room = await EnsureRoomExists(organizationId, request.CompanyId, request.RoomId);
         List<Client> clients = await EnsureClientsExist(organizationId, request.ClientIds);
 
-        decimal suggestedAmount = await ResolveSuggestedAmount(organizationId, request.ServiceId, request.CompanyId, request.StartsAt);
+        ResolvePriceResponse resolvedPrice = await ResolveServicePrice(organizationId, request.ServiceId, request.CompanyId, request.StartsAt);
 
         Dictionary<Guid, AppointmentClientSettlement> settlementByClient = await ValidateSettlements(
             organizationId, clients.Select(c => c.Id.GetValueOrDefault()).ToList(), request.ServiceId, request.StartsAt, request.Settlements);
@@ -273,7 +274,9 @@ public class AppointmentService : IAppointmentService
             appointment.UpdatedAt = DateTimeOffset.UtcNow;
             appointment.UpdatedBy = userId;
 
-            await _appointmentHandler.UpdateWithBookings(uow, appointment, request.ClientIds.Distinct().ToList());
+            // Novi/preživjeli retci dobivaju privremeno BookingPricing.Zero (isto kao prije: 0/0/false) — stvarna cijena
+            // svakog zatraženog klijenta se postavlja niže, po njegovom settlementu.
+            await _appointmentHandler.UpdateWithBookings(uow, appointment, request.ClientIds.Distinct().ToList(), BookingPricing.Zero);
 
             List<Booking> bookingRows = await _appointmentHandler.GetBookings(uow, organizationId, id, request.ClientIds.Distinct().ToList());
 
@@ -283,10 +286,12 @@ public class AppointmentService : IAppointmentService
                 BookingExecutionContext execution = ExecutionContextResolver.ForBooking(appointment, bookingRow);
                 AppointmentClientSettlement settlement = settlementByClient[bookingRow.ClientId];
                 bool hasPackage = settlement.ClientPackageId.HasValue;
-                decimal bookingAmount = settlement.Amount ?? suggestedAmount;
+                BookingPricing pricing = BookingPricing.FromResolution(resolvedPrice, settlement.Amount);
+                decimal bookingAmount = pricing.Amount;
+                decimal currentAmount = BookingParticipations.AmountOf(bookingRow);
 
-                if (bookingRow.Amount != bookingAmount)
-                    await LogAmountChangeInTransaction(uow, id, bookingRow.Id, bookingRow.Amount, bookingAmount, userId);
+                if (currentAmount != bookingAmount)
+                    await LogAmountChangeInTransaction(uow, id, bookingRow.Id, currentAmount, bookingAmount, userId);
 
                 BookingStatus bookingOldStatus = BookingParticipations.StatusOf(bookingRow);
                 bool bookingStatusChanged = BookingLifecycle.TrySetStatus(bookingRow, BookingStatus.Completed);
@@ -308,9 +313,7 @@ public class AppointmentService : IAppointmentService
                         ChangedBy = userId
                     });
                 }
-                bookingRow.Amount = bookingAmount;
-                bookingRow.SuggestedAmount = suggestedAmount;
-                bookingRow.IsAmountManuallyOverridden = settlement.Amount.HasValue && settlement.Amount.Value != suggestedAmount;
+                BookingPrice.Apply(bookingRow, pricing);
 
                 if (hasPackage && !bookingRow.PackageCoverageApplied)
                 {
@@ -465,17 +468,17 @@ public class AppointmentService : IAppointmentService
         Room room = await EnsureRoomExists(organizationId, request.CompanyId, request.RoomId);
         List<Client> clients = await EnsureClientsExist(organizationId, request.ClientIds);
 
-        decimal suggestedAmount = await ResolveSuggestedAmount(organizationId, request.ServiceId, request.CompanyId, request.StartsAt);
-        decimal amount = request.Amount ?? suggestedAmount;
-        bool overridden = request.Amount.HasValue && request.Amount.Value != suggestedAmount;
+        BookingPricing pricing = BookingPricing.FromResolution(
+            await ResolveServicePrice(organizationId, request.ServiceId, request.CompanyId, request.StartsAt), request.Amount);
+        decimal amount = pricing.Amount;
 
         // Re-cijenjenje (persistira ga AppointmentHandler.UpdateWithBookings niže) se primjenjuje samo na
         // Bookinge koji NISU terminalni — historijski Amount na već odrađenom/otkazanom/izostalom Bookingu
         // se ne dira (vidi TerminalBookingStatuses). Ovdje samo audit-logiramo promjenu za te retke.
         List<Guid> requestedClientIds = request.ClientIds.Distinct().ToList();
         foreach (Booking booking in appointment.Bookings.Where(b =>
-            requestedClientIds.Contains(b.ClientId) && !TerminalBookingStatuses.Contains(BookingParticipations.StatusOf(b)) && amount != b.Amount))
-            await LogAmountChange(id, booking.Id, booking.Amount, amount, userId);
+            requestedClientIds.Contains(b.ClientId) && !TerminalBookingStatuses.Contains(BookingParticipations.StatusOf(b)) && amount != BookingParticipations.AmountOf(b)))
+            await LogAmountChange(id, booking.Id, BookingParticipations.AmountOf(booking), amount, userId);
 
         AppointmentFrame currentFrame = AppointmentFrame.Of(appointment);
         if (currentFrame.EmployeeId != request.EmployeeId)
@@ -500,7 +503,7 @@ public class AppointmentService : IAppointmentService
 
         await EnsureNoHardOverlap(organizationId, request.EmployeeId, clients, request.StartsAt, service.DefaultDurationMinutes, excludeId: id, room);
 
-        await _appointmentHandler.UpdateWithBookings(appointment, requestedClientIds, amount, suggestedAmount, overridden);
+        await _appointmentHandler.UpdateWithBookings(appointment, requestedClientIds, pricing);
 
         AppointmentDto dto = await GetByIdInternal(organizationId, id);
         dto.Warnings = warnings;
@@ -631,7 +634,7 @@ public class AppointmentService : IAppointmentService
 
         foreach (DateTimeOffset occurrence in occurrences)
         {
-            decimal suggestedAmount = await ResolveSuggestedAmount(organizationId, request.ServiceId, request.CompanyId, occurrence);
+            ResolvePriceResponse resolvedPrice = await ResolveServicePrice(organizationId, request.ServiceId, request.CompanyId, occurrence);
 
             Appointment appointment = AppointmentFactory.CreateIndividual(
                 organizationId, request.CompanyId,
@@ -644,7 +647,7 @@ public class AppointmentService : IAppointmentService
             {
                 appointment.Bookings.Add(BookingFactory.CreateConfirmed(
                     organizationId, AppointmentSegments.GetSingleExecutionSegment(appointment), client.Id.GetValueOrDefault(),
-                    BookingPricing.AtSuggested(suggestedAmount), DateTimeOffset.UtcNow));
+                    BookingPricing.AtSuggested(resolvedPrice), DateTimeOffset.UtcNow));
             }
 
             toCreate.Add(appointment);
@@ -937,9 +940,8 @@ public class AppointmentService : IAppointmentService
         Room room = await EnsureRoomExists(organizationId, request.CompanyId, request.RoomId);
         List<Client> clients = await EnsureClientsExist(organizationId, request.ClientIds);
 
-        decimal suggestedAmount = await ResolveSuggestedAmount(organizationId, request.ServiceId, request.CompanyId, request.StartsAt);
-        decimal amount = request.Amount ?? suggestedAmount;
-        bool overridden = request.Amount.HasValue && request.Amount.Value != suggestedAmount;
+        BookingPricing pricing = BookingPricing.FromResolution(
+            await ResolveServicePrice(organizationId, request.ServiceId, request.CompanyId, request.StartsAt), request.Amount);
 
         Appointment appointment = AppointmentFactory.CreateIndividual(
             organizationId, request.CompanyId,
@@ -951,7 +953,7 @@ public class AppointmentService : IAppointmentService
         {
             appointment.Bookings.Add(BookingFactory.CreateConfirmed(
                 organizationId, AppointmentSegments.GetSingleExecutionSegment(appointment), client.Id.GetValueOrDefault(),
-                new BookingPricing(amount, suggestedAmount, overridden), DateTimeOffset.UtcNow));
+                pricing, DateTimeOffset.UtcNow));
         }
 
         List<WarningDto> warnings = new List<WarningDto>();
@@ -1230,16 +1232,17 @@ public class AppointmentService : IAppointmentService
         return clients;
     }
 
-    private async Task<decimal> ResolveSuggestedAmount(Guid organizationId, Guid serviceId, Guid companyId, DateTimeOffset date)
+    /// <remarks>Phase D3B2: vraća cijelo razrješavanje (Price + Source) — Source je istinit snapshot za
+    /// BookingSegmentParticipation.BaseAmountSource (vidi BookingPricing.FromResolution).</remarks>
+    private Task<ResolvePriceResponse> ResolveServicePrice(Guid organizationId, Guid serviceId, Guid companyId, DateTimeOffset date)
     {
-        ResolvePriceResponse resolved = await _pricingService.ResolvePrice(organizationId, new ResolvePriceRequest
+        return _pricingService.ResolvePrice(organizationId, new ResolvePriceRequest
         {
             SubjectType = PricingSubjectType.Service,
             SubjectId = serviceId,
             CompanyId = companyId,
             Date = date
         });
-        return resolved.Price;
     }
 
     /// <summary>Kad je ClientPackageId popunjen, svaki klijent na terminu mora imati odabran svoj vlastiti
@@ -1561,7 +1564,7 @@ public class AppointmentService : IAppointmentService
             Status = a.Status,
             GroupId = a.GroupId,
             GroupName = a.Group?.Name,
-            Amount = booking.Amount,
+            Amount = BookingParticipations.AmountOf(booking),
             PaidAmount = BookingFinancialsCalculator.CalculatePaidAmount(booking),
             OutstandingAmount = outstandingAmount,
             IsPaid = outstandingAmount <= 0m,
@@ -1609,9 +1612,9 @@ public class AppointmentService : IAppointmentService
                     ClientId = b.ClientId,
                     ClientName = b.Client != null ? $"{b.Client.FirstName} {b.Client.LastName}" : null,
                     Status = BookingParticipations.StatusOf(b),
-                    Amount = b.Amount,
-                    SuggestedAmount = b.SuggestedAmount,
-                    IsAmountManuallyOverridden = b.IsAmountManuallyOverridden,
+                    Amount = BookingParticipations.AmountOf(b),
+                    SuggestedAmount = BookingParticipations.SuggestedAmountOf(b),
+                    IsAmountManuallyOverridden = BookingParticipations.IsAmountManuallyOverriddenOf(b),
                     PaidAmount = BookingFinancialsCalculator.CalculatePaidAmount(b),
                     OutstandingAmount = outstandingAmount,
                     IsPaid = outstandingAmount <= 0m,

@@ -93,18 +93,19 @@ public class GroupService : IGroupService
         _unitOfWorkFactory = unitOfWorkFactory;
     }
 
-    /// <summary>Isti IPricingService poziv kao AppointmentService.ResolveSuggestedAmount — centralni resolver,
+    /// <summary>Isti IPricingService poziv kao AppointmentService.ResolveServicePrice — centralni resolver,
     /// ne duplicira logiku razrješavanja cijene.</summary>
-    private async Task<decimal> ResolveSuggestedAmount(Guid organizationId, Guid serviceId, Guid companyId, DateTimeOffset date)
+    /// <remarks>Phase D3B2: vraća cijelo razrješavanje (Price + Source) — Source je istinit snapshot za
+    /// BookingSegmentParticipation.BaseAmountSource (vidi BookingPricing.FromResolution).</remarks>
+    private Task<ResolvePriceResponse> ResolveServicePrice(Guid organizationId, Guid serviceId, Guid companyId, DateTimeOffset date)
     {
-        ResolvePriceResponse resolved = await _pricingService.ResolvePrice(organizationId, new ResolvePriceRequest
+        return _pricingService.ResolvePrice(organizationId, new ResolvePriceRequest
         {
             SubjectType = PricingSubjectType.Service,
             SubjectId = serviceId,
             CompanyId = companyId,
             Date = date
         });
-        return resolved.Price;
     }
 
     public async Task<GroupDto> Create(Guid organizationId, Guid userId, GroupCreateRequest request)
@@ -518,12 +519,12 @@ public class GroupService : IGroupService
                 await GroupCapacityGuard.EnsureAvailable(_appointmentHandler, uow, organizationId, futureAppointment.Id.GetValueOrDefault());
 
                 AppointmentExecutionContext execution = ExecutionContextResolver.ForAppointment(futureAppointment);
-                decimal suggestedAmount = await ResolveSuggestedAmount(
+                ResolvePriceResponse resolvedPrice = await ResolveServicePrice(
                     organizationId, execution.ServiceId, execution.CompanyId, execution.StartsAt);
 
                 await _appointmentHandler.AddBooking(uow, BookingFactory.CreateConfirmed(
                     organizationId, AppointmentSegments.GetSingleExecutionSegment(futureAppointment), request.ClientId,
-                    BookingPricing.AtSuggested(suggestedAmount), now));
+                    BookingPricing.AtSuggested(resolvedPrice), now));
             }
 
             await uow.CommitAsync();
@@ -733,7 +734,7 @@ public class GroupService : IGroupService
             // grupni termin prije ovog zahvata nikad nije imao cijenu (uvijek 0 na Appointment). Amount ostaje
             // jednak SuggestedAmount i booking ostaje financijski neplaćen do stvarnog check-ina
             // (BookingService.ResolveCoverage), koji po potrebi razrješava paket/naplatu.
-            decimal suggestedAmount = await ResolveSuggestedAmount(organizationId, group.ServiceId, group.CompanyId, startsAt);
+            ResolvePriceResponse resolvedPrice = await ResolveServicePrice(organizationId, group.ServiceId, group.CompanyId, startsAt);
 
             // Booking (Status=Confirmed) se stvara ODMAH za svakog aktivnog člana grupe u trenutku generiranja
             // occurrencea — preferirani model iz spec section 11: daje eksplicitnu po-terminsku evidenciju
@@ -744,7 +745,7 @@ public class GroupService : IGroupService
             {
                 appointment.Bookings.Add(BookingFactory.CreateConfirmed(
                     organizationId, AppointmentSegments.GetSingleExecutionSegment(appointment), member.ClientId,
-                    BookingPricing.AtSuggested(suggestedAmount), DateTimeOffset.UtcNow));
+                    BookingPricing.AtSuggested(resolvedPrice), DateTimeOffset.UtcNow));
             }
 
             toCreate.Add(appointment);

@@ -1,5 +1,6 @@
 #nullable disable
 using System;
+using BlueDragon.DuneLight.Core.DTOs.Catalog;
 using BlueDragon.DuneLight.Core.Enums;
 using BlueDragon.DuneLight.Infrastructure.Domain.Models.Appointments;
 using BlueDragon.DuneLight.Infrastructure.Utils;
@@ -207,7 +208,7 @@ public class AppointmentWriteSeamTests
     [Fact]
     public void CreateConfirmed_AtTheSuggestedPrice_IsNotAManualOverride()
     {
-        Booking b = BookingFactory.CreateConfirmed(Org, NewSegment(), Guid.NewGuid(), BookingPricing.AtSuggested(35m), CreatedAt);
+        Booking b = BookingFactory.CreateConfirmed(Org, NewSegment(), Guid.NewGuid(), BookingPricing.AtSuggested(new ResolvePriceResponse { Price = 35m, Source = PriceSource.Default }), CreatedAt);
 
         Assert.Equal(35m, b.Amount);
         Assert.Equal(35m, b.SuggestedAmount);

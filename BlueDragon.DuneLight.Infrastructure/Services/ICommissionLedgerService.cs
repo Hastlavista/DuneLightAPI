@@ -25,7 +25,7 @@ public interface ICommissionLedgerService
 {
     /// <summary>Individualna usluga — jedan odrađen Booking (Status upravo postavljen na Completed od
     /// pozivatelja, PRIJE poziva ovoj metodi jer FK commission_entries.booking_id zahtijeva već persistiran
-    /// redak) = jedan izvor. Employee = execution.EmployeeId, osnovica = booking.Amount (retail vrijednost
+    /// redak) = jedan izvor. Employee = execution.EmployeeId, osnovica = BookingParticipations.AmountOf(booking) (retail vrijednost
     /// izvedenog rada, neovisno o paket-pokriću/nenaplaćenosti — vidi spec section 15/51).</summary>
     Task GenerateForIndividualServiceCompletion(IUnitOfWork uow, Guid organizationId, BookingExecutionContext execution, Booking booking);
 

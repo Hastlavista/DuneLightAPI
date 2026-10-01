@@ -73,8 +73,7 @@ public class BookingStatusVersioningCharacterizationTests
     public void TrySetStatus_DoesNotTouchAnyOtherBookingField()
     {
         Booking booking = AppointmentFrameTestExtensions.InMemoryBooking(BookingStatus.Confirmed, cancellationReason: "r");
-        booking.Amount = 50m;
-        booking.SuggestedAmount = 50m;
+        BookingPrice.Apply(booking, new BookingPricing(50m, 50m, false)); // D3B2: price lives on the participation
         booking.Note = "n";
         booking.PackageCoverageApplied = true;
 

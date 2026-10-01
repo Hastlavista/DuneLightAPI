@@ -342,7 +342,8 @@ public class CommissionService : ICommissionRuleService, ICommissionService, ICo
         if (rule == null)
             return;
 
-        decimal commissionAmount = Calculate(rule.CalculationType, rule.Value, booking.Amount);
+        decimal bookingAmount = BookingParticipations.AmountOf(booking);
+        decimal commissionAmount = Calculate(rule.CalculationType, rule.Value, bookingAmount);
 
         await TryAdd(uow, new CommissionEntry
         {
@@ -354,7 +355,7 @@ public class CommissionService : ICommissionRuleService, ICommissionService, ICo
             SourceType = CommissionSourceType.IndividualService,
             AppointmentId = execution.AppointmentId,
             BookingId = booking.Id,
-            BaseAmount = booking.Amount,
+            BaseAmount = bookingAmount,
             CalculationType = rule.CalculationType,
             RuleValue = rule.Value,
             CommissionAmount = commissionAmount,

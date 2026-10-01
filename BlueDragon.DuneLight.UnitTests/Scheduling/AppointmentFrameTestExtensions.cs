@@ -32,6 +32,11 @@ public static class AppointmentFrameTestExtensions
         public int StatusVersion => BookingParticipations.StatusVersionOf(booking);
         public string CancellationReason => BookingParticipations.CancellationReasonOf(booking);
         public bool? IsLateCancellation => BookingParticipations.IsLateCancellationOf(booking);
+
+        // D3B2: price likewise lives on the single participation (BookingParticipations.AmountOf/...).
+        public decimal Amount => BookingParticipations.AmountOf(booking);
+        public decimal SuggestedAmount => BookingParticipations.SuggestedAmountOf(booking);
+        public bool IsAmountManuallyOverridden => BookingParticipations.IsAmountManuallyOverriddenOf(booking);
     }
 
     /// <summary>D3B1: an in-memory Booking carrying its single participation (lifecycle) — for pure unit tests of the

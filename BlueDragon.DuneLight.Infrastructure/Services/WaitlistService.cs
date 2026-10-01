@@ -67,16 +67,17 @@ public class WaitlistService : IWaitlistService, IWaitlistPromotionService
 
     /// <summary>Isti IPricingService poziv kao BookingService/AppointmentService/GroupService — centralni
     /// resolver, ne duplicira logiku razrješavanja cijene (vidi spec section 44).</summary>
-    private async Task<decimal> ResolveSuggestedAmount(Guid organizationId, Guid serviceId, Guid companyId, DateTimeOffset date)
+    /// <remarks>Phase D3B2: vraća cijelo razrješavanje (Price + Source) — Source je istinit snapshot za
+    /// BookingSegmentParticipation.BaseAmountSource (vidi BookingPricing.FromResolution).</remarks>
+    private Task<ResolvePriceResponse> ResolveServicePrice(Guid organizationId, Guid serviceId, Guid companyId, DateTimeOffset date)
     {
-        ResolvePriceResponse resolved = await _pricingService.ResolvePrice(organizationId, new ResolvePriceRequest
+        return _pricingService.ResolvePrice(organizationId, new ResolvePriceRequest
         {
             SubjectType = PricingSubjectType.Service,
             SubjectId = serviceId,
             CompanyId = companyId,
             Date = date
         });
-        return resolved.Price;
     }
 
     public async Task<List<WaitlistEntryDto>> GetForAppointment(Guid organizationId, Guid appointmentId)
@@ -274,14 +275,14 @@ public class WaitlistService : IWaitlistService, IWaitlistPromotionService
             }
 
             AppointmentExecutionContext execution = ExecutionContextResolver.ForAppointment(appointment);
-            decimal suggestedAmount = await ResolveSuggestedAmount(organizationId, execution.ServiceId, execution.CompanyId, execution.StartsAt);
+            ResolvePriceResponse resolvedPrice = await ResolveServicePrice(organizationId, execution.ServiceId, execution.CompanyId, execution.StartsAt);
 
             // Obična Confirmed rezervacija od trenutka nastanka — bez paketa/plaćanja (spec section 13/45): klijent/
             // osoblje to razrješava naknadno kroz uobičajeni check-in tok (BookingService.ResolveCoverage), isto
             // kao svaki drugi Booking. Ne koristi se "slaba" posebna vrsta bookinga za promovirane retke.
             Booking booking = BookingFactory.CreateConfirmed(
                 organizationId, AppointmentSegments.GetSingleExecutionSegment(appointment), entry.ClientId,
-                BookingPricing.AtSuggested(suggestedAmount), now);
+                BookingPricing.AtSuggested(resolvedPrice), now);
             uow.Context.Bookings.Add(booking);
             await uow.Context.SaveChangesAsync();
 

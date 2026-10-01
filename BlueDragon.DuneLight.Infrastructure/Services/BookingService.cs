@@ -87,18 +87,19 @@ public class BookingService : IBookingService
         _unitOfWorkFactory = unitOfWorkFactory;
     }
 
-    /// <summary>Isti IPricingService poziv kao AppointmentService.ResolveSuggestedAmount — ne duplicira logiku
+    /// <summary>Isti IPricingService poziv kao AppointmentService.ResolveServicePrice — ne duplicira logiku
     /// razrješavanja cijene, samo poziva centralni resolver po Service/Company/datumu termina.</summary>
-    private async Task<decimal> ResolveSuggestedAmount(Guid organizationId, Guid serviceId, Guid companyId, DateTimeOffset date)
+    /// <remarks>Phase D3B2: vraća cijelo razrješavanje (Price + Source) — Source je istinit snapshot za
+    /// BookingSegmentParticipation.BaseAmountSource (vidi BookingPricing.FromResolution).</remarks>
+    private Task<ResolvePriceResponse> ResolveServicePrice(Guid organizationId, Guid serviceId, Guid companyId, DateTimeOffset date)
     {
-        ResolvePriceResponse resolved = await _pricingService.ResolvePrice(organizationId, new ResolvePriceRequest
+        return _pricingService.ResolvePrice(organizationId, new ResolvePriceRequest
         {
             SubjectType = PricingSubjectType.Service,
             SubjectId = serviceId,
             CompanyId = companyId,
             Date = date
         });
-        return resolved.Price;
     }
 
     public async Task<List<BookingDto>> GetForAppointment(Guid organizationId, Guid appointmentId)
@@ -130,11 +131,11 @@ public class BookingService : IBookingService
         await EnsureClientHasNoOverlap(organizationId, appointment, request.ClientId);
 
         AppointmentExecutionContext execution = ExecutionContextResolver.ForAppointment(appointment);
-        decimal suggestedAmount = await ResolveSuggestedAmount(organizationId, execution.ServiceId, execution.CompanyId, execution.StartsAt);
+        ResolvePriceResponse resolvedPrice = await ResolveServicePrice(organizationId, execution.ServiceId, execution.CompanyId, execution.StartsAt);
 
         Booking booking = BookingFactory.CreateConfirmed(
             organizationId, AppointmentSegments.GetSingleExecutionSegment(appointment), request.ClientId,
-            BookingPricing.AtSuggested(suggestedAmount), DateTimeOffset.UtcNow);
+            BookingPricing.AtSuggested(resolvedPrice), DateTimeOffset.UtcNow);
 
         await using (IUnitOfWork uow = await _unitOfWorkFactory.Begin())
         {
@@ -220,12 +221,12 @@ public class BookingService : IBookingService
             await EnsureClientHasNoOverlap(organizationId, appointment, clientId);
 
             AppointmentExecutionContext guestExecution = ExecutionContextResolver.ForAppointment(appointment);
-            decimal newBookingSuggestedAmount = await ResolveSuggestedAmount(
+            ResolvePriceResponse guestPrice = await ResolveServicePrice(
                 organizationId, guestExecution.ServiceId, guestExecution.CompanyId, guestExecution.StartsAt);
 
             booking = BookingFactory.CreateConfirmed(
                 organizationId, AppointmentSegments.GetSingleExecutionSegment(appointment), clientId,
-                BookingPricing.AtSuggested(newBookingSuggestedAmount), DateTimeOffset.UtcNow);
+                BookingPricing.AtSuggested(guestPrice), DateTimeOffset.UtcNow);
         }
 
         try
@@ -487,9 +488,7 @@ public class BookingService : IBookingService
         {
             await _paymentLedgerService.VoidCheckInGeneratedPayments(uow, organizationId, userId, booking, "Poništen check-in");
 
-            booking.Amount = 0;
-            booking.SuggestedAmount = 0;
-            booking.IsAmountManuallyOverridden = false;
+            BookingPrice.Apply(booking, BookingPricing.Zero);
         }
 
         if (request.Status == BookingStatus.Cancelled)
@@ -563,7 +562,7 @@ public class BookingService : IBookingService
     ///    PaymentService.TryVoidSoleAutoCheckout).
     /// 3) Paket-ulazak se vraća ako je primijenjen i još nije vraćen (isti ReturnPackageEntryInTransaction poziv
     ///    kao Group/ApplyIndividualTransition).
-    /// 4) booking.Amount/SuggestedAmount se NAMJERNO NE resetiraju na 0 (za razliku od Group!) — Individual Booking
+    /// 4) cijena Bookinga (Amount/SuggestedAmount na sudjelovanju) se NAMJERNO NE resetiraju na 0 (za razliku od Group!) — Individual Booking
     ///    ima svoju cijenu popunjenu OD TRENUTKA KREIRANJA termina (ne tek od check-ina kao Group, vidi Booking.cs
     ///    domensku napomenu), pa bi brisanje na 0 privremeno prikazalo stvaran zakazan/naplativ termin kao
     ///    besplatan. Booking financials (PaidAmount/OutstandingAmount) se ispravno PREPRAVLJAJU BookingFinancialsCalculator
@@ -710,7 +709,7 @@ public class BookingService : IBookingService
     /// Isto ponašanje kao staro GroupAttendanceService.ResolveCoverage, PROŠIREN da uz pokriće razrješava i
     /// komercijalno stanje (Amount/SuggestedAmount) — grupni termin prije ovog zahvata nikad nije imao cijenu
     /// (uvijek 0 na Appointment), pa se ovdje prvi put snapshotta stvarna cijena preko istog IPricingService
-    /// poziva kao za Individual (vidi ResolveSuggestedAmount). Vraća (Method, Amount) ako treba stvoriti stvaran
+    /// poziva kao za Individual (vidi ResolveServicePrice). Vraća (Method, Amount) ako treba stvoriti stvaran
     /// Payment NAKON što pozivatelj persistira Booking redak (FK payments.booking_id — vidi SetStatus), null
     /// ako se ne naplaćuje sada (paket-pokriveno, gratis, ili bez zatraženog PaymentMethod-a).</summary>
     private async Task<(PaymentMethod Method, decimal Amount)?> ResolveCoverage(
@@ -741,11 +740,10 @@ public class BookingService : IBookingService
             selected = null;
         }
 
-        decimal suggestedAmount = await ResolveSuggestedAmount(organizationId, execution.ServiceId, execution.CompanyId, execution.StartsAt);
-        decimal amount = request.Amount ?? suggestedAmount;
-        booking.SuggestedAmount = suggestedAmount;
-        booking.Amount = amount;
-        booking.IsAmountManuallyOverridden = request.Amount.HasValue && request.Amount.Value != suggestedAmount;
+        BookingPricing pricing = BookingPricing.FromResolution(
+            await ResolveServicePrice(organizationId, execution.ServiceId, execution.CompanyId, execution.StartsAt), request.Amount);
+        decimal amount = pricing.Amount;
+        BookingPrice.Apply(booking, pricing);
 
         if (selected == null)
         {
@@ -883,9 +881,9 @@ public class BookingService : IBookingService
                 ? $"{booking.Client.FirstName} {booking.Client.LastName}"
                 : null,
             Status = BookingParticipations.StatusOf(booking),
-            Amount = booking.Amount,
-            SuggestedAmount = booking.SuggestedAmount,
-            IsAmountManuallyOverridden = booking.IsAmountManuallyOverridden,
+            Amount = BookingParticipations.AmountOf(booking),
+            SuggestedAmount = BookingParticipations.SuggestedAmountOf(booking),
+            IsAmountManuallyOverridden = BookingParticipations.IsAmountManuallyOverriddenOf(booking),
             PaidAmount = paidAmount,
             OutstandingAmount = outstandingAmount,
             IsPaid = outstandingAmount <= 0m,
