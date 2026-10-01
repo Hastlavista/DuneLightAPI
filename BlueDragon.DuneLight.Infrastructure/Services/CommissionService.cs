@@ -333,7 +333,7 @@ public class CommissionService : ICommissionRuleService, ICommissionService, ICo
     #region Ledger generation (called from AppointmentService/CheckoutService within their own transaction)
 
     public async Task GenerateForIndividualServiceCompletion(
-        IUnitOfWork uow, Guid organizationId, BookingExecutionContext execution, BookingSegmentParticipation participation)
+        IUnitOfWork uow, Guid organizationId, ParticipationExecutionContext execution, BookingSegmentParticipation participation)
     {
         ArgumentNullException.ThrowIfNull(participation);
         if (!execution.EmployeeId.HasValue)
@@ -372,7 +372,7 @@ public class CommissionService : ICommissionRuleService, ICommissionService, ICo
         });
     }
 
-    public async Task GenerateForGroupServiceCompletion(IUnitOfWork uow, Guid organizationId, AppointmentExecutionContext execution)
+    public async Task GenerateForGroupServiceCompletion(IUnitOfWork uow, Guid organizationId, SegmentExecutionContext execution)
     {
         if (!execution.EmployeeId.HasValue)
             return;

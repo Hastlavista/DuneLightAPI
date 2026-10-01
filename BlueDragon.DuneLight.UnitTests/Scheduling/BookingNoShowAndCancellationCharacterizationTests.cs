@@ -220,9 +220,9 @@ public class BookingNoShowAndCancellationCharacterizationTests
     }
 
     [Fact]
-    public async Task IndividualCancel_OfTheLastBooking_DoesNotCancelTheAppointmentFrame()
+    public async Task IndividualCancel_OfTheLastBooking_DoesNotCancelTheAppointment()
     {
-        await using SchedulingWorld w = await SchedulingWorld.Create(nameof(IndividualCancel_OfTheLastBooking_DoesNotCancelTheAppointmentFrame));
+        await using SchedulingWorld w = await SchedulingWorld.Create(nameof(IndividualCancel_OfTheLastBooking_DoesNotCancelTheAppointment));
         AppointmentDto created = await w.CreateAppointment(SchedulingWorld.Future(10));
 
         await w.SetBookingStatus(created.Id, w.Client, BookingStatus.Cancelled);

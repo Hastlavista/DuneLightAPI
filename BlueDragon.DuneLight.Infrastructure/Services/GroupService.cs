@@ -312,10 +312,10 @@ public class GroupService : IGroupService
         MapGroup(group, dto);
         dto.Members = group.Members.Where(m => m.IsActive).Select(ToMemberDto).ToList();
         int expectedCount = group.Members.Count(m => m.IsActive);
-        dto.UpcomingAppointments = appointments.Where(a => AppointmentFrame.Of(a).StartsAt >= now)
-            .OrderBy(a => AppointmentFrame.Of(a).StartsAt).Select(a => ToScheduleCellDto(a, group.Name, expectedCount)).ToList();
-        dto.PastAppointments = appointments.Where(a => AppointmentFrame.Of(a).StartsAt < now)
-            .OrderByDescending(a => AppointmentFrame.Of(a).StartsAt).Select(a => ToScheduleCellDto(a, group.Name, expectedCount)).ToList();
+        dto.UpcomingAppointments = appointments.Where(a => AppointmentRange.Of(a).PlannedStart >= now)
+            .OrderBy(a => AppointmentRange.Of(a).PlannedStart).Select(a => ToScheduleCellDto(a, group.Name, expectedCount)).ToList();
+        dto.PastAppointments = appointments.Where(a => AppointmentRange.Of(a).PlannedStart < now)
+            .OrderByDescending(a => AppointmentRange.Of(a).PlannedStart).Select(a => ToScheduleCellDto(a, group.Name, expectedCount)).ToList();
 
         return dto;
     }
@@ -482,15 +482,16 @@ public class GroupService : IGroupService
                 if (futureAppointment.Bookings.Any(b => b.ClientId == request.ClientId))
                     continue;
 
-                AppointmentFrame futureFrame = AppointmentFrame.Of(futureAppointment);
+                // Član dobiva sudjelovanje na (jedinom) segmentu occurrencea — preklapanje se provjerava nad TIM segmentom.
+                AppointmentSegment futureSegment = SingleSegmentCompatibility.Resolve(futureAppointment);
                 List<OccupancySlot> overlapping = await _schedulingOccupancyHandler.GetOverlappingForClients(
                     organizationId, new List<Guid> { request.ClientId },
-                    futureFrame.StartsAt, futureFrame.DurationMinutes, excludeId: futureAppointment.Id);
+                    futureSegment.PlannedStart, AppointmentSegments.DurationMinutes(futureSegment), excludeId: futureAppointment.Id);
 
                 if (overlapping.Count > 0)
                     conflicts.Add(new RecurringConflictDetail
                     {
-                        Date = futureFrame.StartsAt,
+                        Date = futureSegment.PlannedStart,
                         Reason = ErrorCodes.RecurringConflictReasonAppointment
                     });
             }
@@ -521,12 +522,13 @@ public class GroupService : IGroupService
                 // postojeći RecurringConflict abort iznad).
                 await GroupCapacityGuard.EnsureAvailable(_appointmentHandler, uow, organizationId, futureAppointment.Id.GetValueOrDefault());
 
-                AppointmentExecutionContext execution = ExecutionContextResolver.ForAppointment(futureAppointment);
+                AppointmentSegment memberSegment = SingleSegmentCompatibility.Resolve(futureAppointment);
+                SegmentExecutionContext execution = ExecutionContextResolver.ForSegment(futureAppointment, memberSegment);
                 ResolvePriceResponse resolvedPrice = await ResolveServicePrice(
                     organizationId, execution.ServiceId, execution.CompanyId, execution.StartsAt);
 
                 await _appointmentHandler.AddBooking(uow, BookingFactory.CreateConfirmed(
-                    organizationId, AppointmentSegments.GetSingleExecutionSegment(futureAppointment), request.ClientId,
+                    organizationId, memberSegment, request.ClientId,
                     BookingPricing.AtSuggested(resolvedPrice), now));
             }
 
@@ -731,12 +733,6 @@ public class GroupService : IGroupService
             // Navigacijska svojstva se namjerno NE postavljaju (AppointmentFactory ih nikad ne postavlja) — appointment ide u
             // AddAppointments preko svježeg DbContext-a, a Service/Company/DefaultTrainer su
             // materijalizirani u kontekstu GetAll/GetById poziva pa bi ih EF pokušao ponovno umetnuti.
-            Appointment appointment = AppointmentFactory.CreateGroupOccurrence(
-                organizationId, group.CompanyId,
-                new AppointmentFrame(group.ServiceId, group.DefaultTrainerId, group.DefaultRoomId, startsAt, group.Service.DefaultDurationMinutes),
-                group.Id.GetValueOrDefault(), slot.Id.GetValueOrDefault(), userId, DateTimeOffset.UtcNow);
-            Guid appointmentId = appointment.Id.GetValueOrDefault();
-
             // Predložena cijena se snapshotta ODMAH po članu (isti IPricingService poziv kao za Individual) —
             // grupni termin prije ovog zahvata nikad nije imao cijenu (uvijek 0 na Appointment). Amount ostaje
             // jednak SuggestedAmount i booking ostaje financijski neplaćen do stvarnog check-ina
@@ -748,12 +744,20 @@ public class GroupService : IGroupService
             // sudjelovanja prije nego se itko čekira, čime otkazivanje/no-show jednog člana unaprijed postaje
             // moguće (vidi BookingService.SetStatus). Gost izvan popisa članova i dalje dobiva ad-hoc Booking
             // tek na check-inu (BookingService.AddBooking / SetStatus s nepostojećim bookingom).
-            foreach (GroupMember member in group.Members.Where(m => m.IsActive))
-            {
-                appointment.Bookings.Add(BookingFactory.CreateConfirmed(
-                    organizationId, AppointmentSegments.GetSingleExecutionSegment(appointment), member.ClientId,
-                    BookingPricing.AtSuggested(resolvedPrice), DateTimeOffset.UtcNow));
-            }
+            //
+            // Phase M1B — grupa (do GroupSegmentTemplates) generira JEDAN segment izravno iz svojih zadanih vrijednosti
+            // (usluga, trener ako postoji, dvorana, trajanje usluge); sudionici segmenta su aktivni članovi.
+            SegmentPlan plan = new SegmentPlan(
+                group.ServiceId, startsAt, startsAt.AddMinutes(group.Service.DefaultDurationMinutes),
+                group.DefaultTrainerId.HasValue ? new[] { group.DefaultTrainerId.Value } : Array.Empty<Guid>(),
+                group.DefaultRoomId,
+                group.Members.Where(m => m.IsActive)
+                    .Select(m => new ParticipantPlan(m.ClientId, BookingPricing.AtSuggested(resolvedPrice)))
+                    .ToList());
+            Appointment appointment = AppointmentFactory.CreateGroupOccurrence(
+                organizationId, group.CompanyId, group.Id.GetValueOrDefault(), slot.Id.GetValueOrDefault(),
+                userId, DateTimeOffset.UtcNow, plan);
+            Guid appointmentId = appointment.Id.GetValueOrDefault();
 
             toCreate.Add(appointment);
 
@@ -762,8 +766,11 @@ public class GroupService : IGroupService
             createdDtos.Add(new AppointmentScheduleCellDto
             {
                 Id = appointmentId,
-                StartsAt = startsAt,
-                DurationMinutes = group.Service.DefaultDurationMinutes,
+                PlannedStart = plan.PlannedStart,
+                PlannedEnd = plan.PlannedEnd,
+                Segments = appointment.Segments.Select(segment => GeneratedSegmentDto(segment, group)).ToList(),
+                StartsAt = plan.PlannedStart,
+                DurationMinutes = (int)(plan.PlannedEnd - plan.PlannedStart).TotalMinutes,
                 ServiceId = group.ServiceId,
                 ServiceName = group.Service?.Name,
                 ServiceCategoryColorHex = group.Service?.ColorHex,
@@ -1368,6 +1375,20 @@ public class GroupService : IGroupService
         dto.UpdatedBy = group.UpdatedBy;
     }
 
+    /// <summary>Segment netom generiranog occurrencea — navigacije segmenta nisu postavljene (svjež DbContext pri upisu),
+    /// pa se nazivi uzimaju iz već učitane grupe (iste vrijednosti iz kojih je segment i nastao).</summary>
+    private static AppointmentSegmentDto GeneratedSegmentDto(AppointmentSegment segment, Group group)
+    {
+        AppointmentSegmentDto dto = AppointmentSegmentReadModel.ToDto(segment);
+        dto.ServiceName = group.Service?.Name;
+        dto.ServiceCategoryColorHex = group.Service?.ColorHex;
+        dto.RoomName = group.DefaultRoom?.Name;
+        foreach (AppointmentSegmentEmployeeDto employee in dto.Employees)
+            if (group.DefaultTrainer != null && employee.EmployeeId == group.DefaultTrainerId)
+                employee.EmployeeName = $"{group.DefaultTrainer.FirstName} {group.DefaultTrainer.LastName}";
+        return dto;
+    }
+
     private static GroupMemberDto ToMemberDto(GroupMember member)
     {
         return new GroupMemberDto
@@ -1384,21 +1405,25 @@ public class GroupService : IGroupService
     /// groupName/expectedCount dolaze iz već učitanog Group entiteta, ne iz a.Group (nije uključen u upit).</summary>
     private static AppointmentScheduleCellDto ToScheduleCellDto(Appointment a, string groupName, int expectedCount)
     {
-        AppointmentFrameView frame = AppointmentFrameView.Of(a);
+        AppointmentRange range = AppointmentRange.Of(a);
+        SingleSegmentProjection compat = SingleSegmentProjection.Of(a);
         return new AppointmentScheduleCellDto
         {
             Id = a.Id.GetValueOrDefault(),
-            StartsAt = frame.StartsAt,
-            DurationMinutes = frame.DurationMinutes,
-            ServiceId = frame.ServiceId,
-            ServiceName = frame.ServiceName,
-            ServiceCategoryColorHex = frame.ServiceColorHex,
-            EmployeeId = frame.EmployeeId,
-            EmployeeName = frame.EmployeeName,
+            PlannedStart = range.PlannedStart,
+            PlannedEnd = range.PlannedEnd,
+            Segments = AppointmentSegmentReadModel.ToDtos(a),
+            StartsAt = range.PlannedStart,
+            DurationMinutes = range.SpanMinutes,
+            ServiceId = compat.ServiceId,
+            ServiceName = compat.ServiceName,
+            ServiceCategoryColorHex = compat.ServiceColorHex,
+            EmployeeId = compat.EmployeeId,
+            EmployeeName = compat.EmployeeName,
             CompanyId = a.CompanyId,
             CompanyName = a.Company?.Name,
-            RoomId = frame.RoomId,
-            RoomName = frame.RoomName,
+            RoomId = compat.RoomId,
+            RoomName = compat.RoomName,
             Status = a.Status,
             IsCancelled = a.Status == AppointmentStatus.Cancelled,
             Form = AppointmentForm.Group,

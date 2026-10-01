@@ -711,7 +711,7 @@ public sealed class SchedulingWorld : IAsyncDisposable
 
     #region Request builders
 
-    public AppointmentCreateRequest CreateRequest(
+    public AppointmentSingleSegmentRequest CreateRequest(
         DateTimeOffset startsAt, Client client = null, Employee employee = null, ServiceEntity service = null,
         Company company = null, Room room = null, decimal? amount = null, bool overrideAvailability = false, string note = null,
         params Client[] extraClients)
@@ -719,7 +719,7 @@ public sealed class SchedulingWorld : IAsyncDisposable
         List<Guid> clientIds = new() { (client ?? Client).Id.Value };
         clientIds.AddRange(extraClients.Select(c => c.Id.Value));
 
-        return new AppointmentCreateRequest
+        return new AppointmentSingleSegmentRequest
         {
             StartsAt = startsAt,
             ServiceId = (service ?? Service).Id.Value,
@@ -733,7 +733,7 @@ public sealed class SchedulingWorld : IAsyncDisposable
         };
     }
 
-    public Task<AppointmentDto> CreateAppointment(AppointmentCreateRequest request, bool hasFullScope = true) =>
+    public Task<AppointmentDto> CreateAppointment(AppointmentSingleSegmentRequest request, bool hasFullScope = true) =>
         Appointments.Create(OrganizationId, ActorUserId, hasFullScope, request);
 
     /// <summary>Convenience: individual appointment for the default Service/Employee/Company through the real Create flow.</summary>
@@ -748,7 +748,7 @@ public sealed class SchedulingWorld : IAsyncDisposable
         PaymentMethod? paymentMethod = null, bool isPaid = true, Guid? clientPackageId = null, decimal? settlementAmount = null,
         params AppointmentClientSettlement[] settlements)
     {
-        AppointmentCreateRequest create = CreateRequest(startsAt, client, employee, service, company, room, amount, overrideAvailability);
+        AppointmentSingleSegmentRequest create = CreateRequest(startsAt, client, employee, service, company, room, amount, overrideAvailability);
         return new AppointmentCompleteRequest
         {
             StartsAt = create.StartsAt,
@@ -786,7 +786,7 @@ public sealed class SchedulingWorld : IAsyncDisposable
         AppointmentUpdateRequest request = new()
         {
             StartsAt = current.StartsAt,
-            ServiceId = current.ServiceId,
+            ServiceId = current.ServiceId.Value,
             EmployeeId = current.EmployeeId.Value,
             CompanyId = current.CompanyId,
             RoomId = current.RoomId,
@@ -887,12 +887,12 @@ public sealed class SchedulingWorld : IAsyncDisposable
             CreatedAt = DateTimeOffset.UtcNow
         };
         // D3A: the execution frame lives on the single authoritative segment (same shape production creates).
-        AppointmentFrameMutator.NewSegment(appointment, new AppointmentFrame(
+        SingleSegmentTestExtensions.AddTestSegment(appointment,
             svc.Id.Value,
             form == AppointmentForm.Group && employee == null ? null : (employee ?? Employee).Id,
             room?.Id,
             startsAt,
-            durationMinutes ?? svc.DefaultDurationMinutes));
+            durationMinutes ?? svc.DefaultDurationMinutes);
         foreach ((Client client, BookingStatus bookingStatus, decimal amount) in bookings)
         {
             // D3B1/D3B2: lifecycle and price live on the booking's single participation on the appointment's segment.

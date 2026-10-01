@@ -9,7 +9,11 @@ namespace BlueDragon.DuneLight.Core.Interfaces.Appointments;
 public interface IAppointmentService
 {
     /// <summary>"Zakaži" — status Scheduled, bez naplate.</summary>
+    /// <summary>Phase M1B — ciljni (segmentni) ugovor kreiranja; trenutno ograničen na jedan segment (vidi AppointmentCreateRequest).</summary>
     Task<AppointmentDto> Create(Guid organizationId, Guid userId, bool hasFullScope, AppointmentCreateRequest request);
+
+    /// <summary>PRIVREMENA KOMPATIBILNOST — plosnati jednosegmentni zahtjev (POST /schedule), mapira se na ciljni ugovor.</summary>
+    Task<AppointmentDto> Create(Guid organizationId, Guid userId, bool hasFullScope, AppointmentSingleSegmentRequest request);
 
     /// <summary>"Upiši odrađeno" — novi termin odmah u statusu Completed, naplata odmah.</summary>
     Task<AppointmentDto> CompleteNew(Guid organizationId, Guid userId, bool hasFullScope, AppointmentCompleteRequest request);

@@ -323,7 +323,7 @@ public class AppointmentSegmentCutoverTests
         await UpdateSegmentInDb(w, created.Id, s => { s.PlannedStart = soon; s.PlannedEnd = soon.AddMinutes(30); });
 
         Appointment loaded = await w.LoadAppointment(created.Id);
-        AppointmentExecutionContext execution = ExecutionContextResolver.ForAppointment(loaded);
+        SegmentExecutionContext execution = ExecutionContextResolver.ForSegment(loaded, loaded.Segments.Single());
         await w.SetBookingStatus(created.Id, w.Client, BookingStatus.Cancelled, "late");
 
         Assert.Equal(soon, execution.StartsAt);

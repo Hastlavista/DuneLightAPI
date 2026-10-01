@@ -139,7 +139,7 @@ public class PackageConsumptionLedgerTests
 
         (PackageConsumption first, PackageConsumption second) = await InLedger(w, created.Id, w.Client, async (ledger, uow, a, b) =>
         {
-            BookingExecutionContext execution = ExecutionContextResolver.ForBooking(a, b);
+            ParticipationExecutionContext execution = ExecutionContextResolver.ForParticipation(a, b, b.Participations.Single());
             PackageConsumption one = await ledger.Consume(uow, w.OrganizationId, w.ActorUserId, b.Participations.Single(), execution, package.Id.Value, BookingStatus.Completed);
             PackageConsumption two = await ledger.Consume(uow, w.OrganizationId, w.ActorUserId, b.Participations.Single(), execution, package.Id.Value, BookingStatus.Completed);
             return (one, two);
@@ -330,7 +330,7 @@ public class PackageConsumptionLedgerTests
         Assert.Equal(PackageConsumptionTiming.OnCompletion, settings.PackageConsumptionTiming);
 
         PackageConsumption none = await InLedger(w, created.Id, w.Client, (ledger, uow, a, b) =>
-            ledger.Consume(uow, w.OrganizationId, w.ActorUserId, b.Participations.Single(), ExecutionContextResolver.ForBooking(a, b), package.Id.Value, BookingStatus.Confirmed));
+            ledger.Consume(uow, w.OrganizationId, w.ActorUserId, b.Participations.Single(), ExecutionContextResolver.ForParticipation(a, b, b.Participations.Single()), package.Id.Value, BookingStatus.Confirmed));
 
         Assert.Null(none);
         Assert.Empty(await ConsumptionsOf(w, created.Id, w.Client));

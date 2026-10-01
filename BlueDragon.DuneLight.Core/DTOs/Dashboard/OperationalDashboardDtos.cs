@@ -40,10 +40,19 @@ public class DashboardCompanyDto
 public class DashboardScheduleOccurrenceDto
 {
     public Guid AppointmentId { get; set; }
+
+    /// <summary>Phase M1B: izvedeni raspon termina i njegovi segmenti (blokovi rasporeda).</summary>
+    public DateTimeOffset PlannedStart { get; set; }
+    public DateTimeOffset PlannedEnd { get; set; }
+    public List<Core.DTOs.Appointments.AppointmentSegmentDto> Segments { get; set; } = new();
+
+    /// <summary>PRIVREMENA KOMPATIBILNOST: = PlannedStart; DurationMinutes = raspon (uključuje razmake).</summary>
     public DateTimeOffset StartsAt { get; set; }
     public int DurationMinutes { get; set; }
     public AppointmentStatus Status { get; set; }
-    public Guid ServiceId { get; set; }
+
+    /// <summary>PRIVREMENA KOMPATIBILNOST (nije autoritativno): samo za termin s točno jednim segmentom, inače null.</summary>
+    public Guid? ServiceId { get; set; }
     public string ServiceName { get; set; }
     public Guid? EmployeeId { get; set; }
     public string EmployeeName { get; set; }

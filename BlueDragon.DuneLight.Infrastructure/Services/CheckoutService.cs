@@ -174,7 +174,7 @@ public class CheckoutService : ICheckoutService
         if (booking.ClientId != locked.ClientId)
             throw new BusinessRuleException(ErrorCodes.CheckoutItemClientMismatch, "Booking pripada drugom klijentu.");
 
-        BookingExecutionContext execution = ExecutionContextResolver.ForParticipation(booking.Appointment, booking, participation);
+        ParticipationExecutionContext execution = ExecutionContextResolver.ForParticipation(booking.Appointment, booking, participation);
 
         if (execution.CompanyId != locked.CompanyId)
             throw new BusinessRuleException(ErrorCodes.CheckoutItemCompanyMismatch, "Booking pripada drugoj tvrtki.");

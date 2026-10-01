@@ -29,7 +29,7 @@ public class TenantIsolationCharacterizationTests
         (SchedulingWorld mine, SchedulingWorld foreign) = await TwoTenants(nameof(Create_WithAClientOfAnotherOrganization_IsNotFound));
         await using SchedulingWorld a = mine;
         await using SchedulingWorld b = foreign;
-        AppointmentCreateRequest request = mine.CreateRequest(SchedulingWorld.Future(10));
+        AppointmentSingleSegmentRequest request = mine.CreateRequest(SchedulingWorld.Future(10));
         request.ClientIds = new() { foreign.Client.Id.Value };
 
         await SchedulingAssert.NotFound(() => mine.CreateAppointment(request));
@@ -43,7 +43,7 @@ public class TenantIsolationCharacterizationTests
         (SchedulingWorld mine, SchedulingWorld foreign) = await TwoTenants(nameof(Create_WithAnEmployeeOfAnotherOrganization_IsNotFound));
         await using SchedulingWorld a = mine;
         await using SchedulingWorld b = foreign;
-        AppointmentCreateRequest request = mine.CreateRequest(SchedulingWorld.Future(10));
+        AppointmentSingleSegmentRequest request = mine.CreateRequest(SchedulingWorld.Future(10));
         request.EmployeeId = foreign.Employee.Id.Value;
 
         await SchedulingAssert.NotFound(() => mine.CreateAppointment(request));
@@ -55,7 +55,7 @@ public class TenantIsolationCharacterizationTests
         (SchedulingWorld mine, SchedulingWorld foreign) = await TwoTenants(nameof(Create_WithAServiceOfAnotherOrganization_IsNotFound));
         await using SchedulingWorld a = mine;
         await using SchedulingWorld b = foreign;
-        AppointmentCreateRequest request = mine.CreateRequest(SchedulingWorld.Future(10));
+        AppointmentSingleSegmentRequest request = mine.CreateRequest(SchedulingWorld.Future(10));
         request.ServiceId = foreign.Service.Id.Value;
 
         await SchedulingAssert.NotFound(() => mine.CreateAppointment(request));
@@ -67,7 +67,7 @@ public class TenantIsolationCharacterizationTests
         (SchedulingWorld mine, SchedulingWorld foreign) = await TwoTenants(nameof(Create_WithACompanyOfAnotherOrganization_IsNotFound));
         await using SchedulingWorld a = mine;
         await using SchedulingWorld b = foreign;
-        AppointmentCreateRequest request = mine.CreateRequest(SchedulingWorld.Future(10));
+        AppointmentSingleSegmentRequest request = mine.CreateRequest(SchedulingWorld.Future(10));
         request.CompanyId = foreign.Company.Id.Value;
 
         await SchedulingAssert.NotFound(() => mine.CreateAppointment(request));
@@ -80,7 +80,7 @@ public class TenantIsolationCharacterizationTests
         await using SchedulingWorld a = mine;
         await using SchedulingWorld b = foreign;
         Room foreignRoom = await foreign.AddRoom();
-        AppointmentCreateRequest request = mine.CreateRequest(SchedulingWorld.Future(10));
+        AppointmentSingleSegmentRequest request = mine.CreateRequest(SchedulingWorld.Future(10));
         request.RoomId = foreignRoom.Id;
 
         await SchedulingAssert.NotFound(() => mine.CreateAppointment(request));

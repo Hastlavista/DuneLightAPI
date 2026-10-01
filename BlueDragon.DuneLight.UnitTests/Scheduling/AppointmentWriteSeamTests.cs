@@ -1,5 +1,6 @@
 #nullable disable
 using System;
+using System.Linq;
 using BlueDragon.DuneLight.Core.DTOs.Catalog;
 using BlueDragon.DuneLight.Core.Enums;
 using BlueDragon.DuneLight.Infrastructure.Domain.Models.Appointments;
@@ -8,9 +9,9 @@ using BlueDragon.DuneLight.Infrastructure.Utils;
 namespace BlueDragon.DuneLight.UnitTests.Scheduling;
 
 /// <summary>
-/// S3 write seams, pure unit tests (no database): <see cref="AppointmentFactory"/>, <see cref="AppointmentFrameMutator"/>,
-/// <see cref="BookingFactory"/> and the <see cref="AppointmentOwnership.IsAssignedToEmployee"/> predicate. The service-level
-/// behaviour that goes through them stays pinned by the characterization suite.
+/// Write seams, pure unit tests (no database): the construction core <see cref="AppointmentFactory"/>,
+/// <see cref="SegmentMutator"/>, <see cref="BookingFactory"/> and the <see cref="AppointmentOwnership.IsAssignedToSegment"/>
+/// predicate. The service-level behaviour that goes through them stays pinned by the characterization suite.
 /// </summary>
 public class AppointmentWriteSeamTests
 {
@@ -19,35 +20,38 @@ public class AppointmentWriteSeamTests
     private static readonly Guid User = Guid.NewGuid();
     private static readonly DateTimeOffset StartsAt = new(2031, 3, 3, 10, 0, 0, TimeSpan.Zero);
     private static readonly DateTimeOffset CreatedAt = new(2026, 9, 30, 8, 0, 0, TimeSpan.Zero);
+    private static readonly BookingPricing Price = new(50m, 50m, false);
 
-    private static AppointmentFrame Frame(Guid? employeeId = null, Guid? roomId = null) =>
-        new(Guid.NewGuid(), employeeId, roomId, StartsAt, 45);
+    private static SegmentPlan Plan(
+        Guid? employeeId = null, Guid? roomId = null, DateTimeOffset? start = null, int minutes = 45, Guid? serviceId = null,
+        params Guid[] clients) =>
+        new(serviceId ?? Guid.NewGuid(), start ?? StartsAt, (start ?? StartsAt).AddMinutes(minutes),
+            employeeId.HasValue ? new[] { employeeId.Value } : Array.Empty<Guid>(), roomId,
+            clients.Select(c => new ParticipantPlan(c, Price)).ToList());
 
-    /// <summary>D3B1: bookings are created against the appointment's authoritative segment.</summary>
-    private static AppointmentSegment NewSegment() =>
-        AppointmentSegments.GetSingleExecutionSegment(
-            AppointmentFactory.CreateIndividual(Org, Company, Frame(), null, null, User, CreatedAt));
+    private static Appointment Individual(params SegmentPlan[] plans) =>
+        AppointmentFactory.CreateIndividual(Org, Company, null, null, User, CreatedAt, plans, ParticipationStatus.Confirmed);
 
-    #region AppointmentFactory
+    /// <summary>Bookings are created against a segment of an appointment.</summary>
+    private static AppointmentSegment NewSegment() => Individual(Plan()).Segments.Single();
 
-    // M1A: creation ALWAYS initializes Scheduled (the former Completed-at-creation input is gone — CompleteNew derives Closed
-    // from its Completed participations through AppointmentLifecycle).
+    #region AppointmentFactory (construction core)
+
+    // M1A: creation ALWAYS initializes Scheduled (CompleteNew derives Closed from its Completed participations).
     [Fact]
-    public void CreateIndividual_MapsTheFrameAndTheAppointmentLevelFields()
+    public void CreateIndividual_MapsTheSegmentAndTheAppointmentLevelFields()
     {
-        const AppointmentStatus status = AppointmentStatus.Scheduled;
-        AppointmentFrame frame = Frame(Guid.NewGuid(), Guid.NewGuid());
-        Guid recurrence = Guid.NewGuid();
+        Guid employee = Guid.NewGuid(), room = Guid.NewGuid(), recurrence = Guid.NewGuid();
+        SegmentPlan plan = Plan(employee, room);
 
-        Appointment a = AppointmentFactory.CreateIndividual(Org, Company, frame, "note", recurrence, User, CreatedAt);
+        Appointment a = AppointmentFactory.CreateIndividual(Org, Company, "note", recurrence, User, CreatedAt, new[] { plan }, ParticipationStatus.Confirmed);
 
         Assert.NotNull(a.Id);
         Assert.NotEqual(Guid.Empty, a.Id.Value);
         Assert.Equal(Org, a.OrganizationId);
         Assert.Equal(Company, a.CompanyId);
         Assert.Equal(AppointmentForm.Individual, a.Form);
-        Assert.Equal(status, a.Status);
-        Assert.Equal(frame, AppointmentFrame.Of(a));
+        Assert.Equal(AppointmentStatus.Scheduled, a.Status);
         Assert.Equal("note", a.Note);
         Assert.Equal(recurrence, a.RecurrenceGroupId);
         Assert.Null(a.GroupId);
@@ -58,8 +62,16 @@ public class AppointmentWriteSeamTests
         Assert.Null(a.UpdatedAt);
         Assert.Null(a.UpdatedBy);
         Assert.Empty(a.Bookings);
+
+        AppointmentSegment segment = Assert.Single(a.Segments);
+        Assert.Equal(a.Id.Value, segment.AppointmentId);
+        Assert.Equal(Org, segment.OrganizationId);
+        Assert.Equal(plan.ServiceId, segment.ServiceId);
+        Assert.Equal(plan.PlannedStart, segment.PlannedStart);
+        Assert.Equal(plan.PlannedEnd, segment.PlannedEnd);
+        Assert.Equal(room, segment.RoomId);
+        Assert.Equal(employee, Assert.Single(segment.Employees).EmployeeId);
         // Navigations are never set (the appointment is attached to a fresh DbContext by the handlers).
-        AppointmentSegment segment = AppointmentSegments.GetSingleExecutionSegment(a);
         Assert.Null(segment.Service);
         Assert.Null(segment.Room);
         Assert.Null(Assert.Single(segment.Employees).Employee);
@@ -69,8 +81,7 @@ public class AppointmentWriteSeamTests
     [Fact]
     public void CreateIndividual_WithoutARoomOrRecurrence_KeepsThemNull()
     {
-        Appointment a = AppointmentFactory.CreateIndividual(
-            Org, Company, Frame(Guid.NewGuid(), roomId: null), null, null, User, CreatedAt);
+        Appointment a = Individual(Plan(Guid.NewGuid(), roomId: null));
 
         Assert.Null(a.RoomId);
         Assert.Null(a.RecurrenceGroupId);
@@ -78,97 +89,170 @@ public class AppointmentWriteSeamTests
     }
 
     [Fact]
+    public void CreateIndividual_RejectsNoSegments_AndASegmentThatDoesNotEndAfterItStarts()
+    {
+        Assert.Throws<InvalidAppointmentSegmentStateException>(() => Individual());
+        Assert.Throws<InvalidAppointmentSegmentStateException>(() => Individual(Plan(minutes: 0)));
+    }
+
+    [Fact]
     public void CreateGroupOccurrence_IsAScheduledGroupAppointmentWithoutANote_AndMayHaveNoTrainer()
     {
-        Guid group = Guid.NewGuid(), slot = Guid.NewGuid();
-        AppointmentFrame frame = Frame(employeeId: null, roomId: Guid.NewGuid());
+        Guid group = Guid.NewGuid(), slot = Guid.NewGuid(), room = Guid.NewGuid();
 
-        Appointment a = AppointmentFactory.CreateGroupOccurrence(Org, Company, frame, group, slot, User, CreatedAt);
+        Appointment a = AppointmentFactory.CreateGroupOccurrence(Org, Company, group, slot, User, CreatedAt, Plan(employeeId: null, roomId: room));
 
         Assert.Equal(AppointmentForm.Group, a.Form);
         Assert.Equal(AppointmentStatus.Scheduled, a.Status);
-        Assert.Equal(frame, AppointmentFrame.Of(a));
+        AppointmentSegment segment = Assert.Single(a.Segments);
+        Assert.Empty(segment.Employees);
+        Assert.Equal(room, segment.RoomId);
         Assert.Null(a.EmployeeId);
         Assert.Equal(group, a.GroupId);
         Assert.Equal(slot, a.GroupSlotId);
         Assert.Null(a.Note);
         Assert.Null(a.RecurrenceGroupId);
         Assert.Equal(Company, a.CompanyId);
+        // A group occurrence may have no members: a valid empty occurrence still has its segment.
+        Assert.Empty(a.Bookings);
+    }
+
+    [Fact]
+    public void CreateGroupOccurrence_GivesEveryMemberOneBookingWithOneConfirmedParticipationOnTheSegment()
+    {
+        Guid c1 = Guid.NewGuid(), c2 = Guid.NewGuid();
+
+        Appointment a = AppointmentFactory.CreateGroupOccurrence(
+            Org, Company, Guid.NewGuid(), Guid.NewGuid(), User, CreatedAt, Plan(clients: new[] { c1, c2 }));
+
+        AppointmentSegment segment = Assert.Single(a.Segments);
+        Assert.Equal(new[] { c1, c2 }, a.Bookings.Select(b => b.ClientId).ToArray());
+        Assert.All(a.Bookings, b =>
+        {
+            BookingSegmentParticipation p = Assert.Single(b.Participations);
+            Assert.Equal(segment.Id, p.AppointmentSegmentId);
+            Assert.Equal(ParticipationStatus.Confirmed, p.Status);
+            Assert.Equal(0, p.StatusVersion);
+        });
     }
 
     [Fact]
     public void Factory_GivesEveryAppointmentItsOwnId()
     {
-        Appointment first = AppointmentFactory.CreateIndividual(Org, Company, Frame(), null, null, User, CreatedAt);
-        Appointment second = AppointmentFactory.CreateIndividual(Org, Company, Frame(), null, null, User, CreatedAt);
+        Assert.NotEqual(Individual(Plan()).Id, Individual(Plan()).Id);
+    }
 
-        Assert.NotEqual(first.Id, second.Id);
+    [Fact]
+    public void CreationCore_TwoSegments_OneClientOnBoth_GetsOneBookingAndTwoParticipations()
+    {
+        Guid client = Guid.NewGuid();
+        SegmentPlan first = Plan(Guid.NewGuid(), start: StartsAt, minutes: 30, clients: client);
+        SegmentPlan second = Plan(Guid.NewGuid(), start: StartsAt.AddMinutes(30), minutes: 60, clients: client);
+
+        Appointment a = Individual(first, second);
+
+        Assert.Equal(2, a.Segments.Count);
+        Booking booking = Assert.Single(a.Bookings);
+        Assert.Equal(client, booking.ClientId);
+        Assert.Equal(a.Id.Value, booking.AppointmentId);
+        Assert.Equal(
+            a.Segments.Select(s => s.Id).OrderBy(id => id),
+            booking.Participations.Select(p => (Guid?)p.AppointmentSegmentId).OrderBy(id => id));
+        Assert.All(booking.Participations, p => Assert.Equal(booking.Id.Value, p.BookingId));
+    }
+
+    [Fact]
+    public void CreationCore_DifferentClientsOnDifferentSegments_EachGetsTheirOwnBookingOnTheirOwnSegment()
+    {
+        Guid onlyFirst = Guid.NewGuid(), onlySecond = Guid.NewGuid(), both = Guid.NewGuid();
+        SegmentPlan first = Plan(Guid.NewGuid(), clients: new[] { onlyFirst, both });
+        SegmentPlan second = Plan(Guid.NewGuid(), start: StartsAt.AddHours(2), clients: new[] { onlySecond, both });
+
+        Appointment a = Individual(first, second);
+
+        AppointmentSegment segA = a.Segments.Single(s => s.PlannedStart == first.PlannedStart);
+        AppointmentSegment segB = a.Segments.Single(s => s.PlannedStart == second.PlannedStart);
+        Assert.Equal(3, a.Bookings.Count);
+        Assert.Equal(segA.Id.Value, Assert.Single(a.Bookings.Single(b => b.ClientId == onlyFirst).Participations).AppointmentSegmentId);
+        Assert.Equal(segB.Id.Value, Assert.Single(a.Bookings.Single(b => b.ClientId == onlySecond).Participations).AppointmentSegmentId);
+        Assert.Equal(2, a.Bookings.Single(b => b.ClientId == both).Participations.Count);
+    }
+
+    [Fact]
+    public void CreationCore_InitialParticipationStatus_IsAppliedToEveryParticipation()
+    {
+        Guid client = Guid.NewGuid();
+        Appointment a = AppointmentFactory.CreateIndividual(
+            Org, Company, null, null, User, CreatedAt,
+            new[] { Plan(clients: client), Plan(start: StartsAt.AddHours(1), clients: client) }, ParticipationStatus.Completed);
+
+        Assert.All(Assert.Single(a.Bookings).Participations, p => Assert.Equal(ParticipationStatus.Completed, p.Status));
+        // The factory never decides the appointment status — the caller derives it.
+        Assert.Equal(AppointmentStatus.Scheduled, a.Status);
     }
 
     #endregion
 
-    #region AppointmentFrameMutator
+    #region SegmentMutator
 
     [Fact]
-    public void Apply_WritesExactlyTheFiveFrameFields_InMemory()
+    public void SegmentMutator_WritesOnlyTheAddressedSegment_InMemory()
     {
-        Appointment a = AppointmentFactory.CreateIndividual(
-            Org, Company, Frame(Guid.NewGuid(), Guid.NewGuid()), "keep", null, User, CreatedAt);
-        Guid id = a.Id.Value;
-        AppointmentFrame next = new(Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), StartsAt.AddHours(3), 90);
+        Guid client = Guid.NewGuid();
+        Appointment a = Individual(Plan(Guid.NewGuid(), Guid.NewGuid(), clients: client), Plan(Guid.NewGuid(), start: StartsAt.AddHours(2), clients: client));
+        a.Note = "keep";
+        AppointmentSegment target = a.Segments.First();
+        AppointmentSegment other = a.Segments.Last();
+        (Guid service, Guid? room, DateTimeOffset start, DateTimeOffset end, Guid employee) otherBefore =
+            (other.ServiceId, other.RoomId, other.PlannedStart, other.PlannedEnd, other.Employees.Single().EmployeeId);
+        Guid newService = Guid.NewGuid(), newRoom = Guid.NewGuid(), newEmployee = Guid.NewGuid();
 
-        AppointmentFrameMutator.Apply(a, next, CreatedAt);
+        SegmentMutator.ChangeService(target, newService, CreatedAt);
+        SegmentMutator.ChangeRoom(target, newRoom, CreatedAt);
+        SegmentMutator.ChangeTime(target, StartsAt.AddHours(5), StartsAt.AddHours(6), CreatedAt);
+        SegmentMutator.AssignEmployees(target, new[] { newEmployee }, CreatedAt);
 
-        Assert.Equal(next, AppointmentFrame.Of(a));
-        // Nothing outside the frame is touched — company, status, note and audit fields stay with the caller.
-        Assert.Equal(id, a.Id);
+        Assert.Equal(newService, target.ServiceId);
+        Assert.Equal(newRoom, target.RoomId);
+        Assert.Equal(StartsAt.AddHours(5), target.PlannedStart);
+        Assert.Equal(StartsAt.AddHours(6), target.PlannedEnd);
+        Assert.Equal(newEmployee, Assert.Single(target.Employees).EmployeeId);
+        Assert.Equal(otherBefore, (other.ServiceId, other.RoomId, other.PlannedStart, other.PlannedEnd, other.Employees.Single().EmployeeId));
+        // Nothing outside the segment is touched — company, status, note and audit fields stay with the caller.
         Assert.Equal(Company, a.CompanyId);
         Assert.Equal(AppointmentStatus.Scheduled, a.Status);
         Assert.Equal("keep", a.Note);
         Assert.Null(a.UpdatedAt);
-        Assert.Null(a.UpdatedBy);
     }
 
     [Fact]
-    public void Apply_CanClearTheEmployeeAndTheRoom_NoNormalization()
+    public void SegmentMutator_CanClearTheEmployeesAndTheRoom_AndRejectsAnEmptyTimeRange()
     {
-        Appointment a = AppointmentFactory.CreateIndividual(
-            Org, Company, Frame(Guid.NewGuid(), Guid.NewGuid()), null, null, User, CreatedAt);
+        AppointmentSegment segment = Individual(Plan(Guid.NewGuid(), Guid.NewGuid())).Segments.Single();
 
-        AppointmentFrameMutator.Apply(a, AppointmentFrame.Of(a) with { EmployeeId = null, RoomId = null }, CreatedAt);
+        SegmentMutator.AssignEmployees(segment, Array.Empty<Guid>(), CreatedAt);
+        SegmentMutator.ChangeRoom(segment, null, CreatedAt);
 
-        Assert.Null(a.EmployeeId);
-        Assert.Null(a.RoomId);
+        Assert.Empty(segment.Employees);
+        Assert.Null(segment.RoomId);
+        Assert.ThrowsAny<Exception>(() => SegmentMutator.ChangeTime(segment, StartsAt, StartsAt, CreatedAt));
     }
 
     [Fact]
-    public void Apply_WithAPartialFrame_KeepsTheUnchangedFieldsExactly()
+    public void SegmentMutator_ChangeTime_KeepsTheOtherFieldsExactly()
     {
-        // The Move shape: only the time and (optionally) employee/room change; service and duration are kept.
+        // The Move shape: only the time changes; service, employee and room are kept.
         Guid room = Guid.NewGuid(), employee = Guid.NewGuid();
-        Appointment a = AppointmentFactory.CreateIndividual(
-            Org, Company, Frame(employee, room), null, null, User, CreatedAt);
-        AppointmentFrame before = AppointmentFrame.Of(a);
+        AppointmentSegment segment = Individual(Plan(employee, room)).Segments.Single();
+        Guid service = segment.ServiceId;
 
-        AppointmentFrameMutator.Apply(a, before with { StartsAt = StartsAt.AddDays(1) }, CreatedAt);
+        SegmentMutator.ChangeTime(segment, StartsAt.AddDays(1), StartsAt.AddDays(1).AddMinutes(45), CreatedAt);
 
-        Assert.Equal(before.ServiceId, a.ServiceId);
-        Assert.Equal(employee, a.EmployeeId);
-        Assert.Equal(room, a.RoomId);
-        Assert.Equal(45, a.DurationMinutes);
-        Assert.Equal(StartsAt.AddDays(1), a.StartsAt);
-    }
-
-    [Fact]
-    public void Of_ReadsTheInMemoryValues_WithoutANavigationOrStoreRoundTrip()
-    {
-        Appointment a = new() { Id = Guid.NewGuid() };
-        AppointmentFrameMutator.NewSegment(a, new AppointmentFrame(Guid.NewGuid(), null, null, StartsAt, 30));
-
-        AppointmentFrame frame = AppointmentFrame.Of(a);
-
-        Assert.Equal(new AppointmentFrame(a.ServiceId, null, null, StartsAt, 30), frame);
-        Assert.Throws<ArgumentNullException>(() => AppointmentFrame.Of(null));
+        Assert.Equal(service, segment.ServiceId);
+        Assert.Equal(employee, segment.Employees.Single().EmployeeId);
+        Assert.Equal(room, segment.RoomId);
+        Assert.Equal(45, AppointmentSegments.DurationMinutes(segment));
+        Assert.Equal(StartsAt.AddDays(1), segment.PlannedStart);
     }
 
     #endregion
@@ -246,18 +330,29 @@ public class AppointmentWriteSeamTests
     #region Ownership predicate
 
     [Fact]
-    public void IsAssignedToEmployee_OnlyForTheAppointmentsEmployee_NeverForATrainerlessAppointment()
+    public void IsAssignedToSegment_OnlyForTheSegmentsEmployees_NeverForATrainerlessSegment()
     {
         Guid employee = Guid.NewGuid();
-        Appointment assigned = new() { Id = Guid.NewGuid() };
-        AppointmentFrameMutator.NewSegment(assigned, Frame(employee));
-        Appointment trainerless = new() { Id = Guid.NewGuid() };
-        AppointmentFrameMutator.NewSegment(trainerless, Frame(employeeId: null));
+        AppointmentSegment assigned = Individual(Plan(employee)).Segments.Single();
+        AppointmentSegment trainerless = Individual(Plan(employeeId: null)).Segments.Single();
 
-        Assert.True(AppointmentOwnership.IsAssignedToEmployee(assigned, employee));
-        Assert.False(AppointmentOwnership.IsAssignedToEmployee(assigned, Guid.NewGuid()));
-        Assert.False(AppointmentOwnership.IsAssignedToEmployee(trainerless, employee));
-        Assert.False(AppointmentOwnership.IsAssignedToEmployee(trainerless, Guid.Empty));
+        Assert.True(AppointmentOwnership.IsAssignedToSegment(assigned, employee));
+        Assert.False(AppointmentOwnership.IsAssignedToSegment(assigned, Guid.NewGuid()));
+        Assert.False(AppointmentOwnership.IsAssignedToSegment(trainerless, employee));
+        Assert.False(AppointmentOwnership.IsAssignedToSegment(trainerless, Guid.Empty));
+    }
+
+    [Fact]
+    public void IsAssignedToSegment_IsPerSegment_AssignedToAIsNotAssignedToB()
+    {
+        Guid employeeA = Guid.NewGuid(), employeeB = Guid.NewGuid();
+        Appointment a = Individual(Plan(employeeA), Plan(employeeB, start: StartsAt.AddHours(1)));
+        AppointmentSegment segA = a.Segments.First(), segB = a.Segments.Last();
+
+        Assert.True(AppointmentOwnership.IsAssignedToSegment(segA, employeeA));
+        Assert.False(AppointmentOwnership.IsAssignedToSegment(segB, employeeA));
+        Assert.True(AppointmentOwnership.IsAssignedToSegment(segB, employeeB));
+        Assert.False(AppointmentOwnership.IsAssignedToSegment(segA, employeeB));
     }
 
     #endregion

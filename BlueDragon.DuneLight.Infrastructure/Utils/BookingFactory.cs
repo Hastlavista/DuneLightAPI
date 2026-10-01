@@ -1,4 +1,5 @@
 using System;
+using System.Linq;
 using BlueDragon.DuneLight.Core.Enums;
 using BlueDragon.DuneLight.Infrastructure.Domain.Models.Appointments;
 
@@ -36,19 +37,40 @@ public static class BookingFactory
     {
         ArgumentNullException.ThrowIfNull(segment);
 
-        Booking booking = new Booking
-        {
-            Id = Guid.NewGuid(),
-            OrganizationId = organizationId,
-            AppointmentId = segment.AppointmentId,
-            ClientId = clientId,
-            CreatedAt = createdAt
-        };
+        Booking booking = NewContainer(organizationId, segment.AppointmentId, clientId, createdAt);
+        AddParticipation(booking, segment, status, pricing, createdAt);
+        return booking;
+    }
+
+    /// <summary>Phase M1B: Booking kao SPREMNIK klijenta na terminu, još bez sudjelovanja — koristi ga konstrukcijska
+    /// jezgra (AppointmentFactory) koja jednom klijentu daje jedan Booking i po jedno sudjelovanje na svakom odabranom
+    /// segmentu.</summary>
+    internal static Booking NewContainer(Guid organizationId, Guid appointmentId, Guid clientId, DateTimeOffset createdAt) => new()
+    {
+        Id = Guid.NewGuid(),
+        OrganizationId = organizationId,
+        AppointmentId = appointmentId,
+        ClientId = clientId,
+        CreatedAt = createdAt
+    };
+
+    /// <summary>Phase M1B: novo sudjelovanje Bookinga na ZADANOM segmentu (StatusVersion 0 — nastanak nije prijelaz).
+    /// Booking i segment moraju pripadati istom terminu; isti segment se ne dodaje dvaput.</summary>
+    internal static BookingSegmentParticipation AddParticipation(
+        Booking booking, AppointmentSegment segment, ParticipationStatus status, BookingPricing pricing, DateTimeOffset createdAt)
+    {
+        ArgumentNullException.ThrowIfNull(booking);
+        ArgumentNullException.ThrowIfNull(segment);
+        if (segment.AppointmentId != booking.AppointmentId)
+            throw new InvalidOperationException("Segment i Booking ne pripadaju istom terminu.");
+        if (booking.Participations.Any(p => p.AppointmentSegmentId == segment.Id))
+            throw new InvalidOperationException($"Booking {booking.Id} već sudjeluje u segmentu {segment.Id}.");
+
         BookingSegmentParticipation participation = new BookingSegmentParticipation
         {
             Id = Guid.NewGuid(),
-            OrganizationId = organizationId,
-            BookingId = booking.Id.Value,
+            OrganizationId = booking.OrganizationId,
+            BookingId = booking.Id.GetValueOrDefault(),
             AppointmentSegmentId = segment.Id.GetValueOrDefault(),
             Status = status,
             StatusVersion = 0,
@@ -56,6 +78,6 @@ public static class BookingFactory
         };
         ParticipationPrice.ApplyTo(participation, pricing);
         booking.Participations.Add(participation);
-        return booking;
+        return participation;
     }
 }

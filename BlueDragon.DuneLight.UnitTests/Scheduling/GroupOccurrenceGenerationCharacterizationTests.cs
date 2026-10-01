@@ -303,9 +303,11 @@ public class GroupOccurrenceGenerationCharacterizationTests
         // index ux_appointments_group_slot_startsat on appointments(group_slot_id, starts_at); starts_at no longer exists
         // (the start lives on the segment), so the net is now GroupHandler.AddAppointments — a per-slot transaction lock
         // plus a re-check of existing (slot, start) pairs before inserting. A duplicate write is refused and nothing is saved.
+        AppointmentSegment existingSegment = existing.Segments.Single();
         Appointment duplicate = AppointmentFactory.CreateGroupOccurrence(
-            w.OrganizationId, existing.CompanyId, AppointmentFrame.Of(existing), existing.GroupId.Value, existing.GroupSlotId.Value,
-            w.ActorUserId, DateTimeOffset.UtcNow);
+            w.OrganizationId, existing.CompanyId, existing.GroupId.Value, existing.GroupSlotId.Value, w.ActorUserId, DateTimeOffset.UtcNow,
+            new SegmentPlan(existingSegment.ServiceId, existingSegment.PlannedStart, existingSegment.PlannedEnd,
+                existingSegment.Employees.Select(e => e.EmployeeId).ToList(), existingSegment.RoomId, new List<ParticipantPlan>()));
 
         bool added = await w.Resolve<IGroupHandler>().AddAppointments(new List<Appointment> { duplicate });
 

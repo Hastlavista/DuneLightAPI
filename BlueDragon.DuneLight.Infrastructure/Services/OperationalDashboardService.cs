@@ -114,19 +114,23 @@ public class OperationalDashboardService : IOperationalDashboardService
 
     private static DashboardScheduleOccurrenceDto BuildOccurrence(Appointment appointment, List<WaitlistEntry> waiting, DateTimeOffset now)
     {
-        AppointmentFrameView frame = AppointmentFrameView.Of(appointment);
+        AppointmentRange range = AppointmentRange.Of(appointment);
+        SingleSegmentProjection compat = SingleSegmentProjection.Of(appointment);
         DashboardScheduleOccurrenceDto dto = new DashboardScheduleOccurrenceDto
         {
             AppointmentId = appointment.Id.GetValueOrDefault(),
-            StartsAt = frame.StartsAt,
-            DurationMinutes = frame.DurationMinutes,
+            PlannedStart = range.PlannedStart,
+            PlannedEnd = range.PlannedEnd,
+            Segments = AppointmentSegmentReadModel.ToDtos(appointment),
+            StartsAt = range.PlannedStart,
+            DurationMinutes = range.SpanMinutes,
             Status = appointment.Status,
-            ServiceId = frame.ServiceId,
-            ServiceName = frame.ServiceName,
-            EmployeeId = frame.EmployeeId,
-            EmployeeName = frame.EmployeeName,
-            RoomId = frame.RoomId,
-            RoomName = frame.RoomName,
+            ServiceId = compat.ServiceId,
+            ServiceName = compat.ServiceName,
+            EmployeeId = compat.EmployeeId,
+            EmployeeName = compat.EmployeeName,
+            RoomId = compat.RoomId,
+            RoomName = compat.RoomName,
             IsGroup = appointment.Form == AppointmentForm.Group,
             GroupId = appointment.GroupId,
             GroupName = appointment.Group?.Name
@@ -148,7 +152,7 @@ public class OperationalDashboardService : IOperationalDashboardService
                 CancelledCount = participations.Count(p => p.Status == ParticipationStatus.Cancelled),
                 WaitingCount = waiting.Count(w => w.AppointmentId == appointment.Id),
                 AvailableReservationSeats = Math.Max(0, capacity - confirmedCount),
-                HasUnresolvedAttendance = frame.StartsAt <= now && confirmedCount > 0
+                HasUnresolvedAttendance = range.PlannedStart <= now && confirmedCount > 0
             };
         }
         else

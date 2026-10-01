@@ -210,7 +210,7 @@ public class GroupHandler : IGroupHandler
             return true;
 
         List<(Guid SlotId, DateTimeOffset StartsAt)> keys = appointments
-            .Select(a => (a.GroupSlotId.GetValueOrDefault(), AppointmentSegments.GetSingleExecutionSegment(a).PlannedStart))
+            .Select(a => (a.GroupSlotId.GetValueOrDefault(), AppointmentRange.Of(a).PlannedStart))
             .ToList();
         List<Guid> slotIds = keys.Select(k => k.SlotId).Distinct().OrderBy(id => id).ToList();
 
@@ -240,6 +240,7 @@ public class GroupHandler : IGroupHandler
             .Include(a => a.Segments).ThenInclude(s => s.Service)
             .Include(a => a.Segments).ThenInclude(s => s.Room)
             .Include(a => a.Segments).ThenInclude(s => s.Employees).ThenInclude(e => e.Employee)
+            .Include(a => a.Segments).ThenInclude(s => s.Resources).ThenInclude(r => r.Resource)
             .Include(a => a.Company)
             .Include(a => a.Bookings)
             .AsSplitQuery()

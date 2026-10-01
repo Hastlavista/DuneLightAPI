@@ -107,9 +107,21 @@ public class AppointmentsController : ControllerBase
     }
 
     /// <summary>"Zakaži" — status Scheduled, bez naplate.</summary>
+    /// <summary>Phase M1B — ciljni segmentni ugovor kreiranja (termin + segmenti + sudionici po segmentu). Do omogućavanja
+    /// više segmenata vraća MULTI_SEGMENT_NOT_ENABLED za više od jednog segmenta.</summary>
+    [HttpPost]
+    [RequireGrant(Grants.AppointmentsWriteOwn, Grants.AppointmentsWriteAll)]
+    public async Task<ActionResult<AppointmentDto>> CreateSegmented([FromBody] AppointmentCreateRequest request)
+    {
+        AppointmentDto created = await _appointmentService.Create(
+            this.CurrentOrganizationId(), this.CurrentUserId(), this.HasGrant(Grants.AppointmentsWriteAll), request);
+        return CreatedAtAction(nameof(GetById), new { id = created.Id }, created);
+    }
+
+    /// <summary>PRIVREMENA KOMPATIBILNOST — plosnati jednosegmentni zahtjev; interno se mapira na ciljni ugovor.</summary>
     [HttpPost("schedule")]
     [RequireGrant(Grants.AppointmentsWriteOwn, Grants.AppointmentsWriteAll)]
-    public async Task<ActionResult<AppointmentDto>> Create([FromBody] AppointmentCreateRequest request)
+    public async Task<ActionResult<AppointmentDto>> Create([FromBody] AppointmentSingleSegmentRequest request)
     {
         AppointmentDto created = await _appointmentService.Create(
             this.CurrentOrganizationId(), this.CurrentUserId(), this.HasGrant(Grants.AppointmentsWriteAll), request);

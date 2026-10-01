@@ -30,7 +30,7 @@ public class BookingStatusVersioningCharacterizationTests
     [Fact]
     public void TrySetStatus_ARealTransition_ChangesTheStatusAndIncrementsTheVersionByExactlyOne()
     {
-        Booking booking = AppointmentFrameTestExtensions.InMemoryBooking(BookingStatus.Confirmed, 0);
+        Booking booking = SingleSegmentTestExtensions.InMemoryBooking(BookingStatus.Confirmed, 0);
 
         bool changed = ParticipationLifecycle.TrySetStatus(BookingParticipations.GetSingleParticipation(booking), ParticipationStatus.Completed);
 
@@ -46,7 +46,7 @@ public class BookingStatusVersioningCharacterizationTests
     [InlineData(BookingStatus.NoShow)]
     public void TrySetStatus_TheSameStatusAgain_IsANoOp_AndDoesNotIncrementTheVersion(BookingStatus status)
     {
-        Booking booking = AppointmentFrameTestExtensions.InMemoryBooking(status, 7);
+        Booking booking = SingleSegmentTestExtensions.InMemoryBooking(status, 7);
 
         bool changed = ParticipationLifecycle.TrySetStatus(BookingParticipations.GetSingleParticipation(booking), BookingParticipations.ToParticipationStatus(status));
 
@@ -58,7 +58,7 @@ public class BookingStatusVersioningCharacterizationTests
     [Fact]
     public void TrySetStatus_ACycleOfTransitions_AdvancesOncePerRealChange_AndSkipsRepeats()
     {
-        Booking booking = AppointmentFrameTestExtensions.InMemoryBooking(BookingStatus.Confirmed);
+        Booking booking = SingleSegmentTestExtensions.InMemoryBooking(BookingStatus.Confirmed);
 
         ParticipationLifecycle.TrySetStatus(BookingParticipations.GetSingleParticipation(booking), ParticipationStatus.NoShow);      // 1
         ParticipationLifecycle.TrySetStatus(BookingParticipations.GetSingleParticipation(booking), ParticipationStatus.NoShow);      // repeat: no change
@@ -73,7 +73,7 @@ public class BookingStatusVersioningCharacterizationTests
     [Fact]
     public void TrySetStatus_DoesNotTouchAnyOtherBookingField()
     {
-        Booking booking = AppointmentFrameTestExtensions.InMemoryBooking(BookingStatus.Confirmed, cancellationReason: "r");
+        Booking booking = SingleSegmentTestExtensions.InMemoryBooking(BookingStatus.Confirmed, cancellationReason: "r");
         ParticipationPrice.Apply(BookingParticipations.GetSingleParticipation(booking), new BookingPricing(50m, 50m, false)); // D3B2: price lives on the participation
         booking.Note = "n";
         BookingParticipations.GetSingleParticipation(booking).PackageConsumptions.Add(new PackageConsumption

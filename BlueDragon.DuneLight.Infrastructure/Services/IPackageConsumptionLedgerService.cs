@@ -24,7 +24,7 @@ public interface IPackageConsumptionLedgerService
     /// (PackageConsumptionTiming) predviđa potrošnju na <paramref name="trigger"/> prijelazu; inače null bez ikakve
     /// promjene. Vraća aktivnu potrošnju (novu ili postojeću za isti paket).</summary>
     Task<PackageConsumption> Consume(
-        IUnitOfWork uow, Guid organizationId, Guid userId, BookingSegmentParticipation participation, BookingExecutionContext execution,
+        IUnitOfWork uow, Guid organizationId, Guid userId, BookingSegmentParticipation participation, ParticipationExecutionContext execution,
         Guid clientPackageId, BookingStatus trigger);
 
     /// <summary>Poništava aktivnu potrošnju sudjelovanja (vraća ulazak u paket) — false ako aktivne potrošnje nema.</summary>

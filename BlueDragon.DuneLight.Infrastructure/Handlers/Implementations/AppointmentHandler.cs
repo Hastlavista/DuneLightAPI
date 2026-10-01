@@ -37,6 +37,7 @@ public class AppointmentHandler : IAppointmentHandler
             .Include(a => a.Segments).ThenInclude(s => s.Service)
             .Include(a => a.Segments).ThenInclude(s => s.Room)
             .Include(a => a.Segments).ThenInclude(s => s.Employees).ThenInclude(e => e.Employee)
+            .Include(a => a.Segments).ThenInclude(s => s.Resources).ThenInclude(r => r.Resource)
             .Include(a => a.Company)
             .Include(a => a.Bookings).ThenInclude(b => b.Client);
     }
@@ -206,23 +207,16 @@ public class AppointmentHandler : IAppointmentHandler
         await uow.Context.SaveChangesAsync();
     }
 
-    public async Task UpdateWithBookings(Appointment appointment, List<Guid> clientIds, BookingPricing pricing)
+    public async Task UpdateWithBookings(IUnitOfWork uow, Appointment appointment, AppointmentSegment segment, List<Guid> clientIds, BookingPricing pricing)
     {
-        await using DatabaseContext context = DatabaseContext.GenerateContext(_databaseSettings.ConnectionString);
-        await UpdateWithBookingsCore(context, appointment, clientIds, pricing);
-        await context.SaveChangesAsync();
-    }
-
-    public async Task UpdateWithBookings(IUnitOfWork uow, Appointment appointment, List<Guid> clientIds, BookingPricing pricing)
-    {
-        await UpdateWithBookingsCore(uow.Context, appointment, clientIds, pricing);
+        await UpdateWithBookingsCore(uow.Context, appointment, segment, clientIds, pricing);
         await uow.Context.SaveChangesAsync();
     }
 
     private static bool IsTerminal(ParticipationStatus status) => status != ParticipationStatus.Confirmed;
 
     private static async Task UpdateWithBookingsCore(
-        DatabaseContext context, Appointment appointment, List<Guid> clientIds, BookingPricing pricing)
+        DatabaseContext context, Appointment appointment, AppointmentSegment executionSegment, List<Guid> clientIds, BookingPricing pricing)
     {
         // Pozivatelj (AppointmentService.Update) ovamo prosljeđuje appointment učitan preko
         // GetWithBookingsForMutation — TAJ poziv već uključuje appointment.Bookings (druga, RANIJA DatabaseContext
@@ -263,9 +257,8 @@ public class AppointmentHandler : IAppointmentHandler
 
         // Re-cijenjenje se primjenjuje samo na preživjele retke koji NISU terminalni — već naplaćen/otkazan/
         // izostao Booking čuva svoj povijesni Amount (vidi spec section 18/20).
-        // Phase M0: okvir termina je JEDAN izvršni segment (privremeni jednostruki raspored) — re-cijeni se sudjelovanje
-        // preživjelog Bookinga NA TOM segmentu, adresirano segmentom (ne "jedino sudjelovanje Bookinga").
-        AppointmentSegment executionSegment = AppointmentSegments.GetSingleExecutionSegment(appointment);
+        // Phase M0/M1B: re-cijeni se sudjelovanje preživjelog Bookinga NA ZADANOM segmentu (adresirano segmentom, ne
+        // "jedino sudjelovanje Bookinga"; segment razrješava pozivatelj na svojoj kompatibilnoj granici).
         foreach (Booking survivor in existing.Where(b => clientIds.Contains(b.ClientId)))
         {
             BookingSegmentParticipation participation = BookingParticipations.OnSegment(survivor, executionSegment);
@@ -277,8 +270,7 @@ public class AppointmentHandler : IAppointmentHandler
         foreach (Guid clientId in clientIds.Where(id => !existingClientIds.Contains(id)))
         {
             context.Bookings.Add(BookingFactory.CreateConfirmed(
-                appointment.OrganizationId, AppointmentSegments.GetSingleExecutionSegment(appointment), clientId,
-                pricing, DateTimeOffset.UtcNow));
+                appointment.OrganizationId, executionSegment, clientId, pricing, DateTimeOffset.UtcNow));
         }
 
         await PrepareForSave(context, appointment);

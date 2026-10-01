@@ -67,12 +67,11 @@ public interface IAppointmentHandler
     /// ParticipationPrice/BookingFactory) na SVE preživjele Booking retke (postojeće I nove) čiji status NIJE terminalan
     /// (Completed/Cancelled/NoShow) — re-cijenjenje termina prije naplate (vidi spec section 18/20); već
     /// naplaćeni/otkazani/izostali retci se ne diraju. BookingPricing.Zero kad pozivatelj svejedno odmah nakon
-    /// prepisuje sve retke (CompleteExisting).</summary>
-    Task UpdateWithBookings(Appointment appointment, List<Guid> clientIds, BookingPricing pricing);
-
-    /// <summary>Kao <see cref="UpdateWithBookings(Appointment, List{Guid}, BookingPricing)"/>, ali unutar
-    /// zajedničke transakcije — vidi IUnitOfWork.</summary>
-    Task UpdateWithBookings(IUnitOfWork uow, Appointment appointment, List<Guid> clientIds, BookingPricing pricing);
+    /// prepisuje sve retke (CompleteExisting). Phase M1B: PRIVREMENA KOMPATIBILNOST plosnatih Update/CompleteExisting —
+    /// rekoncilijacija i re-cijenjenje adresiraju EKSPLICITNO zadani <paramref name="segment"/> (razriješen na granici
+    /// pozivatelja); novi klijenti dobivaju Booking s jednim sudjelovanjem na tom segmentu. Radi unutar zajedničke
+    /// transakcije — vidi IUnitOfWork.</summary>
+    Task UpdateWithBookings(IUnitOfWork uow, Appointment appointment, AppointmentSegment segment, List<Guid> clientIds, BookingPricing pricing);
 
     Task Delete(Appointment appointment);
 

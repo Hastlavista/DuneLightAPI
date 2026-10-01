@@ -12,6 +12,7 @@ using BlueDragon.DuneLight.Infrastructure.Domain.Models.Clients;
 using BlueDragon.DuneLight.Infrastructure.Domain.Models.Groups;
 using BlueDragon.DuneLight.Infrastructure.Domain.Settings;
 using BlueDragon.DuneLight.Infrastructure.Handlers.Implementations;
+using BlueDragon.DuneLight.UnitTests.Scheduling;
 using Microsoft.EntityFrameworkCore;
 
 namespace BlueDragon.DuneLight.UnitTests;
@@ -159,8 +160,7 @@ public class LifecycleCleanupSafeFixesTests
                     CreatedAt = DateTimeOffset.UtcNow
                 };
                 // D3A: the execution frame lives on the appointment's single segment.
-                AppointmentFrameMutator.NewSegment(appointment,
-                    new AppointmentFrame(serviceId, null, null, DateTimeOffset.UtcNow.AddDays(-30), 30));
+                SingleSegmentTestExtensions.AddTestSegment(appointment, serviceId, null, null, DateTimeOffset.UtcNow.AddDays(-30), 30);
                 context.Appointments.Add(appointment);
                 await context.SaveChangesAsync();
 

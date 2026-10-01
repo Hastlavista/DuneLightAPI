@@ -165,7 +165,7 @@ public class ClientPackageService : IClientPackageService, IPackageConsumptionLe
     }
 
     public async Task<PackageConsumption> Consume(
-        IUnitOfWork uow, Guid organizationId, Guid userId, BookingSegmentParticipation participation, BookingExecutionContext execution,
+        IUnitOfWork uow, Guid organizationId, Guid userId, BookingSegmentParticipation participation, ParticipationExecutionContext execution,
         Guid clientPackageId, BookingStatus trigger)
     {
         PackageConsumptionTiming timing = await _organizationSettingsService.GetPackageConsumptionTiming(organizationId);

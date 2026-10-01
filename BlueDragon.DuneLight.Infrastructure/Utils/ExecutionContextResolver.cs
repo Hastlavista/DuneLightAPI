@@ -5,29 +5,30 @@ using BlueDragon.DuneLight.Infrastructure.Domain.Models.Appointments;
 namespace BlueDragon.DuneLight.Infrastructure.Utils;
 
 /// <summary>
-/// JEDINO mjesto koje prevodi izvršni okvir termina (od Phase D3A: njegov jedini AppointmentSegment) u izvršni
-/// kontekst za cijenu, pakete, proviziju, rok otkazivanja i blagajnu — komercijalna logika čita
-/// <see cref="AppointmentExecutionContext"/>/<see cref="BookingExecutionContext"/>, ne Appointment polja izravno.
+/// JEDINO mjesto koje prevodi izvršnu jedinicu u izvršni kontekst za cijenu, pakete, proviziju, rok otkazivanja i
+/// blagajnu. Phase M1B: izvršna jedinica je SEGMENT (ili sudjelovanje na segmentu) — termin nema kontekst (može imati
+/// više usluga/zaposlenika/početaka), pa "kontekst termina" više ne postoji.
 ///
 /// Čisto preslikavanje nad VEĆ učitanim entitetima, bez upita u bazu: pozivatelji rade unutar vlastite transakcije i
-/// ponekad nad Appointmentom koji su upravo izmijenili (npr. CompleteExisting mijenja okvir segmenta pa tek onda
-/// zarađuje proviziju) — kontekst mora odražavati točno te vrijednosti, kao i prije. Pozivatelji moraju učitati
-/// Segments (+ Employees). Kad Booking prijeđe na BookingSegmentParticipation, ovdje se mijenja izvor, ne pozivatelji.
+/// ponekad nad segmentom koji su upravo izmijenili (npr. CompleteExisting mijenja segment pa tek onda zarađuje proviziju)
+/// — kontekst odražava točno te vrijednosti. Pozivatelji moraju učitati segment (+ Employees).
 /// </summary>
 public static class ExecutionContextResolver
 {
-    public static AppointmentExecutionContext ForAppointment(Appointment appointment)
+    /// <summary>Segment mora pripadati terminu (programska greška inače).</summary>
+    public static SegmentExecutionContext ForSegment(Appointment appointment, AppointmentSegment segment)
     {
         ArgumentNullException.ThrowIfNull(appointment);
-        if (!appointment.Id.HasValue)
-            throw new InvalidOperationException("Izvršni kontekst zahtijeva termin s dodijeljenim Id-em.");
+        ArgumentNullException.ThrowIfNull(segment);
+        if (!appointment.Id.HasValue || !segment.Id.HasValue)
+            throw new InvalidOperationException("Izvršni kontekst zahtijeva termin i segment s dodijeljenim Id-em.");
+        if (segment.AppointmentId != appointment.Id.Value || segment.OrganizationId != appointment.OrganizationId)
+            throw new InvalidOperationException("Segment ne pripada zadanom terminu.");
 
-        // Phase D3A: okvir se čita iz jedinog autoritativnog segmenta (ServiceName iz segment.Service ako je učitan —
-        // ista semantika kao prije s appointment.Service).
-        AppointmentSegment segment = AppointmentSegments.GetSingleExecutionSegment(appointment);
-        return new AppointmentExecutionContext(
+        return new SegmentExecutionContext(
             appointment.OrganizationId,
             appointment.Id.Value,
+            segment.Id.Value,
             appointment.CompanyId,
             segment.ServiceId,
             segment.Service?.Name,
@@ -35,27 +36,9 @@ public static class ExecutionContextResolver
             segment.PlannedStart);
     }
 
-    /// <summary>Booking mora pripadati TOM terminu i TOJ organizaciji — neusklađen par je programska greška pozivatelja
-    /// (nikad valjan poslovni slučaj), pa se odbija umjesto da tiho spoji tuđi kontekst.</summary>
-    public static BookingExecutionContext ForBooking(Appointment appointment, Booking booking)
-    {
-        ArgumentNullException.ThrowIfNull(booking);
-        AppointmentExecutionContext execution = ForAppointment(appointment);
-
-        if (!booking.Id.HasValue)
-            throw new InvalidOperationException("Izvršni kontekst zahtijeva booking s dodijeljenim Id-em.");
-        if (booking.OrganizationId != execution.OrganizationId)
-            throw new InvalidOperationException("Booking ne pripada organizaciji termina.");
-        if (booking.AppointmentId != execution.AppointmentId)
-            throw new InvalidOperationException("Booking ne pripada zadanom terminu.");
-
-        return new BookingExecutionContext(execution, booking.Id.Value, booking.ClientId);
-    }
-
-    /// <summary>Phase M0 — izvršni kontekst ADRESIRANOG sudjelovanja: okvir (usluga, zaposlenik, početak) čita se iz
-    /// SEGMENTA tog sudjelovanja (ne iz "jedinog" segmenta termina), pa kontekst ostaje točan i kad termin ima više
-    /// segmenata. Sudjelovanje mora pripadati Bookingu, a Booking terminu (programska greška inače).</summary>
-    public static BookingExecutionContext ForParticipation(Appointment appointment, Booking booking, BookingSegmentParticipation participation)
+    /// <summary>Kontekst ADRESIRANOG sudjelovanja: okvir (usluga, zaposlenik, početak) čita se iz SEGMENTA tog sudjelovanja.
+    /// Sudjelovanje mora pripadati Bookingu, a Booking terminu (programska greška inače).</summary>
+    public static ParticipationExecutionContext ForParticipation(Appointment appointment, Booking booking, BookingSegmentParticipation participation)
     {
         ArgumentNullException.ThrowIfNull(appointment);
         ArgumentNullException.ThrowIfNull(booking);
@@ -70,14 +53,7 @@ public static class ExecutionContextResolver
         AppointmentSegment segment = appointment.Segments.SingleOrDefault(s => s.Id == participation.AppointmentSegmentId)
             ?? throw new InvalidOperationException("Segment sudjelovanja nije učitan na terminu (ili ne pripada terminu).");
 
-        AppointmentExecutionContext execution = new AppointmentExecutionContext(
-            appointment.OrganizationId,
-            appointment.Id.Value,
-            appointment.CompanyId,
-            segment.ServiceId,
-            segment.Service?.Name,
-            AppointmentSegments.GetSingleEmployeeId(segment),
-            segment.PlannedStart);
-        return new BookingExecutionContext(execution, booking.Id.Value, booking.ClientId);
+        return new ParticipationExecutionContext(
+            ForSegment(appointment, segment), booking.Id.Value, participation.Id.GetValueOrDefault(), booking.ClientId);
     }
 }

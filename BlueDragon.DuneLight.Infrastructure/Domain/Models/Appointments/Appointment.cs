@@ -10,8 +10,9 @@ namespace BlueDragon.DuneLight.Infrastructure.Domain.Models.Appointments;
 
 /// <summary>
 /// Termin — operativni kontejner (organizacija, poslovnica, životni ciklus, metapodaci, Bookinzi, segmenti). Od Phase D3A
-/// izvršni okvir (usluga, planirano vrijeme/trajanje, trener, prostorija) živi ISKLJUČIVO na njegovom jedinom
-/// AppointmentSegmentu (vidi Utils.AppointmentSegments/AppointmentFrame) — nekadašnji stupci termina su uklonjeni. Naplata (Amount/SuggestedAmount, i
+/// izvršni podaci (usluga, planirano vrijeme, zaposlenici, prostorija, resursi) žive ISKLJUČIVO na njegovim
+/// AppointmentSegmentima — nekadašnji stupci termina su uklonjeni; od Phase M1B raspon termina se IZVODI
+/// (Domain.Models.Appointments.AppointmentRange: MIN početka .. MAX kraja segmenata). Naplata (Amount/SuggestedAmount, i
 /// monetarni Payment ledger) živi isključivo na/preko Booking, ne ovdje — omogućuje mješovito plaćanje po
 /// klijentu na istom terminu (npr. duo: jedan klijent iz paketa, drugi karticom). Vidi Booking.cs za punu
 /// domensku napomenu. Form=Group: veza na Group/GroupSlot koji ga je generirao.
@@ -96,7 +97,8 @@ public class Appointment
     public GroupSlot GroupSlot { get; set; }
     public List<Booking> Bookings { get; set; } = new();
 
-    /// <summary>Izvršni segmenti termina — od Phase D3A AUTORITATIVNI izvor okvira. Današnji tokovi uvijek imaju točno
-    /// jedan segment (vidi Utils.AppointmentSegments.GetSingleExecutionSegment).</summary>
+    /// <summary>Izvršni segmenti termina (barem jedan) — JEDINI izvor izvršnih podataka. Produkcijsko kreiranje je do daljnjeg
+    /// ograničeno na jedan segment (Phase M1B: MULTI_SEGMENT_NOT_ENABLED); jezgra, read-model, vlasništvo i kontekst su
+    /// višesegmentni.</summary>
     public List<AppointmentSegment> Segments { get; set; } = new();
 }

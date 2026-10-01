@@ -7,21 +7,43 @@ using BlueDragon.DuneLight.Infrastructure.Utils;
 namespace BlueDragon.DuneLight.UnitTests.Scheduling;
 
 /// <summary>
-/// Test-only read convenience after the D3A storage cutover: the legacy Appointment frame properties no longer exist,
-/// so characterization tests read the same values through the PRODUCTION single-segment frame
-/// (<see cref="AppointmentFrame.Of"/> — the authoritative segment). Read-only and in-memory only: never usable in EF
-/// queries, never available to production code. Requires the appointment to be loaded with Segments (+ Employees),
-/// as SchedulingWorld.LoadAppointment does.
+/// Test-only read convenience for SINGLE-segment characterization tests: the legacy Appointment frame properties no
+/// longer exist (and since M1B neither does the production frame), so these read the values of the appointment's only
+/// segment through the PRODUCTION compatibility resolver (<see cref="SingleSegmentCompatibility.Resolve"/>, which rejects
+/// any other segment count). Read-only and in-memory only. Multi-segment tests address segments directly.
 /// </summary>
-public static class AppointmentFrameTestExtensions
+public static class SingleSegmentTestExtensions
 {
     extension(Appointment appointment)
     {
-        public DateTimeOffset StartsAt => AppointmentFrame.Of(appointment).StartsAt;
-        public int DurationMinutes => AppointmentFrame.Of(appointment).DurationMinutes;
-        public Guid ServiceId => AppointmentFrame.Of(appointment).ServiceId;
-        public Guid? EmployeeId => AppointmentFrame.Of(appointment).EmployeeId;
-        public Guid? RoomId => AppointmentFrame.Of(appointment).RoomId;
+        private AppointmentSegment OnlySegment => SingleSegmentCompatibility.Resolve(appointment);
+        public DateTimeOffset StartsAt => appointment.OnlySegment.PlannedStart;
+        public int DurationMinutes => AppointmentSegments.DurationMinutes(appointment.OnlySegment);
+        public Guid ServiceId => appointment.OnlySegment.ServiceId;
+        public Guid? EmployeeId => AppointmentSegments.GetSingleEmployeeId(appointment.OnlySegment);
+        public Guid? RoomId => appointment.OnlySegment.RoomId;
+    }
+
+    /// <summary>M1B: adds an in-memory segment (one employee at most) to an appointment — the same shape the production
+    /// construction core (AppointmentFactory) builds — for pure unit tests and for seeding.</summary>
+    public static AppointmentSegment AddTestSegment(
+        Appointment appointment, Guid serviceId, Guid? employeeId, Guid? roomId, DateTimeOffset plannedStart, int durationMinutes)
+    {
+        AppointmentSegment segment = new()
+        {
+            Id = Guid.NewGuid(),
+            OrganizationId = appointment.OrganizationId,
+            AppointmentId = appointment.Id.GetValueOrDefault(),
+            ServiceId = serviceId,
+            RoomId = roomId,
+            PlannedStart = plannedStart,
+            PlannedEnd = plannedStart.AddMinutes(durationMinutes),
+            CreatedAt = DateTimeOffset.UtcNow
+        };
+        if (employeeId.HasValue)
+            segment.Employees.Add(new AppointmentSegmentEmployee { AppointmentSegmentId = segment.Id.Value, EmployeeId = employeeId.Value });
+        appointment.Segments.Add(segment);
+        return segment;
     }
 
     /// <summary>D3B1/M0: single-participation characterization tests read the lifecycle/price of a Booking's ONLY

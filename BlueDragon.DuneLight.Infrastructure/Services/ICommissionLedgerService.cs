@@ -30,14 +30,14 @@ public interface ICommissionLedgerService
     /// Phase M0: izvor je EKSPLICITNO <paramref name="participation"/> (SourceVersion = njegov StatusVersion); Booking
     /// samo kontekst (BookingId stupac). Atribucija zaposlenika ostaje execution.EmployeeId (jedan zaposlenik).</summary>
     Task GenerateForIndividualServiceCompletion(
-        IUnitOfWork uow, Guid organizationId, BookingExecutionContext execution, BookingSegmentParticipation participation);
+        IUnitOfWork uow, Guid organizationId, ParticipationExecutionContext execution, BookingSegmentParticipation participation);
 
     /// <summary>Grupna usluga — jedan odrađen grupni termin (Appointment.Status upravo postavljen na Completed)
     /// = jedan izvor, PO TERMINU ne po sudioniku (vidi CommissionSourceType.GroupService domensku napomenu za
     /// obrazloženje). No-op ako termin nema dodijeljenog trenera (execution.EmployeeId je null za grupne
     /// termine bez zadanog trenera) ili ne postoji primjenjivo Fixed pravilo (Percentage je odbijen već kod
     /// kreiranja pravila za Group-mode usluge, vidi CommissionRuleService).</summary>
-    Task GenerateForGroupServiceCompletion(IUnitOfWork uow, Guid organizationId, AppointmentExecutionContext execution);
+    Task GenerateForGroupServiceCompletion(IUnitOfWork uow, Guid organizationId, SegmentExecutionContext execution);
 
     /// <summary>Prodaja Producta/Packagea — jedna CheckoutItem stavka (Type=Product ili Package) na upravo
     /// Completed Checkoutu = jedan izvor. Prodavatelj se razrješava iz completedByUserId preko postojeće

@@ -24,9 +24,9 @@ public class AppointmentCreateCharacterizationTests
     #region Happy path — persisted shape
 
     [Fact]
-    public async Task Create_Individual_PersistsAppointmentFrameAndOneConfirmedBooking()
+    public async Task Create_Individual_PersistsTheSegmentAndOneConfirmedBooking()
     {
-        await using SchedulingWorld w = await SchedulingWorld.Create(nameof(Create_Individual_PersistsAppointmentFrameAndOneConfirmedBooking));
+        await using SchedulingWorld w = await SchedulingWorld.Create(nameof(Create_Individual_PersistsTheSegmentAndOneConfirmedBooking));
         Room room = await w.AddRoom();
 
         AppointmentDto dto = await w.CreateAppointment(w.CreateRequest(SchedulingWorld.Future(10), room: room, note: "hello"));
@@ -263,7 +263,7 @@ public class AppointmentCreateCharacterizationTests
     public async Task Create_UnknownClient_IsNotFound()
     {
         await using SchedulingWorld w = await SchedulingWorld.Create(nameof(Create_UnknownClient_IsNotFound));
-        AppointmentCreateRequest request = w.CreateRequest(SchedulingWorld.Future(10));
+        AppointmentSingleSegmentRequest request = w.CreateRequest(SchedulingWorld.Future(10));
         request.ClientIds = new() { Guid.NewGuid() };
 
         await SchedulingAssert.NotFound(() => w.CreateAppointment(request));
@@ -287,7 +287,7 @@ public class AppointmentCreateCharacterizationTests
     public async Task Create_UnknownService_IsNotFound()
     {
         await using SchedulingWorld w = await SchedulingWorld.Create(nameof(Create_UnknownService_IsNotFound));
-        AppointmentCreateRequest request = w.CreateRequest(SchedulingWorld.Future(10));
+        AppointmentSingleSegmentRequest request = w.CreateRequest(SchedulingWorld.Future(10));
         request.ServiceId = Guid.NewGuid();
 
         await SchedulingAssert.NotFound(() => w.CreateAppointment(request));
@@ -358,7 +358,7 @@ public class AppointmentCreateCharacterizationTests
     public async Task Create_UnknownEmployee_IsNotFound()
     {
         await using SchedulingWorld w = await SchedulingWorld.Create(nameof(Create_UnknownEmployee_IsNotFound));
-        AppointmentCreateRequest request = w.CreateRequest(SchedulingWorld.Future(10));
+        AppointmentSingleSegmentRequest request = w.CreateRequest(SchedulingWorld.Future(10));
         request.EmployeeId = Guid.NewGuid();
 
         // Full-scope callers skip the ownership lookup, so the first failure is the missing Employee.
@@ -369,7 +369,7 @@ public class AppointmentCreateCharacterizationTests
     public async Task Create_UnknownRoom_IsNotFound()
     {
         await using SchedulingWorld w = await SchedulingWorld.Create(nameof(Create_UnknownRoom_IsNotFound));
-        AppointmentCreateRequest request = w.CreateRequest(SchedulingWorld.Future(10));
+        AppointmentSingleSegmentRequest request = w.CreateRequest(SchedulingWorld.Future(10));
         request.RoomId = Guid.NewGuid();
 
         await SchedulingAssert.NotFound(() => w.CreateAppointment(request));

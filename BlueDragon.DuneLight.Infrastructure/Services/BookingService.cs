@@ -123,7 +123,10 @@ public class BookingService : IBookingService
         if (appointment.Status == AppointmentStatus.Cancelled)
             throw new BusinessRuleException(ErrorCodes.AppointmentNotMovable, "Otkazan termin se ne može dopunjavati novim rezervacijama.");
 
-        await AppointmentOwnership.EnsureCallerIsAssigned(_employeeHandler, organizationId, userId, hasFullScope, appointment, NotOwnerMessage);
+        // PRIVREMENA KOMPATIBILNOST (Phase M1B): AddBooking još ne prima segment(e) — novi klijent sudjeluje u (jedinom)
+        // segmentu termina, razriješenom na ovoj granici; vlasništvo i cijena slijede TAJ segment.
+        AppointmentSegment segment = SingleSegmentCompatibility.Resolve(appointment);
+        await AppointmentOwnership.EnsureCallerOwnsSegments(_employeeHandler, organizationId, userId, hasFullScope, new[] { segment }, NotOwnerMessage);
 
         Booking existing = appointment.Bookings.FirstOrDefault(b => b.ClientId == request.ClientId);
         if (existing != null)
@@ -131,14 +134,13 @@ public class BookingService : IBookingService
 
         Client client = await LoadEligibleClient(organizationId, request.ClientId);
 
-        await EnsureClientHasNoOverlap(organizationId, appointment, request.ClientId);
+        await EnsureClientHasNoOverlap(organizationId, appointment, segment, request.ClientId);
 
-        AppointmentExecutionContext execution = ExecutionContextResolver.ForAppointment(appointment);
+        SegmentExecutionContext execution = ExecutionContextResolver.ForSegment(appointment, segment);
         ResolvePriceResponse resolvedPrice = await ResolveServicePrice(organizationId, execution.ServiceId, execution.CompanyId, execution.StartsAt);
 
         Booking booking = BookingFactory.CreateConfirmed(
-            organizationId, AppointmentSegments.GetSingleExecutionSegment(appointment), request.ClientId,
-            BookingPricing.AtSuggested(resolvedPrice), DateTimeOffset.UtcNow);
+            organizationId, segment, request.ClientId, BookingPricing.AtSuggested(resolvedPrice), DateTimeOffset.UtcNow);
 
         await using (IUnitOfWork uow = await _unitOfWorkFactory.Begin())
         {
@@ -177,14 +179,13 @@ public class BookingService : IBookingService
         if (appointment == null)
             throw new NotFoundAppException("Appointment", appointmentId);
 
-        await AppointmentOwnership.EnsureCallerIsAssigned(_employeeHandler, organizationId, userId, hasFullScope, appointment, NotOwnerMessage);
-
+        // Phase M1B: vlasništvo slijedi SEGMENT adresiranog sudjelovanja (provjera u TransitionParticipation/CheckInNewGuest).
         Booking booking = appointment.Bookings.FirstOrDefault(b => b.ClientId == clientId);
         if (booking != null)
             return await TransitionParticipation(
-                organizationId, userId, appointment, BookingParticipations.GetSingleParticipation(booking).Id.GetValueOrDefault(), request);
+                organizationId, userId, hasFullScope, appointment, BookingParticipations.GetSingleParticipation(booking).Id.GetValueOrDefault(), request);
 
-        return await CheckInNewGuest(organizationId, userId, appointment, clientId, request);
+        return await CheckInNewGuest(organizationId, userId, hasFullScope, appointment, clientId, request);
     }
 
     /// <summary>Phase M0 — participation-native prijelaz: naredba adresira JEDNO sudjelovanje i djeluje samo na njega
@@ -200,9 +201,7 @@ public class BookingService : IBookingService
         if (appointment == null)
             throw new NotFoundAppException("Appointment", appointmentId.Value);
 
-        await AppointmentOwnership.EnsureCallerIsAssigned(_employeeHandler, organizationId, userId, hasFullScope, appointment, NotOwnerMessage);
-
-        return await TransitionParticipation(organizationId, userId, appointment, participationId, request);
+        return await TransitionParticipation(organizationId, userId, hasFullScope, appointment, participationId, request);
     }
 
     /// <summary>Phase M0 — Booking-wide otkazivanje: Booking nema vlastiti status, pa se naredba izvršava kao kontrolirani
@@ -219,8 +218,6 @@ public class BookingService : IBookingService
         if (appointment == null)
             throw new NotFoundAppException("Appointment", appointmentId);
 
-        await AppointmentOwnership.EnsureCallerIsAssigned(_employeeHandler, organizationId, userId, hasFullScope, appointment, NotOwnerMessage);
-
         Booking booking = appointment.Bookings.FirstOrDefault(b => b.ClientId == clientId);
         if (booking == null)
             throw new NotFoundAppException("Booking", clientId);
@@ -235,10 +232,17 @@ public class BookingService : IBookingService
         if (!booking.Participations.Any(p => p.Status == ParticipationStatus.Confirmed))
         {
             if (booking.Participations.Count == 1)
-                return await TransitionParticipation(organizationId, userId, appointment, booking.Participations[0].Id.GetValueOrDefault(), cancel);
+                return await TransitionParticipation(
+                    organizationId, userId, hasFullScope, appointment, booking.Participations[0].Id.GetValueOrDefault(), cancel);
 
             throw new BusinessRuleException(ErrorCodes.AlreadyCompleted, "Booking nema aktivnih sudjelovanja za otkazivanje.");
         }
+
+        // Phase M1B: own-opseg mora posjedovati SVAKI segment na kojem se otkazuje aktivno sudjelovanje.
+        HashSet<Guid> affectedSegmentIds = booking.Participations
+            .Where(p => p.Status == ParticipationStatus.Confirmed).Select(p => p.AppointmentSegmentId).ToHashSet();
+        await AppointmentOwnership.EnsureCallerOwnsSegments(_employeeHandler, organizationId, userId, hasFullScope,
+            appointment.Segments.Where(s => affectedSegmentIds.Contains(s.Id.GetValueOrDefault())), NotOwnerMessage);
 
         try
         {
@@ -296,14 +300,19 @@ public class BookingService : IBookingService
     /// <summary>Phase M0 — jezgra participation-native prijelaza postojećeg sudjelovanja: Appointment-PA-sudjelovanje
     /// zaključavanje, prijelaz u transakciji, svježi DTO Bookinga.</summary>
     private async Task<BookingDto> TransitionParticipation(
-        Guid organizationId, Guid userId, Appointment appointment, Guid participationId, BookingSetStatusRequest request)
+        Guid organizationId, Guid userId, bool hasFullScope, Appointment appointment, Guid participationId, BookingSetStatusRequest request)
     {
         Guid appointmentId = appointment.Id.GetValueOrDefault();
         Booking preloaded = appointment.Bookings.FirstOrDefault(b => b.Participations.Any(p => p.Id == participationId));
         if (preloaded == null)
             throw new NotFoundAppException("Participation", participationId);
 
-        ValidateTransition(appointment, BookingParticipations.ById(preloaded, participationId), request);
+        // Phase M1B: vlasništvo slijedi SEGMENT sudjelovanja (own-opseg smije mijenjati sudjelovanja svojih segmenata).
+        BookingSegmentParticipation addressed = BookingParticipations.ById(preloaded, participationId);
+        await AppointmentOwnership.EnsureCallerOwnsSegments(_employeeHandler, organizationId, userId, hasFullScope,
+            appointment.Segments.Where(seg => seg.Id == addressed.AppointmentSegmentId), NotOwnerMessage);
+
+        ValidateTransition(appointment, addressed, request);
 
         try
         {
@@ -346,9 +355,12 @@ public class BookingService : IBookingService
     /// ponašanje kao staro GroupAttendanceService.HandleAttended/HandleNotAttended kad existing==null) — dopušteno samo za
     /// Form=Group, individualni Bookinzi uvijek postoje od kreiranja termina. Privremeni jednostruki NASTANAK.</summary>
     private async Task<BookingDto> CheckInNewGuest(
-        Guid organizationId, Guid userId, Appointment appointment, Guid clientId, BookingSetStatusRequest request)
+        Guid organizationId, Guid userId, bool hasFullScope, Appointment appointment, Guid clientId, BookingSetStatusRequest request)
     {
         Guid appointmentId = appointment.Id.GetValueOrDefault();
+        // PRIVREMENA KOMPATIBILNOST (Phase M1B): gost sudjeluje u (jedinom) segmentu grupnog occurrencea.
+        AppointmentSegment segment = SingleSegmentCompatibility.Resolve(appointment);
+        await AppointmentOwnership.EnsureCallerOwnsSegments(_employeeHandler, organizationId, userId, hasFullScope, new[] { segment }, NotOwnerMessage);
         if (appointment.Form != AppointmentForm.Group)
         {
             if (request.Status == BookingStatus.Completed)
@@ -360,22 +372,21 @@ public class BookingService : IBookingService
         await LoadEligibleClient(organizationId, clientId);
 
         if ((request.Status == BookingStatus.Completed || request.Status == BookingStatus.NoShow) &&
-            AppointmentFrame.Of(appointment).StartsAt > DateTimeOffset.UtcNow)
+            segment.PlannedStart > DateTimeOffset.UtcNow)
         {
             throw new BusinessRuleException(
                 ErrorCodes.AttendanceBeforeStart,
                 "Prisustvo gosta (Completed/NoShow) može se evidentirati tek nakon početka termina.");
         }
 
-        await EnsureClientHasNoOverlap(organizationId, appointment, clientId);
+        await EnsureClientHasNoOverlap(organizationId, appointment, segment, clientId);
 
-        AppointmentExecutionContext guestExecution = ExecutionContextResolver.ForAppointment(appointment);
+        SegmentExecutionContext guestExecution = ExecutionContextResolver.ForSegment(appointment, segment);
         ResolvePriceResponse guestPrice = await ResolveServicePrice(
             organizationId, guestExecution.ServiceId, guestExecution.CompanyId, guestExecution.StartsAt);
 
         Booking booking = BookingFactory.CreateConfirmed(
-            organizationId, AppointmentSegments.GetSingleExecutionSegment(appointment), clientId,
-            BookingPricing.AtSuggested(guestPrice), DateTimeOffset.UtcNow);
+            organizationId, segment, clientId, BookingPricing.AtSuggested(guestPrice), DateTimeOffset.UtcNow);
 
         try
         {
@@ -517,11 +528,11 @@ public class BookingService : IBookingService
 
     /// <summary>Koristi postojeći AppointmentHandler overlap kriterij: samo aktivni Booking statusi na
     /// neotkazanim terminima blokiraju interval. Pravilo ostaje strict-open interval pa su susjedni termini valjani.</summary>
-    private async Task EnsureClientHasNoOverlap(Guid organizationId, Appointment appointment, Guid clientId)
+    private async Task EnsureClientHasNoOverlap(Guid organizationId, Appointment appointment, AppointmentSegment segment, Guid clientId)
     {
-        AppointmentFrame frame = AppointmentFrame.Of(appointment);
+        // Phase M1B: raspon SEGMENTA u kojem bi klijent sudjelovao (ne okvir termina).
         List<OccupancySlot> overlapping = await _schedulingOccupancyHandler.GetOverlappingForClients(
-            organizationId, new List<Guid> { clientId }, frame.StartsAt, frame.DurationMinutes, excludeId: appointment.Id);
+            organizationId, new List<Guid> { clientId }, segment.PlannedStart, AppointmentSegments.DurationMinutes(segment), excludeId: appointment.Id);
 
         if (overlapping.Count > 0)
             throw new BusinessRuleException(
@@ -746,7 +757,7 @@ public class BookingService : IBookingService
         IUnitOfWork uow, Guid organizationId, Guid userId, Appointment appointment, Booking booking,
         BookingSegmentParticipation participation, BookingSetStatusRequest request)
     {
-        BookingExecutionContext execution = ExecutionContextResolver.ForParticipation(appointment, booking, participation);
+        ParticipationExecutionContext execution = ExecutionContextResolver.ForParticipation(appointment, booking, participation);
 
         List<ClientPackageDto> eligible = await _clientPackageService.GetEligibleForService(
             organizationId, execution.ClientId, execution.ServiceId, execution.StartsAt, execution.CompanyId);
