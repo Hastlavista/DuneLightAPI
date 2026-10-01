@@ -668,8 +668,7 @@ public class CheckoutService : ICheckoutService
 
         // Phase D3B3A.1: poslovni datum kupnje je lokalni datum u kalendaru poslovnice checkouta.
         DateOnly validUntilDate = PackageExpiryCalculator.ForSale(package, purchaseDate,
-            await _organizationCalendarService.GetCompanyCalendar(organizationId, checkout.CompanyId),
-            await _organizationCalendarService.GetCalendar(organizationId));
+            await _organizationCalendarService.GetCompanyCalendar(organizationId, checkout.CompanyId));
 
         Guid clientPackageId = Guid.NewGuid();
         ClientPackage clientPackage = new ClientPackage

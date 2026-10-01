@@ -128,6 +128,8 @@ Legend — **Test**: the characterization test(s) that pin it. **Later**: whethe
   D3B3A.1: the expiry is a calendar date (`ClientPackage.ValidUntilDate`, PostgreSQL `date`) computed at sale from the
   sale Company's business date; validity is `service local date (appointment Company zone) <= ValidUntilDate`; `/eligible`
   requires the Company; a reversal restores `Active` regardless of the clock. Test: `PackageValidityCalendarTests`.
+  D3B3A.2: `Package.ValidityFixedDate` is a calendar date (PostgreSQL `date`, used as-is at sale); `/eligible` requires
+  the service date (no fallback to "now"). Test: `PackageCatalogDateTests`.
 * **F-09 Delete leaks a persistence error.** Same-day delete of an appointment whose booking already sits on a checkout item fails
   with a raw `DbUpdateException` (FK) instead of a business error. Test: `Delete_OfAnAppointmentWhoseBookingWasAddedToACheckout_*`.
 

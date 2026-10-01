@@ -167,7 +167,7 @@ public class PackageService : IPackageService
         }
     }
 
-    private static void ValidateValidity(PackageValidityType validityType, int? validityDays, DateTimeOffset? validityFixedDate)
+    private static void ValidateValidity(PackageValidityType validityType, int? validityDays, DateOnly? validityFixedDate)
     {
         switch (validityType)
         {

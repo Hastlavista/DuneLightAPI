@@ -668,7 +668,7 @@ public sealed class SchedulingWorld : IAsyncDisposable
             EntryMode = mode,
             TotalEntryCount = mode == PackageEntryMode.SharedPool ? entries : null,
             ValidityType = PackageValidityType.FixedDate,
-            ValidityFixedDate = new DateTimeOffset(validUntil.ToDateTime(TimeOnly.MinValue), TimeSpan.Zero),
+            ValidityFixedDate = validUntil,
             DefaultPrice = 100m,
             IsActive = true,
             SortOrder = 0,

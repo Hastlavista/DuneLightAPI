@@ -38,16 +38,17 @@ public class ClientPackagesController : ControllerBase
     }
 
     /// <summary>Aktivni paketi klijenta koji pokrivaju uslugu i imaju preostalih ulazaka — za odabir kod plaćanja termina.
-    /// Phase D3B3A.1: <paramref name="companyId"/> (poslovnica termina) je OBAVEZAN — valjanost paketa je lokalni DATUM
-    /// izvođenja (<paramref name="date"/> = početak termina kao instant, zadano "sada") u efektivnoj zoni poslovnice, koju
-    /// određuje backend; klijent nikad ne bira niti računa zonu.</summary>
+    /// Phase D3B3A.1/.2: <paramref name="companyId"/> (poslovnica termina) i <paramref name="date"/> (početak izvođenja
+    /// usluge kao instant) su OBAVEZNI — valjanost paketa je lokalni DATUM izvođenja u efektivnoj zoni poslovnice, koju
+    /// određuje backend; klijent nikad ne bira zonu niti računa lokalni datum, a nedostajući datum se NIKAD ne zamjenjuje
+    /// trenutnim satom (400).</summary>
     [HttpGet("eligible")]
     [RequireGrant(Grants.ClientsPackagesView)]
     public async Task<ActionResult<List<ClientPackageDto>>> GetEligible(
-        Guid clientId, [FromQuery] Guid serviceId, [FromQuery, BindRequired] Guid companyId, [FromQuery] DateTimeOffset? date)
+        Guid clientId, [FromQuery] Guid serviceId, [FromQuery, BindRequired] Guid companyId, [FromQuery, BindRequired] DateTimeOffset date)
     {
         return Ok(await _clientPackageService.GetEligibleForService(
-            this.CurrentOrganizationId(), clientId, serviceId, date ?? DateTimeOffset.UtcNow, companyId));
+            this.CurrentOrganizationId(), clientId, serviceId, date, companyId));
     }
 
     [HttpPost]

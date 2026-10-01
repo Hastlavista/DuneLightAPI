@@ -243,10 +243,11 @@ public class PackageValidityCalendarTests
         Assert.Equal(new DateOnly(2032, 2, 29), PackageExpiryCalculator.CalculateValidUntilDate(PackageValidityType.EndOfMonth, new DateOnly(2032, 2, 1), null, null));
         Assert.Equal(new DateOnly(2031, 6, 30), PackageExpiryCalculator.CalculateValidUntilDate(PackageValidityType.FixedDate, purchase, null, new DateOnly(2031, 6, 30)));
 
-        // FixedDate is an organization-level catalog value: its calendar date is read in the organization calendar.
-        Package fixedDate = new() { ValidityType = PackageValidityType.FixedDate, ValidityFixedDate = new DateTimeOffset(2031, 6, 29, 22, 0, 0, TimeSpan.Zero) };
-        Assert.Equal(new DateOnly(2031, 6, 30), PackageExpiryCalculator.ForSale(
-            fixedDate, new DateTimeOffset(2031, 1, 31, 12, 0, 0, TimeSpan.Zero), OrganizationCalendar.For(NewYork), OrganizationCalendar.For(Zagreb)));
+        // D3B3A.2: FixedDate is already a calendar date — used as-is whatever the sale calendar.
+        Package fixedDate = new() { ValidityType = PackageValidityType.FixedDate, ValidityFixedDate = new DateOnly(2031, 6, 30) };
+        foreach (string zone in new[] { "UTC", Zagreb, NewYork, "Pacific/Auckland" })
+            Assert.Equal(new DateOnly(2031, 6, 30), PackageExpiryCalculator.ForSale(
+                fixedDate, new DateTimeOffset(2031, 1, 31, 23, 30, 0, TimeSpan.Zero), OrganizationCalendar.For(zone)));
     }
 
     #endregion

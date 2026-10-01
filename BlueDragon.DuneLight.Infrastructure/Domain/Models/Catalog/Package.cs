@@ -37,9 +37,10 @@ public class Package
     [Column("validity_days")]
     public int? ValidityDays { get; set; }
 
-    /// <summary>Obavezno kad je ValidityType = FixedDate.</summary>
+    /// <summary>Obavezno kad je ValidityType = FixedDate. Phase D3B3A.2: KALENDARSKI datum (PostgreSQL date) — zadnji
+    /// valjani dan paketa iz kataloga; nema zonu ni doba dana i nikad se ne pretvara kroz UTC/organizaciju/poslovnicu.</summary>
     [Column("validity_fixed_date")]
-    public DateTimeOffset? ValidityFixedDate { get; set; }
+    public DateOnly? ValidityFixedDate { get; set; }
 
     [Column("default_price")]
     public decimal DefaultPrice { get; set; }

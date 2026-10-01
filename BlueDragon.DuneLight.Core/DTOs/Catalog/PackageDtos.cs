@@ -32,7 +32,8 @@ public class PackageDto
     public int? TotalEntryCount { get; set; }
     public PackageValidityType ValidityType { get; set; }
     public int? ValidityDays { get; set; }
-    public DateTimeOffset? ValidityFixedDate { get; set; }
+    /// <summary>Kalendarski datum ("yyyy-MM-dd"), bez zone i doba dana — zadnji valjani dan za FixedDate pakete.</summary>
+    public DateOnly? ValidityFixedDate { get; set; }
     public decimal DefaultPrice { get; set; }
     public bool IsActive { get; set; }
     public int SortOrder { get; set; }
@@ -64,7 +65,8 @@ public class PackageCreateRequest
     [Range(1, int.MaxValue)]
     public int? ValidityDays { get; set; }
 
-    public DateTimeOffset? ValidityFixedDate { get; set; }
+    /// <summary>Kalendarski datum ("yyyy-MM-dd"), bez zone i doba dana — zadnji valjani dan za FixedDate pakete.</summary>
+    public DateOnly? ValidityFixedDate { get; set; }
 
     [Range(0, double.MaxValue, ErrorMessage = "Cijena ne smije biti negativna.")]
     public decimal DefaultPrice { get; set; }
@@ -96,7 +98,8 @@ public class PackageUpdateRequest
     [Range(1, int.MaxValue)]
     public int? ValidityDays { get; set; }
 
-    public DateTimeOffset? ValidityFixedDate { get; set; }
+    /// <summary>Kalendarski datum ("yyyy-MM-dd"), bez zone i doba dana — zadnji valjani dan za FixedDate pakete.</summary>
+    public DateOnly? ValidityFixedDate { get; set; }
 
     [Range(0, double.MaxValue, ErrorMessage = "Cijena ne smije biti negativna.")]
     public decimal DefaultPrice { get; set; }

@@ -85,11 +85,10 @@ public class ClientPackageService : IClientPackageService, IPackageConsumptionLe
 
         // Phase D3B3A.1: poslovni datum kupnje = lokalni datum u kalendaru poslovnice prodaje (organizacije kad prodaja
         // stvarno nema poslovnicu) — ne offset ulazne PurchaseDate vrijednosti, ne UTC datum, ne zona hosta.
-        OrganizationCalendar organizationCalendar = await _organizationCalendarService.GetCalendar(organizationId);
         OrganizationCalendar saleCalendar = request.CompanyId.HasValue
             ? await _organizationCalendarService.GetCompanyCalendar(organizationId, request.CompanyId.Value)
-            : organizationCalendar;
-        DateOnly validUntilDate = PackageExpiryCalculator.ForSale(package, purchaseDate, saleCalendar, organizationCalendar);
+            : await _organizationCalendarService.GetCalendar(organizationId);
+        DateOnly validUntilDate = PackageExpiryCalculator.ForSale(package, purchaseDate, saleCalendar);
 
         Guid clientPackageId = Guid.NewGuid();
         ClientPackage clientPackage = new ClientPackage
