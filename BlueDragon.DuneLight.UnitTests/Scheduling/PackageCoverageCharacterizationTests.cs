@@ -34,16 +34,17 @@ namespace BlueDragon.DuneLight.UnitTests.Scheduling;
 public class PackageCoverageCharacterizationTests
 {
     private static readonly DateTimeOffset LongValid = new(2035, 1, 1, 0, 0, 0, TimeSpan.Zero);
-    private static readonly DateTimeOffset Now = new(2031, 3, 3, 12, 0, 0, TimeSpan.Zero);
+    /// <summary>D3B3A.1: the mutator judges validity on the SERVICE DATE (a calendar date), never a clock instant.</summary>
+    private static readonly DateOnly Today = new(2031, 3, 3);
 
     #region The entry mutator in isolation
 
-    private static ClientPackage PerService(Guid serviceId, int? remaining, int? total = null, ClientPackageStatus status = ClientPackageStatus.Active, DateTimeOffset? expiry = null) =>
+    private static ClientPackage PerService(Guid serviceId, int? remaining, int? total = null, ClientPackageStatus status = ClientPackageStatus.Active, DateOnly? validUntil = null) =>
         new()
         {
             EntryMode = PackageEntryMode.PerService,
             Status = status,
-            ExpiryDate = expiry ?? Now.AddYears(1),
+            ValidUntilDate = validUntil ?? Today.AddYears(1),
             ServiceEntries = { new ClientPackageServiceEntry { ServiceId = serviceId, RemainingEntries = remaining, TotalEntries = total ?? remaining } }
         };
 
@@ -53,7 +54,7 @@ public class PackageCoverageCharacterizationTests
         Guid service = Guid.NewGuid();
         ClientPackage package = PerService(service, 5);
 
-        ClientPackageEntryMutator.Deduct(package, service, Now);
+        ClientPackageEntryMutator.Deduct(package, service, Today);
 
         Assert.Equal(4, package.ServiceEntries.Single().RemainingEntries);
         Assert.Equal(ClientPackageStatus.Active, package.Status);
@@ -65,7 +66,7 @@ public class PackageCoverageCharacterizationTests
         Guid service = Guid.NewGuid();
         ClientPackage package = PerService(service, 1);
 
-        ClientPackageEntryMutator.Deduct(package, service, Now);
+        ClientPackageEntryMutator.Deduct(package, service, Today);
 
         Assert.Equal(0, package.ServiceEntries.Single().RemainingEntries);
         Assert.Equal(ClientPackageStatus.Depleted, package.Status);
@@ -77,7 +78,7 @@ public class PackageCoverageCharacterizationTests
         Guid service = Guid.NewGuid();
         ClientPackage package = PerService(service, 0, total: 5);
 
-        BusinessRuleException ex = Assert.Throws<BusinessRuleException>(() => ClientPackageEntryMutator.Deduct(package, service, Now));
+        BusinessRuleException ex = Assert.Throws<BusinessRuleException>(() => ClientPackageEntryMutator.Deduct(package, service, Today));
 
         Assert.Equal(ErrorCodes.PackageNotEligible, ex.Code);
     }
@@ -88,7 +89,7 @@ public class PackageCoverageCharacterizationTests
         Guid service = Guid.NewGuid();
         ClientPackage package = PerService(service, remaining: null);
 
-        ClientPackageEntryMutator.Deduct(package, service, Now);
+        ClientPackageEntryMutator.Deduct(package, service, Today);
 
         Assert.Null(package.ServiceEntries.Single().RemainingEntries);
         Assert.Equal(ClientPackageStatus.Active, package.Status);
@@ -99,7 +100,7 @@ public class PackageCoverageCharacterizationTests
     {
         ClientPackage package = PerService(Guid.NewGuid(), 5);
 
-        BusinessRuleException ex = Assert.Throws<BusinessRuleException>(() => ClientPackageEntryMutator.Deduct(package, Guid.NewGuid(), Now));
+        BusinessRuleException ex = Assert.Throws<BusinessRuleException>(() => ClientPackageEntryMutator.Deduct(package, Guid.NewGuid(), Today));
 
         Assert.Equal(ErrorCodes.PackageServiceNotCovered, ex.Code);
     }
@@ -112,17 +113,20 @@ public class PackageCoverageCharacterizationTests
         ClientPackage package = PerService(service, 5, status: status);
 
         Assert.Equal(ErrorCodes.PackageNotEligible,
-            Assert.Throws<BusinessRuleException>(() => ClientPackageEntryMutator.Deduct(package, service, Now)).Code);
+            Assert.Throws<BusinessRuleException>(() => ClientPackageEntryMutator.Deduct(package, service, Today)).Code);
     }
 
     [Fact]
-    public void Deduct_AnExpiredPackage_IsRejected_JudgedAgainstTheClockPassedIn()
+    public void Deduct_IsJudgedAgainstTheServiceDatePassedIn_ValidOnValidUntilDate_RejectedTheDayAfter()
     {
         Guid service = Guid.NewGuid();
-        ClientPackage package = PerService(service, 5, expiry: Now.AddDays(-1));
+        ClientPackage lastDay = PerService(service, 5, validUntil: Today);
+        ClientPackage expired = PerService(service, 5, validUntil: Today.AddDays(-1));
 
+        ClientPackageEntryMutator.Deduct(lastDay, service, Today); // inclusive: valid ON ValidUntilDate
         Assert.Equal(ErrorCodes.PackageNotEligible,
-            Assert.Throws<BusinessRuleException>(() => ClientPackageEntryMutator.Deduct(package, service, Now)).Code);
+            Assert.Throws<BusinessRuleException>(() => ClientPackageEntryMutator.Deduct(expired, service, Today)).Code);
+        Assert.Equal(4, lastDay.ServiceEntries.Single().RemainingEntries);
     }
 
     [Fact]
@@ -131,24 +135,30 @@ public class PackageCoverageCharacterizationTests
         Guid service = Guid.NewGuid();
         ClientPackage package = PerService(service, remaining: 4, total: 5);
 
-        ClientPackageEntryMutator.Return(package, service, Now);
-        ClientPackageEntryMutator.Return(package, service, Now); // a repeated / concurrent return must not inflate the package
+        ClientPackageEntryMutator.Return(package, service);
+        ClientPackageEntryMutator.Return(package, service); // a repeated / concurrent return must not inflate the package
 
         Assert.Equal(5, package.ServiceEntries.Single().RemainingEntries);
     }
 
     [Fact]
-    public void Return_ReactivatesADepletedPackage_UnlessItHasExpiredInTheMeantime()
+    public void Return_ReactivatesADepletedPackage_EvenWhenItHasExpired_ExpiryIsEnforcedByEligibility()
     {
         Guid service = Guid.NewGuid();
-        ClientPackage active = PerService(service, 0, total: 5, status: ClientPackageStatus.Depleted, expiry: Now.AddDays(10));
-        ClientPackage expired = PerService(service, 0, total: 5, status: ClientPackageStatus.Depleted, expiry: Now.AddDays(-10));
+        ClientPackage active = PerService(service, 0, total: 5, status: ClientPackageStatus.Depleted, validUntil: Today.AddDays(10));
+        ClientPackage expired = PerService(service, 0, total: 5, status: ClientPackageStatus.Depleted, validUntil: Today.AddDays(-10));
 
-        ClientPackageEntryMutator.Return(active, service, Now);
-        ClientPackageEntryMutator.Return(expired, service, Now);
+        ClientPackageEntryMutator.Return(active, service);
+        ClientPackageEntryMutator.Return(expired, service);
 
+        // D3B3A.1 (changed): inventory status does not depend on the clock. A restored entry makes the package Active again;
+        // it stays unusable because eligibility (PackageValidity) rejects any service date after ValidUntilDate, and the
+        // EFFECTIVE status shown to users is Expired (ClientPackageStatusResolver). Before: it stayed Depleted.
         Assert.Equal(ClientPackageStatus.Active, active.Status);
-        Assert.Equal(ClientPackageStatus.Depleted, expired.Status);
+        Assert.Equal(ClientPackageStatus.Active, expired.Status);
+        Assert.Equal(ClientPackageStatus.Expired, ClientPackageStatusResolver.GetEffectiveStatus(expired, Today));
+        Assert.Equal(ErrorCodes.PackageNotEligible,
+            Assert.Throws<BusinessRuleException>(() => ClientPackageEntryMutator.Deduct(expired, service, Today)).Code);
     }
 
     [Fact]
@@ -157,7 +167,7 @@ public class PackageCoverageCharacterizationTests
         Guid service = Guid.NewGuid();
         ClientPackage package = PerService(service, 4, total: 5, status: ClientPackageStatus.Cancelled);
 
-        ClientPackageEntryMutator.Return(package, service, Now);
+        ClientPackageEntryMutator.Return(package, service);
 
         Assert.Equal(ClientPackageStatus.Cancelled, package.Status);
     }
@@ -170,13 +180,13 @@ public class PackageCoverageCharacterizationTests
         {
             EntryMode = PackageEntryMode.SharedPool,
             Status = ClientPackageStatus.Active,
-            ExpiryDate = Now.AddYears(1),
+            ValidUntilDate = Today.AddYears(1),
             TotalEntryCount = 2,
             RemainingSharedEntries = 1,
             ServiceEntries = { new ClientPackageServiceEntry { ServiceId = service } }
         };
 
-        ClientPackageEntryMutator.Deduct(package, service, Now);
+        ClientPackageEntryMutator.Deduct(package, service, Today);
 
         Assert.Equal(0, package.RemainingSharedEntries);
         Assert.Equal(ClientPackageStatus.Depleted, package.Status);

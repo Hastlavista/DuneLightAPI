@@ -114,7 +114,7 @@ public class ClientPackageHandler : IClientPackageHandler
             .ToListAsync();
     }
 
-    public async Task<List<ClientPackage>> GetEligibleForService(Guid organizationId, Guid clientId, Guid serviceId, DateTimeOffset validityCutoff)
+    public async Task<List<ClientPackage>> GetEligibleForService(Guid organizationId, Guid clientId, Guid serviceId, DateOnly serviceDate)
     {
         await using DatabaseContext context = DatabaseContext.GenerateContext(_databaseSettings.ConnectionString);
         return await context.ClientPackages
@@ -124,14 +124,14 @@ public class ClientPackageHandler : IClientPackageHandler
                 cp.OrganizationId == organizationId &&
                 cp.ClientId == clientId &&
                 cp.Status == ClientPackageStatus.Active &&
-                cp.ExpiryDate >= validityCutoff && // PackageValidity.IsValidOn, izraženo u SQL-u
+                cp.ValidUntilDate >= serviceDate && // PackageValidity.IsValidOn (usporedba datuma), izraženo u SQL-u
                 cp.ServiceEntries.Any(se => se.ServiceId == serviceId) &&
                 (
                     (cp.EntryMode == PackageEntryMode.SharedPool && (cp.RemainingSharedEntries == null || cp.RemainingSharedEntries > 0)) ||
                     (cp.EntryMode == PackageEntryMode.PerService && cp.ServiceEntries.Any(se =>
                         se.ServiceId == serviceId && (se.RemainingEntries == null || se.RemainingEntries > 0)))
                 ))
-            .OrderBy(cp => cp.ExpiryDate)
+            .OrderBy(cp => cp.ValidUntilDate)
             .ToListAsync();
     }
 
@@ -158,16 +158,16 @@ public class ClientPackageHandler : IClientPackageHandler
     /// Ekvivalent ClientPackageStatusResolver.GetEffectiveStatus(cp, now) == Active, izražen kao upit umjesto
     /// učitavanja punih entiteta. Persistirani Status prima samo Active/Depleted/Cancelled (Expired se nikad
     /// ne perzistira — vidi ClientPackageStatus.cs), pa je "efektivno Active" logički točno
-    /// Status == Active && ExpiryDate >= now (Cancelled/Depleted su isključeni samim Status == Active uvjetom,
-    /// Expired samim ExpiryDate uvjetom). Ako se presedan Resolvera ikad promijeni, uskladiti i ovdje.
+    /// Status == Active && ValidUntilDate >= today (Cancelled/Depleted su isključeni samim Status == Active uvjetom,
+    /// Expired samim datumskim uvjetom). Ako se presedan Resolvera ikad promijeni, uskladiti i ovdje.
     /// </summary>
-    public async Task<bool> HasUsableForClient(Guid organizationId, Guid clientId, DateTimeOffset now)
+    public async Task<bool> HasUsableForClient(Guid organizationId, Guid clientId, DateOnly today)
     {
         await using DatabaseContext context = DatabaseContext.GenerateContext(_databaseSettings.ConnectionString);
         return await context.ClientPackages.AnyAsync(cp =>
             cp.OrganizationId == organizationId &&
             cp.ClientId == clientId &&
             cp.Status == ClientPackageStatus.Active &&
-            cp.ExpiryDate >= now);
+            cp.ValidUntilDate >= today);
     }
 }

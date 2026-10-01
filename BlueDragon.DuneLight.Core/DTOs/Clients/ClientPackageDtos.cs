@@ -25,7 +25,9 @@ public class ClientPackageDto
     public int? TotalEntryCount { get; set; }
     public int? RemainingSharedEntries { get; set; }
     public PackageValidityType ValidityType { get; set; }
-    public DateTimeOffset ExpiryDate { get; set; }
+    /// <summary>Zadnji kalendarski dan valjanosti (uključivo, "yyyy-MM-dd") — Phase D3B3A.1 zamjenjuje instant ExpiryDate.
+    /// Paket vrijedi za uslugu čiji je lokalni datum (zona poslovnice termina) &lt;= ovaj datum.</summary>
+    public DateOnly ValidUntilDate { get; set; }
     public ClientPackageStatus Status { get; set; }
     public List<ClientPackageServiceEntryDto> ServiceEntries { get; set; } = new();
     public DateTimeOffset CreatedAt { get; set; }
@@ -47,6 +49,7 @@ public class ClientPackageCreateRequest
     [Range(0, double.MaxValue, ErrorMessage = "Cijena ne smije biti negativna.")]
     public decimal? PaidPrice { get; set; }
 
-    /// <summary>Koristi se samo za predlaganje cijene (cjenik po tvrtki). Ne pohranjuje se na paket.</summary>
+    /// <summary>Poslovnica prodaje: predlaganje cijene (cjenik po tvrtki) i, Phase D3B3A.1, POSLOVNI datum kupnje za
+    /// izračun ValidUntilDate (efektivna zona poslovnice; bez poslovnice zona organizacije). Ne pohranjuje se na paket.</summary>
     public Guid? CompanyId { get; set; }
 }

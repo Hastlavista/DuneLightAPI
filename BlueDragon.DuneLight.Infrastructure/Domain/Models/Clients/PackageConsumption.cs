@@ -48,6 +48,11 @@ public class PackageConsumption
     [Column("service_starts_at")]
     public DateTimeOffset ServiceStartsAt { get; set; }
 
+    /// <summary>Phase D3B3A.1 — lokalni datum izvođenja (kalendar poslovnice termina) prema kojem je valjanost paketa
+    /// provjerena (ServiceDate &lt;= ClientPackage.ValidUntilDate).</summary>
+    [Column("service_date")]
+    public DateOnly ServiceDate { get; set; }
+
     [Column("status")]
     public PackageConsumptionStatus Status { get; set; }
 

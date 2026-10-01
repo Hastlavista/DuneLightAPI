@@ -40,6 +40,7 @@ public class CheckoutService : ICheckoutService
     private readonly IPricingService _pricingService;
     private readonly ICommissionLedgerService _commissionLedgerService;
     private readonly IUnitOfWorkFactory _unitOfWorkFactory;
+    private readonly IOrganizationCalendarService _organizationCalendarService;
 
     public CheckoutService(
         ICheckoutHandler checkoutHandler,
@@ -52,8 +53,10 @@ public class CheckoutService : ICheckoutService
         IStockLedgerService stockLedgerService,
         IPricingService pricingService,
         ICommissionLedgerService commissionLedgerService,
-        IUnitOfWorkFactory unitOfWorkFactory)
+        IUnitOfWorkFactory unitOfWorkFactory,
+        IOrganizationCalendarService organizationCalendarService)
     {
+        _organizationCalendarService = organizationCalendarService;
         _checkoutHandler = checkoutHandler;
         _auditLogHandler = auditLogHandler;
         _appointmentHandler = appointmentHandler;
@@ -663,8 +666,10 @@ public class CheckoutService : ICheckoutService
             throw new BusinessRuleException(
                 ErrorCodes.InactivePackage, $"Paket '{package.Name}' više nije aktivan — kupnja se ne može dovršiti.");
 
-        DateTimeOffset expiryDate = PackageExpiryCalculator.CalculateExpiryDate(
-            package.ValidityType, purchaseDate, package.ValidityDays, package.ValidityFixedDate);
+        // Phase D3B3A.1: poslovni datum kupnje je lokalni datum u kalendaru poslovnice checkouta.
+        DateOnly validUntilDate = PackageExpiryCalculator.ForSale(package, purchaseDate,
+            await _organizationCalendarService.GetCompanyCalendar(organizationId, checkout.CompanyId),
+            await _organizationCalendarService.GetCalendar(organizationId));
 
         Guid clientPackageId = Guid.NewGuid();
         ClientPackage clientPackage = new ClientPackage
@@ -681,7 +686,7 @@ public class CheckoutService : ICheckoutService
             TotalEntryCount = package.TotalEntryCount,
             RemainingSharedEntries = package.EntryMode == PackageEntryMode.SharedPool ? package.TotalEntryCount : null,
             ValidityType = package.ValidityType,
-            ExpiryDate = expiryDate,
+            ValidUntilDate = validUntilDate,
             Status = ClientPackageStatus.Active,
             CreatedAt = purchaseDate,
             CreatedBy = userId

@@ -16,14 +16,15 @@ namespace BlueDragon.DuneLight.Infrastructure.Utils;
 /// ovdje — ovo je jedino zajedničko grlo za obje putanje poziva.
 ///
 /// Phase D3B3A: jedini pozivatelj je IPackageConsumptionLedgerService (svaka promjena brojača ima svoj PackageConsumption
-/// zapis). Deduct prima VALIDITY CUTOFF datuma izvođenja usluge (PackageValidity.ValidityCutoff) umjesto trenutnog sata
-/// (F-08); Return prima "sada" samo za odluku Depleted -&gt; Active (status, ne valjanost potrošnje).
+/// zapis). Deduct prima lokalni DATUM izvođenja usluge (PackageValidity.ServiceDate) — valjanost je pravilo datuma.
+/// Phase D3B3A.1: Return ne gleda sat — status zaliha (Active/Depleted) ne ovisi o vremenu; istek se provodi
+/// isključivo eligibility pravilom (PackageValidity), a Expired se nikad ne sprema.
 /// </summary>
 public static class ClientPackageEntryMutator
 {
-    public static void Deduct(ClientPackage clientPackage, Guid serviceId, DateTimeOffset validityCutoff)
+    public static void Deduct(ClientPackage clientPackage, Guid serviceId, DateOnly serviceDate)
     {
-        EnsureEligible(clientPackage, validityCutoff);
+        EnsureEligible(clientPackage, serviceDate);
 
         if (clientPackage.EntryMode == PackageEntryMode.SharedPool)
         {
@@ -61,7 +62,7 @@ public static class ClientPackageEntryMutator
         }
     }
 
-    public static void Return(ClientPackage clientPackage, Guid serviceId, DateTimeOffset now)
+    public static void Return(ClientPackage clientPackage, Guid serviceId)
     {
         if (clientPackage.EntryMode == PackageEntryMode.SharedPool)
         {
@@ -83,18 +84,23 @@ public static class ClientPackageEntryMutator
             }
         }
 
-        // Depleted -> Active je dopušteno vraćanjem ulaska, ali samo ako paket u međuvremenu nije istekao.
-        // Cancelled se ovdje nikad ne dira (status je Depleted, ne Cancelled), pa se otkazan paket vraćanjem
-        // ulaska ne "odotkazuje".
-        if (clientPackage.Status == ClientPackageStatus.Depleted && clientPackage.ExpiryDate >= now)
+        // Depleted -> Active čim paket nakon vraćanja ponovno ima raspoloživ entitlement — NEOVISNO o datumu (Phase
+        // D3B3A.1): status zaliha ne ovisi o satu, istekao paket s vraćenim ulaskom je Active ali neprihvatljiv po
+        // PackageValidity. Cancelled se ovdje nikad ne dira (otkazan paket se vraćanjem ulaska ne "odotkazuje").
+        if (clientPackage.Status == ClientPackageStatus.Depleted && HasAvailableEntitlement(clientPackage))
             clientPackage.Status = ClientPackageStatus.Active;
     }
 
-    private static void EnsureEligible(ClientPackage clientPackage, DateTimeOffset validityCutoff)
+    private static bool HasAvailableEntitlement(ClientPackage clientPackage) =>
+        clientPackage.EntryMode == PackageEntryMode.SharedPool
+            ? clientPackage.RemainingSharedEntries is null or > 0
+            : clientPackage.ServiceEntries.Any(e => e.RemainingEntries is null or > 0);
+
+    private static void EnsureEligible(ClientPackage clientPackage, DateOnly serviceDate)
     {
         if (clientPackage.Status == ClientPackageStatus.Cancelled)
             throw new BusinessRuleException(ErrorCodes.PackageNotEligible, "Paket je otkazan.");
-        if (!PackageValidity.IsValidOn(clientPackage, validityCutoff))
+        if (!PackageValidity.IsValidOn(clientPackage, serviceDate))
             throw new BusinessRuleException(ErrorCodes.PackageNotEligible, "Paket je istekao.");
     }
 }

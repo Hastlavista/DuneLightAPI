@@ -7,6 +7,7 @@ using BlueDragon.DuneLight.Core.DTOs.Clients;
 using BlueDragon.DuneLight.Core.Interfaces.Clients;
 using BlueDragon.DuneLight.Core.Shared;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Mvc.ModelBinding;
 
 namespace BlueDragon.DuneLight.API.Controllers.Clients;
 
@@ -36,13 +37,17 @@ public class ClientPackagesController : ControllerBase
         return Ok(await _clientPackageService.GetById(this.CurrentOrganizationId(), clientId, id));
     }
 
-    /// <summary>Aktivni paketi klijenta koji pokrivaju uslugu i imaju preostalih ulazaka — za odabir kod plaćanja termina.</summary>
+    /// <summary>Aktivni paketi klijenta koji pokrivaju uslugu i imaju preostalih ulazaka — za odabir kod plaćanja termina.
+    /// Phase D3B3A.1: <paramref name="companyId"/> (poslovnica termina) je OBAVEZAN — valjanost paketa je lokalni DATUM
+    /// izvođenja (<paramref name="date"/> = početak termina kao instant, zadano "sada") u efektivnoj zoni poslovnice, koju
+    /// određuje backend; klijent nikad ne bira niti računa zonu.</summary>
     [HttpGet("eligible")]
     [RequireGrant(Grants.ClientsPackagesView)]
-    public async Task<ActionResult<List<ClientPackageDto>>> GetEligible(Guid clientId, [FromQuery] Guid serviceId, [FromQuery] DateTimeOffset? date)
+    public async Task<ActionResult<List<ClientPackageDto>>> GetEligible(
+        Guid clientId, [FromQuery] Guid serviceId, [FromQuery, BindRequired] Guid companyId, [FromQuery] DateTimeOffset? date)
     {
         return Ok(await _clientPackageService.GetEligibleForService(
-            this.CurrentOrganizationId(), clientId, serviceId, date ?? DateTimeOffset.UtcNow));
+            this.CurrentOrganizationId(), clientId, serviceId, date ?? DateTimeOffset.UtcNow, companyId));
     }
 
     [HttpPost]

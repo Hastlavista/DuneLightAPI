@@ -12,10 +12,11 @@ public interface IClientPackageService
     Task<List<ClientPackageDto>> GetByClient(Guid organizationId, Guid clientId);
 
     /// <summary>Aktivni paketi klijenta koji pokrivaju uslugu i imaju preostalih ulazaka (ili su neograničeni), valjani na
-    /// lokalni datum izvođenja usluge <paramref name="date"/> (kalendar poslovnice <paramref name="companyId"/>, inače
-    /// organizacije). Potrošnja/povrat ulaska ide isključivo kroz ledger potrošnje (Phase D3B3A), ne kroz ovaj servis.</summary>
+    /// lokalni DATUM izvođenja usluge <paramref name="date"/> u efektivnoj zoni poslovnice <paramref name="companyId"/>
+    /// (obavezna — usluga se uvijek izvodi u poslovnici). Potrošnja/povrat ulaska ide isključivo kroz ledger potrošnje
+    /// (Phase D3B3A), ne kroz ovaj servis.</summary>
     Task<List<ClientPackageDto>> GetEligibleForService(
-        Guid organizationId, Guid clientId, Guid serviceId, DateTimeOffset date, Guid? companyId = null);
+        Guid organizationId, Guid clientId, Guid serviceId, DateTimeOffset date, Guid companyId);
 
     /// <summary>Otkazuje paket — terminalno, sprječava buduće trošenje. Ne briše i ne vraća ulaske.</summary>
     Task<ClientPackageDto> Cancel(Guid organizationId, Guid clientId, Guid id, Guid userId);

@@ -29,7 +29,8 @@ public class ClientHistorySummaryDto
     /// aktivne grupe kojoj je klijent član), null ako ništa nije zakazano.</summary>
     public DateTimeOffset? NextVisitAt { get; set; }
 
-    /// <summary>Broj paketa sa Status=Active i ExpiryDate u budućnosti (isti kriterij kao GetEligibleForService).</summary>
+    /// <summary>Broj paketa s EFEKTIVNIM statusom Active (nije otkazan/potrošen, ValidUntilDate nije prije današnjeg datuma
+    /// organizacije).</summary>
     public int ActivePackagesCount { get; set; }
 
     /// <summary>Broj grupa u kojima je klijent trenutno aktivan član (GroupMember.IsActive).</summary>

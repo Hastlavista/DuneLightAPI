@@ -23,6 +23,7 @@ public class ClientService : IClientService
     private readonly IAppointmentHandler _appointmentHandler;
     private readonly IGroupHandler _groupHandler;
     private readonly IClientPackageHandler _clientPackageHandler;
+    private readonly IOrganizationCalendarService _organizationCalendarService;
     private readonly IWaitlistHandler _waitlistHandler;
     private readonly IClientFutureActivityProvider _futureActivityProvider;
 
@@ -35,8 +36,10 @@ public class ClientService : IClientService
         IGroupHandler groupHandler,
         IClientPackageHandler clientPackageHandler,
         IWaitlistHandler waitlistHandler,
-        IClientFutureActivityProvider futureActivityProvider)
+        IClientFutureActivityProvider futureActivityProvider,
+        IOrganizationCalendarService organizationCalendarService)
     {
+        _organizationCalendarService = organizationCalendarService;
         _clientHandler = clientHandler;
         _clientTagHandler = clientTagHandler;
         _companyHandler = companyHandler;
@@ -209,11 +212,12 @@ public class ClientService : IClientService
     /// </summary>
     private async Task EnsureNoActiveBusinessRelationships(Guid organizationId, Guid clientId)
     {
-        DateTimeOffset now = DateTimeOffset.UtcNow;
+        // Paket nije vezan uz poslovnicu — "danas" za valjanost paketa je današnji datum u kalendaru organizacije.
+        DateOnly today = (await _organizationCalendarService.GetCalendar(organizationId)).LocalDate(DateTimeOffset.UtcNow);
 
         bool hasFutureScheduledAppointments = await _appointmentHandler.HasFutureScheduledForClient(organizationId, clientId);
         bool hasActiveGroupMemberships = await _groupHandler.HasActiveMembershipForClient(organizationId, clientId);
-        bool hasUsablePackages = await _clientPackageHandler.HasUsableForClient(organizationId, clientId, now);
+        bool hasUsablePackages = await _clientPackageHandler.HasUsableForClient(organizationId, clientId, today);
         bool hasActiveWaitlistEntries = await _waitlistHandler.HasActiveWaitingForClient(organizationId, clientId);
 
         if (!hasFutureScheduledAppointments && !hasActiveGroupMemberships && !hasUsablePackages && !hasActiveWaitlistEntries)

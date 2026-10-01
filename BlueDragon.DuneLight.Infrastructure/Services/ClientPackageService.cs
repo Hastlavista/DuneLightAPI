@@ -83,8 +83,13 @@ public class ClientPackageService : IClientPackageService, IPackageConsumptionLe
 
         decimal paidPrice = request.PaidPrice ?? await ResolveSuggestedPrice(organizationId, request.PackageId, request.CompanyId, purchaseDate);
 
-        DateTimeOffset expiryDate = PackageExpiryCalculator.CalculateExpiryDate(
-            package.ValidityType, purchaseDate, package.ValidityDays, package.ValidityFixedDate);
+        // Phase D3B3A.1: poslovni datum kupnje = lokalni datum u kalendaru poslovnice prodaje (organizacije kad prodaja
+        // stvarno nema poslovnicu) — ne offset ulazne PurchaseDate vrijednosti, ne UTC datum, ne zona hosta.
+        OrganizationCalendar organizationCalendar = await _organizationCalendarService.GetCalendar(organizationId);
+        OrganizationCalendar saleCalendar = request.CompanyId.HasValue
+            ? await _organizationCalendarService.GetCompanyCalendar(organizationId, request.CompanyId.Value)
+            : organizationCalendar;
+        DateOnly validUntilDate = PackageExpiryCalculator.ForSale(package, purchaseDate, saleCalendar, organizationCalendar);
 
         Guid clientPackageId = Guid.NewGuid();
         ClientPackage clientPackage = new ClientPackage
@@ -99,7 +104,7 @@ public class ClientPackageService : IClientPackageService, IPackageConsumptionLe
             TotalEntryCount = package.TotalEntryCount,
             RemainingSharedEntries = package.EntryMode == PackageEntryMode.SharedPool ? package.TotalEntryCount : null,
             ValidityType = package.ValidityType,
-            ExpiryDate = expiryDate,
+            ValidUntilDate = validUntilDate,
             Status = ClientPackageStatus.Active,
             CreatedAt = DateTimeOffset.UtcNow,
             CreatedBy = userId
@@ -127,27 +132,31 @@ public class ClientPackageService : IClientPackageService, IPackageConsumptionLe
         if (clientPackage == null || clientPackage.ClientId != clientId)
             throw new NotFoundAppException("ClientPackage", id);
 
-        return ToDto(clientPackage);
+        return ToDto(clientPackage, await TodayForOrganization(organizationId));
     }
 
     public async Task<List<ClientPackageDto>> GetByClient(Guid organizationId, Guid clientId)
     {
         List<ClientPackage> packages = await _clientPackageHandler.GetByClient(organizationId, clientId);
-        return packages.Select(ToDto).ToList();
+        DateOnly today = await TodayForOrganization(organizationId);
+        return packages.Select(cp => ToDto(cp, today)).ToList();
     }
 
-    /// <remarks>Phase D3B3A (F-08): <paramref name="date"/> je trenutak izvođenja usluge; valjanost se procjenjuje na
-    /// njegov lokalni datum u kalendaru poslovnice (<paramref name="companyId"/>), odnosno organizacije kad poslovnica
-    /// nije poznata (javni /eligible upit) — vidi PackageValidity.</remarks>
+    /// <remarks>Phase D3B3A.1: <paramref name="date"/> je trenutak izvođenja usluge; valjanost je usporedba njegovog
+    /// lokalnog DATUMA u efektivnoj zoni poslovnice termina (<paramref name="companyId"/>, obavezno — paket se bira za
+    /// uslugu koja se izvodi u poslovnici) s ClientPackage.ValidUntilDate — vidi PackageValidity.</remarks>
     public async Task<List<ClientPackageDto>> GetEligibleForService(
-        Guid organizationId, Guid clientId, Guid serviceId, DateTimeOffset date, Guid? companyId = null)
+        Guid organizationId, Guid clientId, Guid serviceId, DateTimeOffset date, Guid companyId)
     {
-        OrganizationCalendar calendar = companyId.HasValue
-            ? await _organizationCalendarService.GetCompanyCalendar(organizationId, companyId.Value)
-            : await _organizationCalendarService.GetCalendar(organizationId);
+        Company company = await _companyHandler.GetById(organizationId, companyId);
+        if (company == null)
+            throw new NotFoundAppException("Company", companyId);
+
+        OrganizationCalendar calendar = await _organizationCalendarService.GetCompanyCalendar(organizationId, companyId);
         List<ClientPackage> packages = await _clientPackageHandler.GetEligibleForService(
-            organizationId, clientId, serviceId, PackageValidity.ValidityCutoff(calendar, date));
-        return packages.Select(ToDto).ToList();
+            organizationId, clientId, serviceId, PackageValidity.ServiceDate(calendar, date));
+        DateOnly today = await TodayForOrganization(organizationId);
+        return packages.Select(cp => ToDto(cp, today)).ToList();
     }
 
     public async Task<PackageConsumption> Consume(
@@ -180,7 +189,8 @@ public class ClientPackageService : IClientPackageService, IPackageConsumptionLe
         // F-08: valjanost na DATUM IZVOĐENJA usluge (lokalni datum poslovnice), ne na trenutni sat.
         OrganizationCalendar calendar = await _organizationCalendarService.GetCompanyCalendar(organizationId, execution.CompanyId);
         bool counted = IsCounted(clientPackage, execution.ServiceId);
-        ClientPackageEntryMutator.Deduct(clientPackage, execution.ServiceId, PackageValidity.ValidityCutoff(calendar, execution.StartsAt));
+        DateOnly serviceDate = PackageValidity.ServiceDate(calendar, execution.StartsAt);
+        ClientPackageEntryMutator.Deduct(clientPackage, execution.ServiceId, serviceDate);
 
         DateTimeOffset now = DateTimeOffset.UtcNow;
         clientPackage.UpdatedAt = now;
@@ -196,6 +206,7 @@ public class ClientPackageService : IClientPackageService, IPackageConsumptionLe
             ServiceId = execution.ServiceId,
             Units = counted ? 1 : 0,
             ServiceStartsAt = execution.StartsAt,
+            ServiceDate = serviceDate,
             Status = PackageConsumptionStatus.Consumed,
             CreatedAt = now,
             CreatedBy = userId
@@ -222,7 +233,7 @@ public class ClientPackageService : IClientPackageService, IPackageConsumptionLe
             return false;
 
         DateTimeOffset now = DateTimeOffset.UtcNow;
-        ClientPackageEntryMutator.Return(clientPackage, active.ServiceId, now);
+        ClientPackageEntryMutator.Return(clientPackage, active.ServiceId);
         clientPackage.UpdatedAt = now;
         clientPackage.UpdatedBy = userId;
         await _clientPackageHandler.Update(uow, clientPackage);
@@ -305,7 +316,12 @@ public class ClientPackageService : IClientPackageService, IPackageConsumptionLe
         return resolved.Price;
     }
 
-    private static ClientPackageDto ToDto(ClientPackage cp)
+    /// <summary>Današnji kalendarski datum u kalendaru organizacije — samo za PRIKAZ efektivnog statusa (Expired) paketa,
+    /// koji nije vezan uz poslovnicu; potrošnja/eligibility uvijek koriste datum izvođenja usluge.</summary>
+    private async Task<DateOnly> TodayForOrganization(Guid organizationId) =>
+        (await _organizationCalendarService.GetCalendar(organizationId)).LocalDate(DateTimeOffset.UtcNow);
+
+    private static ClientPackageDto ToDto(ClientPackage cp, DateOnly today)
     {
         return new ClientPackageDto
         {
@@ -319,8 +335,8 @@ public class ClientPackageService : IClientPackageService, IPackageConsumptionLe
             TotalEntryCount = cp.TotalEntryCount,
             RemainingSharedEntries = cp.RemainingSharedEntries,
             ValidityType = cp.ValidityType,
-            ExpiryDate = cp.ExpiryDate,
-            Status = ClientPackageStatusResolver.GetEffectiveStatus(cp, DateTimeOffset.UtcNow),
+            ValidUntilDate = cp.ValidUntilDate,
+            Status = ClientPackageStatusResolver.GetEffectiveStatus(cp, today),
             ServiceEntries = cp.ServiceEntries.Select(e => new ClientPackageServiceEntryDto
             {
                 ServiceId = e.ServiceId,

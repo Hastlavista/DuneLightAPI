@@ -124,24 +124,7 @@ public class PackageConsumptionLedgerTests
         Assert.Equal(5, await Remaining(w, shortPackage));
     }
 
-    [Fact]
-    public async Task Validity_UsesTheCompanyLocalDate_NotTheUtcDate()
-    {
-        await using SchedulingWorld w = await SchedulingWorld.Create(nameof(Validity_UsesTheCompanyLocalDate_NotTheUtcDate), "Europe/Zagreb");
-        // Expiry instant 2020-03-02T23:30Z is already 2020-03-03 00:30 in Zagreb (+01:00): the package's last valid LOCAL
-        // date is 3 March. A service at 10:00 local on 3 March (09:00Z — a later UTC date than the expiry's) is covered;
-        // the UTC date of the expiry (2 March) is not the business validity date.
-        ClientPackage package = await w.AddClientPackage(w.Client, w.Service, 5, new DateTimeOffset(2020, 3, 2, 23, 30, 0, TimeSpan.Zero));
-        DateTimeOffset onTheLastLocalDay = new(2020, 3, 3, 10, 0, 0, TimeSpan.FromHours(1));
-        DateTimeOffset dayAfter = new(2020, 3, 4, 10, 0, 0, TimeSpan.FromHours(1));
-
-        AppointmentDto covered = await w.CompleteNew(w.CompleteRequest(onTheLastLocalDay, clientPackageId: package.Id));
-        await SchedulingAssert.BusinessRule(ErrorCodes.PackageNotEligible,
-            () => w.CompleteNew(w.CompleteRequest(dayAfter, clientPackageId: package.Id)));
-
-        Assert.Single(await ConsumptionsOf(w, covered.Id, w.Client));
-        Assert.Equal(4, await Remaining(w, package));
-    }
+    // D3B3A.1: the company-local-date boundary tests moved to PackageValidityCalendarTests (ValidUntilDate is a date).
 
     #endregion
 

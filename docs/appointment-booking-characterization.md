@@ -73,6 +73,7 @@ dotnet test BlueDragon.DuneLight.UnitTests --filter "FullyQualifiedName~Scheduli
 | `BookingParticipationPricingTests` | D3B2 — price authoritative on `BookingSegmentParticipation`: every creation path, truthful resolution snapshot (BaseAmount/BaseAmountSource), manual override, repricing (Update, CompleteExisting, group un-check-in reset), pricing is not lifecycle history, checkout reads the participation price |
 | `BookingParticipationPricingCutoverMigrationTests` (project root) | D3B2 migration on a throw-away database: exact price copy, no fabricated history, guards, identical rollback |
 | `PackageConsumptionLedgerTests` | D3B3A — PackageConsumption ledger: eligibility (service, client, exhausted, expired), service-performance-date validity incl. company-local date (F-08), once-only/idempotent/concurrent consumption, reversal history (never twice, consume again), timing setting, history rule, schema |
+| `PackageValidityCalendarTests` | D3B3A.1 — ValidUntilDate as a date, inclusive boundary, Zagreb/New York company boundaries, two companies per organization, sale-company business date, ledger uses the same rule, unlimited expiry, /eligible company context, clock-free reversal status |
 
 ## Current behaviour findings
 
@@ -124,6 +125,9 @@ Legend — **Test**: the characterization test(s) that pin it. **Later**: whethe
   consumption are both judged on the service-performance date as a company-local date (`PackageValidity`), and the payment
   guard asks for an ACTIVE consumption. Test: `Individual_APackageValidOnAPastAppointmentDateButExpiredToday_CoversThatAppointment`,
   `Xor_AfterTheCoverageWasReturned_ACashReCompletionIsAllowed_*`, `PackageConsumptionLedgerTests`.
+  D3B3A.1: the expiry is a calendar date (`ClientPackage.ValidUntilDate`, PostgreSQL `date`) computed at sale from the
+  sale Company's business date; validity is `service local date (appointment Company zone) <= ValidUntilDate`; `/eligible`
+  requires the Company; a reversal restores `Active` regardless of the clock. Test: `PackageValidityCalendarTests`.
 * **F-09 Delete leaks a persistence error.** Same-day delete of an appointment whose booking already sits on a checkout item fails
   with a raw `DbUpdateException` (FK) instead of a business error. Test: `Delete_OfAnAppointmentWhoseBookingWasAddedToACheckout_*`.
 

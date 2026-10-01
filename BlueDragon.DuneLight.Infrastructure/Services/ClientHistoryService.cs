@@ -45,8 +45,8 @@ public class ClientHistoryService : IClientHistoryService
         ClientAppointmentStatsDto stats = await _appointmentHandler.GetStatsForClient(organizationId, clientId, activeGroupIds);
 
         List<ClientPackageDto> packages = await _clientPackageService.GetByClient(organizationId, clientId);
-        DateTimeOffset now = DateTimeOffset.UtcNow;
-        int activePackagesCount = packages.Count(p => p.Status == ClientPackageStatus.Active && p.ExpiryDate >= now);
+        // ClientPackageDto.Status je EFEKTIVNI status (Expired je izveden iz ValidUntilDate i današnjeg datuma organizacije).
+        int activePackagesCount = packages.Count(p => p.Status == ClientPackageStatus.Active);
 
         return new ClientHistorySummaryDto
         {

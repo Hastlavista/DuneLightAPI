@@ -33,8 +33,8 @@ public interface IClientPackageHandler
     Task<List<ClientPackage>> GetByClient(Guid organizationId, Guid clientId);
 
     /// <summary>Aktivni paketi klijenta koji pokrivaju uslugu i imaju preostalih ulazaka (ili su neograničeni), valjani
-    /// na datum izvođenja usluge — <paramref name="validityCutoff"/> je PackageValidity.ValidityCutoff tog datuma.</summary>
-    Task<List<ClientPackage>> GetEligibleForService(Guid organizationId, Guid clientId, Guid serviceId, DateTimeOffset validityCutoff);
+    /// na lokalni datum izvođenja usluge <paramref name="serviceDate"/> (PackageValidity.ServiceDate).</summary>
+    Task<List<ClientPackage>> GetEligibleForService(Guid organizationId, Guid clientId, Guid serviceId, DateOnly serviceDate);
 
     /// <summary>Sprema promjene na ClientPackage i njegovim ServiceEntries (koristi se za deduct/return ulaska).</summary>
     Task Update(ClientPackage clientPackage);
@@ -45,7 +45,7 @@ public interface IClientPackageHandler
     Task<bool> HasAnyForClient(Guid organizationId, Guid clientId);
 
     /// <summary>Ima li klijent ijedan paket s efektivnim statusom Active (vidi ClientPackageStatusResolver —
-    /// persistirani Status je Active I ExpiryDate još nije prošao). Expired/Depleted/Cancelled ne broje se.
-    /// Koristi ClientService.Anonymize.</summary>
-    Task<bool> HasUsableForClient(Guid organizationId, Guid clientId, DateTimeOffset now);
+    /// persistirani Status je Active I ValidUntilDate nije prije <paramref name="today"/>). Expired/Depleted/Cancelled ne
+    /// broje se. Koristi ClientService.Anonymize (današnji datum u kalendaru organizacije).</summary>
+    Task<bool> HasUsableForClient(Guid organizationId, Guid clientId, DateOnly today);
 }

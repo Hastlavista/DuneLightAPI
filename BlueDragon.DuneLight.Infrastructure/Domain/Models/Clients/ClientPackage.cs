@@ -9,7 +9,7 @@ namespace BlueDragon.DuneLight.Infrastructure.Domain.Models.Clients;
 
 /// <summary>
 /// Prodani paket klijenta (instanca). Snapshotira strukturu kataloškog Package-a u trenutku
-/// kupnje (EntryMode, TotalEntryCount, ValidityType, izračunati ExpiryDate) tako da kasnija
+/// kupnje (EntryMode, TotalEntryCount, ValidityType, izračunati ValidUntilDate) tako da kasnija
 /// promjena definicije paketa ne utječe na već prodane instance — isto načelo kao snapshot
 /// cijene/trajanja na Appointment.
 /// </summary>
@@ -50,8 +50,12 @@ public class ClientPackage
     [Column("validity_type")]
     public PackageValidityType ValidityType { get; set; }
 
-    [Column("expiry_date")]
-    public DateTimeOffset ExpiryDate { get; set; }
+    /// <summary>Phase D3B3A.1 — AUTORITATIVAN zadnji KALENDARSKI dan valjanosti (uključivo), PostgreSQL date. Valjanost
+    /// paketa je pravilo datuma: paket vrijedi za uslugu kad je lokalni datum izvođenja (kalendar poslovnice) &lt;= ovaj
+    /// datum (vidi Utils.PackageValidity). Izračunat kod prodaje iz POSLOVNOG datuma kupnje u kalendaru poslovnice prodaje
+    /// (organizacije kad prodaja nema poslovnicu) — nikad instant, nikad UTC datum ni offset ulazne vrijednosti.</summary>
+    [Column("valid_until_date")]
+    public DateOnly ValidUntilDate { get; set; }
 
     [Column("status")]
     public ClientPackageStatus Status { get; set; }

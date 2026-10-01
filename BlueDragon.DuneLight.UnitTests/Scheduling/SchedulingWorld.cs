@@ -648,8 +648,14 @@ public sealed class SchedulingWorld : IAsyncDisposable
 
     /// <summary>Client package covering <paramref name="service"/>. <paramref name="entries"/> = remaining entries
     /// (null = unlimited). SharedPool keeps one pooled counter; PerService keeps the counter on the service entry.</summary>
-    public async Task<ClientPackage> AddClientPackage(
+    /// <summary>D3B3A.1: convenience for existing tests — the expiry's calendar date in its own offset becomes ValidUntilDate.</summary>
+    public Task<ClientPackage> AddClientPackage(
         Client client, ServiceEntity service, int? entries, DateTimeOffset expiry,
+        PackageEntryMode mode = PackageEntryMode.PerService, ClientPackageStatus status = ClientPackageStatus.Active) =>
+        AddClientPackage(client, service, entries, DateOnly.FromDateTime(expiry.DateTime), mode, status);
+
+    public async Task<ClientPackage> AddClientPackage(
+        Client client, ServiceEntity service, int? entries, DateOnly validUntil,
         PackageEntryMode mode = PackageEntryMode.PerService, ClientPackageStatus status = ClientPackageStatus.Active)
     {
         await using DatabaseContext db = NewDb();
@@ -662,7 +668,7 @@ public sealed class SchedulingWorld : IAsyncDisposable
             EntryMode = mode,
             TotalEntryCount = mode == PackageEntryMode.SharedPool ? entries : null,
             ValidityType = PackageValidityType.FixedDate,
-            ValidityFixedDate = expiry,
+            ValidityFixedDate = new DateTimeOffset(validUntil.ToDateTime(TimeOnly.MinValue), TimeSpan.Zero),
             DefaultPrice = 100m,
             IsActive = true,
             SortOrder = 0,
@@ -684,7 +690,7 @@ public sealed class SchedulingWorld : IAsyncDisposable
             TotalEntryCount = mode == PackageEntryMode.SharedPool ? entries : null,
             RemainingSharedEntries = mode == PackageEntryMode.SharedPool ? entries : null,
             ValidityType = PackageValidityType.FixedDate,
-            ExpiryDate = expiry,
+            ValidUntilDate = validUntil,
             Status = status,
             CreatedAt = DateTimeOffset.UtcNow
         };
@@ -956,6 +962,7 @@ public sealed class SchedulingWorld : IAsyncDisposable
             Id = Guid.NewGuid(), OrganizationId = OrganizationId, ClientPackageId = package.Id.Value,
             BookingSegmentParticipationId = participation.Id.Value, ServiceId = participation.Segment.ServiceId,
             Units = entry.RemainingEntries.HasValue ? 1 : 0, ServiceStartsAt = participation.Segment.PlannedStart,
+            ServiceDate = DateOnly.FromDateTime(participation.Segment.PlannedStart.UtcDateTime), // seeded worlds are UTC organizations
             Status = PackageConsumptionStatus.Consumed, CreatedAt = DateTimeOffset.UtcNow
         });
         await db.SaveChangesAsync();
