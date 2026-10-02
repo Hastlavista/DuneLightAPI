@@ -11,6 +11,7 @@ using BlueDragon.DuneLight.Infrastructure.Domain.Contexts;
 using BlueDragon.DuneLight.Infrastructure.Domain.Models.Appointments;
 using BlueDragon.DuneLight.Infrastructure.Domain.Models.Clients;
 using BlueDragon.DuneLight.Infrastructure.UnitOfWork;
+using BlueDragon.DuneLight.Infrastructure.Utils;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using ServiceEntity = BlueDragon.DuneLight.Infrastructure.Domain.Models.Catalog.Service;
@@ -199,6 +200,119 @@ public class MultiSegmentGroupConsistencyTests
             Assert.Equal(new[] { SegmentOf(occurrence, g.A).Id, SegmentOf(occurrence, g.C).Id }.OrderBy(x => x),
                 participations.Select(p => (Guid?)p.AppointmentSegmentId).OrderBy(x => x));
         }
+    }
+
+    /// <summary>
+    /// Forced order "membership change first": generation has already read its snapshot (before its transaction) and is held
+    /// at its first scheduling-subject lock (the trainer); the membership change, which never locks the trainer, commits in
+    /// the meantime. On release generation must notice the stale snapshot and rebuild with the new member.
+    /// </summary>
+    [Fact]
+    public async Task Race_ForcedOrder_AddMemberCommitsWhileGenerationHoldsAStaleSnapshot_GenerationIncludesTheMember()
+    {
+        await using SchedulingWorld w = await SchedulingWorld.Create(nameof(Race_ForcedOrder_AddMemberCommitsWhileGenerationHoldsAStaleSnapshot_GenerationIncludesTheMember));
+        Wellness g = await CreateWellness(w);
+        Client existing = await w.AddClient("Existing");
+        Client ana = await w.AddClient("Ana");
+        await Join(w, g.Group, existing, g.A);
+
+        Task<Exception> generation;
+        await using (IUnitOfWork gate = await w.Resolve<IUnitOfWorkFactory>().Begin())
+        {
+            int gatePid = await gate.Context.Database.SqlQuery<int>($"SELECT pg_backend_pid() AS \"Value\"").SingleAsync();
+            await gate.Context.Database.ExecuteSqlInterpolatedAsync(
+                $"SELECT pg_advisory_xact_lock({SchedulingLockOrder.EmployeeKey(w.Employee.Id.Value)})");
+
+            generation = Task.Run(() => InOwnScope(s => s.GenerateAppointments(w.OrganizationId, w.ActorUserId,
+                new GenerateGroupAppointmentsRequest { GroupId = g.Group.Id, FromDate = SchedulingWorld.FutureDay, ToDate = SchedulingWorld.FutureDay })));
+            await WaitUntil(async () => await BlockedBehind(w, gatePid) >= 1);
+
+            Assert.Null(await InOwnScope(s => s.AddMember(w.OrganizationId, w.ActorUserId, g.Group.Id,
+                new GroupMemberAddRequest { ClientId = ana.Id.Value, SegmentTemplateIds = new List<Guid> { g.A, g.C } })));
+            Assert.Equal(0, await w.CountAppointments()); // nothing generated yet: AddMember had no occurrence to propagate into
+
+            await gate.CommitAsync();
+        }
+
+        Assert.Null(await generation);
+        (Appointment occurrence, List<BookingSegmentParticipation> participations, int bookings) = await ClientOn(w, g.Group, ana);
+        Assert.Equal(1, bookings);
+        Assert.Equal(new[] { SegmentOf(occurrence, g.A).Id, SegmentOf(occurrence, g.C).Id }.OrderBy(x => x),
+            participations.Select(p => (Guid?)p.AppointmentSegmentId).OrderBy(x => x));
+    }
+
+    /// <summary>Same forced order for a selection expansion (A → A+B) committing under generation's stale snapshot.</summary>
+    [Fact]
+    public async Task Race_ForcedOrder_SelectionExpansionCommitsWhileGenerationHoldsAStaleSnapshot_GenerationIncludesTheTemplate()
+    {
+        await using SchedulingWorld w = await SchedulingWorld.Create(nameof(Race_ForcedOrder_SelectionExpansionCommitsWhileGenerationHoldsAStaleSnapshot_GenerationIncludesTheTemplate));
+        Wellness g = await CreateWellness(w);
+        Client ana = await w.AddClient("Ana");
+        await Join(w, g.Group, ana, g.A);
+        Guid member = await MemberId(w, g.Group, ana);
+
+        Task<Exception> generation;
+        await using (IUnitOfWork gate = await w.Resolve<IUnitOfWorkFactory>().Begin())
+        {
+            int gatePid = await gate.Context.Database.SqlQuery<int>($"SELECT pg_backend_pid() AS \"Value\"").SingleAsync();
+            await gate.Context.Database.ExecuteSqlInterpolatedAsync(
+                $"SELECT pg_advisory_xact_lock({SchedulingLockOrder.EmployeeKey(w.Employee.Id.Value)})");
+
+            generation = Task.Run(() => InOwnScope(s => s.GenerateAppointments(w.OrganizationId, w.ActorUserId,
+                new GenerateGroupAppointmentsRequest { GroupId = g.Group.Id, FromDate = SchedulingWorld.FutureDay, ToDate = SchedulingWorld.FutureDay })));
+            await WaitUntil(async () => await BlockedBehind(w, gatePid) >= 1);
+
+            Assert.Null(await InOwnScope(s => s.ChangeMemberSegmentTemplates(w.OrganizationId, w.ActorUserId, g.Group.Id, member,
+                new GroupMemberSegmentTemplatesRequest { SegmentTemplateIds = new List<Guid> { g.A, g.B } })));
+
+            await gate.CommitAsync();
+        }
+
+        Assert.Null(await generation);
+        (Appointment occurrence, List<BookingSegmentParticipation> participations, int bookings) = await ClientOn(w, g.Group, ana);
+        Assert.Equal(1, bookings);
+        Assert.Equal(new[] { SegmentOf(occurrence, g.A).Id, SegmentOf(occurrence, g.B).Id }.OrderBy(x => x),
+            participations.Select(p => (Guid?)p.AppointmentSegmentId).OrderBy(x => x));
+    }
+
+    /// <summary>
+    /// Forced order "generation first": AddMember has started but is held at its client lock; generation (which does not lock
+    /// the not-yet-member) commits the occurrence without her. On release AddMember must see the committed occurrence and
+    /// propagate into it.
+    /// </summary>
+    [Fact]
+    public async Task Race_ForcedOrder_GenerationCommitsWhileAddMemberIsInFlight_AddMemberPropagatesIntoTheOccurrence()
+    {
+        await using SchedulingWorld w = await SchedulingWorld.Create(nameof(Race_ForcedOrder_GenerationCommitsWhileAddMemberIsInFlight_AddMemberPropagatesIntoTheOccurrence));
+        Wellness g = await CreateWellness(w);
+        Client existing = await w.AddClient("Existing");
+        Client ana = await w.AddClient("Ana");
+        await Join(w, g.Group, existing, g.A);
+
+        Task<Exception> addMember;
+        await using (IUnitOfWork gate = await w.Resolve<IUnitOfWorkFactory>().Begin())
+        {
+            int gatePid = await gate.Context.Database.SqlQuery<int>($"SELECT pg_backend_pid() AS \"Value\"").SingleAsync();
+            await gate.Context.Database.ExecuteSqlInterpolatedAsync(
+                $"SELECT pg_advisory_xact_lock({SchedulingLockOrder.ClientKey(ana.Id.Value)})");
+
+            addMember = Task.Run(() => InOwnScope(s => s.AddMember(w.OrganizationId, w.ActorUserId, g.Group.Id,
+                new GroupMemberAddRequest { ClientId = ana.Id.Value, SegmentTemplateIds = new List<Guid> { g.A, g.C } })));
+            await WaitUntil(async () => await BlockedBehind(w, gatePid) >= 1);
+
+            Assert.Null(await InOwnScope(s => s.GenerateAppointments(w.OrganizationId, w.ActorUserId,
+                new GenerateGroupAppointmentsRequest { GroupId = g.Group.Id, FromDate = SchedulingWorld.FutureDay, ToDate = SchedulingWorld.FutureDay })));
+            Assert.Equal(0, (await ClientOn(w, g.Group, ana)).Bookings); // generated from the old membership
+
+            await gate.CommitAsync();
+        }
+
+        Assert.Null(await addMember);
+        (Appointment occurrence, List<BookingSegmentParticipation> participations, int bookings) = await ClientOn(w, g.Group, ana);
+        Assert.Equal(1, bookings);
+        Assert.Equal(new[] { SegmentOf(occurrence, g.A).Id, SegmentOf(occurrence, g.C).Id }.OrderBy(x => x),
+            participations.Select(p => (Guid?)p.AppointmentSegmentId).OrderBy(x => x));
+        Assert.All(participations, p => Assert.Equal(ParticipationStatus.Confirmed, p.Status));
     }
 
     /// <summary>Sessions waiting (directly or behind another waiter) on the gate session.</summary>
