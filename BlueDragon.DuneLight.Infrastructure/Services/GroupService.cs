@@ -683,6 +683,8 @@ public class GroupService : IGroupService
             // "group slot" u globalnom redoslijedu) i tek onda Appointment lockovi niže.
             await _schedulingOccupancyHandler.LockSchedulingSubjects(uow, Array.Empty<Guid>(), new[] { request.ClientId });
             await LockMembershipScope(uow, organizationId, groupId);
+            if (await uow.Context.GroupMembers.AnyAsync(m => m.GroupId == groupId && m.ClientId == request.ClientId && m.IsActive))
+                throw new BusinessRuleException(ErrorCodes.AlreadyMember, "Klijent je već aktivan član ove grupe.");
 
             // Meki kapacitet ČLANSTVA po odabranom predlošku (aktivni članovi koji ga biraju) — pod lockom grupe, pa dva
             // konkurentna upisa za posljednje mjesto ne mogu oba proći. Prekoračenje samo eksplicitno.
@@ -738,9 +740,7 @@ public class GroupService : IGroupService
         List<GroupSegmentTemplate> selected = ResolveSelection(group, request.SegmentTemplateIds);
         HashSet<Guid> target = selected.Select(t => t.Id.GetValueOrDefault()).ToHashSet();
         HashSet<Guid> current = member.SegmentTemplates.Select(x => x.GroupSegmentTemplateId).ToHashSet();
-        List<GroupSegmentTemplate> added = selected.Where(t => !current.Contains(t.Id.GetValueOrDefault())).ToList();
-        HashSet<Guid> removed = current.Where(id => !target.Contains(id)).ToHashSet();
-        if (added.Count == 0 && removed.Count == 0)
+        if (current.SetEquals(target))
             return await GetDtoById(organizationId, groupId);
 
         await GroupCapacityOverride.EnsureAllowed(_grantResolver, organizationId, userId, request.OverrideCapacity);
@@ -750,6 +750,15 @@ public class GroupService : IGroupService
         {
             await _schedulingOccupancyHandler.LockSchedulingSubjects(uow, Array.Empty<Guid>(), new[] { member.ClientId });
             await LockMembershipScope(uow, organizationId, groupId);
+
+            // Phase M1F.1: razlika se računa iz odabira pročitanog POD lockom grupe (konkurentna izmjena istog člana je već
+            // commitana ili čeka) — nikad iz zastarjelog odabira pročitanog prije transakcije.
+            if (!await uow.Context.GroupMembers.AnyAsync(m => m.Id == memberId && m.GroupId == groupId && m.IsActive))
+                throw new NotFoundAppException("GroupMember", memberId);
+            current = (await uow.Context.GroupMemberSegmentTemplates
+                .Where(x => x.GroupMemberId == memberId).Select(x => x.GroupSegmentTemplateId).ToListAsync()).ToHashSet();
+            List<GroupSegmentTemplate> added = selected.Where(t => !current.Contains(t.Id.GetValueOrDefault())).ToList();
+            HashSet<Guid> removed = current.Where(id => !target.Contains(id)).ToHashSet();
             await EnsureMembershipCapacity(uow, added, request.OverrideCapacity);
 
             uow.Context.GroupMemberSegmentTemplates.RemoveRange(
@@ -803,6 +812,11 @@ public class GroupService : IGroupService
 
         await using (IUnitOfWork uow = await _unitOfWorkFactory.Begin())
         {
+            // Phase M1F.1: isti redoslijed kao AddMember (klijent → prostorije → grupa uz reviziju članstva → termini), pa se
+            // uklanjanje serijalizira s generiranjem occurrencea i ostalim izmjenama članstva iste grupe.
+            await _schedulingOccupancyHandler.LockSchedulingSubjects(uow, Array.Empty<Guid>(), new[] { member.ClientId });
+            await LockMembershipScope(uow, organizationId, groupId);
+
             await _groupHandler.UpdateMember(uow, member);
 
             await _auditLogHandler.Add(uow, new GroupAuditLog
@@ -816,12 +830,13 @@ public class GroupService : IGroupService
                 ChangedBy = userId
             });
 
-            // Napuštanje grupe otkazuje SVA aktivna sudjelovanja bivšeg člana na BUDUĆIM segmentima već generiranih
-            // occurrencea (svih predložaka) — svako sa svojom klasifikacijom kasnog otkazivanja (početak NJEGOVOG segmenta).
-            // Povijest se ne briše; prošli/odrađeni segmenti se ne diraju.
+            // Napuštanje grupe povlači bivšeg člana sa SVIH budućih segmenata već generiranih occurrencea (svih predložaka) po
+            // centraliziranom pravilu povijesti (Phase M1F.1): NETAKNUTO sudjelovanje (ParticipationHistory.IsUntouched) se
+            // briše (prazan Booking s njim) — ponovni upis tada normalno stvara novo; sudjelovanje S POVIJEŠĆU se otkazuje uz
+            // kasno-otkazivanje po početku NJEGOVOG segmenta. Prošli/odrađeni segmenti se ne diraju.
             List<Appointment> futureAppointments = await _appointmentHandler.GetFutureScheduledForGroup(uow, organizationId, groupId);
             await WithdrawFromFutureSegments(uow, organizationId, userId, member.ClientId, futureAppointments,
-                _ => true, "Klijent uklonjen iz grupe", removeUntouched: false, now);
+                _ => true, "Klijent uklonjen iz grupe", removeUntouched: true, now);
 
             await uow.CommitAsync();
         }
@@ -862,7 +877,8 @@ public class GroupService : IGroupService
     private static bool TemplatesOverlap(GroupSegmentTemplate a, GroupSegmentTemplate b) =>
         a.StartOffsetMinutes < b.StartOffsetMinutes + b.DurationMinutes && b.StartOffsetMinutes < a.StartOffsetMinutes + a.DurationMinutes;
 
-    /// <summary>Serijalizira izmjene članstva iste grupe (meki kapacitet članstva se broji pod ovim lockom). Prostorije
+    /// <summary>Serijalizira izmjene članstva iste grupe (meki kapacitet članstva se broji pod ovim lockom) i serijalizira ih s
+    /// generiranjem occurrencea te grupe (revizija članstva). Prostorije
     /// budućih segmenata grupe (subjekti rasporeda) se zaključavaju PRIJE — globalni redoslijed: subjekti → grupa →
     /// Appointment → sudjelovanja.</summary>
     private async Task LockMembershipScope(IUnitOfWork uow, Guid organizationId, Guid groupId)
@@ -874,8 +890,11 @@ public class GroupService : IGroupService
             .Distinct()
             .ToListAsync();
         await _schedulingOccupancyHandler.LockSchedulingSubjects(uow, Array.Empty<Guid>(), Array.Empty<Guid>(), roomIds);
+        // Phase M1F.1: jedan UPDATE i zaključava redak grupe (do commita) i povećava reviziju članstva — generiranje koje je
+        // sastavilo planove iz starije revizije to vidi pod svojim FOR SHARE lockom i ponovno ih sastavlja (vidi
+        // GenerateAppointments). Redak grupe dolazi NAKON subjekata rasporeda, ISTO kao u generiranju — nema obrnutog redoslijeda.
         await uow.Context.Database.ExecuteSqlInterpolatedAsync(
-            $"SELECT 1 FROM dunelight.groups WHERE organization_id = {organizationId} AND id = {groupId} FOR UPDATE");
+            $"UPDATE dunelight.groups SET membership_version = membership_version + 1 WHERE organization_id = {organizationId} AND id = {groupId}");
     }
 
     private async Task EnsureMembershipCapacity(IUnitOfWork uow, IEnumerable<GroupSegmentTemplate> templates, bool overrideCapacity)
@@ -1103,7 +1122,66 @@ public class GroupService : IGroupService
         public List<CandidateSegment> Segments { get; init; } = new();
     }
 
+    /// <summary>Planovi occurrencea sastavljeni su iz revizije članstva koja je u međuvremenu promijenjena (vidi
+    /// <see cref="EnsureMembershipSnapshotCurrent"/>) — pokušaj se odbacuje (rollback) i sastavlja ponovno.</summary>
+    private sealed class StaleMembershipSnapshotException : Exception
+    {
+    }
+
+    private const int GenerationAttempts = 3;
+
+    /// <summary>
+    /// Phase M1F.1 — generiranje je konzistentno s JEDNIM commitanim stanjem članstva svake grupe: planovi se sastavljaju iz
+    /// pročitane revizije članstva, a prije upisa (pod FOR SHARE lockom redaka grupa, nakon subjekata rasporeda) se provjerava
+    /// da je revizija još važeća. Izmjena članstva koja je commitala u međuvremenu → pokušaj se ponavlja s novim stanjem
+    /// (najviše <see cref="GenerationAttempts"/> puta, zatim CONCURRENCY_CONFLICT). Izmjena članstva koja dođe NAKON provjere
+    /// čeka na commit generiranja (FOR UPDATE vs FOR SHARE) i zatim propagira u novi occurrence. Lockovi su po grupi — različite
+    /// grupe se ne serijaliziraju.
+    /// </summary>
     public async Task<GenerateGroupAppointmentsResult> GenerateAppointments(
+        Guid organizationId, Guid userId, GenerateGroupAppointmentsRequest request)
+    {
+        for (int attempt = 1; ; attempt++)
+        {
+            try
+            {
+                return await GenerateAppointmentsAttempt(organizationId, userId, request);
+            }
+            catch (StaleMembershipSnapshotException) when (attempt < GenerationAttempts)
+            {
+            }
+            catch (StaleMembershipSnapshotException)
+            {
+                throw new BusinessRuleException(ErrorCodes.ConcurrencyConflict,
+                    "Članstvo grupe se upravo mijenjalo tijekom generiranja termina — pokušajte ponovno.");
+            }
+        }
+    }
+
+    /// <summary>Pod FOR SHARE lockom redaka grupa (uzlazno po Id-u; nakon subjekata rasporeda, prije locka slota) — revizija
+    /// članstva iz koje su sastavljeni planovi mora biti trenutna. FOR SHARE blokira konkurentnu izmjenu članstva (UPDATE
+    /// revizije) do commita generiranja, pa ona zatim vidi novi occurrence i propagira u njega.</summary>
+    private static async Task EnsureMembershipSnapshotCurrent(IUnitOfWork uow, Guid organizationId, IReadOnlyCollection<Group> groups)
+    {
+        if (groups.Count == 0)
+            return;
+
+        Guid[] ids = groups.Select(g => g.Id.GetValueOrDefault()).Distinct().OrderBy(id => id).ToArray();
+        List<GroupVersionRow> current = await uow.Context.Database.SqlQuery<GroupVersionRow>(
+                $"SELECT id AS \"Id\", membership_version AS \"MembershipVersion\" FROM dunelight.groups WHERE organization_id = {organizationId} AND id = ANY({ids}) ORDER BY id FOR SHARE")
+            .ToListAsync();
+        foreach (Group group in groups)
+            if (current.SingleOrDefault(r => r.Id == group.Id)?.MembershipVersion != group.MembershipVersion)
+                throw new StaleMembershipSnapshotException();
+    }
+
+    private sealed class GroupVersionRow
+    {
+        public Guid Id { get; set; }
+        public long MembershipVersion { get; set; }
+    }
+
+    private async Task<GenerateGroupAppointmentsResult> GenerateAppointmentsAttempt(
         Guid organizationId, Guid userId, GenerateGroupAppointmentsRequest request)
     {
         if (request.ToDate < request.FromDate)
@@ -1208,6 +1286,10 @@ public class GroupService : IGroupService
             allSegments.SelectMany(s => s.ClientIds),
             allSegments.Where(s => s.Template.RoomId.HasValue).Select(s => s.Template.RoomId.Value),
             allSegments.SelectMany(s => s.Template.Resources.Select(r => r.ResourceId)));
+
+        // Phase M1F.1: članstvo iz kojeg su planovi sastavljeni mora biti trenutno (i ostaje takvo do commita).
+        await EnsureMembershipSnapshotCurrent(uow, organizationId,
+            candidates.Select(c => c.Group).GroupBy(g => g.Id).Select(g => g.First()).ToList());
 
         Dictionary<(Guid SlotId, DateTimeOffset StartsAt), List<WarningDto>> warningsByCandidate =
             await EnsureNoTrainerConflicts(organizationId, candidates, request.OverrideAvailability);

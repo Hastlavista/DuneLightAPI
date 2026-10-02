@@ -155,11 +155,32 @@ public class GroupCapacityCharacterizationTests
     }
 
     [Fact]
-    public async Task RemoveMember_CancelsTheirFutureConfirmedBookings_AuditsThem_AndEmitsACancelledEvent()
+    public async Task RemoveMember_DeletesTheirUntouchedFutureParticipation_AndTheEmptyBooking()
     {
-        (SchedulingWorld w, GroupDto group, Appointment occurrence, Client[] members) = await Occurrence(nameof(RemoveMember_CancelsTheirFutureConfirmedBookings_AuditsThem_AndEmitsACancelledEvent), capacity: 3, members: 2);
+        (SchedulingWorld w, GroupDto group, Appointment occurrence, Client[] members) = await Occurrence(nameof(RemoveMember_DeletesTheirUntouchedFutureParticipation_AndTheEmptyBooking), capacity: 3, members: 2);
         await using SchedulingWorld _w = w;
         Guid memberId = (await w.Groups.GetById(w.OrganizationId, group.Id)).Members.Single(m => m.ClientId == members[0].Id).Id;
+
+        await w.Groups.RemoveMember(w.OrganizationId, w.ActorUserId, group.Id, memberId);
+
+        // CHANGED in M1F.1: removal uses the centralized untouched/history rule — an UNTOUCHED future participation is
+        // hard-deleted (with its now-empty Booking): no cancellation, no event. Re-adding the member creates it again.
+        Appointment after = await w.LoadAppointment(occurrence.Id.Value);
+        Assert.DoesNotContain(after.Bookings, x => x.ClientId == members[0].Id);
+        Assert.Single(await w.LoadAuditLog(occurrence.Id.Value), l => l.ChangeType == "ParticipationRemoved");
+        Assert.DoesNotContain(await w.LoadOutbox(), m => m.Type == OutboxEventTypes.BookingCancelledV1);
+        Assert.Equal(BookingStatus.Confirmed, after.Bookings.Single(x => x.ClientId == members[1].Id).Status);
+    }
+
+    [Fact]
+    public async Task RemoveMember_CancelsTheirFutureParticipationWithHistory_AuditsIt_AndEmitsACancelledEvent()
+    {
+        (SchedulingWorld w, GroupDto group, Appointment occurrence, Client[] members) = await Occurrence(nameof(RemoveMember_CancelsTheirFutureParticipationWithHistory_AuditsIt_AndEmitsACancelledEvent), capacity: 3, members: 2);
+        await using SchedulingWorld _w = w;
+        Guid memberId = (await w.Groups.GetById(w.OrganizationId, group.Id)).Members.Single(m => m.ClientId == members[0].Id).Id;
+        // Business history without a status change: a (partial) payment through a checkout.
+        Booking before = (await w.LoadAppointment(occurrence.Id.Value)).Bookings.Single(x => x.ClientId == members[0].Id);
+        await w.PayBookingViaCheckout(before.Id.Value, members[0], 5m);
 
         await w.Groups.RemoveMember(w.OrganizationId, w.ActorUserId, group.Id, memberId);
 
@@ -167,9 +188,8 @@ public class GroupCapacityCharacterizationTests
         Assert.Equal(BookingStatus.Cancelled, b.Status);
         Assert.Equal(1, b.StatusVersion);
         Assert.Equal("Klijent uklonjen iz grupe", b.CancellationReason);
-        // CHANGED in M1F (intentional fix of the old pin, which left lateness empty): every participation cancelled by a member
-        // removal is classified from ITS OWN segment start via the central BookingCancellationPolicy — 2031 is far outside
-        // the default cutoff, so: not late.
+        // CHANGED in M1F (intentional fix of the old pin, which left lateness empty): classified from ITS OWN segment start
+        // via the central BookingCancellationPolicy — 2031 is far outside the default cutoff, so: not late.
         Assert.False(b.IsLateCancellation);
         AppointmentAuditLog audit = Assert.Single(await w.LoadAuditLog(occurrence.Id.Value), l => l.ChangeType == "BookingStatus");
         Assert.Equal("Confirmed", audit.OldValue);

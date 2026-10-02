@@ -23,16 +23,38 @@ public class GroupAttendanceEntryDto
     public bool IsPaid { get; set; }
     public string Note { get; set; }
 
-    /// <summary>Je li klijent trenutno aktivan član grupe (razlikuje ga od gosta/zamjene dodanog u prisutnost).</summary>
+    /// <summary>Je li klijent trenutno aktivan član grupe (razlikuje ga od gosta/zamjene dodanog u prisutnost). Phase M1F.1:
+    /// u popisu SEGMENTA = aktivan član koji je odabrao predložak tog segmenta.</summary>
     public bool IsMember { get; set; }
+
+    /// <summary>Phase M1F.1 — sudjelovanje (samo u popisu segmenta; null za očekivanog člana bez sudjelovanja).</summary>
+    public Guid? ParticipationId { get; set; }
 }
 
-/// <summary>Expected = aktivni članovi grupe bez zabilježene prisutnosti na ovom terminu (kandidati za čekiranje).
-/// Recorded = svi već zabilježeni retci prisutnosti (uklj. goste izvan popisa članova).</summary>
+/// <summary>Phase M1F.1 — prisutnost JEDNOG segmenta occurrencea. Recorded = konkretna sudjelovanja tog segmenta (istina
+/// occurrencea, uključivo goste). Expected = aktivni članovi koji su ODABRALI predložak segmenta, a nemaju sudjelovanje — samo
+/// dok segment još nije počeo (izmjena članstva propagira samo u buduće segmente; za počete/prošle segmente su sudjelovanja
+/// jedina istina i današnje članstvo ih ne prepisuje).</summary>
+public class GroupSegmentAttendanceDto
+{
+    public Guid SegmentId { get; set; }
+    public Guid? SegmentTemplateId { get; set; }
+    public Guid ServiceId { get; set; }
+    public string ServiceName { get; set; }
+    public DateTimeOffset PlannedStart { get; set; }
+    public DateTimeOffset PlannedEnd { get; set; }
+    public List<GroupAttendanceEntryDto> Expected { get; set; } = new();
+    public List<GroupAttendanceEntryDto> Recorded { get; set; } = new();
+}
+
+/// <summary>Expected = aktivni članovi bez zabilježene prisutnosti (Phase M1F.1: unija očekivanih po segmentima — po odabiru
+/// predložaka, samo za segmente koji još nisu počeli). Recorded = svi Booking retci occurrencea (uklj. goste) — sažetak po
+/// Bookingu. Segments = ista slika po segmentu (autoritativna za višesegmentni occurrence).</summary>
 public class GroupAttendanceListDto
 {
     public List<GroupAttendanceEntryDto> Expected { get; set; } = new();
     public List<GroupAttendanceEntryDto> Recorded { get; set; } = new();
+    public List<GroupSegmentAttendanceDto> Segments { get; set; } = new();
 }
 
 public class SetGroupAttendanceRequest
@@ -58,4 +80,7 @@ public class SetGroupAttendanceRequest
     public bool IsPaid { get; set; } = true;
 
     public string Note { get; set; }
+
+    /// <summary>Phase M1F.1 — segment occurrencea (obavezan za višesegmentni occurrence, SEGMENT_SELECTION_REQUIRED).</summary>
+    public Guid? SegmentId { get; set; }
 }

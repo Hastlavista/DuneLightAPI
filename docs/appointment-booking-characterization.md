@@ -161,6 +161,29 @@ Legend — **Test**: the characterization test(s) that pin it. **Later**: whethe
   rules stay hard and are never overridden. Generation reproduces existing membership (no member is dropped).
   Test: `GroupOccurrenceGenerationCharacterizationTests.Generate_WhenTheGroupHasMoreActiveMembersThanItsCapacity_ReproducesTheMembership`,
   `MultiSegmentGroupTests.SoftCapacity_*`, `HardRoomCapacity_*`.
+* **F-23 Group generation vs membership changes — FIXED in M1F.1 (intentional).** Old: generation read members/selections
+  before its transaction and never re-validated them; a concurrent AddMember / selection expansion could not see the
+  not-yet-committed occurrence, so the new member was permanently missing from it. Target: every membership mutation
+  (AddMember, ChangeMemberSegmentTemplates, RemoveMember) bumps `groups.membership_version` under the group row lock (after
+  its subject locks); generation takes `FOR SHARE` on the candidate groups (ordered by id, after its subject locks) and
+  verifies the version equals its snapshot, retrying up to 3× (`CONCURRENCY_CONFLICT` after that). Either generation commits
+  first and the change propagates into the new occurrence, or the change commits first and generation sees it. Per-group
+  row locks only; no org-wide or advisory group locks.
+  Test: `MultiSegmentGroupConsistencyTests.Race_*`.
+* **F-24 RemoveMember / selection removal use the central untouched rule — CHANGED in M1F.1 (intentional).** Untouched
+  future participations (`ParticipationHistory.IsUntouched`) are hard-deleted (empty Bookings removed, `ParticipationRemoved`
+  audit, no cancelled event); history-bearing ones are cancelled with per-segment lateness (F-21). Re-adding after an
+  untouched removal creates a fresh participation. Re-adding after a history-bearing cancellation does NOT reactivate it
+  (no reliable provenance; no reason-text heuristics) — pinned as open ambiguity.
+  Test: `MultiSegmentGroupConsistencyTests.ReAdd_*`, `GroupCapacityCharacterizationTests.RemoveMember_*`.
+* **F-25 Group attendance is per segment — CHANGED in M1F.1 (intentional).** `Segments[]` reports Recorded (concrete
+  participations on that segment, authoritative for history) and Expected (active members selecting the segment's template
+  without a participation, only for future, non-cancelled segments). Guests appear only as Recorded (`IsMember = false`).
+  Top-level Expected = union of segment Expected for clients without a Booking (past occurrences list no gaps any more).
+  Test: `MultiSegmentGroupConsistencyTests.Attendance_*`.
+* **DB enforcement audit (M1F.1).** Occurrence identity (`group_slot_id`, first segment start) spans appointments and
+  segments and cannot be a unique constraint without denormalization; "segment template belongs to the appointment's group"
+  needs `group_id` on `appointment_segments`. Both stay application-enforced (slot advisory lock / generation validation).
 
 ### Individual vs Group asymmetries (all pinned, none normalized)
 

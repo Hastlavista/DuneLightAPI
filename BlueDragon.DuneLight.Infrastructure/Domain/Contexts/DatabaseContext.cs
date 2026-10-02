@@ -18,6 +18,7 @@ using BlueDragon.DuneLight.Infrastructure.Domain.Models.Permissions;
 using BlueDragon.DuneLight.Infrastructure.Domain.Models.Products;
 using BlueDragon.DuneLight.Infrastructure.Domain.Models.Roster;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Metadata;
 
 namespace BlueDragon.DuneLight.Infrastructure.Domain.Contexts;
 
@@ -841,6 +842,11 @@ public class DatabaseContext : DbContext
     {
         modelBuilder.Entity<Group>().HasKey(g => g.Id);
         modelBuilder.Entity<Group>().HasIndex(g => g.OrganizationId);
+        // Phase M1F.1: revizija članstva je isključivo vlasništvo atomičnog SQL inkrementa (GroupService) — EF je nikad ne
+        // upisuje (ni Update(graph) zastarjele grupe ne smije vratiti reviziju unatrag).
+        modelBuilder.Entity<Group>().Property(g => g.MembershipVersion).HasDefaultValue(0L);
+        modelBuilder.Entity<Group>().Property(g => g.MembershipVersion).Metadata.SetBeforeSaveBehavior(PropertySaveBehavior.Ignore);
+        modelBuilder.Entity<Group>().Property(g => g.MembershipVersion).Metadata.SetAfterSaveBehavior(PropertySaveBehavior.Ignore);
         modelBuilder.Entity<Group>()
             .HasOne(g => g.Company)
             .WithMany()

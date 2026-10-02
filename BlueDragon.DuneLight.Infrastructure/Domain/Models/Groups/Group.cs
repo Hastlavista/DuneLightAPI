@@ -45,6 +45,11 @@ public class Group
     [Column("note")]
     public string Note { get; set; }
 
+    /// <summary>Phase M1F.1 — revizija aktivnog članstva i odabira predložaka. Mijenja je SAMO atomični SQL inkrement u
+    /// izmjeni članstva (EF je nikad ne upisuje — vidi DatabaseContext); generiranje occurrencea je čita i provjerava.</summary>
+    [Column("membership_version")]
+    public long MembershipVersion { get; set; }
+
     [Column("created_at")]
     public DateTimeOffset CreatedAt { get; set; }
 
