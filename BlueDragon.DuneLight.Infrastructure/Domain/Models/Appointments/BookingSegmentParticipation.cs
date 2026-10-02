@@ -34,7 +34,8 @@ namespace BlueDragon.DuneLight.Infrastructure.Domain.Models.Appointments;
 /// Nazivi prate Booking (Amount/SuggestedAmount/IsAmountManuallyOverridden). Paket/namirenje namjerno nisu ovdje.
 ///
 /// Otkazivanje: CancellationReason i IsLateCancellation isti su koncepti kao na Bookingu — kasno otkazivanje je
-/// klasifikacija uz Status=Cancelled, ne status. Dolazak (ArrivedAt/ArrivedBy) je metapodatak, ne status.
+/// klasifikacija uz Status=Cancelled, ne status; računa se iz PlannedStart SEGMENTA ovog sudjelovanja jednako za otkazivanje
+/// sudjelovanja, Bookinga i cijelog termina (Phase M1E.1, BookingCancellationPolicy). Dolazak (ArrivedAt/ArrivedBy) je metapodatak, ne status.
 /// </summary>
 [Table("booking_segment_participations")]
 public class BookingSegmentParticipation

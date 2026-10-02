@@ -141,6 +141,15 @@ Legend — **Test**: the characterization test(s) that pin it. **Later**: whethe
   with `REFERENCED_CANNOT_DELETE`. Test: `Delete_OfAnAppointmentWhoseBookingWasAddedToACheckout_IsRefusedWithADomainError`,
   `ParticipationSettlementTests.SettlementHistory_MakesAParticipationNonUntouched_WithADomainError`.
 
+* **F-20 Appointment-wide cancel did not classify lateness — FIXED in M1E.1 (intentional).** Old behaviour: cancelling the whole
+  appointment left `IsLateCancellation` empty on every cancelled participation ("a business cancellation is never late"), while a
+  participation or Booking-wide cancel classified it. Target behaviour: every participation cancelled by an appointment-wide
+  cancel is classified independently from **its own segment's `PlannedStart`** with the organization cutoff
+  (`BookingCancellationPolicy.IsLateCancellation(ParticipationExecutionContext, …)` — the single formula for all three scopes),
+  so one appointment cancel can yield late A and on-time B. Never the appointment start or range start.
+  Test: `AppointmentCancel_CancelsEveryConfirmedBooking_AndClassifiesLatenessPerParticipation`,
+  `MultiSegmentAppointmentTests.AppointmentCancel_*`.
+
 ### Individual vs Group asymmetries (all pinned, none normalized)
 
 * **F-10 Corrections.** Individual Completed→Confirmed keeps `Amount`, refuses when a manual POS payment exists, reverses the

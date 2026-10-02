@@ -643,7 +643,7 @@ public class BookingService : IBookingService
         {
             int cutoffMinutes = await _organizationSettingsService.GetCancellationCutoffMinutes(organizationId);
             ParticipationLifecycle.SetLateCancellation(participation, BookingCancellationPolicy.IsLateCancellation(
-                ExecutionContextResolver.ForParticipation(appointment, booking, participation).StartsAt, DateTimeOffset.UtcNow, cutoffMinutes));
+                ExecutionContextResolver.ForParticipation(appointment, booking, participation), DateTimeOffset.UtcNow, cutoffMinutes));
         }
 
         ParticipationLifecycle.TrySetStatus(participation, BookingParticipations.ToParticipationStatus(request.Status));
@@ -735,7 +735,7 @@ public class BookingService : IBookingService
         {
             int cutoffMinutes = await _organizationSettingsService.GetCancellationCutoffMinutes(organizationId);
             ParticipationLifecycle.SetLateCancellation(participation, BookingCancellationPolicy.IsLateCancellation(
-                ExecutionContextResolver.ForParticipation(appointment, booking, participation).StartsAt, DateTimeOffset.UtcNow, cutoffMinutes));
+                ExecutionContextResolver.ForParticipation(appointment, booking, participation), DateTimeOffset.UtcNow, cutoffMinutes));
         }
 
         ParticipationLifecycle.TrySetStatus(participation, BookingParticipations.ToParticipationStatus(request.Status));

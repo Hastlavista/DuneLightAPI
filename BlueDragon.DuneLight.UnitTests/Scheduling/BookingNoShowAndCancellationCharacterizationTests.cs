@@ -373,9 +373,9 @@ public class BookingNoShowAndCancellationCharacterizationTests
     }
 
     [Fact]
-    public async Task AppointmentCancel_CancelsTheFrameAndEveryConfirmedBooking_WithoutTheLateFlag()
+    public async Task AppointmentCancel_CancelsEveryConfirmedBooking_AndClassifiesLatenessPerParticipation()
     {
-        await using SchedulingWorld w = await SchedulingWorld.Create(nameof(AppointmentCancel_CancelsTheFrameAndEveryConfirmedBooking_WithoutTheLateFlag));
+        await using SchedulingWorld w = await SchedulingWorld.Create(nameof(AppointmentCancel_CancelsEveryConfirmedBooking_AndClassifiesLatenessPerParticipation));
         Client partner = await w.AddClient("Partner", "Client");
         AppointmentDto created = await w.CreateAppointment(SchedulingWorld.Future(10), extraClients: partner);
 
@@ -389,7 +389,10 @@ public class BookingNoShowAndCancellationCharacterizationTests
         {
             Assert.Equal(BookingStatus.Cancelled, b.Status);
             Assert.Equal(1, b.StatusVersion);
-            Assert.Null(b.IsLateCancellation); // a business cancellation is never a "late client cancellation"
+            // CHANGED in M1E.1 (intentional asymmetry fix): the old pin left IsLateCancellation empty for an appointment-wide
+            // cancel. Every cancelled participation is now classified from its own segment start, exactly like a participation
+            // or Booking-wide cancel — 2031 is far outside the default cutoff, so: not late.
+            Assert.False(b.IsLateCancellation);
             Assert.Equal("studio closed", b.CancellationReason);
         });
         Assert.Equal(2, (await w.LoadOutbox()).Count(m => m.Type == OutboxEventTypes.BookingCancelledV1));

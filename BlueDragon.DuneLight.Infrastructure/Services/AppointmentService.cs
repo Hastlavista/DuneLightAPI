@@ -11,6 +11,7 @@ using BlueDragon.DuneLight.Core.Events;
 using BlueDragon.DuneLight.Core.Interfaces.Appointments;
 using BlueDragon.DuneLight.Core.Interfaces.Catalog;
 using BlueDragon.DuneLight.Core.Interfaces.Clients;
+using BlueDragon.DuneLight.Core.Interfaces.Organization;
 using BlueDragon.DuneLight.Core.Shared;
 using BlueDragon.DuneLight.Core.Shared.Exceptions;
 using BlueDragon.DuneLight.Infrastructure.Domain.Models.Appointments;
@@ -60,6 +61,8 @@ public partial class AppointmentService : IAppointmentService
 
     private readonly IOrganizationCalendarService _organizationCalendarService;
 
+    private readonly IOrganizationSettingsService _organizationSettingsService;
+
     public AppointmentService(
         IAppointmentHandler appointmentHandler,
         ISchedulingOccupancyHandler schedulingOccupancyHandler,
@@ -86,9 +89,11 @@ public partial class AppointmentService : IAppointmentService
         ICommissionLedgerService commissionLedgerService,
         IOutboxWriter outboxWriter,
         IUnitOfWorkFactory unitOfWorkFactory,
-        IOrganizationCalendarService organizationCalendarService)
+        IOrganizationCalendarService organizationCalendarService,
+        IOrganizationSettingsService organizationSettingsService)
     {
         _organizationCalendarService = organizationCalendarService;
+        _organizationSettingsService = organizationSettingsService;
         _appointmentHandler = appointmentHandler;
         _schedulingOccupancyHandler = schedulingOccupancyHandler;
         _auditLogHandler = auditLogHandler;
@@ -1280,6 +1285,12 @@ public partial class AppointmentService : IAppointmentService
             // termina, u stabilnom redoslijedu (po Id-u); statusi su već svježi jer svaki prijelaz statusa prvo zaključava
             // ovaj isti termin.
             ParticipationStatus target = BookingParticipations.ToParticipationStatus(targetBookingStatus);
+            // Phase M1E.1: otkazivanje termina klasificira SVAKO otkazano sudjelovanje zasebno (isti cutoff organizacije, isti
+            // trenutak, početak NJEGOVOG segmenta) — kao otkazivanje jednog sudjelovanja ili cijelog Bookinga.
+            int cutoffMinutes = targetBookingStatus == BookingStatus.Cancelled
+                ? await _organizationSettingsService.GetCancellationCutoffMinutes(organizationId)
+                : 0;
+            DateTimeOffset cancelledAt = DateTimeOffset.UtcNow;
             await _participationHandler.LockForUpdate(
                 uow, organizationId, appointment.Bookings.SelectMany(b => b.Participations).Select(p => p.Id.GetValueOrDefault()));
 
@@ -1292,10 +1303,11 @@ public partial class AppointmentService : IAppointmentService
                 ParticipationStatus oldParticipationStatus = participation.Status;
                 ParticipationLifecycle.TrySetStatus(participation, target);
                 ParticipationLifecycle.SetCancellationReason(participation, request.CancellationReason);
+                if (targetBookingStatus == BookingStatus.Cancelled)
+                    ParticipationLifecycle.SetLateCancellation(participation, BookingCancellationPolicy.IsLateCancellation(
+                        ExecutionContextResolver.ForParticipation(appointment, booking, participation), cancelledAt, cutoffMinutes));
                 booking.UpdatedAt = DateTimeOffset.UtcNow;
                 booking.UpdatedBy = userId;
-                // IsLateCancellation namjerno OSTAJE null ovdje (poslovno/appointment-wide otkazivanje, ne
-                // klijentska inicijativa) — vidi Booking.cs domensku napomenu i spec section 38.
 
                 // Phase D3B3A: povrat ulaska = poništenje AKTIVNE potrošnje paketa sudjelovanja (ledger; no-op ako je nema).
                 bool shouldReturn = returnClientIds.Contains(booking.ClientId) &&

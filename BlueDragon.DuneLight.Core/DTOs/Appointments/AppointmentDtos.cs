@@ -608,11 +608,11 @@ public class AppointmentSegmentCreateRequest
     /// <summary>Opcionalno — mora pripadati CompanyId termina.</summary>
     public Guid? RoomId { get; set; }
 
-    /// <summary>Ciljni ugovor; PRIVREMENO mora biti prazno (vidi klasnu napomenu).</summary>
+    /// <summary>Resursi segmenta (Phase M1D: omogućeni, količina &gt; 0, svaki resurs jednom).</summary>
     public List<AppointmentSegmentResourceRequest> Resources { get; set; } = new();
 
-    [Required]
-    [MinLength(1, ErrorMessage = "Segment mora imati barem jednog sudionika.")]
+    /// <summary>Kreiranje termina: barem jedan sudionik po segmentu (domensko pravilo u AppointmentService — ne atribut, jer
+    /// isti ugovor koristi i dodavanje segmenta postojećem terminu, gdje je segment bez sudionika dopušten; Phase M1E.1).</summary>
     public List<AppointmentParticipantCreateRequest> Participants { get; set; } = new();
 }
 
