@@ -26,12 +26,15 @@ public class GroupHandler : IGroupHandler
     private static IQueryable<Group> IncludeGraph(IQueryable<Group> query)
     {
         return query
-            .Include(g => g.Service)
             .Include(g => g.Company)
             .Include(g => g.DefaultTrainer)
-            .Include(g => g.DefaultRoom)
             .Include(g => g.Slots)
-            .Include(g => g.Members.Where(m => m.IsActive)).ThenInclude(m => m.Client);
+            .Include(g => g.SegmentTemplates).ThenInclude(t => t.Service)
+            .Include(g => g.SegmentTemplates).ThenInclude(t => t.Room)
+            .Include(g => g.SegmentTemplates).ThenInclude(t => t.Resources).ThenInclude(r => r.Resource)
+            .Include(g => g.Members.Where(m => m.IsActive)).ThenInclude(m => m.Client)
+            .Include(g => g.Members.Where(m => m.IsActive)).ThenInclude(m => m.SegmentTemplates)
+            .AsSplitQuery();
     }
 
     public async Task Add(Group group)
@@ -120,6 +123,38 @@ public class GroupHandler : IGroupHandler
             m.GroupId == groupId && m.Id == memberId && m.Group.OrganizationId == organizationId);
     }
 
+    public async Task<GroupSegmentTemplate> GetTemplateById(Guid organizationId, Guid groupId, Guid templateId)
+    {
+        await using DatabaseContext context = DatabaseContext.GenerateContext(_databaseSettings.ConnectionString);
+        return await context.GroupSegmentTemplates.Include(t => t.Resources)
+            .SingleOrDefaultAsync(t => t.Id == templateId && t.GroupId == groupId && t.Group.OrganizationId == organizationId);
+    }
+
+    public async Task<int> CountActiveMembersSelecting(IUnitOfWork uow, Guid templateId)
+    {
+        // Isto pravilo "aktivnog mjesta" kao CountActiveMembers: aktivno članstvo aktivnog, neanonimiziranog klijenta.
+        return await uow.Context.GroupMemberSegmentTemplates.CountAsync(x =>
+            x.GroupSegmentTemplateId == templateId && x.Member.IsActive && x.Member.Client.IsActive && !x.Member.Client.IsAnonymized);
+    }
+
+    public async Task<int> GetSegmentTemplateCapacity(Guid templateId)
+    {
+        await using DatabaseContext context = DatabaseContext.GenerateContext(_databaseSettings.ConnectionString);
+        return await context.GroupSegmentTemplates.Where(t => t.Id == templateId).Select(t => t.Capacity).SingleAsync();
+    }
+
+    public async Task<bool> IsTemplateUsedBySegments(Guid templateId)
+    {
+        await using DatabaseContext context = DatabaseContext.GenerateContext(_databaseSettings.ConnectionString);
+        return await context.AppointmentSegments.AnyAsync(s => s.GroupSegmentTemplateId == templateId);
+    }
+
+    public async Task<bool> IsTemplateSelectedByActiveMember(Guid templateId)
+    {
+        await using DatabaseContext context = DatabaseContext.GenerateContext(_databaseSettings.ConnectionString);
+        return await context.GroupMemberSegmentTemplates.AnyAsync(x => x.GroupSegmentTemplateId == templateId && x.Member.IsActive);
+    }
+
     public async Task<int> CountActiveMembers(Guid groupId)
     {
         await using DatabaseContext context = DatabaseContext.GenerateContext(_databaseSettings.ConnectionString);
@@ -164,7 +199,8 @@ public class GroupHandler : IGroupHandler
     {
         await using DatabaseContext context = DatabaseContext.GenerateContext(_databaseSettings.ConnectionString);
         return await context.GroupMembers
-            .Include(m => m.Group).ThenInclude(g => g.Service)
+            .Include(m => m.Group).ThenInclude(g => g.SegmentTemplates).ThenInclude(t => t.Service)
+            .Include(m => m.SegmentTemplates)
             .Include(m => m.Group).ThenInclude(g => g.Company)
             .Include(m => m.Group).ThenInclude(g => g.Slots)
             .Where(m => m.ClientId == clientId && m.Group.OrganizationId == organizationId)

@@ -39,27 +39,112 @@ public class GroupMemberDto
     public string ClientName { get; set; }
     public DateTimeOffset JoinedAt { get; set; }
     public bool IsActive { get; set; }
+
+    /// <summary>Phase M1F — predlošci segmenata koje je član odabrao (sudjeluje SAMO u tim segmentima occurrencea).</summary>
+    public List<Guid> SegmentTemplateIds { get; set; } = new();
 }
 
 public class GroupMemberAddRequest
 {
     [Required]
     public Guid ClientId { get; set; }
+
+    /// <summary>Phase M1F — eksplicitan odabir predložaka. Izostavljen/prazan smije biti SAMO za grupu s točno jednim
+    /// predloškom (legacy); za višesegmentnu grupu SEGMENT_SELECTION_REQUIRED — nikad implicitno "svi".</summary>
+    public List<Guid> SegmentTemplateIds { get; set; }
+
+    /// <summary>Eksplicitno prekoračenje mekog kapaciteta odabranih predložaka; zahtijeva groups.capacity.override.</summary>
+    public bool OverrideCapacity { get; set; }
+}
+
+/// <summary>Phase M1F — nova (potpuna) selekcija predložaka postojećeg člana.</summary>
+public class GroupMemberSegmentTemplatesRequest
+{
+    [Required]
+    public List<Guid> SegmentTemplateIds { get; set; } = new();
+
+    /// <summary>Eksplicitno prekoračenje mekog kapaciteta NOVO odabranih predložaka; zahtijeva groups.capacity.override.</summary>
+    public bool OverrideCapacity { get; set; }
+}
+
+public class GroupSegmentTemplateResourceDto
+{
+    public Guid ResourceId { get; set; }
+    public string ResourceName { get; set; }
+    public int QuantityRequired { get; set; }
+}
+
+/// <summary>Phase M1F — predložak segmenta grupe (vrijeme relativno sidru occurrencea = vrijeme slota).</summary>
+public class GroupSegmentTemplateDto
+{
+    public Guid Id { get; set; }
+    public Guid ServiceId { get; set; }
+    public string ServiceName { get; set; }
+    public int StartOffsetMinutes { get; set; }
+    public int DurationMinutes { get; set; }
+    public Guid? RoomId { get; set; }
+    public string RoomName { get; set; }
+
+    /// <summary>MEKI poslovni broj mjesta segmenta (prekoračenje samo eksplicitno uz groups.capacity.override).</summary>
+    public int Capacity { get; set; }
+
+    public List<GroupSegmentTemplateResourceDto> Resources { get; set; } = new();
+}
+
+public class GroupSegmentTemplateResourceRequest
+{
+    [Required]
+    public Guid ResourceId { get; set; }
+
+    [Range(1, int.MaxValue)]
+    public int QuantityRequired { get; set; } = 1;
+}
+
+/// <summary>Phase M1F — predložak segmenta (kreiranje grupe, dodavanje/izmjena predloška).</summary>
+public class GroupSegmentTemplateRequest
+{
+    [Required]
+    public Guid ServiceId { get; set; }
+
+    /// <summary>Pomak početka segmenta od sidra occurrencea (lokalno vrijeme slota), 0..1439 min. Barem jedan predložak
+    /// grupe ima pomak 0 (sidro = početak occurrencea).</summary>
+    [Range(0, 1439)]
+    public int StartOffsetMinutes { get; set; }
+
+    /// <summary>Null = prijedlog iz zadanog trajanja usluge (predložak zatim posjeduje svoje trajanje).</summary>
+    [Range(1, 1440)]
+    public int? DurationMinutes { get; set; }
+
+    public Guid? RoomId { get; set; }
+
+    [Range(1, int.MaxValue, ErrorMessage = "Kapacitet mora biti veći od 0.")]
+    public int Capacity { get; set; }
+
+    public List<GroupSegmentTemplateResourceRequest> Resources { get; set; } = new();
 }
 
 public class GroupDto
 {
     public Guid Id { get; set; }
     public string Name { get; set; }
-    public Guid ServiceId { get; set; }
+
+    /// <summary>KOMPATIBILNOST (nije autoritativno): usluga JEDINOG predloška; null za višesegmentnu grupu.</summary>
+    public Guid? ServiceId { get; set; }
     public string ServiceName { get; set; }
     public Guid CompanyId { get; set; }
     public string CompanyName { get; set; }
-    public int Capacity { get; set; }
+
+    /// <summary>KOMPATIBILNOST (nije autoritativno): kapacitet JEDINOG predloška; null za višesegmentnu grupu.</summary>
+    public int? Capacity { get; set; }
     public Guid? DefaultTrainerId { get; set; }
     public string DefaultTrainerName { get; set; }
+
+    /// <summary>KOMPATIBILNOST (nije autoritativno): prostorija JEDINOG predloška; null za višesegmentnu grupu.</summary>
     public Guid? DefaultRoomId { get; set; }
     public string DefaultRoomName { get; set; }
+
+    /// <summary>Phase M1F — autoritativna izvršna definicija grupe.</summary>
+    public List<GroupSegmentTemplateDto> SegmentTemplates { get; set; } = new();
     public bool IsActive { get; set; }
     public string Note { get; set; }
     public List<GroupSlotDto> Slots { get; set; } = new();
@@ -87,24 +172,29 @@ public class GroupCreateRequest
     [Required]
     public string Name { get; set; }
 
-    [Required]
-    public Guid ServiceId { get; set; }
+    /// <summary>KOMPATIBILNOST: plosnata jednosegmentna grupa (= jedan predložak: pomak 0, trajanje usluge). Ne smije se
+    /// kombinirati sa <see cref="SegmentTemplates"/>.</summary>
+    public Guid? ServiceId { get; set; }
 
     [Required]
     public Guid CompanyId { get; set; }
 
+    /// <summary>KOMPATIBILNOST: kapacitet plosnatog (jedinog) predloška.</summary>
     [Range(1, int.MaxValue, ErrorMessage = "Kapacitet mora biti veći od 0.")]
-    public int Capacity { get; set; }
+    public int? Capacity { get; set; }
 
     public Guid? DefaultTrainerId { get; set; }
 
-    /// <summary>Opcionalno — mora pripadati istoj CompanyId.</summary>
+    /// <summary>KOMPATIBILNOST: prostorija plosnatog (jedinog) predloška — mora pripadati istoj CompanyId.</summary>
     public Guid? DefaultRoomId { get; set; }
 
     public string Note { get; set; }
 
     /// <summary>Barem jedan slot je obavezan pri kreiranju grupe.</summary>
     public List<GroupSlotCreateRequest> Slots { get; set; } = new();
+
+    /// <summary>Phase M1F — ciljni ugovor: predlošci segmenata (barem jedan; jedan ima pomak 0).</summary>
+    public List<GroupSegmentTemplateRequest> SegmentTemplates { get; set; }
 }
 
 public class GroupUpdateRequest
@@ -112,18 +202,20 @@ public class GroupUpdateRequest
     [Required]
     public string Name { get; set; }
 
-    [Required]
-    public Guid ServiceId { get; set; }
+    /// <summary>KOMPATIBILNOST: usluga jedinog predloška (samo jednosegmentna grupa; inače SEGMENT_SELECTION_REQUIRED —
+    /// predlošci se mijenjaju kroz /segment-templates).</summary>
+    public Guid? ServiceId { get; set; }
 
     [Required]
     public Guid CompanyId { get; set; }
 
+    /// <summary>KOMPATIBILNOST: kapacitet jedinog predloška (vidi ServiceId).</summary>
     [Range(1, int.MaxValue, ErrorMessage = "Kapacitet mora biti veći od 0.")]
-    public int Capacity { get; set; }
+    public int? Capacity { get; set; }
 
     public Guid? DefaultTrainerId { get; set; }
 
-    /// <summary>Opcionalno — mora pripadati istoj CompanyId.</summary>
+    /// <summary>KOMPATIBILNOST: prostorija jedinog predloška (vidi ServiceId).</summary>
     public Guid? DefaultRoomId { get; set; }
 
     public string Note { get; set; }

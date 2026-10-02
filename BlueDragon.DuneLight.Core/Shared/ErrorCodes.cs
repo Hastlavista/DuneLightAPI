@@ -96,6 +96,8 @@ public static class ErrorCodes
     public const string ServiceNotAvailableAtCompany = "SERVICE_NOT_AVAILABLE_AT_COMPANY";
     public const string InactiveRoom = "INACTIVE_ROOM";
     public const string GroupCapacityReached = "GROUP_CAPACITY_REACHED";
+    /// <summary>Phase M1F — grupa mora zadržati barem jedan predložak segmenta.</summary>
+    public const string LastGroupSegmentTemplate = "LAST_GROUP_SEGMENT_TEMPLATE";
     public const string AttendanceBeforeStart = "ATTENDANCE_BEFORE_START";
     public const string PackageAlreadyCancelled = "PACKAGE_ALREADY_CANCELLED";
 

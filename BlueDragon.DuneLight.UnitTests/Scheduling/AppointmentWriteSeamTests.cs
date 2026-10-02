@@ -100,7 +100,7 @@ public class AppointmentWriteSeamTests
     {
         Guid group = Guid.NewGuid(), slot = Guid.NewGuid(), room = Guid.NewGuid();
 
-        Appointment a = AppointmentFactory.CreateGroupOccurrence(Org, Company, group, slot, User, CreatedAt, Plan(employeeId: null, roomId: room));
+        Appointment a = AppointmentFactory.CreateGroupOccurrence(Org, Company, group, slot, User, CreatedAt, new[] { Plan(employeeId: null, roomId: room) with { GroupSegmentTemplateId = Guid.NewGuid() } });
 
         Assert.Equal(AppointmentForm.Group, a.Form);
         Assert.Equal(AppointmentStatus.Scheduled, a.Status);
@@ -123,7 +123,7 @@ public class AppointmentWriteSeamTests
         Guid c1 = Guid.NewGuid(), c2 = Guid.NewGuid();
 
         Appointment a = AppointmentFactory.CreateGroupOccurrence(
-            Org, Company, Guid.NewGuid(), Guid.NewGuid(), User, CreatedAt, Plan(clients: new[] { c1, c2 }));
+            Org, Company, Guid.NewGuid(), Guid.NewGuid(), User, CreatedAt, new[] { Plan(clients: new[] { c1, c2 }) with { GroupSegmentTemplateId = Guid.NewGuid() } });
 
         AppointmentSegment segment = Assert.Single(a.Segments);
         Assert.Equal(new[] { c1, c2 }, a.Bookings.Select(b => b.ClientId).ToArray());

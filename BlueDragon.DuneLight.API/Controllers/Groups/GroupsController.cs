@@ -100,13 +100,45 @@ public class GroupsController : ControllerBase
         return Ok(await _groupService.RemoveSlot(this.CurrentOrganizationId(), this.CurrentUserId(), id, slotId));
     }
 
-    /// <summary>Tvrda blokada na kapacitetu (GROUP_CAPACITY_REACHED) i na sudaru s postojećim rasporedom klijenta
-    /// na bilo kojem budućem generiranom terminu grupe (RECURRING_CONFLICT) — nema override-a u ovoj fazi.</summary>
+    /// <summary>Phase M1F — član bira predloške segmenata (SegmentTemplateIds; izostavljeno samo za jednopredlošku grupu).
+    /// Meki kapacitet odabranih predložaka (GROUP_CAPACITY_REACHED) — eksplicitni OverrideCapacity zahtijeva
+    /// groups.capacity.override (403 bez njega). Tvrdi sudar s rasporedom klijenta na budućem occurrenceu: RECURRING_CONFLICT;
+    /// fizički kapacitet prostorije se nikad ne zaobilazi.</summary>
     [HttpPost("{id:guid}/members")]
     [RequireGrant(Grants.GroupsManage)]
     public async Task<ActionResult<GroupDto>> AddMember(Guid id, [FromBody] GroupMemberAddRequest request)
     {
         return Ok(await _groupService.AddMember(this.CurrentOrganizationId(), this.CurrentUserId(), id, request));
+    }
+
+    /// <summary>Phase M1F — nova potpuna selekcija predložaka člana (budući generirani occurrencei se usklađuju).</summary>
+    [HttpPut("{id:guid}/members/{memberId:guid}/segment-templates")]
+    [RequireGrant(Grants.GroupsManage)]
+    public async Task<ActionResult<GroupDto>> ChangeMemberSegmentTemplates(Guid id, Guid memberId, [FromBody] GroupMemberSegmentTemplatesRequest request)
+    {
+        return Ok(await _groupService.ChangeMemberSegmentTemplates(this.CurrentOrganizationId(), this.CurrentUserId(), id, memberId, request));
+    }
+
+    /// <summary>Phase M1F — predlošci segmenata grupe. Izmjene vrijede za buduća generiranja (generirani segmenti su snapshot).</summary>
+    [HttpPost("{id:guid}/segment-templates")]
+    [RequireGrant(Grants.GroupsManage)]
+    public async Task<ActionResult<GroupDto>> AddSegmentTemplate(Guid id, [FromBody] GroupSegmentTemplateRequest request)
+    {
+        return Ok(await _groupService.AddSegmentTemplate(this.CurrentOrganizationId(), this.CurrentUserId(), id, request));
+    }
+
+    [HttpPut("{id:guid}/segment-templates/{templateId:guid}")]
+    [RequireGrant(Grants.GroupsManage)]
+    public async Task<ActionResult<GroupDto>> UpdateSegmentTemplate(Guid id, Guid templateId, [FromBody] GroupSegmentTemplateRequest request)
+    {
+        return Ok(await _groupService.UpdateSegmentTemplate(this.CurrentOrganizationId(), this.CurrentUserId(), id, templateId, request));
+    }
+
+    [HttpDelete("{id:guid}/segment-templates/{templateId:guid}")]
+    [RequireGrant(Grants.GroupsManage)]
+    public async Task<ActionResult<GroupDto>> RemoveSegmentTemplate(Guid id, Guid templateId)
+    {
+        return Ok(await _groupService.RemoveSegmentTemplate(this.CurrentOrganizationId(), this.CurrentUserId(), id, templateId));
     }
 
     /// <summary>Deaktivira članstvo (napuštanje grupe) — ne dira povijesne termine/prisutnost.</summary>

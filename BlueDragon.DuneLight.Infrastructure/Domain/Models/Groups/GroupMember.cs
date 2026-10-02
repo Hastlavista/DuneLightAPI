@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.ComponentModel.DataAnnotations;
 using System.ComponentModel.DataAnnotations.Schema;
 using BlueDragon.DuneLight.Infrastructure.Domain.Models.Clients;
@@ -36,4 +37,8 @@ public class GroupMember
 
     public Group Group { get; set; }
     public Client Client { get; set; }
+
+    /// <summary>Phase M1F — EKSPLICITAN odabir predložaka segmenata (članstvo ne znači sudjelovanje u svakom segmentu).
+    /// Aktivan član ima barem jedan odabir.</summary>
+    public List<GroupMemberSegmentTemplate> SegmentTemplates { get; set; } = new();
 }

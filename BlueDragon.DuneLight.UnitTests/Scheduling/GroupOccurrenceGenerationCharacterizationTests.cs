@@ -306,8 +306,12 @@ public class GroupOccurrenceGenerationCharacterizationTests
         AppointmentSegment existingSegment = existing.Segments.Single();
         Appointment duplicate = AppointmentFactory.CreateGroupOccurrence(
             w.OrganizationId, existing.CompanyId, existing.GroupId.Value, existing.GroupSlotId.Value, w.ActorUserId, DateTimeOffset.UtcNow,
-            new SegmentPlan(existingSegment.ServiceId, existingSegment.PlannedStart, existingSegment.PlannedEnd,
-                existingSegment.Employees.Select(e => e.EmployeeId).ToList(), existingSegment.RoomId, new List<ParticipantPlan>()));
+            new[]
+            {
+                new SegmentPlan(existingSegment.ServiceId, existingSegment.PlannedStart, existingSegment.PlannedEnd,
+                    existingSegment.Employees.Select(e => e.EmployeeId).ToList(), existingSegment.RoomId, new List<ParticipantPlan>(),
+                    GroupSegmentTemplateId: existingSegment.GroupSegmentTemplateId)
+            });
 
         bool added = await w.Resolve<IGroupHandler>().AddAppointments(new List<Appointment> { duplicate });
 
@@ -388,15 +392,15 @@ public class GroupOccurrenceGenerationCharacterizationTests
     }
 
     [Fact]
-    public async Task Generate_WhenTheGroupHasMoreActiveMembersThanItsCapacity_IsBlocked()
+    public async Task Generate_WhenTheGroupHasMoreActiveMembersThanItsCapacity_ReproducesTheMembership()
     {
-        (SchedulingWorld w, ServiceEntity svc) = await Arrange(nameof(Generate_WhenTheGroupHasMoreActiveMembersThanItsCapacity_IsBlocked));
+        (SchedulingWorld w, ServiceEntity svc) = await Arrange(nameof(Generate_WhenTheGroupHasMoreActiveMembersThanItsCapacity_ReproducesTheMembership));
         await using SchedulingWorld _ = w;
         Client second = await w.AddClient("Second", "Member");
         GroupDto group = await w.CreateGroup(svc, capacity: 2);
         await w.AddGroupMember(group, w.Client);
         await w.AddGroupMember(group, second);
-        // Lowering the capacity below the current roster is allowed by Group.Update; generation then refuses.
+        // Lowering the capacity below the current roster is allowed by Group.Update.
         await w.Groups.Update(w.OrganizationId, w.ActorUserId, group.Id, new GroupUpdateRequest
         {
             Name = group.Name,
@@ -407,10 +411,12 @@ public class GroupOccurrenceGenerationCharacterizationTests
             DefaultRoomId = group.DefaultRoomId
         });
 
-        await SchedulingAssert.BusinessRule(ErrorCodes.GroupCapacityReached,
-            () => w.GenerateOccurrences(group, SchedulingWorld.FutureDay));
+        // CHANGED in M1F: capacity is a SOFT business limit of the segment template. Generation reproduces the existing
+        // membership (validly created earlier) instead of refusing — nobody is dropped; only NEW additions above the limit
+        // need an explicit override. Hard physical rules still apply at generation.
+        Appointment occurrence = await w.GenerateSingleOccurrence(group);
 
-        Assert.Equal(0, await w.CountAppointments());
+        Assert.Equal(2, occurrence.Bookings.Count);
     }
 
     #endregion

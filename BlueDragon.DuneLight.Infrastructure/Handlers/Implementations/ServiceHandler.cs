@@ -131,9 +131,10 @@ public class ServiceHandler : IServiceHandler
             .Where(e => e.ServiceId == id && e.ClientPackage.OrganizationId == organizationId)
             .Select(e => 1);
 
-        IQueryable<int> groups = context.Groups
-            .Where(g => g.OrganizationId == organizationId && g.ServiceId == id)
-            .Select(g => 1);
+        // Phase M1F: usluga grupe živi na njezinim predlošcima segmenata.
+        IQueryable<int> groups = context.GroupSegmentTemplates
+            .Where(t => t.Group.OrganizationId == organizationId && t.ServiceId == id)
+            .Select(t => 1);
 
         IQueryable<int> commissionRules = context.CommissionRules
             .Where(r => r.OrganizationId == organizationId && r.ServiceId == id)
@@ -166,9 +167,10 @@ public class ServiceHandler : IServiceHandler
             .Where(s => s.OrganizationId == organizationId && s.ServiceId == id)
             .Select(s => 1);
 
-        IQueryable<int> groups = context.Groups
-            .Where(g => g.OrganizationId == organizationId && g.ServiceId == id)
-            .Select(g => 1);
+        // Phase M1F: usluga grupe živi na njezinim predlošcima segmenata.
+        IQueryable<int> groups = context.GroupSegmentTemplates
+            .Where(t => t.Group.OrganizationId == organizationId && t.ServiceId == id)
+            .Select(t => 1);
 
         return await appointments.Union(groups).AnyAsync();
     }

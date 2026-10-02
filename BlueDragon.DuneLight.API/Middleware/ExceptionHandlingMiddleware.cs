@@ -51,6 +51,10 @@ public class ExceptionHandlingMiddleware
         {
             await WriteError(context, HttpStatusCode.NotFound, ex.Code ?? ErrorCodes.NotFound, ex.Message);
         }
+        catch (ForbiddenAppException ex)
+        {
+            await WriteError(context, HttpStatusCode.Forbidden, ex.Code, ex.Message);
+        }
         catch (UnauthorizedAppException ex)
         {
             await WriteError(context, HttpStatusCode.Unauthorized, ex.Code, ex.Message);

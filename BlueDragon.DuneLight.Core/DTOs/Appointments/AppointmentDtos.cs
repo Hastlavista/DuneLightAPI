@@ -479,6 +479,13 @@ public class BookingCreateRequest
 {
     [Required]
     public Guid ClientId { get; set; }
+
+    /// <summary>Phase M1F — grupni occurrence: segment u koji se dodaje gost (postojeći Booking klijenta se ponovno koristi).
+    /// Obavezan za višesegmentni occurrence (SEGMENT_SELECTION_REQUIRED).</summary>
+    public Guid? SegmentId { get; set; }
+
+    /// <summary>Phase M1F — eksplicitno prekoračenje mekog kapaciteta segmenta grupe; zahtijeva groups.capacity.override.</summary>
+    public bool OverrideCapacity { get; set; }
 }
 
 /// <summary>Otkazivanje/no-show JEDNOG Bookinga (npr. jedan od dvoje na duo terminu) — vidi
@@ -527,6 +534,14 @@ public class BookingSetStatusRequest
     /// sada po jednom Bookingu). Za Form=Group vraćanje je uvijek automatsko kod poništenja check-ina — vidi
     /// domensku napomenu na BookingService.</summary>
     public bool ReturnPackageEntry { get; set; }
+
+    /// <summary>Phase M1F — grupni occurrence, (termin, klijent) adresiranje: segment na koji se odnosi prijelaz/check-in
+    /// gosta. Obavezan za višesegmentni occurrence kad ga nije moguće jednoznačno odrediti (SEGMENT_SELECTION_REQUIRED).</summary>
+    public Guid? SegmentId { get; set; }
+
+    /// <summary>Phase M1F — eksplicitno prekoračenje mekog kapaciteta segmenta grupe pri novom/ponovno aktiviranom
+    /// Confirmed mjestu; zahtijeva groups.capacity.override.</summary>
+    public bool OverrideCapacity { get; set; }
 
     /// <summary>Opcionalan razlog — popunjava se samo kod prijelaza u Cancelled/NoShow.</summary>
     [MaxLength(500)]

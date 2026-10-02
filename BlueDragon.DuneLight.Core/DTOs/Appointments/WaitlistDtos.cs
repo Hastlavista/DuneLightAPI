@@ -10,6 +10,10 @@ public class WaitlistEntryDto
 {
     public Guid Id { get; set; }
     public Guid AppointmentId { get; set; }
+
+    /// <summary>Phase M1F — konkretan segment occurrencea na koji klijent čeka.</summary>
+    public Guid AppointmentSegmentId { get; set; }
+
     public Guid ClientId { get; set; }
     public string ClientName { get; set; }
     public WaitlistEntryStatus Status { get; set; }
@@ -34,4 +38,8 @@ public class WaitlistJoinRequest
 {
     [Required]
     public Guid ClientId { get; set; }
+
+    /// <summary>Phase M1F — segment occurrencea na koji se čeka. Obavezan za višesegmentni occurrence
+    /// (SEGMENT_SELECTION_REQUIRED); jednosegmentni (legacy) ga smije izostaviti.</summary>
+    public Guid? SegmentId { get; set; }
 }

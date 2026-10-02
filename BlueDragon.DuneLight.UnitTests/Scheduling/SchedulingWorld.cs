@@ -177,7 +177,12 @@ public sealed class SchedulingWorld : IAsyncDisposable
             "DELETE FROM dunelight.client_package_service_entries WHERE client_package_id IN (SELECT id FROM dunelight.client_packages WHERE organization_id = {0})",
             "DELETE FROM dunelight.package_services WHERE package_id IN (SELECT id FROM dunelight.packages WHERE organization_id = {0})",
             "DELETE FROM dunelight.group_audit_log WHERE group_id IN (SELECT id FROM dunelight.groups WHERE organization_id = {0})",
+            "DELETE FROM dunelight.group_member_segment_templates WHERE group_id IN (SELECT id FROM dunelight.groups WHERE organization_id = {0})",
+            "DELETE FROM dunelight.user_grant_groups WHERE grant_group_id IN (SELECT id FROM dunelight.grant_groups WHERE organization_id = {0})",
+            "DELETE FROM dunelight.grant_group_grants WHERE grant_group_id IN (SELECT id FROM dunelight.grant_groups WHERE organization_id = {0})",
             "DELETE FROM dunelight.group_members WHERE group_id IN (SELECT id FROM dunelight.groups WHERE organization_id = {0})",
+            "DELETE FROM dunelight.group_segment_template_resources WHERE group_segment_template_id IN (SELECT t.id FROM dunelight.group_segment_templates t JOIN dunelight.groups g ON g.id = t.group_id WHERE g.organization_id = {0})",
+            "DELETE FROM dunelight.group_segment_templates WHERE group_id IN (SELECT id FROM dunelight.groups WHERE organization_id = {0})",
             "DELETE FROM dunelight.group_slots WHERE group_id IN (SELECT id FROM dunelight.groups WHERE organization_id = {0})",
             "DELETE FROM dunelight.employee_companies WHERE employee_id IN (SELECT id FROM dunelight.employees WHERE organization_id = {0})",
             "DELETE FROM dunelight.employee_services WHERE employee_id IN (SELECT id FROM dunelight.employees WHERE organization_id = {0})",
@@ -872,6 +877,27 @@ public sealed class SchedulingWorld : IAsyncDisposable
     public async Task<Core.DTOs.Appointments.BookingDto> AddGuest(Appointment occurrence, Client client) =>
         await Bookings.AddBooking(OrganizationId, ActorUserId, true, occurrence.Id.Value, new BookingCreateRequest { ClientId = client.Id.Value });
 
+    /// <summary>M1F: gives a user exactly these raw grants through a real GrantGroup (grant resolution is not mocked).</summary>
+    public async Task GrantUser(Guid userId, params string[] grants)
+    {
+        await using DatabaseContext db = NewDb();
+        Guid groupId = Guid.NewGuid();
+        db.GrantGroups.Add(new BlueDragon.DuneLight.Infrastructure.Domain.Models.Permissions.GrantGroup
+        {
+            Id = groupId, OrganizationId = OrganizationId, Name = $"test-{groupId:N}", CreatedAt = DateTimeOffset.UtcNow,
+            Grants = grants.Select(g => new BlueDragon.DuneLight.Infrastructure.Domain.Models.Permissions.GrantGroupGrant { GrantGroupId = groupId, GrantKey = g }).ToList()
+        });
+        db.UserGrantGroups.Add(new BlueDragon.DuneLight.Infrastructure.Domain.Models.Permissions.UserGrantGroup { UserId = userId, GrantGroupId = groupId });
+        await db.SaveChangesAsync();
+    }
+
+    /// <summary>M1F: a member user (no grants) of this organization.</summary>
+    public async Task<Guid> AddMemberUser()
+    {
+        await using DatabaseContext db = NewDb();
+        return await AddUser(UserRole.Member, db);
+    }
+
     public async Task<Group> LoadGroup(Guid id)
     {
         await using DatabaseContext db = NewDb();
@@ -917,6 +943,11 @@ public sealed class SchedulingWorld : IAsyncDisposable
             room?.Id,
             startsAt,
             durationMinutes ?? svc.DefaultDurationMinutes);
+        // M1F: a group occurrence's segment is generated from a template (production shape) — the seeded occurrence of a
+        // one-template group links to that template.
+        if (groupId.HasValue)
+            appointment.Segments[0].GroupSegmentTemplateId = await db.GroupSegmentTemplates
+                .Where(t => t.GroupId == groupId.Value).Select(t => t.Id).SingleAsync();
         foreach ((Client client, BookingStatus bookingStatus, decimal amount) in bookings)
         {
             // D3B1/D3B2: lifecycle and price live on the booking's single participation on the appointment's segment.

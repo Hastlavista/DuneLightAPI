@@ -45,6 +45,11 @@ public class AppointmentSegment
     [Column("room_id")]
     public Guid? RoomId { get; set; }
 
+    /// <summary>Phase M1F — predložak grupe koji je generirao ovaj segment (null za negrupne segmente). Jedinstven po
+    /// terminu: jedan predložak → jedan segment occurrencea. Segment je konkretan snapshot; izmjena predloška ga ne mijenja.</summary>
+    [Column("group_segment_template_id")]
+    public Guid? GroupSegmentTemplateId { get; set; }
+
     [Column("created_at")]
     public DateTimeOffset CreatedAt { get; set; }
 
@@ -54,6 +59,7 @@ public class AppointmentSegment
     public Appointment Appointment { get; set; }
     public Service Service { get; set; }
     public Room Room { get; set; }
+    public Groups.GroupSegmentTemplate GroupSegmentTemplate { get; set; }
     public List<AppointmentSegmentEmployee> Employees { get; set; } = new();
     public List<AppointmentSegmentResource> Resources { get; set; } = new();
     public List<BookingSegmentParticipation> Participations { get; set; } = new();

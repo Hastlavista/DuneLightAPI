@@ -42,7 +42,7 @@ namespace BlueDragon.DuneLight.UnitTests.Scheduling;
 /// </summary>
 public class MultiSegmentHttpContractTests : IClassFixture<MultiSegmentHttpContractTests.ApiHost>
 {
-    private static readonly JwtSettings Jwt = new()
+    internal static readonly JwtSettings Jwt = new()
     {
         SecretKey = "M1E1-http-contract-test-signing-key-that-is-long-enough-256-bits!",
         Issuer = "BlueDragon.DuneLight",
@@ -208,7 +208,12 @@ public class MultiSegmentHttpContractTests : IClassFixture<MultiSegmentHttpContr
         return new JwtService(Jwt).GenerateToken(userId, $"{userId:N}@http.test", w.OrganizationId, "Member");
     }
 
-    private async Task<(HttpStatusCode Status, JsonElement Body)> Send(HttpMethod method, string url, string token, object body = null, string rawBody = null)
+    private Task<(HttpStatusCode Status, JsonElement Body)> Send(HttpMethod method, string url, string token, object body = null, string rawBody = null) =>
+        Send(_http, method, url, token, body, rawBody);
+
+    /// <summary>Shared by the M1F group contract tests (same host, same envelope reading).</summary>
+    internal static async Task<(HttpStatusCode Status, JsonElement Body)> Send(
+        HttpClient http, HttpMethod method, string url, string token, object body = null, string rawBody = null)
     {
         using HttpRequestMessage request = new(method, url);
         if (token != null)
@@ -218,13 +223,13 @@ public class MultiSegmentHttpContractTests : IClassFixture<MultiSegmentHttpContr
         else if (body != null)
             request.Content = new StringContent(JsonSerializer.Serialize(body, new JsonSerializerOptions(JsonSerializerDefaults.Web)), Encoding.UTF8, "application/json");
 
-        using HttpResponseMessage response = await _http.SendAsync(request);
+        using HttpResponseMessage response = await http.SendAsync(request);
         string text = await response.Content.ReadAsStringAsync();
         JsonElement json = string.IsNullOrEmpty(text) ? default : JsonDocument.Parse(text).RootElement.Clone();
         return (response.StatusCode, json);
     }
 
-    private static void AssertError(HttpStatusCode expectedStatus, string expectedCode, (HttpStatusCode Status, JsonElement Body) response)
+    internal static void AssertError(HttpStatusCode expectedStatus, string expectedCode, (HttpStatusCode Status, JsonElement Body) response)
     {
         Assert.Equal(expectedStatus, response.Status);
         Assert.True(response.Body.ValueKind == JsonValueKind.Object && response.Body.TryGetProperty("error", out _),

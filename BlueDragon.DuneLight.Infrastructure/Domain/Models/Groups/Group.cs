@@ -13,6 +13,10 @@ namespace BlueDragon.DuneLight.Infrastructure.Domain.Models.Groups;
 /// termin i može se mijenjati po pojedinom terminu (zamjene) bez diranja grupe. Bez pravog brisanja
 /// — samo deaktivacija (IsActive); deaktivacija ne dira već generirane termine, zaustavlja samo
 /// buduće generiranje.
+///
+/// Phase M1F: usluga, trajanje, prostorija i kapacitet NISU svojstva grupe nego njezinih predložaka segmenata
+/// (<see cref="SegmentTemplates"/>). Grupa zadržava kalendar (slotovi = sidro occurrencea), poslovnicu, trenera (pravilo
+/// osoblja: svaki generirani segment nasljeđuje istog trenera, najviše jedan zaposlenik po segmentu) i članove.
 /// </summary>
 [Table("groups")]
 public class Group
@@ -28,22 +32,12 @@ public class Group
     [Column("name")]
     public string Name { get; set; }
 
-    [Column("service_id")]
-    public Guid ServiceId { get; set; }
-
     [Column("company_id")]
     public Guid CompanyId { get; set; }
-
-    [Column("capacity")]
-    public int Capacity { get; set; }
 
     /// <summary>Prijedlog trenera za generirane termine. Smije biti prazan (ručna dodjela po terminu).</summary>
     [Column("default_trainer_id")]
     public Guid? DefaultTrainerId { get; set; }
-
-    /// <summary>Prijedlog prostorije za generirane termine, isti obrazac kao DefaultTrainerId. Smije biti prazan.</summary>
-    [Column("default_room_id")]
-    public Guid? DefaultRoomId { get; set; }
 
     [Column("is_active")]
     public bool IsActive { get; set; }
@@ -63,10 +57,12 @@ public class Group
     [Column("updated_by")]
     public Guid? UpdatedBy { get; set; }
 
-    public Service Service { get; set; }
     public Company Company { get; set; }
     public Employee DefaultTrainer { get; set; }
-    public Room DefaultRoom { get; set; }
     public List<GroupSlot> Slots { get; set; } = new();
+
+    /// <summary>Phase M1F — izvršna definicija grupe: svaki predložak generira točno jedan segment occurrencea (usluga,
+    /// pomak od sidra, trajanje, prostorija, resursi, MEKI kapacitet). Barem jedan.</summary>
+    public List<GroupSegmentTemplate> SegmentTemplates { get; set; } = new();
     public List<GroupMember> Members { get; set; } = new();
 }

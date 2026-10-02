@@ -10,7 +10,7 @@ namespace BlueDragon.DuneLight.Infrastructure.Utils;
 
 /// <summary>
 /// Pomoćnici nad JEDNIM segmentom (izvršnom jedinicom). Phase M1B: termin nema "izvršni okvir" — više nema odabira
-/// "jedinog" segmenta ovdje (legacy endpointi: <see cref="LegacySingleSegment"/>; grupe: <see cref="SingleGroupSegment"/>).
+/// "jedinog" segmenta ovdje (legacy endpointi: <see cref="LegacySingleSegment"/>; grupe: <see cref="GroupOccurrenceSegments"/>).
 /// </summary>
 public static class AppointmentSegments
 {
@@ -64,21 +64,30 @@ public static class LegacySingleSegment
 }
 
 /// <summary>
-/// Phase M1E — GRUPNI proizvod je (do GroupSegmentTemplates, M1F) namjerno jednosegmentan: generirani occurrence ima točno
-/// jedan segment. Grupne operacije (AddMember, lista čekanja, gost na check-inu, close-out, Group.Capacity) ga razrješavaju
-/// ovdje. Samo za Form=Group termine; drugi oblik segmenata je integritetna greška. Ne koristiti u generičkom kodu termina.
+/// Phase M1F — razrješavanje SEGMENTA grupnog occurrencea (occurrence ima po jedan segment za svaki predložak grupe).
+/// Ciljne operacije navode SegmentId; legacy operacija bez selektora smije razriješiti segment SAMO kad occurrence ima
+/// točno jedan segment (jednopredloška grupa — kompatibilnost). Za višesegmentni occurrence bez selektora: poslovna greška
+/// SEGMENT_SELECTION_REQUIRED — nikad "prvi" segment niti "svi". Samo za Form=Group termine.
 /// </summary>
-public static class SingleGroupSegment
+public static class GroupOccurrenceSegments
 {
-    public static AppointmentSegment Of(Appointment appointment)
+    public static AppointmentSegment Resolve(Appointment appointment, Guid? segmentId)
     {
         ArgumentNullException.ThrowIfNull(appointment);
         if (appointment.Form != AppointmentForm.Group)
             throw new InvalidAppointmentSegmentStateException($"Termin {appointment.Id} nije grupni occurrence.");
-        if (appointment.Segments.Count != 1)
-            throw new InvalidAppointmentSegmentStateException(
-                $"Grupni occurrence {appointment.Id} ima {appointment.Segments.Count} segmenata — grupe su jednosegmentne do GroupSegmentTemplates.");
-        return appointment.Segments[0];
+
+        if (segmentId.HasValue)
+            return appointment.Segments.SingleOrDefault(s => s.Id == segmentId.Value)
+                   ?? throw new NotFoundAppException("Segment", segmentId.Value);
+
+        return appointment.Segments.Count switch
+        {
+            1 => appointment.Segments[0],
+            0 => throw new InvalidAppointmentSegmentStateException($"Grupni occurrence {appointment.Id} nema segment (ili nisu učitani)."),
+            _ => throw new BusinessRuleException(ErrorCodes.SegmentSelectionRequired,
+                "Grupni termin ima više segmenata — navedite segment (SegmentId).")
+        };
     }
 }
 

@@ -167,7 +167,10 @@ public class GroupCapacityCharacterizationTests
         Assert.Equal(BookingStatus.Cancelled, b.Status);
         Assert.Equal(1, b.StatusVersion);
         Assert.Equal("Klijent uklonjen iz grupe", b.CancellationReason);
-        Assert.Null(b.IsLateCancellation); // classification is only set by BookingService.SetStatus
+        // CHANGED in M1F (intentional fix of the old pin, which left lateness empty): every participation cancelled by a member
+        // removal is classified from ITS OWN segment start via the central BookingCancellationPolicy — 2031 is far outside
+        // the default cutoff, so: not late.
+        Assert.False(b.IsLateCancellation);
         AppointmentAuditLog audit = Assert.Single(await w.LoadAuditLog(occurrence.Id.Value), l => l.ChangeType == "BookingStatus");
         Assert.Equal("Confirmed", audit.OldValue);
         Assert.Equal("Cancelled", audit.NewValue);

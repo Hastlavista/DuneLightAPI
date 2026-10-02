@@ -76,6 +76,9 @@ public class DatabaseContext : DbContext
     public DbSet<GroupMember> GroupMembers { get; set; }
     public DbSet<GroupAuditLog> GroupAuditLog { get; set; }
     public DbSet<WaitlistEntry> WaitlistEntries { get; set; }
+    public DbSet<GroupSegmentTemplate> GroupSegmentTemplates { get; set; }
+    public DbSet<GroupSegmentTemplateResource> GroupSegmentTemplateResources { get; set; }
+    public DbSet<GroupMemberSegmentTemplate> GroupMemberSegmentTemplates { get; set; }
 
     public DbSet<RosterType> RosterTypes { get; set; }
     public DbSet<RosterEntry> RosterEntries { get; set; }
@@ -464,6 +467,11 @@ public class DatabaseContext : DbContext
             .WithMany()
             .HasForeignKey(s => s.RoomId)
             .OnDelete(DeleteBehavior.Restrict);
+        modelBuilder.Entity<AppointmentSegment>()
+            .HasOne(s => s.GroupSegmentTemplate)
+            .WithMany()
+            .HasForeignKey(s => s.GroupSegmentTemplateId)
+            .OnDelete(DeleteBehavior.Restrict);
 
         modelBuilder.Entity<AppointmentSegmentEmployee>().HasKey(e => new { e.AppointmentSegmentId, e.EmployeeId });
         modelBuilder.Entity<AppointmentSegmentEmployee>()
@@ -834,11 +842,6 @@ public class DatabaseContext : DbContext
         modelBuilder.Entity<Group>().HasKey(g => g.Id);
         modelBuilder.Entity<Group>().HasIndex(g => g.OrganizationId);
         modelBuilder.Entity<Group>()
-            .HasOne(g => g.Service)
-            .WithMany()
-            .HasForeignKey(g => g.ServiceId)
-            .OnDelete(DeleteBehavior.Restrict);
-        modelBuilder.Entity<Group>()
             .HasOne(g => g.Company)
             .WithMany()
             .HasForeignKey(g => g.CompanyId)
@@ -848,10 +851,48 @@ public class DatabaseContext : DbContext
             .WithMany()
             .HasForeignKey(g => g.DefaultTrainerId)
             .OnDelete(DeleteBehavior.Restrict);
-        modelBuilder.Entity<Group>()
-            .HasOne(g => g.DefaultRoom)
+
+        // Phase M1F — predlošci segmenata (CHECK-ovi, kompozitni FK-ovi odabira i jedinstvenosti su u migraciji
+        // Migration_2026_10_20_GroupSegmentTemplates).
+        modelBuilder.Entity<GroupSegmentTemplate>().HasKey(t => t.Id);
+        modelBuilder.Entity<GroupSegmentTemplate>()
+            .HasOne(t => t.Group)
+            .WithMany(g => g.SegmentTemplates)
+            .HasForeignKey(t => t.GroupId)
+            .OnDelete(DeleteBehavior.Cascade);
+        modelBuilder.Entity<GroupSegmentTemplate>()
+            .HasOne(t => t.Service)
             .WithMany()
-            .HasForeignKey(g => g.DefaultRoomId)
+            .HasForeignKey(t => t.ServiceId)
+            .OnDelete(DeleteBehavior.Restrict);
+        modelBuilder.Entity<GroupSegmentTemplate>()
+            .HasOne(t => t.Room)
+            .WithMany()
+            .HasForeignKey(t => t.RoomId)
+            .OnDelete(DeleteBehavior.Restrict);
+
+        modelBuilder.Entity<GroupSegmentTemplateResource>().HasKey(r => new { r.GroupSegmentTemplateId, r.ResourceId });
+        modelBuilder.Entity<GroupSegmentTemplateResource>()
+            .HasOne(r => r.Template)
+            .WithMany(t => t.Resources)
+            .HasForeignKey(r => r.GroupSegmentTemplateId)
+            .OnDelete(DeleteBehavior.Cascade);
+        modelBuilder.Entity<GroupSegmentTemplateResource>()
+            .HasOne(r => r.Resource)
+            .WithMany()
+            .HasForeignKey(r => r.ResourceId)
+            .OnDelete(DeleteBehavior.Restrict);
+
+        modelBuilder.Entity<GroupMemberSegmentTemplate>().HasKey(x => new { x.GroupMemberId, x.GroupSegmentTemplateId });
+        modelBuilder.Entity<GroupMemberSegmentTemplate>()
+            .HasOne(x => x.Member)
+            .WithMany(m => m.SegmentTemplates)
+            .HasForeignKey(x => x.GroupMemberId)
+            .OnDelete(DeleteBehavior.Cascade);
+        modelBuilder.Entity<GroupMemberSegmentTemplate>()
+            .HasOne(x => x.Template)
+            .WithMany()
+            .HasForeignKey(x => x.GroupSegmentTemplateId)
             .OnDelete(DeleteBehavior.Restrict);
 
         modelBuilder.Entity<GroupSlot>().HasKey(gs => gs.Id);
@@ -887,9 +928,14 @@ public class DatabaseContext : DbContext
         modelBuilder.Entity<WaitlistEntry>().HasKey(w => w.Id);
         modelBuilder.Entity<WaitlistEntry>().HasIndex(w => new { w.AppointmentId, w.Status, w.JoinedAt });
         modelBuilder.Entity<WaitlistEntry>()
-            .HasIndex(w => new { w.AppointmentId, w.ClientId })
+            .HasIndex(w => new { w.AppointmentSegmentId, w.ClientId })
             .IsUnique()
             .HasFilter("status = 'Waiting'");
+        modelBuilder.Entity<WaitlistEntry>()
+            .HasOne(w => w.Segment)
+            .WithMany()
+            .HasForeignKey(w => w.AppointmentSegmentId)
+            .OnDelete(DeleteBehavior.Cascade);
         modelBuilder.Entity<WaitlistEntry>()
             .Property(w => w.Status)
             .HasConversion(v => v.ToString(), v => Enum.Parse<WaitlistEntryStatus>(v));

@@ -556,6 +556,7 @@ public partial class AppointmentService : IAppointmentService
     public async Task<AppointmentDto> CompleteGroupAppointment(Guid organizationId, Guid userId, bool hasFullScope, Guid id)
     {
         Appointment appointment;
+        bool commissionSkipped = false;
 
         await using (IUnitOfWork uow = await _unitOfWorkFactory.Begin())
         {
@@ -573,9 +574,10 @@ public partial class AppointmentService : IAppointmentService
             if (appointment.Status == AppointmentStatus.Cancelled)
                 throw new BusinessRuleException(ErrorCodes.AppointmentNotMovable, "Otkazan termin se ne može označiti kao odrađen.");
 
-            // Grupni close-out: grupe su jednosegmentne (M1F) — vlasništvo slijedi segment occurrencea (trener).
+            // Phase M1F: close-out zatvara CIJELU sesiju (sve segmente occurrencea) — own-opseg mora posjedovati svaki segment
+            // (grupni trener je dodijeljen svim segmentima occurrencea).
             await AppointmentOwnership.EnsureCallerOwnsSegments(
-                _employeeHandler, organizationId, userId, hasFullScope, new[] { SingleGroupSegment.Of(appointment) }, NotOwnerMessage);
+                _employeeHandler, organizationId, userId, hasFullScope, appointment.Segments, NotOwnerMessage);
 
             if (appointment.ClosedOutAt == null)
             {
@@ -601,11 +603,16 @@ public partial class AppointmentService : IAppointmentService
                 await _waitlistPromotionService.ExpireWaitingForAppointment(
                     uow, organizationId, id, userId, WaitlistExpiredReasons.AppointmentCompleted);
 
-                // Provizija se zarađuje PO CIJELOM odrađenom terminu, ne po sudioniku — vidi CommissionService domensku
-                // napomenu (spec section 14/27/28). Jednom: zaštićena close-out činjenicom iznad (pod lockom termina).
-                // Grupni occurrence do GroupSegmentTemplates ima jedan segment — provizija po sesiji čita NJEGOV kontekst.
-                await _commissionLedgerService.GenerateForGroupServiceCompletion(
-                    uow, organizationId, ExecutionContextResolver.ForSegment(appointment, SingleGroupSegment.Of(appointment)));
+                // Provizija se zarađuje PO CIJELOM odrađenom terminu (sesiji), ne po sudioniku: korisnik = zaposlenik segmenta,
+                // pravilo = (zaposlenik, USLUGA sesije), Fixed. Jednom: zaštićena close-out činjenicom iznad (pod lockom termina).
+                // Phase M1F: postojeće pravilo je jednoznačno SAMO za jednosegmentni occurrence (jedna usluga). Za višesegmentni
+                // occurrence (više usluga) NE izmišlja se atribucija (ni "prvi" segment, ni zbroj, ni prosjek) — provizija se
+                // ne stvara i close-out vraća upozorenje (dug faze provizija).
+                if (appointment.Segments.Count == 1)
+                    await _commissionLedgerService.GenerateForGroupServiceCompletion(
+                        uow, organizationId, ExecutionContextResolver.ForSegment(appointment, appointment.Segments[0]));
+                else
+                    commissionSkipped = true;
             }
 
             // Status se ne postavlja — izvodi se (no-op kad je već usklađen).
@@ -624,6 +631,8 @@ public partial class AppointmentService : IAppointmentService
         if (unresolvedClientIds.Count > 0)
             dto.Warnings.Add(new WarningDto(
                 WarningCodes.GroupAppointmentUnresolvedBookings, new WarningUnresolvedBookingsDetails { ClientIds = unresolvedClientIds }));
+        if (commissionSkipped)
+            dto.Warnings.Add(new WarningDto(WarningCodes.GroupCommissionNotSupportedForMultiSegment, null));
 
         return dto;
     }

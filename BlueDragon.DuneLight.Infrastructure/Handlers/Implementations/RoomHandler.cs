@@ -110,9 +110,10 @@ public class RoomHandler : IRoomHandler
     {
         await using DatabaseContext context = DatabaseContext.GenerateContext(_databaseSettings.ConnectionString);
 
-        IQueryable<int> groups = context.Groups
-            .Where(g => g.OrganizationId == organizationId && g.DefaultRoomId == id)
-            .Select(g => 1);
+        // Phase M1F: prostorija grupe živi na njezinim predlošcima segmenata.
+        IQueryable<int> groups = context.GroupSegmentTemplates
+            .Where(t => t.Group.OrganizationId == organizationId && t.RoomId == id)
+            .Select(t => 1);
 
         // Phase D3A: prostorija termina živi na njegovom segmentu (Restrict FK).
         IQueryable<int> segments = context.AppointmentSegments

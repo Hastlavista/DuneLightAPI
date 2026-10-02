@@ -141,7 +141,9 @@ public class OperationalDashboardService : IOperationalDashboardService
             // Phase M0: grupni sažetak broji SUDJELOVANJA (izvršne jedinice) termina, ne Bookinge.
             List<BookingSegmentParticipation> participations = appointment.Bookings.SelectMany(b => b.Participations).ToList();
             int confirmedCount = participations.Count(p => p.Status == ParticipationStatus.Confirmed);
-            int capacity = appointment.Group?.Capacity ?? 0;
+            // Phase M1F: meki kapacitet je po segmentu (predlošku); sažetak occurrencea zbraja kapacitete segmenata (za
+            // jednosegmentni occurrence = kapacitet jedinog predloška, kao prije).
+            int capacity = appointment.Segments.Sum(s => s.GroupSegmentTemplate?.Capacity ?? 0);
 
             dto.GroupSummary = new DashboardGroupSummaryDto
             {

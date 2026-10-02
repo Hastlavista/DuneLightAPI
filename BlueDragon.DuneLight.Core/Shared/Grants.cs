@@ -49,6 +49,8 @@ public static class Grants
 
     public const string GroupsView = "groups.view";
     public const string GroupsManage = "groups.manage";
+    /// <summary>Phase M1F — eksplicitno prekoračenje MEKOG kapaciteta segmenta grupe (zahtjev mora tražiti override).</summary>
+    public const string GroupsCapacityOverride = "groups.capacity.override";
     public const string GroupsAttendanceView = "groups.attendance.view";
     public const string GroupsAttendanceOwn = "groups.attendance.own";
     public const string GroupsAttendanceAll = "groups.attendance.all";
@@ -150,6 +152,7 @@ public static class Grants
 
         new(GroupsView, "groups", "Pregled grupa i članstava (transparentno)."),
         new(GroupsManage, "groups", "Kreiranje/uređivanje grupa, slotova, članova, generiranje termina."),
+        new(GroupsCapacityOverride, "groups", "Eksplicitno prekoračenje poslovnog kapaciteta segmenta grupe (fizički kapacitet prostorije/resursa i dalje vrijedi)."),
         new(GroupsAttendanceView, "groups", "Pregled prisutnosti na grupnim terminima."),
         new(GroupsAttendanceOwn, "groups", "Čekiranje prisutnosti na vlastitim grupnim terminima."),
         new(GroupsAttendanceAll, "groups", "Čekiranje prisutnosti na bilo čijim grupnim terminima."),

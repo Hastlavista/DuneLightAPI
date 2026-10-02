@@ -327,6 +327,7 @@ public class AppointmentHandler : IAppointmentHandler
         await using DatabaseContext context = DatabaseContext.GenerateContext(_databaseSettings.ConnectionString);
         return await IncludeGraph(context.Appointments)
             .Include(a => a.Group).ThenInclude(g => g.Members.Where(m => m.IsActive))
+            .Include(a => a.Segments).ThenInclude(seg => seg.GroupSegmentTemplate)
             .Include(a => a.Bookings).ThenInclude(b => b.Participations).ThenInclude(p => p.CheckoutItems).ThenInclude(i => i.Allocations).ThenInclude(alloc => alloc.Payment)
             .AsSplitQuery()
             .Where(a => a.OrganizationId == organizationId && a.CompanyId == companyId &&
@@ -441,6 +442,7 @@ public class AppointmentHandler : IAppointmentHandler
             .FromSqlInterpolated($"SELECT * FROM dunelight.appointments WHERE organization_id = {organizationId} AND id = {appointmentId} FOR UPDATE")
             .Include(a => a.Segments).ThenInclude(s => s.Employees)
             .Include(a => a.Group)
+            .AsSplitQuery()
             .SingleOrDefaultAsync();
     }
 

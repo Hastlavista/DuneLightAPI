@@ -150,6 +150,18 @@ Legend — **Test**: the characterization test(s) that pin it. **Later**: whethe
   Test: `AppointmentCancel_CancelsEveryConfirmedBooking_AndClassifiesLatenessPerParticipation`,
   `MultiSegmentAppointmentTests.AppointmentCancel_*`.
 
+* **F-21 Group RemoveMember did not classify lateness — FIXED in M1F (intentional).** Old behaviour: participations cancelled by
+  removing a group member kept `IsLateCancellation` empty. Target: every cancelled participation is classified from its own
+  segment's `PlannedStart` through the central `BookingCancellationPolicy` (one removal can yield late A and on-time C).
+  Test: `GroupCapacityCharacterizationTests.RemoveMember_*`, `MultiSegmentGroupTests.RemoveMember_*`.
+* **F-22 Group capacity — CHANGED in M1F (intentional).** Old: one hard `Group.Capacity` for the whole occurrence; generation
+  refused to run when the roster exceeded it. Target: capacity is a SOFT business seat limit per `GroupSegmentTemplate`
+  (seat = Confirmed participation on that segment; membership = active members selecting the template); exceeding it needs an
+  explicit `OverrideCapacity` plus the raw grant `groups.capacity.override` (403 without it). Room/Resource/Employee/Client
+  rules stay hard and are never overridden. Generation reproduces existing membership (no member is dropped).
+  Test: `GroupOccurrenceGenerationCharacterizationTests.Generate_WhenTheGroupHasMoreActiveMembersThanItsCapacity_ReproducesTheMembership`,
+  `MultiSegmentGroupTests.SoftCapacity_*`, `HardRoomCapacity_*`.
+
 ### Individual vs Group asymmetries (all pinned, none normalized)
 
 * **F-10 Corrections.** Individual Completed→Confirmed keeps `Amount`, refuses when a manual POS payment exists, reverses the

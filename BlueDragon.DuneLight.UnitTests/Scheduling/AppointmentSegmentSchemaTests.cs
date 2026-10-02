@@ -62,6 +62,7 @@ public class AppointmentSegmentSchemaTests
             ["room_id"] = ("uuid", "YES"),
             ["created_at"] = ("timestamp with time zone", "NO"),
             ["updated_at"] = ("timestamp with time zone", "YES"),
+            ["group_segment_template_id"] = ("uuid", "YES"), // M1F: which group template generated the segment
         }, await Columns("appointment_segments")); // no company_id: derived through the appointment
 
         Assert.Equal(new Dictionary<string, string>
@@ -71,6 +72,7 @@ public class AppointmentSegmentSchemaTests
             ["fk_appointment_segments_appointment_id"] = "FOREIGN KEY (appointment_id) REFERENCES dunelight.appointments(id) ON DELETE CASCADE",
             ["fk_appointment_segments_service_id"] = "FOREIGN KEY (service_id) REFERENCES dunelight.services(id)",
             ["fk_appointment_segments_room_id"] = "FOREIGN KEY (room_id) REFERENCES dunelight.rooms(id)",
+            ["fk_appointment_segments_group_segment_template_id"] = "FOREIGN KEY (group_segment_template_id) REFERENCES dunelight.group_segment_templates(id) ON DELETE RESTRICT",
             ["ck_appointment_segments_planned_range"] = "CHECK ((planned_end > planned_start))",
             ["ck_appointment_segments_actual_range"] = "CHECK (((actual_end IS NULL) OR ((actual_start IS NOT NULL) AND (actual_end >= actual_start))))",
         }, await Constraints("appointment_segments"));
@@ -79,8 +81,11 @@ public class AppointmentSegmentSchemaTests
         Assert.Equal(new[]
         {
             "ix_appointment_segments_appointment_id", "ix_appointment_segments_organization_planned",
-            "ix_appointment_segments_room_planned", "ix_appointment_segments_service_id", "pk_appointment_segments"
+            "ix_appointment_segments_room_planned", "ix_appointment_segments_service_id", "pk_appointment_segments",
+            "ux_appointment_segments_appointment_template"
         }, indexes.Keys.OrderBy(k => k).ToArray());
+        Assert.EndsWith("(appointment_id, group_segment_template_id) WHERE (group_segment_template_id IS NOT NULL)",
+            indexes["ux_appointment_segments_appointment_template"]);
         Assert.EndsWith("(organization_id, planned_start, planned_end)", indexes["ix_appointment_segments_organization_planned"]);
         Assert.EndsWith("(room_id, planned_start, planned_end)", indexes["ix_appointment_segments_room_planned"]);
         Assert.EndsWith("(appointment_id)", indexes["ix_appointment_segments_appointment_id"]);

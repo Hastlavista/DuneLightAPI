@@ -29,6 +29,11 @@ public class WaitlistEntry
     [Column("appointment_id")]
     public Guid AppointmentId { get; set; }
 
+    /// <summary>Phase M1F — KONKRETAN segment occurrencea za koji klijent čeka (klijent smije čekati na A dok već
+    /// sudjeluje u B istog occurrencea). Jedinstveno: jedan Waiting redak po (segment, klijent).</summary>
+    [Column("appointment_segment_id")]
+    public Guid AppointmentSegmentId { get; set; }
+
     [Column("client_id")]
     public Guid ClientId { get; set; }
 
@@ -62,6 +67,7 @@ public class WaitlistEntry
     public DateTimeOffset? UpdatedAt { get; set; }
 
     public Appointment Appointment { get; set; }
+    public AppointmentSegment Segment { get; set; }
     public Client Client { get; set; }
     public Booking PromotedBooking { get; set; }
 }

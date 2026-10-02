@@ -17,10 +17,10 @@ public interface IWaitlistHandler
 
     /// <summary>Trenutno AKTIVAN (Waiting) redak za (appointment, client), ili null — koristi se za
     /// eligibility provjeru kod Join (ALREADY_WAITLISTED).</summary>
-    Task<WaitlistEntry> GetActiveForClient(Guid organizationId, Guid appointmentId, Guid clientId);
+    Task<WaitlistEntry> GetActiveForClient(Guid organizationId, Guid appointmentSegmentId, Guid clientId);
 
     /// <summary>Najnoviji redak (bilo kojeg statusa) za (appointment, client) — koristi se za idempotentan Cancel.</summary>
-    Task<WaitlistEntry> GetMostRecentForClient(Guid organizationId, Guid appointmentId, Guid clientId);
+    Task<WaitlistEntry> GetMostRecentForClient(Guid organizationId, Guid appointmentSegmentId, Guid clientId);
 
     /// <summary>Ima li klijent ijedan TRENUTNO aktivan (Waiting) redak, na bilo kojem terminu — koristi
     /// ClientService.Anonymize (vidi spec section 57).</summary>

@@ -22,6 +22,7 @@ public interface IWaitlistService
     /// Vlasništvo: isto pravilo kao IBookingService (trener samo na svojim terminima, osim uz hasFullScope).</summary>
     Task<WaitlistEntryDto> Join(Guid organizationId, Guid userId, bool hasFullScope, Guid appointmentId, WaitlistJoinRequest request);
 
-    /// <summary>Ručno uklanjanje (Waiting -&gt; Cancelled) — idempotentno, ne diže grešku za već terminalan redak.</summary>
-    Task<WaitlistEntryDto> Cancel(Guid organizationId, Guid userId, bool hasFullScope, Guid appointmentId, Guid clientId);
+    /// <summary>Ručno uklanjanje (Waiting -&gt; Cancelled) — idempotentno, ne diže grešku za već terminalan redak.
+    /// Phase M1F: <paramref name="segmentId"/> = segment occurrencea (obavezan za višesegmentni occurrence).</summary>
+    Task<WaitlistEntryDto> Cancel(Guid organizationId, Guid userId, bool hasFullScope, Guid appointmentId, Guid clientId, Guid? segmentId = null);
 }

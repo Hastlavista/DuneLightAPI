@@ -88,6 +88,12 @@ public class ResourceAuthorizationTests
         .Select(g => new CapabilityGrantRoleEntry(g.GrantKey, Enum.Parse<CapabilityGrantRole>(g.Role)))
         .ToArray();
 
+    private static TemplateSelectionInput GroupCapacityOverrideSelection() => new(
+        GroupCapacityOverrideCapabilitySeedData.CapabilityId(), GroupCapacityOverrideCapabilitySeedData.CapabilityKey, CapabilityScopeModel.None,
+        CapabilitySelectedScope.On,
+        GroupCapacityOverrideCapabilitySeedData.Grants
+            .Select(g => new CapabilityGrantRoleEntry(g.GrantKey, Enum.Parse<CapabilityGrantRole>(g.Role))).ToArray());
+
     private static TemplateSelectionInput ResourceSelection(CapabilitySelectedScope scope) => new(
         ResourcesCapabilitySeedData.CapabilityId(), ResourcesCapabilitySeedData.CapabilityKey, CapabilityScopeModel.ViewManage, scope, ResourceCapabilityGrants);
 
@@ -121,12 +127,14 @@ public class ResourceAuthorizationTests
     }
 
     [Fact]
-    public void AdminV4_MaterializesTheWholeGrantCatalog()
+    public void AdminLatest_MaterializesTheWholeGrantCatalog()
     {
-        List<TemplateSelectionInput> v4 = AdminV3Selections();
-        v4.Add(ResourceSelection(CapabilitySelectedScope.Manage));
+        // CHANGED in M1F: the latest Admin template is v5 = v4 + groups.capacity.override (On).
+        List<TemplateSelectionInput> v5 = AdminV3Selections();
+        v5.Add(ResourceSelection(CapabilitySelectedScope.Manage));
+        v5.Add(GroupCapacityOverrideSelection());
 
-        HashSet<string> grants = TestSupport.MaterializeAll(v4);
+        HashSet<string> grants = TestSupport.MaterializeAll(v5);
         grants.UnionWith(CapabilityV2SeedData.Templates.Single(t => t.Key == "admin").CompatibilityExtraGrants);
 
         Assert.Equal(Grants.Catalog.Select(g => g.Key).ToHashSet(), grants);
@@ -171,7 +179,7 @@ public class ResourceAuthorizationTests
     #region Reference data in the database
 
     [Fact]
-    public async Task Database_HasTheCapability_AndAdminV4IsTheLatestAdminTemplate()
+    public async Task Database_HasTheCapability_AndAdminV5IsTheLatestAdminTemplate()
     {
         await using DatabaseContext db = DatabaseContext.GenerateContext(LocalConnectionString);
 
@@ -194,15 +202,17 @@ public class ResourceAuthorizationTests
             .OrderByDescending(t => t.Version)
             .Select(t => new { t.Id, t.Version })
             .FirstAsync();
-        Assert.Equal(4, latestAdmin.Version);
-        Assert.Equal(ResourcesCapabilitySeedData.AdminTemplateId(), latestAdmin.Id);
+        // CHANGED in M1F: v5 (v4 + groups.capacity.override) is the latest Admin template; it still carries the resource capability.
+        Assert.Equal(5, latestAdmin.Version);
+        Assert.Equal(GroupCapacityOverrideCapabilitySeedData.AdminTemplateId(), latestAdmin.Id);
 
         List<Guid?> v4Caps = await db.DefaultRoleTemplateCapabilities
             .Where(c => c.DefaultRoleTemplateId == latestAdmin.Id)
             .Select(c => (Guid?)c.CapabilityDefinitionId)
             .ToListAsync();
-        Assert.Equal(AdminV3Selections().Count + 1, v4Caps.Count);
+        Assert.Equal(AdminV3Selections().Count + 2, v4Caps.Count);
         Assert.Contains(capability.Id, v4Caps);
+        Assert.Contains(GroupCapacityOverrideCapabilitySeedData.CapabilityId(), v4Caps);
 
         // Trener/Recepcija templates were not re-published.
         Assert.Equal(2, await db.DefaultRoleTemplates.Where(t => t.Key == "trener").MaxAsync(t => t.Version));

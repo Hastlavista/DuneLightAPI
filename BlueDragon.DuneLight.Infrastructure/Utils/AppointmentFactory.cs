@@ -15,7 +15,8 @@ public sealed record SegmentPlan(
     IReadOnlyList<Guid> EmployeeIds,
     Guid? RoomId,
     IReadOnlyList<ParticipantPlan> Participants,
-    IReadOnlyList<SegmentResourcePlan> Resources = null);
+    IReadOnlyList<SegmentResourcePlan> Resources = null,
+    Guid? GroupSegmentTemplateId = null);
 
 /// <summary>Phase M1D: resurs koji segment zauzima, u količini QuantityRequired (&gt; 0).</summary>
 public sealed record SegmentResourcePlan(Guid ResourceId, int QuantityRequired);
@@ -46,15 +47,22 @@ public static class AppointmentFactory
         return appointment;
     }
 
-    /// <summary>Generirani occurrence grupe — bez napomene, veza na Group/GroupSlot. Do GroupSegmentTemplates grupa generira
-    /// JEDAN segment (sudionici = aktivni članovi; može ih biti nula — valjan prazan occurrence sa segmentom).</summary>
+    /// <summary>Generirani occurrence grupe — bez napomene, veza na Group/GroupSlot. Phase M1F: JEDAN termin s po jednim
+    /// segmentom za svaki predložak grupe (plan nosi GroupSegmentTemplateId); sudionici segmenta su članovi koji su ODABRALI
+    /// taj predložak — klijent dobiva jedan Booking i sudjelovanje samo u odabranim segmentima (segment smije biti bez
+    /// sudionika).</summary>
     public static Appointment CreateGroupOccurrence(
-        Guid organizationId, Guid companyId, Guid groupId, Guid groupSlotId, Guid createdBy, DateTimeOffset createdAt, SegmentPlan segment)
+        Guid organizationId, Guid companyId, Guid groupId, Guid groupSlotId, Guid createdBy, DateTimeOffset createdAt,
+        IReadOnlyList<SegmentPlan> segments)
     {
+        if (segments.Any(s => !s.GroupSegmentTemplateId.HasValue) ||
+            segments.Select(s => s.GroupSegmentTemplateId).Distinct().Count() != segments.Count)
+            throw new InvalidAppointmentSegmentStateException("Svaki segment grupnog occurrencea nastaje iz jednog, različitog predloška.");
+
         Appointment appointment = NewAppointment(organizationId, companyId, AppointmentForm.Group, createdBy, createdAt);
         appointment.GroupId = groupId;
         appointment.GroupSlotId = groupSlotId;
-        Populate(appointment, new[] { segment }, ParticipationStatus.Confirmed, createdAt);
+        Populate(appointment, segments, ParticipationStatus.Confirmed, createdAt);
         return appointment;
     }
 
@@ -138,6 +146,7 @@ public static class AppointmentFactory
             AppointmentId = appointment.Id.GetValueOrDefault(),
             ServiceId = plan.ServiceId,
             RoomId = plan.RoomId,
+            GroupSegmentTemplateId = plan.GroupSegmentTemplateId,
             PlannedStart = plan.PlannedStart,
             PlannedEnd = plan.PlannedEnd,
             CreatedAt = createdAt

@@ -316,12 +316,13 @@ public class AppointmentsController : ControllerBase
             this.CurrentOrganizationId(), this.CurrentUserId(), this.HasGrant(Grants.AppointmentsWriteAll), appointmentId, request));
     }
 
-    /// <summary>Ručno uklanjanje s liste čekanja (Waiting -&gt; Cancelled) — idempotentno.</summary>
+    /// <summary>Ručno uklanjanje s liste čekanja (Waiting -&gt; Cancelled) — idempotentno. Phase M1F: ?segmentId= je obavezan
+    /// za višesegmentni occurrence (lista čekanja je po segmentu).</summary>
     [HttpDelete("{appointmentId:guid}/waitlist/{clientId:guid}")]
     [RequireGrant(Grants.AppointmentsWriteOwn, Grants.AppointmentsWriteAll)]
-    public async Task<ActionResult<WaitlistEntryDto>> CancelWaitlistEntry(Guid appointmentId, Guid clientId)
+    public async Task<ActionResult<WaitlistEntryDto>> CancelWaitlistEntry(Guid appointmentId, Guid clientId, [FromQuery] Guid? segmentId)
     {
         return Ok(await _waitlistService.Cancel(
-            this.CurrentOrganizationId(), this.CurrentUserId(), this.HasGrant(Grants.AppointmentsWriteAll), appointmentId, clientId));
+            this.CurrentOrganizationId(), this.CurrentUserId(), this.HasGrant(Grants.AppointmentsWriteAll), appointmentId, clientId, segmentId));
     }
 }

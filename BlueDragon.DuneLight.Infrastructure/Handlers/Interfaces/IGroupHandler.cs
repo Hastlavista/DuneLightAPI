@@ -33,6 +33,16 @@ public interface IGroupHandler
     Task<GroupMember> GetActiveMember(Guid organizationId, Guid groupId, Guid clientId);
     Task<GroupMember> GetMemberById(Guid organizationId, Guid groupId, Guid memberId);
     Task<int> CountActiveMembers(Guid groupId);
+
+    /// <summary>Phase M1F.</summary>
+    Task<GroupSegmentTemplate> GetTemplateById(Guid organizationId, Guid groupId, Guid templateId);
+
+    /// <summary>Phase M1F — meki kapacitet ČLANSTVA predloška: aktivni članovi (aktivan, neanonimiziran klijent) koji ga biraju.</summary>
+    Task<int> CountActiveMembersSelecting(IUnitOfWork uow, Guid templateId);
+
+    Task<bool> IsTemplateUsedBySegments(Guid templateId);
+    Task<int> GetSegmentTemplateCapacity(Guid templateId);
+    Task<bool> IsTemplateSelectedByActiveMember(Guid templateId);
     Task AddMember(GroupMember member);
 
     /// <summary>Kao <see cref="AddMember(GroupMember)"/>, ali unutar zajedničke transakcije s audit logom — vidi IUnitOfWork.</summary>

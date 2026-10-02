@@ -100,8 +100,11 @@ public class ResourceHandler : IResourceHandler
     public async Task<bool> IsReferenced(Guid organizationId, Guid id)
     {
         await using DatabaseContext context = DatabaseContext.GenerateContext(_databaseSettings.ConnectionString);
+        // Phase M1F: i predložak grupe (FK Restrict) je referenca.
         return await context.AppointmentSegmentResources
-            .AnyAsync(r => r.ResourceId == id && r.Segment.OrganizationId == organizationId);
+                   .AnyAsync(r => r.ResourceId == id && r.Segment.OrganizationId == organizationId)
+               || await context.GroupSegmentTemplateResources
+                   .AnyAsync(r => r.ResourceId == id && r.Template.Group.OrganizationId == organizationId);
     }
 
     private static string Normalize(string name)

@@ -42,22 +42,22 @@ public class WaitlistHandler : IWaitlistHandler
             .ToListAsync();
     }
 
-    public async Task<WaitlistEntry> GetActiveForClient(Guid organizationId, Guid appointmentId, Guid clientId)
+    public async Task<WaitlistEntry> GetActiveForClient(Guid organizationId, Guid appointmentSegmentId, Guid clientId)
     {
         await using DatabaseContext context = DatabaseContext.GenerateContext(_databaseSettings.ConnectionString);
         return await context.WaitlistEntries
             .Include(w => w.Client)
-            .Where(w => w.OrganizationId == organizationId && w.AppointmentId == appointmentId &&
+            .Where(w => w.OrganizationId == organizationId && w.AppointmentSegmentId == appointmentSegmentId &&
                 w.ClientId == clientId && w.Status == WaitlistEntryStatus.Waiting)
             .SingleOrDefaultAsync();
     }
 
-    public async Task<WaitlistEntry> GetMostRecentForClient(Guid organizationId, Guid appointmentId, Guid clientId)
+    public async Task<WaitlistEntry> GetMostRecentForClient(Guid organizationId, Guid appointmentSegmentId, Guid clientId)
     {
         await using DatabaseContext context = DatabaseContext.GenerateContext(_databaseSettings.ConnectionString);
         return await context.WaitlistEntries
             .Include(w => w.Client)
-            .Where(w => w.OrganizationId == organizationId && w.AppointmentId == appointmentId && w.ClientId == clientId)
+            .Where(w => w.OrganizationId == organizationId && w.AppointmentSegmentId == appointmentSegmentId && w.ClientId == clientId)
             .OrderByDescending(w => w.CreatedAt)
             .FirstOrDefaultAsync();
     }

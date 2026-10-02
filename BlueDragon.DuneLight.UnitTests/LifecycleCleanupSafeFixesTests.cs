@@ -172,6 +172,7 @@ public class LifecycleCleanupSafeFixesTests
                     Id = Guid.NewGuid(),
                     OrganizationId = organizationId,
                     AppointmentId = appointmentId,
+                    AppointmentSegmentId = appointment.Segments[0].Id.Value, // M1F: waitlist is per segment
                     ClientId = clientId,
                     Status = WaitlistEntryStatus.Cancelled,
                     JoinedAt = DateTimeOffset.UtcNow.AddDays(-30),

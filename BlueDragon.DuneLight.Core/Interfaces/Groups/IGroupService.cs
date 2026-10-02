@@ -24,6 +24,15 @@ public interface IGroupService
     Task<GroupDto> AddMember(Guid organizationId, Guid userId, Guid groupId, GroupMemberAddRequest request);
     Task<GroupDto> RemoveMember(Guid organizationId, Guid userId, Guid groupId, Guid memberId);
 
+    /// <summary>Phase M1F — nova potpuna selekcija predložaka člana; budući generirani occurrencei se usklađuju (novo
+    /// sudjelovanje za dodane predloške, netaknuto uklonjeno / s poviješću otkazano za uklonjene; jedan Booking po occurrenceu).</summary>
+    Task<GroupDto> ChangeMemberSegmentTemplates(Guid organizationId, Guid userId, Guid groupId, Guid memberId, GroupMemberSegmentTemplatesRequest request);
+
+    /// <summary>Phase M1F — predlošci segmenata. Izmjene vrijede za BUDUĆA generiranja; već generirani segmenti su snapshot.</summary>
+    Task<GroupDto> AddSegmentTemplate(Guid organizationId, Guid userId, Guid groupId, GroupSegmentTemplateRequest request);
+    Task<GroupDto> UpdateSegmentTemplate(Guid organizationId, Guid userId, Guid groupId, Guid templateId, GroupSegmentTemplateRequest request);
+    Task<GroupDto> RemoveSegmentTemplate(Guid organizationId, Guid userId, Guid groupId, Guid templateId);
+
     /// <summary>Idempotentno generira grupne termine za zadani raspon — GroupId=null generira za sve aktivne grupe.</summary>
     Task<GenerateGroupAppointmentsResult> GenerateAppointments(Guid organizationId, Guid userId, GenerateGroupAppointmentsRequest request);
 

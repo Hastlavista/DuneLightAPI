@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
 using BlueDragon.DuneLight.Core.Enums;
@@ -69,10 +70,13 @@ public class GroupActiveMemberCountTests
             Id = groupId,
             OrganizationId = organizationId,
             Name = "Test Group",
-            ServiceId = serviceId,
             CompanyId = companyId,
-            Capacity = 10,
-            IsActive = true
+            IsActive = true,
+            // Phase M1F: usluga i kapacitet žive na predlošku segmenta.
+            SegmentTemplates = new List<GroupSegmentTemplate>
+            {
+                new() { Id = Guid.NewGuid(), GroupId = groupId, ServiceId = serviceId, StartOffsetMinutes = 0, DurationMinutes = 60, Capacity = 10, CreatedAt = DateTimeOffset.UtcNow }
+            }
         });
         await context.SaveChangesAsync();
 
