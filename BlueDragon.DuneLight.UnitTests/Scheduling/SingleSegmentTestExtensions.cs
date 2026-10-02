@@ -9,14 +9,14 @@ namespace BlueDragon.DuneLight.UnitTests.Scheduling;
 /// <summary>
 /// Test-only read convenience for SINGLE-segment characterization tests: the legacy Appointment frame properties no
 /// longer exist (and since M1B neither does the production frame), so these read the values of the appointment's only
-/// segment through the PRODUCTION compatibility resolver (<see cref="SingleSegmentCompatibility.Resolve"/>, which rejects
+/// segment through the PRODUCTION compatibility resolver (<see cref="LegacySingleSegment.Resolve"/>, which rejects
 /// any other segment count). Read-only and in-memory only. Multi-segment tests address segments directly.
 /// </summary>
 public static class SingleSegmentTestExtensions
 {
     extension(Appointment appointment)
     {
-        private AppointmentSegment OnlySegment => SingleSegmentCompatibility.Resolve(appointment);
+        private AppointmentSegment OnlySegment => LegacySingleSegment.Resolve(appointment);
         public DateTimeOffset StartsAt => appointment.OnlySegment.PlannedStart;
         public int DurationMinutes => AppointmentSegments.DurationMinutes(appointment.OnlySegment);
         public Guid ServiceId => appointment.OnlySegment.ServiceId;

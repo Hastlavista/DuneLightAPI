@@ -97,8 +97,7 @@ public class Appointment
     public GroupSlot GroupSlot { get; set; }
     public List<Booking> Bookings { get; set; } = new();
 
-    /// <summary>Izvršni segmenti termina (barem jedan) — JEDINI izvor izvršnih podataka. Produkcijsko kreiranje je do daljnjeg
-    /// ograničeno na jedan segment (Phase M1B: MULTI_SEGMENT_NOT_ENABLED); jezgra, read-model, vlasništvo i kontekst su
-    /// višesegmentni.</summary>
+    /// <summary>Izvršni segmenti termina (barem jedan) — JEDINI izvor izvršnih podataka. Phase M1E: generički termin smije
+    /// imati više segmenata (kreiranje i segmentne naredbe); grupni occurrence ostaje jednosegmentan.</summary>
     public List<AppointmentSegment> Segments { get; set; } = new();
 }

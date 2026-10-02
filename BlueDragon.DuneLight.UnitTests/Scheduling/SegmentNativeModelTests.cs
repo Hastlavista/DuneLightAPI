@@ -429,15 +429,17 @@ public class SegmentNativeModelTests
     }
 
     [Fact]
-    public async Task ProductionGuard_RejectsMoreThanOneSegment_AndPersistsNothing()
+    public async Task TargetCreate_MoreThanOneSegment_IsEnabled_AndPersistsEverySegment()
     {
-        await using SchedulingWorld w = await SchedulingWorld.Create(nameof(ProductionGuard_RejectsMoreThanOneSegment_AndPersistsNothing));
+        // CHANGED in M1E: MULTI_SEGMENT_NOT_ENABLED is removed — a multi-segment create succeeds (one Booking per client,
+        // one Participation per segment). Detailed multi-segment behaviour: MultiSegmentAppointmentTests.
+        await using SchedulingWorld w = await SchedulingWorld.Create(nameof(TargetCreate_MoreThanOneSegment_IsEnabled_AndPersistsEverySegment));
 
-        ValidationAppException ex = await SchedulingAssert.Validation(() => CreateTarget(w,
-            Target(w, Segment(w, SchedulingWorld.Future(10)), Segment(w, SchedulingWorld.Future(12)))));
+        AppointmentDto dto = await CreateTarget(w, Target(w, Segment(w, SchedulingWorld.Future(10)), Segment(w, SchedulingWorld.Future(12))));
 
-        Assert.Equal(ErrorCodes.MultiSegmentNotEnabled, ex.Code);
-        Assert.Equal(0, await w.CountAppointments());
+        Assert.Equal(2, dto.Segments.Count);
+        Assert.Equal(2, Assert.Single(dto.Bookings).Participations.Count);
+        Assert.Equal(1, await w.CountAppointments());
     }
 
     [Fact]
@@ -498,10 +500,13 @@ public class SegmentNativeModelTests
         AppointmentDto created = await w.CreateAppointment(SchedulingWorld.Future(10));
         await w.AddArtificialSegmentParticipation(created.Id, w.Client, SchedulingWorld.Future(12), 10m);
 
-        await Assert.ThrowsAsync<InvalidAppointmentSegmentStateException>(() => w.Appointments.Move(
+        // CHANGED in M1E: a business error (SEGMENT_SELECTION_REQUIRED), not an integrity exception / 500.
+        BusinessRuleException move = await Assert.ThrowsAsync<BusinessRuleException>(() => w.Appointments.Move(
             w.OrganizationId, w.ActorUserId, true, created.Id, new AppointmentMoveRequest { StartsAt = SchedulingWorld.Future(15) }));
-        await Assert.ThrowsAsync<InvalidAppointmentSegmentStateException>(() => w.Appointments.Update(
+        BusinessRuleException update = await Assert.ThrowsAsync<BusinessRuleException>(() => w.Appointments.Update(
             w.OrganizationId, w.ActorUserId, true, created.Id, w.UpdateRequest(created, r => r.StartsAt = SchedulingWorld.Future(15))));
+        Assert.Equal(ErrorCodes.SegmentSelectionRequired, move.Code);
+        Assert.Equal(ErrorCodes.SegmentSelectionRequired, update.Code);
 
         Appointment after = await w.LoadAppointment(created.Id);
         Assert.Equal(new[] { SchedulingWorld.Future(10), SchedulingWorld.Future(12) }, after.Segments.Select(s => s.PlannedStart).OrderBy(x => x));

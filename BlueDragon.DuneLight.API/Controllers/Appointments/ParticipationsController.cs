@@ -23,10 +23,22 @@ namespace BlueDragon.DuneLight.API.Controllers.Appointments;
 public class ParticipationsController : ControllerBase
 {
     private readonly IBookingService _bookingService;
+    private readonly IAppointmentService _appointmentService;
 
-    public ParticipationsController(IBookingService bookingService)
+    public ParticipationsController(IBookingService bookingService, IAppointmentService appointmentService)
     {
         _bookingService = bookingService;
+        _appointmentService = appointmentService;
+    }
+
+    /// <summary>Phase M1E — uklanja klijenta iz JEDNOG segmenta: samo netaknuto sudjelovanje (bez statusa, paketa, naplate);
+    /// prazan Booking se uklanja. Sudjelovanje s poviješću se otkazuje (PATCH .../cancel).</summary>
+    [HttpDelete("{participationId:guid}")]
+    [RequireGrant(Grants.AppointmentsWriteOwn, Grants.AppointmentsWriteAll)]
+    public async Task<ActionResult<AppointmentDto>> Remove(Guid participationId)
+    {
+        return Ok(await _appointmentService.RemoveParticipation(
+            this.CurrentOrganizationId(), this.CurrentUserId(), this.HasGrant(Grants.AppointmentsWriteAll), participationId));
     }
 
     /// <summary>Opći prijelaz sudjelovanja: check-in (Completed, uz paket/naplatu/ručnu cijenu kroz tijelo zahtjeva — samo

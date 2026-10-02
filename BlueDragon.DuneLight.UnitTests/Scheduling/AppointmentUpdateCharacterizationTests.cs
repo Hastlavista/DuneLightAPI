@@ -51,23 +51,20 @@ public class AppointmentUpdateCharacterizationTests
     }
 
     [Fact]
-    public async Task Update_ChangingTheService_IsValidatedButNotPersisted_WhileDurationAndPriceFollowTheRequestedService()
+    public async Task Update_ChangingTheService_IsPersisted_WithDurationAndPriceOfTheRequestedService()
     {
-        await using SchedulingWorld w = await SchedulingWorld.Create(nameof(Update_ChangingTheService_IsValidatedButNotPersisted_WhileDurationAndPriceFollowTheRequestedService));
+        await using SchedulingWorld w = await SchedulingWorld.Create(nameof(Update_ChangingTheService_IsPersisted_WithDurationAndPriceOfTheRequestedService));
         ServiceEntity longer = await w.AddService(45, 80m);
         await w.AssignEmployeeToService(w.Employee, longer);
         AppointmentDto created = await w.CreateAppointment(SchedulingWorld.Future(10));
 
         AppointmentDto updated = await Update(w, created, r => r.ServiceId = longer.Id.Value);
 
-        // FINDING (likely defect, NOT fixed here): AppointmentService.Update validates the NEW service and re-derives
-        // duration and price from it, but Appointment.ServiceId is not written — the row keeps the OLD service. The
-        // appointment ends up with the old service, the new service's duration and the new service's price.
-        // Cause: AppointmentHandler.GetWithBookingsForMutation loads the Service/Employee navigations, and
-        // context.Appointments.Update(graph) lets the stale navigation win over the changed foreign key.
+        // CHANGED in M1E (F-01 fixed intentionally): the requested service is persisted on the segment together with its
+        // duration and price — no more "old service, new duration, new price".
         Appointment a = await w.LoadAppointment(created.Id);
-        Assert.Equal(w.Service.Id, a.ServiceId);
-        Assert.Equal(w.Service.Id, updated.ServiceId);
+        Assert.Equal(longer.Id, a.ServiceId);
+        Assert.Equal(longer.Id, updated.ServiceId);
         Assert.Equal(45, a.DurationMinutes);
         Booking b = a.Bookings.Single();
         Assert.Equal(80m, b.Amount);
@@ -86,18 +83,17 @@ public class AppointmentUpdateCharacterizationTests
     }
 
     [Fact]
-    public async Task Update_ChangingTheEmployee_IsValidatedAndAuditedButTheEmployeeIsNotPersisted()
+    public async Task Update_ChangingTheEmployee_IsPersistedAndAudited()
     {
-        await using SchedulingWorld w = await SchedulingWorld.Create(nameof(Update_ChangingTheEmployee_IsValidatedAndAuditedButTheEmployeeIsNotPersisted));
+        await using SchedulingWorld w = await SchedulingWorld.Create(nameof(Update_ChangingTheEmployee_IsPersistedAndAudited));
         Employee other = await w.AddEmployee("Other");
         AppointmentDto created = await w.CreateAppointment(SchedulingWorld.Future(10));
 
         AppointmentDto updated = await Update(w, created, r => r.EmployeeId = other.Id.Value);
 
-        // FINDING (likely defect, NOT fixed here): same root cause as the Service case above — the audit log claims the
-        // employee changed, availability/overlap were checked for the NEW employee, yet the row keeps the OLD one.
-        Assert.Equal(w.Employee.Id, (await w.LoadAppointment(created.Id)).EmployeeId);
-        Assert.Equal(w.Employee.Id, updated.EmployeeId);
+        // CHANGED in M1E (F-01 fixed intentionally): the validated and audited employee is now persisted on the segment.
+        Assert.Equal(other.Id, (await w.LoadAppointment(created.Id)).EmployeeId);
+        Assert.Equal(other.Id, updated.EmployeeId);
         AppointmentAuditLog audit = Assert.Single(await w.LoadAuditLog(created.Id), l => l.ChangeType == "EmployeeId");
         Assert.Equal(w.Employee.Id.ToString(), audit.OldValue);
         Assert.Equal(other.Id.ToString(), audit.NewValue);
@@ -114,7 +110,7 @@ public class AppointmentUpdateCharacterizationTests
         await w.CreateAppointment(SchedulingWorld.Future(10), client: busyClient, employee: other);
         AppointmentDto created = await w.CreateAppointment(SchedulingWorld.Future(10));
 
-        // The requested employee is busy at that time, so the (never-persisted) reassignment is still rejected.
+        // The requested employee is busy at that time, so the reassignment is rejected.
         await SchedulingAssert.BusinessRule(ErrorCodes.AppointmentOverlap, () => Update(w, created, r => r.EmployeeId = other.Id.Value));
     }
 
@@ -170,9 +166,9 @@ public class AppointmentUpdateCharacterizationTests
     }
 
     [Fact]
-    public async Task Update_AllFieldsAtOnce_AreFullyRevalidated_AndEverythingExceptServiceAndEmployeeIsPersisted()
+    public async Task Update_AllFieldsAtOnce_AreFullyRevalidated_AndPersisted()
     {
-        await using SchedulingWorld w = await SchedulingWorld.Create(nameof(Update_AllFieldsAtOnce_AreFullyRevalidated_AndEverythingExceptServiceAndEmployeeIsPersisted));
+        await using SchedulingWorld w = await SchedulingWorld.Create(nameof(Update_AllFieldsAtOnce_AreFullyRevalidated_AndPersisted));
         Company company2 = await w.AddCompany("Second company");
         ServiceEntity service2 = await w.AddService(45, 80m, companyId: company2.Id);
         Employee employee2 = await w.AddEmployee("Second", companyId: company2.Id, serviceId: service2.Id);
@@ -197,9 +193,9 @@ public class AppointmentUpdateCharacterizationTests
         Assert.Equal(company2.Id, a.CompanyId);
         Assert.Equal(room2.Id, a.RoomId);
         Assert.Equal("everything changed", a.Note);
-        Assert.Equal(45, a.DurationMinutes); // taken from the requested (but not persisted) service
-        Assert.Equal(w.Service.Id, a.ServiceId); // FINDING: not persisted, see the dedicated tests
-        Assert.Equal(w.Employee.Id, a.EmployeeId); // FINDING: not persisted, see the dedicated tests
+        Assert.Equal(45, a.DurationMinutes); // taken from the requested service
+        Assert.Equal(service2.Id, a.ServiceId); // CHANGED in M1E: F-01 fixed
+        Assert.Equal(employee2.Id, a.EmployeeId); // CHANGED in M1E: F-01 fixed
         Booking b = Assert.Single(a.Bookings); // the original client's Confirmed booking was removed, the new client added
         Assert.Equal(client2.Id, b.ClientId);
         Assert.Equal(BookingStatus.Confirmed, b.Status);

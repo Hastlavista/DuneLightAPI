@@ -452,6 +452,30 @@ public class AppointmentHandler : IAppointmentHandler
             .SingleOrDefaultAsync();
     }
 
+    public async Task<Appointment> GetForSegmentMutation(IUnitOfWork uow, Guid organizationId, Guid appointmentId)
+    {
+        return await uow.Context.Appointments
+            .FromSqlInterpolated($"SELECT * FROM dunelight.appointments WHERE organization_id = {organizationId} AND id = {appointmentId} FOR UPDATE")
+            .Include(a => a.Segments).ThenInclude(s => s.Employees)
+            .Include(a => a.Segments).ThenInclude(s => s.Resources)
+            .Include(a => a.Bookings).ThenInclude(b => b.Participations).ThenInclude(p => p.PackageConsumptions)
+            .Include(a => a.Bookings).ThenInclude(b => b.Participations).ThenInclude(p => p.CheckoutItems)
+            .AsSplitQuery()
+            .SingleOrDefaultAsync();
+    }
+
+    public async Task<Appointment> GetLockedSegmentState(IUnitOfWork uow, Guid organizationId, Guid appointmentId)
+    {
+        return await uow.Context.Appointments
+            .FromSqlInterpolated($"SELECT * FROM dunelight.appointments WHERE organization_id = {organizationId} AND id = {appointmentId} FOR UPDATE")
+            .Include(a => a.Segments).ThenInclude(s => s.Employees)
+            .Include(a => a.Segments).ThenInclude(s => s.Resources)
+            .Include(a => a.Bookings).ThenInclude(b => b.Participations)
+            .AsSplitQuery()
+            .AsNoTracking()
+            .SingleOrDefaultAsync();
+    }
+
     public async Task<Appointment> GetForUpdateWithBookings(IUnitOfWork uow, Guid organizationId, Guid appointmentId)
     {
         return await uow.Context.Appointments

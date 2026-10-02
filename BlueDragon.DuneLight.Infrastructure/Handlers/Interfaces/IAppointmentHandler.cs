@@ -119,6 +119,16 @@ public interface IAppointmentHandler
     /// ICheckoutHandler.GetForUpdate. Null ako termin ne postoji.</summary>
     Task<Appointment> GetForUpdate(IUnitOfWork uow, Guid organizationId, Guid appointmentId);
 
+    /// <summary>Phase M1E: zaključan (FOR UPDATE) i PRAĆEN agregat za segmentne naredbe — segmenti s dodjelama zaposlenika i
+    /// resursa, Bookinzi sa sudjelovanjima (potrošnje paketa i stavke checkouta za pravilo povijesti). Pozivatelj je PRIJE
+    /// zaključao subjekte rasporeda (SchedulingLockOrder).</summary>
+    Task<Appointment> GetForSegmentMutation(IUnitOfWork uow, Guid organizationId, Guid appointmentId);
+
+    /// <summary>Phase M1E: zaključava Appointment redak (FOR UPDATE) i čita NEPRAĆENO svježe stanje segmenata (zaposlenici,
+    /// resursi) i sudjelovanja — za <see cref="Utils.SegmentSnapshot"/> provjeru u tokovima koji već prate (zastarjeli)
+    /// agregat ili ga kasnije spremaju kao nepraćen graf. Null ako termin ne postoji.</summary>
+    Task<Appointment> GetLockedSegmentState(IUnitOfWork uow, Guid organizationId, Guid appointmentId);
+
     /// <summary>Kao <see cref="GetForUpdate"/>, ali s uključenim Bookings (bez daljnjih ThenInclude) — za prijelaze
     /// koji trebaju čitati/mijenjati Booking retke pod istim lockom (npr. ChangeToTerminalStatus Cancel/MarkNoShow,
     /// vidi AppointmentService). Null ako termin ne postoji.</summary>

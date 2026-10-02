@@ -66,9 +66,11 @@ public static class ErrorCodes
     public const string BookingParticipationAmbiguous = "BOOKING_PARTICIPATION_AMBIGUOUS";
     /// <summary>Phase M0: zadani BookingId i ParticipationId se ne odnose na isto sudjelovanje.</summary>
     public const string ParticipationBookingMismatch = "PARTICIPATION_BOOKING_MISMATCH";
-    /// <summary>Phase M1B: više segmenata u jednom terminu još nije omogućeno (segmentna validacija preklapanja i
-    /// fizičkog kapaciteta nije potpuna) — privremeno ograničenje proizvoda.</summary>
-    public const string MultiSegmentNotEnabled = "MULTI_SEGMENT_NOT_ENABLED";
+    /// <summary>Phase M1E: legacy (plosnata, jednosegmentna) operacija nad višesegmentnim terminom — segment se ne pogađa;
+    /// potrebna je naredba nad segmentom (SegmentId) ili sudjelovanjem (ParticipationId).</summary>
+    public const string SegmentSelectionRequired = "SEGMENT_SELECTION_REQUIRED";
+    /// <summary>Phase M1E: termin mora zadržati barem jedan segment.</summary>
+    public const string LastSegmentCannotBeRemoved = "LAST_SEGMENT_CANNOT_BE_REMOVED";
     /// <summary>Phase M1B: segment trenutno podržava točno jednog zaposlenika (atribucija cijene/provizije više zaposlenika
     /// je otvorena) — ograničenje proizvoda, ne sheme.</summary>
     public const string MultiEmployeeNotSupported = "MULTI_EMPLOYEE_NOT_SUPPORTED";

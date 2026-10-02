@@ -29,7 +29,8 @@ namespace BlueDragon.DuneLight.UnitTests.Scheduling;
 /// (1) the same Employee cannot be assigned to overlapping occupying Segments;
 /// (2) the same Client cannot have overlapping occupying Participations —
 /// between appointments, between sibling segments of one appointment and across companies; adjacent ranges are allowed.
-/// Multi-segment data is ARTIFICIAL (production creation is still guarded by MULTI_SEGMENT_NOT_ENABLED).
+/// Multi-segment data here is seeded ARTIFICIALLY (written before M1E enabled production multi-segment creation; see
+/// MultiSegmentAppointmentTests for the production path).
 /// </summary>
 public class SegmentConflictInvariantTests
 {

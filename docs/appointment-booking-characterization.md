@@ -92,6 +92,10 @@ Legend — **Test**: the characterization test(s) that pin it. **Later**: whethe
   **D3A:** the frame now lives on the appointment's single `AppointmentSegment`, so the stale-navigation mechanism no longer
   exists; the pinned behaviour is kept *explicitly* in `AppointmentService.Update` (the segment keeps the current service and
   employee; time, duration and room follow the request). Not fixed — still pending the new edit path.
+  **M1E: FIXED (intentionally).** `Update` now persists the requested service and employee on the (single) segment, together
+  with the derived duration, room and price; segment-native edits use `PATCH api/segments/{id}/service|employees|time|room` and
+  `PUT .../resources`. On a multi-segment appointment the flat `Update`/`Move`/`CompleteExisting` answer
+  `SEGMENT_SELECTION_REQUIRED`.
   Test: `AppointmentUpdateCharacterizationTests.Update_ChangingTheService_*`, `Update_ChangingTheEmployee_*`,
   `Update_AllFieldsAtOnce_*`; contrast `Move_CanChangeTheEmployee_*`, `CompleteExisting_RewritesTheFrame_*`.
   Later: **yes** — do not patch piecemeal; the edit path is replaced by the new model.
@@ -269,3 +273,6 @@ Legend — **Test**: the characterization test(s) that pin it. **Later**: whethe
 * **Calendar constants** (2031 appointments, 2035 package expiry) are "far future" today; they must be moved forward if the real
   clock approaches them.
 * Group slot management (`AddSlot/UpdateSlot`), the operational dashboard and the future-activity providers are outside this suite.
+* **Notification grouping debt (M1E).** Notifications stay per participation (unchanged): a multi-segment Booking whose
+  participations are cancelled together (Booking-wide cancel) emits one cancellation notification per participation, not one
+  grouped message per Booking/Appointment. Grouping is deferred to the notification-delivery redesign.

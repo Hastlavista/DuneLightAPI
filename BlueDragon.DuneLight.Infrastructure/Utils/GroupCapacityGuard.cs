@@ -31,7 +31,7 @@ public static class GroupCapacityGuard
 
         // Phase M0: kapacitet je po (jedinom grupnom) segmentu — broje se Confirmed sudjelovanja tog segmenta.
         int confirmedCount = await appointmentHandler.CountConfirmedOnSegment(
-            uow, organizationId, SingleSegmentCompatibility.Resolve(locked).Id.GetValueOrDefault()); // grupni occurrence: jedan segment (do GroupSegmentTemplates)
+            uow, organizationId, SingleGroupSegment.Of(locked).Id.GetValueOrDefault()); // grupni occurrence: jedan segment (do GroupSegmentTemplates)
         if (confirmedCount >= locked.Group.Capacity)
             throw new BusinessRuleException(
                 ErrorCodes.GroupCapacityReached, "Grupa je popunjena — kapacitet je dosegnut.",

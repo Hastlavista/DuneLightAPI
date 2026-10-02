@@ -193,9 +193,9 @@ public class AppointmentSegmentCutoverTests
         Assert.Equal(Z(12).AddMinutes(45), segment.PlannedEnd); // duration follows the requested service
         Assert.Equal(room.Id, segment.RoomId);
         Assert.NotNull(segment.UpdatedAt);
-        // Pinned F-01 (kept, not fixed): service and employee are validated but not persisted.
-        Assert.Equal(w.Service.Id, segment.ServiceId);
-        Assert.Equal(w.Employee.Id.Value, Assert.Single(segment.Employees).EmployeeId);
+        // F-01 INTENTIONALLY FIXED in M1E (was pinned): the requested service and employee are now really persisted.
+        Assert.Equal(longer.Id, segment.ServiceId);
+        Assert.Equal(other.Id.Value, Assert.Single(segment.Employees).EmployeeId);
     }
 
     [Fact]
@@ -395,9 +395,10 @@ public class AppointmentSegmentCutoverTests
             await db.SaveChangesAsync();
         }
 
-        await Assert.ThrowsAsync<InvalidAppointmentSegmentStateException>(() => w.Appointments.Move(
+        // CHANGED in M1E: multi-segment is a valid production shape — legacy flat writes answer with a business error.
+        await SchedulingAssert.BusinessRule(ErrorCodes.SegmentSelectionRequired, () => w.Appointments.Move(
             w.OrganizationId, w.ActorUserId, true, created.Id, new AppointmentMoveRequest { StartsAt = Z(12) }));
-        await Assert.ThrowsAsync<InvalidAppointmentSegmentStateException>(() => w.Appointments.Update(
+        await SchedulingAssert.BusinessRule(ErrorCodes.SegmentSelectionRequired, () => w.Appointments.Update(
             w.OrganizationId, w.ActorUserId, true, created.Id, w.UpdateRequest(created, r => r.StartsAt = Z(12))));
 
         await using DatabaseContext verify = w.NewDb();

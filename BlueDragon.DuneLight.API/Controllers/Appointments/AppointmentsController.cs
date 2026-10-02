@@ -107,8 +107,8 @@ public class AppointmentsController : ControllerBase
     }
 
     /// <summary>"Zakaži" — status Scheduled, bez naplate.</summary>
-    /// <summary>Phase M1B — ciljni segmentni ugovor kreiranja (termin + segmenti + sudionici po segmentu). Do omogućavanja
-    /// više segmenata vraća MULTI_SEGMENT_NOT_ENABLED za više od jednog segmenta.</summary>
+    /// <summary>Phase M1B — ciljni segmentni ugovor kreiranja (termin + segmenti + sudionici po segmentu). Phase M1E: više
+    /// segmenata je omogućeno (atomično; segment trenutno ima točno jednog zaposlenika — MULTI_EMPLOYEE_NOT_SUPPORTED).</summary>
     [HttpPost]
     [RequireGrant(Grants.AppointmentsWriteOwn, Grants.AppointmentsWriteAll)]
     public async Task<ActionResult<AppointmentDto>> CreateSegmented([FromBody] AppointmentCreateRequest request)
@@ -152,6 +152,26 @@ public class AppointmentsController : ControllerBase
     public async Task<ActionResult<AppointmentDto>> Update(Guid id, [FromBody] AppointmentUpdateRequest request)
     {
         return Ok(await _appointmentService.Update(
+            this.CurrentOrganizationId(), this.CurrentUserId(), this.HasGrant(Grants.AppointmentsWriteAll), id, request));
+    }
+
+    /// <summary>Phase M1E — dodaje NOVI segment postojećem (generičkom) terminu; navedeni klijenti sudjeluju u njemu (postojeći
+    /// Booking klijenta se ponovno koristi). Validira se puno ciljno stanje uključujući sestrinske segmente.</summary>
+    [HttpPost("{id:guid}/segments")]
+    [RequireGrant(Grants.AppointmentsWriteOwn, Grants.AppointmentsWriteAll)]
+    public async Task<ActionResult<AppointmentDto>> AddSegment(Guid id, [FromBody] AppointmentSegmentAddRequest request)
+    {
+        return Ok(await _appointmentService.AddSegment(
+            this.CurrentOrganizationId(), this.CurrentUserId(), this.HasGrant(Grants.AppointmentsWriteAll), id, request));
+    }
+
+    /// <summary>Phase M1E — dodaje klijenta ODABRANIM segmentima termina (jedan Booking po klijentu, jedno sudjelovanje po
+    /// segmentu, cijena po sudjelovanju). Paket/naplata se ne primjenjuju pri dodavanju.</summary>
+    [HttpPost("{id:guid}/clients")]
+    [RequireGrant(Grants.AppointmentsWriteOwn, Grants.AppointmentsWriteAll)]
+    public async Task<ActionResult<AppointmentDto>> AddClient(Guid id, [FromBody] AppointmentClientAddRequest request)
+    {
+        return Ok(await _appointmentService.AddClient(
             this.CurrentOrganizationId(), this.CurrentUserId(), this.HasGrant(Grants.AppointmentsWriteAll), id, request));
     }
 

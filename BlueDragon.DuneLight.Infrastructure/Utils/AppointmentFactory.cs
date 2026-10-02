@@ -70,6 +70,36 @@ public static class AppointmentFactory
         CreatedBy = createdBy
     };
 
+    /// <summary>Phase M1E — novi segment POSTOJEĆEG termina (ista konstrukcijska pravila): sudionik koji već ima Booking na
+    /// terminu dobiva samo novo sudjelovanje (Booking = jedan klijent unutar termina), ostali novi Booking. Vraća stvorene
+    /// entitete koje pozivatelj eksplicitno dodaje u kontekst (segment s dodjelama; nove Bookinge sa sudjelovanjima; nova
+    /// sudjelovanja postojećih Bookinga).</summary>
+    public static (AppointmentSegment Segment, List<Booking> NewBookings, List<BookingSegmentParticipation> NewParticipationsOfExistingBookings)
+        AddSegment(Appointment appointment, SegmentPlan plan, DateTimeOffset createdAt)
+    {
+        ArgumentNullException.ThrowIfNull(appointment);
+        AppointmentSegment segment = NewSegment(appointment, plan, createdAt);
+        List<Booking> newBookings = new();
+        List<BookingSegmentParticipation> added = new();
+        foreach (ParticipantPlan participant in plan.Participants)
+        {
+            Booking booking = appointment.Bookings.FirstOrDefault(b => b.ClientId == participant.ClientId);
+            if (booking == null)
+            {
+                booking = BookingFactory.NewContainer(appointment.OrganizationId, appointment.Id.GetValueOrDefault(), participant.ClientId, createdAt);
+                appointment.Bookings.Add(booking);
+                newBookings.Add(booking);
+                BookingFactory.AddParticipation(booking, segment, ParticipationStatus.Confirmed, participant.Pricing, createdAt);
+            }
+            else
+            {
+                added.Add(BookingFactory.AddParticipation(booking, segment, ParticipationStatus.Confirmed, participant.Pricing, createdAt));
+            }
+        }
+
+        return (segment, newBookings, added);
+    }
+
     private static void Populate(
         Appointment appointment, IReadOnlyList<SegmentPlan> plans, ParticipationStatus initialStatus, DateTimeOffset createdAt)
     {

@@ -634,3 +634,82 @@ public class AppointmentParticipantCreateRequest
     [Range(0, double.MaxValue, ErrorMessage = "Iznos ne smije biti negativan.")]
     public decimal? Amount { get; set; }
 }
+
+/// <summary>Phase M1E — dodavanje segmenta postojećem terminu: isti oblik kao segment ciljnog kreiranja (usluga, vrijeme,
+/// zaposlenici, prostorija, resursi, sudionici — sudionici su opcionalni). Klijent koji već ima Booking na terminu dobiva
+/// samo novo sudjelovanje.</summary>
+public class AppointmentSegmentAddRequest : AppointmentSegmentCreateRequest
+{
+    /// <summary>Vidi AppointmentSingleSegmentRequest.OverrideAvailability (samo uz appointments.write.all).</summary>
+    public bool OverrideAvailability { get; set; }
+}
+
+/// <summary>Phase M1E — promjena vremena JEDNOG segmenta. PlannedEnd null = zadržava se trajanje segmenta.</summary>
+public class AppointmentSegmentTimeChangeRequest
+{
+    [Required]
+    public DateTimeOffset PlannedStart { get; set; }
+
+    public DateTimeOffset? PlannedEnd { get; set; }
+
+    public bool OverrideAvailability { get; set; }
+}
+
+/// <summary>Phase M1E — promjena usluge JEDNOG segmenta. Trajanje se mijenja SAMO uz UseServiceDuration (početak + zadano
+/// trajanje nove usluge) ili eksplicitni PlannedEnd; inače vrijeme segmenta ostaje isto. Aktivna (Confirmed) sudjelovanja se
+/// ponovno cijene po novoj usluzi (ručni iznos se čuva).</summary>
+public class AppointmentSegmentServiceChangeRequest
+{
+    [Required]
+    public Guid ServiceId { get; set; }
+
+    public bool UseServiceDuration { get; set; }
+
+    public DateTimeOffset? PlannedEnd { get; set; }
+
+    public bool OverrideAvailability { get; set; }
+}
+
+/// <summary>Phase M1E — dodjela zaposlenika JEDNOM segmentu (oblik je skup; proizvod trenutno zahtijeva točno jednog —
+/// MULTI_EMPLOYEE_NOT_SUPPORTED).</summary>
+public class AppointmentSegmentEmployeesChangeRequest
+{
+    [Required]
+    public List<Guid> EmployeeIds { get; set; } = new();
+
+    public bool OverrideAvailability { get; set; }
+}
+
+/// <summary>Phase M1E — prostorija JEDNOG segmenta (null = bez prostorije).</summary>
+public class AppointmentSegmentRoomChangeRequest
+{
+    public Guid? RoomId { get; set; }
+}
+
+/// <summary>Phase M1E — zamjena SVIH dodjela resursa JEDNOG segmenta (prazan popis = bez resursa).</summary>
+public class AppointmentSegmentResourcesChangeRequest
+{
+    public List<AppointmentSegmentResourceRequest> Resources { get; set; } = new();
+}
+
+/// <summary>Phase M1E — klijent se pridružuje ODABRANIM segmentima termina: jedan Booking po (termin, klijent) — postojeći
+/// se ponovno koristi — i po jedno sudjelovanje za svaki odabrani segment. Cijena se razrješava po sudjelovanju; dodavanje
+/// ne troši paket i ne stvara plaćanje.</summary>
+public class AppointmentClientAddRequest
+{
+    [Required]
+    public Guid ClientId { get; set; }
+
+    [Required]
+    [MinLength(1, ErrorMessage = "Potreban je barem jedan segment.")]
+    public List<AppointmentClientParticipationRequest> Participations { get; set; } = new();
+}
+
+public class AppointmentClientParticipationRequest
+{
+    [Required]
+    public Guid SegmentId { get; set; }
+
+    /// <summary>Ručni iznos za ovo sudjelovanje (null = predložena cijena).</summary>
+    public decimal? Amount { get; set; }
+}

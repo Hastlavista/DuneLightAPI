@@ -1,13 +1,16 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using BlueDragon.DuneLight.Core.Enums;
+using BlueDragon.DuneLight.Core.Shared;
+using BlueDragon.DuneLight.Core.Shared.Exceptions;
 using BlueDragon.DuneLight.Infrastructure.Domain.Models.Appointments;
 
 namespace BlueDragon.DuneLight.Infrastructure.Utils;
 
 /// <summary>
 /// Pomoćnici nad JEDNIM segmentom (izvršnom jedinicom). Phase M1B: termin nema "izvršni okvir" — više nema odabira
-/// "jedinog" segmenta ovdje (vidi <see cref="SingleSegmentCompatibility"/> za privremene granice postojećih endpointa).
+/// "jedinog" segmenta ovdje (legacy endpointi: <see cref="LegacySingleSegment"/>; grupe: <see cref="SingleGroupSegment"/>).
 /// </summary>
 public static class AppointmentSegments
 {
@@ -38,14 +41,12 @@ public static class AppointmentSegments
 }
 
 /// <summary>
-/// Phase M1B — PRIVREMENA granica postojećih (single-segment) API operacija: Update/Move/CompleteExisting/AddBooking/
-/// gost na check-inu/lista čekanja i grupni occurrence adresiraju TERMIN, a produkcija trenutno stvara točno jedan
-/// segment (višesegmentno kreiranje je isključeno dok validacija zauzetosti i kapaciteta po segmentu ne bude potpuna;
-/// grupe do GroupSegmentTemplates generiraju jedan segment). Ovdje se taj segment razrješava NA GRANICI i dalje se
-/// prosljeđuje eksplicitno; termin s više segmenata odbija se (<see cref="InvalidAppointmentSegmentStateException"/>)
-/// umjesto proizvoljnog izbora. Ne koristiti u jezgri (konstrukcija, vlasništvo, kontekst, read-model, raspon).
+/// Phase M1E — granica LEGACY (plosnatih, jednosegmentnih) API operacija: plosnati Update/Move/CompleteExisting/AddBooking
+/// i interni CompleteNew adresiraju TERMIN, ne segment. Za jednosegmentni termin razrješava taj segment; za višesegmentni
+/// termin NIKAD ne pogađa (ni "prvi" segment, ni "svi") nego vraća poslovnu grešku SEGMENT_SELECTION_REQUIRED — ciljni put
+/// su segmentne (SegmentId) i participation-native (ParticipationId) naredbe. Ne koristiti u ciljnim tokovima.
 /// </summary>
-public static class SingleSegmentCompatibility
+public static class LegacySingleSegment
 {
     public static AppointmentSegment Resolve(Appointment appointment)
     {
@@ -56,10 +57,28 @@ public static class SingleSegmentCompatibility
             1 => appointment.Segments[0],
             0 => throw new InvalidAppointmentSegmentStateException(
                 $"Termin {appointment.Id} nema segment (ili segmenti nisu učitani)."),
-            _ => throw new InvalidAppointmentSegmentStateException(
-                $"Termin {appointment.Id} ima {appointment.Segments.Count} segmenata — ova (single-segment) operacija ga ne može " +
-                "adresirati; koristiti segmentnu operaciju.")
+            _ => throw new BusinessRuleException(ErrorCodes.SegmentSelectionRequired,
+                "Termin ima više segmenata — ova operacija ne može odabrati segment; koristite operaciju nad segmentom (SegmentId) ili sudjelovanjem (ParticipationId).")
         };
+    }
+}
+
+/// <summary>
+/// Phase M1E — GRUPNI proizvod je (do GroupSegmentTemplates, M1F) namjerno jednosegmentan: generirani occurrence ima točno
+/// jedan segment. Grupne operacije (AddMember, lista čekanja, gost na check-inu, close-out, Group.Capacity) ga razrješavaju
+/// ovdje. Samo za Form=Group termine; drugi oblik segmenata je integritetna greška. Ne koristiti u generičkom kodu termina.
+/// </summary>
+public static class SingleGroupSegment
+{
+    public static AppointmentSegment Of(Appointment appointment)
+    {
+        ArgumentNullException.ThrowIfNull(appointment);
+        if (appointment.Form != AppointmentForm.Group)
+            throw new InvalidAppointmentSegmentStateException($"Termin {appointment.Id} nije grupni occurrence.");
+        if (appointment.Segments.Count != 1)
+            throw new InvalidAppointmentSegmentStateException(
+                $"Grupni occurrence {appointment.Id} ima {appointment.Segments.Count} segmenata — grupe su jednosegmentne do GroupSegmentTemplates.");
+        return appointment.Segments[0];
     }
 }
 

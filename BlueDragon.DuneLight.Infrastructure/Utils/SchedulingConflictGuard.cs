@@ -29,13 +29,20 @@ public static class SchedulingConflictGuard
 {
     public static async Task Claim(
         ISchedulingOccupancyHandler occupancy, IUnitOfWork uow, Guid organizationId, IReadOnlyList<SegmentClaim> claims,
-        Func<Guid, string> clientLabel = null)
+        Func<Guid, string> clientLabel = null, SchedulingSubjects alsoLock = null)
     {
         ArgumentNullException.ThrowIfNull(claims);
         SchedulingConflicts.EnsureTargetStateConsistent(claims, clientLabel);
 
+        // Phase M1E: promjena stari -> novi (zaposlenik, prostorija, resursi) zaključava UNIJU starih i novih subjekata,
+        // jednim pozivom (jedan globalni redoslijed) — oslobađanje starog subjekta je serijalizirano s njegovim zauzimanjem.
+        alsoLock ??= SchedulingSubjects.None;
         await occupancy.LockSchedulingSubjects(
-            uow, claims.SelectMany(c => c.EmployeeIds), claims.SelectMany(c => c.ClientIds), RoomsOf(claims), ResourcesOf(claims));
+            uow,
+            claims.SelectMany(c => c.EmployeeIds).Concat(alsoLock.EmployeeIds),
+            claims.SelectMany(c => c.ClientIds).Concat(alsoLock.ClientIds),
+            RoomsOf(claims).Concat(alsoLock.RoomIds),
+            ResourcesOf(claims).Concat(alsoLock.ResourceIds));
 
         List<Guid> rewritten = Rewritten(claims);
         foreach (SegmentClaim claim in claims)
@@ -135,6 +142,21 @@ public static class SchedulingConflictGuard
 
     private static List<Guid> Rewritten(IEnumerable<SegmentClaim> claims) =>
         claims.Where(c => c.SegmentId.HasValue).Select(c => c.SegmentId.Value).Distinct().ToList();
+}
+
+/// <summary>Phase M1E: dodatni subjekti rasporeda koje upis zaključava (npr. STARI zaposlenik/prostorija/resursi segmenta koji
+/// se mijenja) uz one koje traži — jedan sortirani skup, isti globalni redoslijed.</summary>
+public sealed record SchedulingSubjects(
+    IReadOnlyCollection<Guid> EmployeeIds, IReadOnlyCollection<Guid> ClientIds, IReadOnlyCollection<Guid> RoomIds, IReadOnlyCollection<Guid> ResourceIds)
+{
+    public static readonly SchedulingSubjects None = new(Array.Empty<Guid>(), Array.Empty<Guid>(), Array.Empty<Guid>(), Array.Empty<Guid>());
+
+    /// <summary>Svi subjekti koje segment trenutno zauzima (zaposlenici, prostorija, resursi).</summary>
+    public static SchedulingSubjects Of(AppointmentSegment segment) => new(
+        segment.Employees.Select(e => e.EmployeeId).ToList(),
+        Array.Empty<Guid>(),
+        segment.RoomId.HasValue ? new[] { segment.RoomId.Value } : Array.Empty<Guid>(),
+        segment.Resources.Select(r => r.ResourceId).ToList());
 }
 
 public enum CapacitySubject

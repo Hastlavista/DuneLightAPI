@@ -113,9 +113,14 @@ public class WaitlistService : IWaitlistService, IWaitlistPromotionService
         if (appointment == null)
             throw new NotFoundAppException("Appointment", appointmentId);
 
-        // PRIVREMENA KOMPATIBILNOST (Phase M1B): lista čekanja je po (jedinom grupnom) segmentu occurrencea — razriješen
-        // na ovoj granici; vlasništvo, početak i kapacitet slijede TAJ segment.
-        AppointmentSegment segment = SingleSegmentCompatibility.Resolve(appointment);
+        // Phase M1E: lista čekanja je samo za grupe (individualni/višesegmentni termin: WAITLIST_NOT_AVAILABLE, ne greška
+        // integriteta) — provjera forme PRIJE razrješavanja grupnog segmenta.
+        if (appointment.Form != AppointmentForm.Group)
+            throw new BusinessRuleException(ErrorCodes.WaitlistNotAvailable, "Lista čekanja nije dostupna za ovaj termin.");
+
+        // Lista čekanja je po (jedinom grupnom) segmentu occurrencea — razriješen na ovoj granici; vlasništvo, početak i
+        // kapacitet slijede TAJ segment.
+        AppointmentSegment segment = SingleGroupSegment.Of(appointment);
         await AppointmentOwnership.EnsureCallerOwnsSegments(_employeeHandler, organizationId, userId, hasFullScope, new[] { segment }, NotOwnerMessage);
 
         DateTimeOffset now = DateTimeOffset.UtcNow;
@@ -194,9 +199,11 @@ public class WaitlistService : IWaitlistService, IWaitlistPromotionService
         Appointment appointment = await _appointmentHandler.GetByIdLight(organizationId, appointmentId);
         if (appointment == null)
             throw new NotFoundAppException("Appointment", appointmentId);
+        if (appointment.Form != AppointmentForm.Group)
+            throw new BusinessRuleException(ErrorCodes.WaitlistNotAvailable, "Lista čekanja nije dostupna za ovaj termin.");
 
         await AppointmentOwnership.EnsureCallerOwnsSegments(_employeeHandler, organizationId, userId, hasFullScope,
-            new[] { SingleSegmentCompatibility.Resolve(appointment) }, NotOwnerMessage);
+            new[] { SingleGroupSegment.Of(appointment) }, NotOwnerMessage);
 
         WaitlistEntry entry = await _waitlistHandler.GetMostRecentForClient(organizationId, appointmentId, clientId);
         if (entry == null)
@@ -245,7 +252,7 @@ public class WaitlistService : IWaitlistService, IWaitlistPromotionService
         // Phase M1A: Scheduled = termin ima barem jedno Confirmed sudjelovanje ILI se tek izvodi — pozivatelji (otkazivanje
         // sudjelovanja, uklanjanje člana) pozivaju promociju PRIJE ponovnog izvođenja statusa, pa occurrence čije je zadnje
         // aktivno sudjelovanje upravo otkazano ovdje još vidi Scheduled i promovira (isto kao prije).
-        AppointmentSegment segment = SingleSegmentCompatibility.Resolve(appointment); // grupni occurrence: jedan segment
+        AppointmentSegment segment = SingleGroupSegment.Of(appointment); // grupni occurrence: jedan segment
         if (appointment.Status != AppointmentStatus.Scheduled || segment.PlannedStart <= now)
             return;
 
@@ -367,7 +374,7 @@ public class WaitlistService : IWaitlistService, IWaitlistPromotionService
         if (client.IsAnonymized)
             return WaitlistExpiredReasons.ClientAnonymized;
 
-        AppointmentSegment segment = SingleSegmentCompatibility.Resolve(appointment); // grupni occurrence: jedan segment
+        AppointmentSegment segment = SingleGroupSegment.Of(appointment); // grupni occurrence: jedan segment
         Guid segmentId = segment.Id.GetValueOrDefault();
         bool alreadyBooked = await uow.Context.BookingSegmentParticipations
             .Where(p => p.AppointmentSegmentId == segmentId && p.Booking.ClientId == entry.ClientId)

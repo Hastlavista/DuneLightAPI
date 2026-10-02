@@ -60,6 +60,9 @@ public interface ISchedulingOccupancyHandler
     /// <summary>Phase M1D: resursi postojećeg segmenta (za prepisivanje vremena i reaktivaciju).</summary>
     Task<List<ResourceClaim>> GetSegmentResources(IUnitOfWork uow, Guid segmentId);
 
+    /// <summary>Phase M1E: isto izvan transakcije (pročitano stanje za SegmentSnapshot prije zaključavanja).</summary>
+    Task<List<ResourceClaim>> GetSegmentResources(Guid segmentId);
+
     /// <summary>Svi segmenti zaposlenika koji se preklapaju s [rangeFrom, rangeTo] — kandidati za batch provjere.</summary>
     Task<List<OccupancySlot>> GetForEmployeeInRange(Guid organizationId, Guid employeeId, DateTimeOffset rangeFrom, DateTimeOffset rangeTo);
 

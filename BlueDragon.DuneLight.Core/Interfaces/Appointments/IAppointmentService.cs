@@ -12,6 +12,34 @@ public interface IAppointmentService
     /// <summary>Phase M1B — ciljni (segmentni) ugovor kreiranja; trenutno ograničen na jedan segment (vidi AppointmentCreateRequest).</summary>
     Task<AppointmentDto> Create(Guid organizationId, Guid userId, bool hasFullScope, AppointmentCreateRequest request);
 
+    // Phase M1E — segmentne naredbe (ciljni put višesegmentnog termina). Vlasništvo: own-opseg smije mijenjati segment kojem
+    // je pozivatelj dodijeljen (i dodijeliti novi segment samo sebi); sve tvrde invarijante (preklapanje zaposlenika/klijenta,
+    // kapacitet prostorije/resursa) se provjeravaju pod zaključanim subjektima, isključujući samo segment koji se mijenja.
+
+    Task<AppointmentDto> AddSegment(Guid organizationId, Guid userId, bool hasFullScope, Guid appointmentId, AppointmentSegmentAddRequest request);
+
+    /// <summary>Brisanje segmenta samo dok su sva njegova sudjelovanja netaknuta (REFERENCED_CANNOT_DELETE inače); zadnji
+    /// segment se ne briše (LAST_SEGMENT_CANNOT_BE_REMOVED).</summary>
+    Task<AppointmentDto> RemoveSegment(Guid organizationId, Guid userId, bool hasFullScope, Guid segmentId);
+
+    Task<AppointmentDto> ChangeSegmentTime(Guid organizationId, Guid userId, bool hasFullScope, Guid segmentId, AppointmentSegmentTimeChangeRequest request);
+
+    Task<AppointmentDto> ChangeSegmentService(Guid organizationId, Guid userId, bool hasFullScope, Guid segmentId, AppointmentSegmentServiceChangeRequest request);
+
+    Task<AppointmentDto> ChangeSegmentEmployees(Guid organizationId, Guid userId, bool hasFullScope, Guid segmentId, AppointmentSegmentEmployeesChangeRequest request);
+
+    Task<AppointmentDto> ChangeSegmentRoom(Guid organizationId, Guid userId, bool hasFullScope, Guid segmentId, AppointmentSegmentRoomChangeRequest request);
+
+    Task<AppointmentDto> ChangeSegmentResources(Guid organizationId, Guid userId, bool hasFullScope, Guid segmentId, AppointmentSegmentResourcesChangeRequest request);
+
+    /// <summary>Klijent se pridružuje ODABRANIM segmentima (jedan Booking po terminu+klijentu, po jedno sudjelovanje po
+    /// segmentu).</summary>
+    Task<AppointmentDto> AddClient(Guid organizationId, Guid userId, bool hasFullScope, Guid appointmentId, AppointmentClientAddRequest request);
+
+    /// <summary>Uklanja JEDNO netaknuto sudjelovanje (ne cijeli Booking); prazan Booking se uklanja. Sudjelovanje s
+    /// poviješću se ne briše (REFERENCED_CANNOT_DELETE) — koristi se otkazivanje.</summary>
+    Task<AppointmentDto> RemoveParticipation(Guid organizationId, Guid userId, bool hasFullScope, Guid participationId);
+
     /// <summary>PRIVREMENA KOMPATIBILNOST — plosnati jednosegmentni zahtjev (POST /schedule), mapira se na ciljni ugovor.</summary>
     Task<AppointmentDto> Create(Guid organizationId, Guid userId, bool hasFullScope, AppointmentSingleSegmentRequest request);
 

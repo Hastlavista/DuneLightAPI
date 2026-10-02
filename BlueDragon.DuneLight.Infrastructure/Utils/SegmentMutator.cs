@@ -52,4 +52,42 @@ public static class SegmentMutator
             segment.Employees.Add(new AppointmentSegmentEmployee { AppointmentSegmentId = segment.Id.GetValueOrDefault(), EmployeeId = employeeId });
         segment.UpdatedAt = updatedAt;
     }
+    /// <summary>Phase M1E — zamjenjuje dodjelu resursa segmenta (diff nad učitanom kolekcijom: promjena količine, uklanjanje
+    /// nenavedenih, dodavanje novih). Nepromijenjen skup je no-op.</summary>
+    public static void ReplaceResources(AppointmentSegment segment, IReadOnlyList<(Guid ResourceId, int Quantity)> resources, DateTimeOffset updatedAt)
+    {
+        ArgumentNullException.ThrowIfNull(segment);
+        ArgumentNullException.ThrowIfNull(resources);
+        Dictionary<Guid, int> target = resources.ToDictionary(r => r.ResourceId, r => r.Quantity);
+        bool changed = false;
+        foreach (AppointmentSegmentResource existing in segment.Resources.ToList())
+        {
+            if (!target.TryGetValue(existing.ResourceId, out int quantity))
+            {
+                segment.Resources.Remove(existing);
+                changed = true;
+            }
+            else if (existing.QuantityRequired != quantity)
+            {
+                existing.QuantityRequired = quantity;
+                changed = true;
+            }
+        }
+
+        foreach ((Guid resourceId, int quantity) in target)
+        {
+            if (segment.Resources.Any(r => r.ResourceId == resourceId))
+                continue;
+            segment.Resources.Add(new AppointmentSegmentResource
+            {
+                AppointmentSegmentId = segment.Id.GetValueOrDefault(),
+                ResourceId = resourceId,
+                QuantityRequired = quantity
+            });
+            changed = true;
+        }
+
+        if (changed)
+            segment.UpdatedAt = updatedAt;
+    }
 }

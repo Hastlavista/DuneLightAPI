@@ -38,67 +38,67 @@ public class AppointmentOwnershipCharacterizationTests
     #region AppointmentOwnership helper (real IEmployeeHandler)
 
     [Fact]
-    public async Task EnsureCallerOwnsWholeAppointment_TheAssignedEmployee_Passes()
+    public async Task EnsureCallerOwnsSegments_TheAssignedEmployee_Passes()
     {
-        await using SchedulingWorld w = await SchedulingWorld.Create(nameof(EnsureCallerOwnsWholeAppointment_TheAssignedEmployee_Passes));
+        await using SchedulingWorld w = await SchedulingWorld.Create(nameof(EnsureCallerOwnsSegments_TheAssignedEmployee_Passes));
 
-        await AppointmentOwnership.EnsureCallerOwnsWholeAppointment(
-            Employees(w), w.OrganizationId, w.Employee.UserId, false, AssignedTo(w, w.Employee.Id), Message);
+        await AppointmentOwnership.EnsureCallerOwnsSegments(
+            Employees(w), w.OrganizationId, w.Employee.UserId, false, AssignedTo(w, w.Employee.Id).Segments, Message);
     }
 
     [Fact]
-    public async Task EnsureCallerOwnsWholeAppointment_AnotherEmployee_IsNotOwner_WithTheGivenMessage()
+    public async Task EnsureCallerOwnsSegments_AnotherEmployee_IsNotOwner_WithTheGivenMessage()
     {
-        await using SchedulingWorld w = await SchedulingWorld.Create(nameof(EnsureCallerOwnsWholeAppointment_AnotherEmployee_IsNotOwner_WithTheGivenMessage));
+        await using SchedulingWorld w = await SchedulingWorld.Create(nameof(EnsureCallerOwnsSegments_AnotherEmployee_IsNotOwner_WithTheGivenMessage));
         Employee other = await w.AddEmployee("Other");
 
         BusinessRuleException ex = await SchedulingAssert.BusinessRule(ErrorCodes.NotOwner,
-            () => AppointmentOwnership.EnsureCallerOwnsWholeAppointment(
-                Employees(w), w.OrganizationId, other.UserId, false, AssignedTo(w, w.Employee.Id), Message));
+            () => AppointmentOwnership.EnsureCallerOwnsSegments(
+                Employees(w), w.OrganizationId, other.UserId, false, AssignedTo(w, w.Employee.Id).Segments, Message));
         Assert.Equal(Message, ex.Message);
     }
 
     [Fact]
-    public async Task EnsureCallerOwnsWholeAppointment_AUserWithoutAnEmployeeRecord_IsNotOwner()
+    public async Task EnsureCallerOwnsSegments_AUserWithoutAnEmployeeRecord_IsNotOwner()
     {
-        await using SchedulingWorld w = await SchedulingWorld.Create(nameof(EnsureCallerOwnsWholeAppointment_AUserWithoutAnEmployeeRecord_IsNotOwner));
+        await using SchedulingWorld w = await SchedulingWorld.Create(nameof(EnsureCallerOwnsSegments_AUserWithoutAnEmployeeRecord_IsNotOwner));
 
         await SchedulingAssert.BusinessRule(ErrorCodes.NotOwner,
-            () => AppointmentOwnership.EnsureCallerOwnsWholeAppointment(
-                Employees(w), w.OrganizationId, Guid.NewGuid(), false, AssignedTo(w, w.Employee.Id), Message));
+            () => AppointmentOwnership.EnsureCallerOwnsSegments(
+                Employees(w), w.OrganizationId, Guid.NewGuid(), false, AssignedTo(w, w.Employee.Id).Segments, Message));
     }
 
     [Fact]
-    public async Task EnsureCallerOwnsWholeAppointment_ATrainerlessAppointment_BelongsToNobodyInOwnScope()
+    public async Task EnsureCallerOwnsSegments_ATrainerlessAppointment_BelongsToNobodyInOwnScope()
     {
-        await using SchedulingWorld w = await SchedulingWorld.Create(nameof(EnsureCallerOwnsWholeAppointment_ATrainerlessAppointment_BelongsToNobodyInOwnScope));
+        await using SchedulingWorld w = await SchedulingWorld.Create(nameof(EnsureCallerOwnsSegments_ATrainerlessAppointment_BelongsToNobodyInOwnScope));
 
         await SchedulingAssert.BusinessRule(ErrorCodes.NotOwner,
-            () => AppointmentOwnership.EnsureCallerOwnsWholeAppointment(
-                Employees(w), w.OrganizationId, w.Employee.UserId, false, AssignedTo(w, null), Message));
+            () => AppointmentOwnership.EnsureCallerOwnsSegments(
+                Employees(w), w.OrganizationId, w.Employee.UserId, false, AssignedTo(w, null).Segments, Message));
     }
 
     [Fact]
-    public async Task EnsureCallerOwnsWholeAppointment_FullScope_PassesForAnyone_WithoutResolvingTheCaller()
+    public async Task EnsureCallerOwnsSegments_FullScope_PassesForAnyone_WithoutResolvingTheCaller()
     {
-        await using SchedulingWorld w = await SchedulingWorld.Create(nameof(EnsureCallerOwnsWholeAppointment_FullScope_PassesForAnyone_WithoutResolvingTheCaller));
+        await using SchedulingWorld w = await SchedulingWorld.Create(nameof(EnsureCallerOwnsSegments_FullScope_PassesForAnyone_WithoutResolvingTheCaller));
 
-        await AppointmentOwnership.EnsureCallerOwnsWholeAppointment(Employees(w), w.OrganizationId, Guid.NewGuid(), true, AssignedTo(w, null), Message);
-        await AppointmentOwnership.EnsureCallerOwnsWholeAppointment(null, w.OrganizationId, Guid.NewGuid(), true, AssignedTo(w, Guid.NewGuid()), Message);
+        await AppointmentOwnership.EnsureCallerOwnsSegments(Employees(w), w.OrganizationId, Guid.NewGuid(), true, AssignedTo(w, null).Segments, Message);
+        await AppointmentOwnership.EnsureCallerOwnsSegments(null, w.OrganizationId, Guid.NewGuid(), true, AssignedTo(w, Guid.NewGuid()).Segments, Message);
     }
 
     [Fact]
-    public async Task EnsureCallerOwnsWholeAppointment_TheCallerIsResolvedOnlyInsideTheRequestedOrganization()
+    public async Task EnsureCallerOwnsSegments_TheCallerIsResolvedOnlyInsideTheRequestedOrganization()
     {
-        await using SchedulingWorld w = await SchedulingWorld.Create(nameof(EnsureCallerOwnsWholeAppointment_TheCallerIsResolvedOnlyInsideTheRequestedOrganization));
-        await using SchedulingWorld other = await SchedulingWorld.Create(nameof(EnsureCallerOwnsWholeAppointment_TheCallerIsResolvedOnlyInsideTheRequestedOrganization) + "-other");
+        await using SchedulingWorld w = await SchedulingWorld.Create(nameof(EnsureCallerOwnsSegments_TheCallerIsResolvedOnlyInsideTheRequestedOrganization));
+        await using SchedulingWorld other = await SchedulingWorld.Create(nameof(EnsureCallerOwnsSegments_TheCallerIsResolvedOnlyInsideTheRequestedOrganization) + "-other");
         Appointment claimed = AssignedTo(w, other.Employee.Id); // an appointment claiming another tenant's employee
 
         await SchedulingAssert.BusinessRule(ErrorCodes.NotOwner,
-            () => AppointmentOwnership.EnsureCallerOwnsWholeAppointment(Employees(w), w.OrganizationId, other.Employee.UserId, false, claimed, Message));
+            () => AppointmentOwnership.EnsureCallerOwnsSegments(Employees(w), w.OrganizationId, other.Employee.UserId, false, claimed.Segments, Message));
 
         // Control: in its own organization the same user does resolve to that employee.
-        await AppointmentOwnership.EnsureCallerOwnsWholeAppointment(Employees(w), other.OrganizationId, other.Employee.UserId, false, claimed, Message);
+        await AppointmentOwnership.EnsureCallerOwnsSegments(Employees(w), other.OrganizationId, other.Employee.UserId, false, claimed.Segments, Message);
     }
 
     [Fact]
@@ -120,9 +120,13 @@ public class AppointmentOwnershipCharacterizationTests
         await SchedulingAssert.BusinessRule(ErrorCodes.NotOwner,
             () => AppointmentOwnership.EnsureCallerOwnsSegments(Employees(w), w.OrganizationId, w.Employee.UserId, false, new[] { a, b }, Message));
         await SchedulingAssert.BusinessRule(ErrorCodes.NotOwner,
-            () => AppointmentOwnership.EnsureCallerOwnsWholeAppointment(Employees(w), w.OrganizationId, other.UserId, false, appointment, Message));
+            () => AppointmentOwnership.EnsureCallerOwnsSegments(Employees(w), w.OrganizationId, other.UserId, false, appointment.Segments, Message));
+        // M1E: a whole-appointment operation is never own-scope, even for a caller assigned to every segment.
+        Assert.Equal(ErrorCodes.NotOwner,
+            Assert.Throws<BusinessRuleException>(() => AppointmentOwnership.EnsureWholeAppointmentScope(false, Message)).Code);
+        AppointmentOwnership.EnsureWholeAppointmentScope(true, Message);
         // Full scope passes for any segment set.
-        await AppointmentOwnership.EnsureCallerOwnsWholeAppointment(Employees(w), w.OrganizationId, other.UserId, true, appointment, Message);
+        await AppointmentOwnership.EnsureCallerOwnsSegments(Employees(w), w.OrganizationId, other.UserId, true, appointment.Segments, Message);
         // An empty segment set never proves own-scope ownership.
         await SchedulingAssert.BusinessRule(ErrorCodes.NotOwner,
             () => AppointmentOwnership.EnsureCallerOwnsSegments(Employees(w), w.OrganizationId, w.Employee.UserId, false, Array.Empty<AppointmentSegment>(), Message));
@@ -150,9 +154,9 @@ public class AppointmentOwnershipCharacterizationTests
     #region Services (behaviour and messages unchanged by S3)
 
     [Fact]
-    public async Task AppointmentCancel_OwnScope_AssignedTrainerMayCancel_OthersGetTheAppointmentMessage()
+    public async Task AppointmentCancel_IsAWholeAppointmentOperation_OwnScopeIsRefusedEvenForTheAssignedTrainer()
     {
-        await using SchedulingWorld w = await SchedulingWorld.Create(nameof(AppointmentCancel_OwnScope_AssignedTrainerMayCancel_OthersGetTheAppointmentMessage));
+        await using SchedulingWorld w = await SchedulingWorld.Create(nameof(AppointmentCancel_IsAWholeAppointmentOperation_OwnScopeIsRefusedEvenForTheAssignedTrainer));
         Employee other = await w.AddEmployee("Other");
         AppointmentDto mine = await w.CreateAppointment(SchedulingWorld.Future(10));
         AppointmentDto alsoMine = await w.CreateAppointment(SchedulingWorld.Future(12));
@@ -161,7 +165,13 @@ public class AppointmentOwnershipCharacterizationTests
             () => w.Appointments.Cancel(w.OrganizationId, other.UserId, false, mine.Id, new AppointmentCancelRequest()));
         Assert.Equal("Trener smije upravljati samo svojim vlastitim terminima.", ex.Message);
 
-        AppointmentDto cancelled = await w.Appointments.Cancel(w.OrganizationId, w.Employee.UserId, false, alsoMine.Id, new AppointmentCancelRequest());
+        // CHANGED in M1E: cancelling the WHOLE appointment requires appointments.write.all even when the caller is assigned to
+        // every segment; own scope cancels its own participations (ParticipationId) instead.
+        BusinessRuleException assigned = await SchedulingAssert.BusinessRule(ErrorCodes.NotOwner,
+            () => w.Appointments.Cancel(w.OrganizationId, w.Employee.UserId, false, alsoMine.Id, new AppointmentCancelRequest()));
+        Assert.Equal("Trener smije upravljati samo svojim vlastitim terminima.", assigned.Message);
+
+        AppointmentDto cancelled = await w.Appointments.Cancel(w.OrganizationId, w.ActorUserId, true, alsoMine.Id, new AppointmentCancelRequest());
         Assert.Equal(AppointmentStatus.Cancelled, cancelled.Status);
     }
 

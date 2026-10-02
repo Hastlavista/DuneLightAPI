@@ -40,6 +40,31 @@ public static class ParticipationHistory
                && participation.CheckoutItems.Count == 0;
     }
 
+    /// <summary>Phase M1E — uklanja SAMO zadana sudjelovanja (npr. jednog segmenta) ako su sva netaknuta, a Booking-spremnik
+    /// samo kad mu nakon toga ne ostane nijedno sudjelovanje; ili baca REFERENCED_CANNOT_DELETE (ništa ne označava). Booking
+    /// nema vlastitu povijest izvan sudjelovanja (nema statusa ni iznosa).</summary>
+    public static async Task RemoveUntouchedParticipations(
+        DatabaseContext context, IReadOnlyCollection<Booking> bookings, IReadOnlyCollection<BookingSegmentParticipation> participations, string message)
+    {
+        foreach (BookingSegmentParticipation participation in participations)
+        {
+            var checkoutItems = context.Entry(participation).Collection(p => p.CheckoutItems);
+            if (!checkoutItems.IsLoaded)
+                await checkoutItems.LoadAsync();
+            var consumptions = context.Entry(participation).Collection(p => p.PackageConsumptions);
+            if (!consumptions.IsLoaded)
+                await consumptions.LoadAsync();
+        }
+
+        if (participations.Any(p => !IsUntouched(p)))
+            throw new BusinessRuleException(ErrorCodes.ReferencedCannotDelete, message);
+
+        HashSet<Guid> removed = participations.Select(p => p.Id.GetValueOrDefault()).ToHashSet();
+        context.BookingSegmentParticipations.RemoveRange(participations);
+        context.Bookings.RemoveRange(bookings.Where(b =>
+            b.Participations.Count > 0 && b.Participations.All(p => removed.Contains(p.Id.GetValueOrDefault()))));
+    }
+
     /// <summary>Označava za brisanje (unutar pozivateljevog SaveChanges) svako sudjelovanje pa Booking — ili baca
     /// REFERENCED_CANNOT_DELETE (i ne označava ništa) ako bilo koje sudjelovanje ima povijest.</summary>
     public static async Task RemoveUntouched(DatabaseContext context, IReadOnlyCollection<Booking> bookings, string message)

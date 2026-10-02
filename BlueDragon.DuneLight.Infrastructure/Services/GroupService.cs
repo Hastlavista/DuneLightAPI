@@ -484,7 +484,7 @@ public class GroupService : IGroupService
                     continue;
 
                 // Član dobiva sudjelovanje na (jedinom) segmentu occurrencea — preklapanje se provjerava nad TIM segmentom.
-                AppointmentSegment futureSegment = SingleSegmentCompatibility.Resolve(futureAppointment);
+                AppointmentSegment futureSegment = SingleGroupSegment.Of(futureAppointment);
                 List<OccupancySlot> overlapping = await _schedulingOccupancyHandler.GetOverlappingForClients(
                     uow, organizationId, new[] { request.ClientId }, futureSegment.PlannedStart, futureSegment.PlannedEnd, excludedSegmentIds: null);
 
@@ -501,7 +501,7 @@ public class GroupService : IGroupService
             {
                 List<SegmentClaim> roomClaims = futureAppointments
                     .Where(a => a.Bookings.All(b => b.ClientId != request.ClientId))
-                    .Select(a => SingleSegmentCompatibility.Resolve(a))
+                    .Select(a => SingleGroupSegment.Of(a))
                     .Where(seg => seg.RoomId.HasValue)
                     .Select(seg => new SegmentClaim(null, seg.PlannedStart, seg.PlannedEnd, Array.Empty<Guid>(), Array.Empty<Guid>())
                     {
@@ -541,7 +541,15 @@ public class GroupService : IGroupService
                 // postojeći RecurringConflict abort iznad).
                 await GroupCapacityGuard.EnsureAvailable(_appointmentHandler, uow, organizationId, futureAppointment.Id.GetValueOrDefault());
 
-                AppointmentSegment memberSegment = SingleSegmentCompatibility.Resolve(futureAppointment);
+                AppointmentSegment memberSegment = SingleGroupSegment.Of(futureAppointment);
+                // Phase M1E: provjere sudara klijenta i kapaciteta prostorije gore su rađene nad PROČITANIM okvirom segmenta —
+                // pod Appointment lockom se potvrđuje da ga segmentna naredba (vrijeme/prostorija) u međuvremenu nije promijenila.
+                await SegmentSnapshot.VerifyUnderLock(_appointmentHandler, uow, organizationId, futureAppointment.Id.GetValueOrDefault(),
+                    new[]
+                    {
+                        SegmentSnapshot.Capture(futureAppointment, memberSegment,
+                            await _schedulingOccupancyHandler.GetSegmentResources(uow, memberSegment.Id.GetValueOrDefault()))
+                    }, includeParticipants: false);
                 SegmentExecutionContext execution = ExecutionContextResolver.ForSegment(futureAppointment, memberSegment);
                 ResolvePriceResponse resolvedPrice = await ResolveServicePrice(
                     organizationId, execution.ServiceId, execution.CompanyId, execution.StartsAt);

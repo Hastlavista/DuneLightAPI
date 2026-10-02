@@ -110,9 +110,17 @@ public class SchedulingOccupancyHandler : ISchedulingOccupancyHandler
         return rows.ToDictionary(r => r.Id, r => (r.Name, r.Capacity));
     }
 
-    public async Task<List<ResourceClaim>> GetSegmentResources(IUnitOfWork uow, Guid segmentId)
+    public async Task<List<ResourceClaim>> GetSegmentResources(Guid segmentId)
     {
-        var rows = await uow.Context.AppointmentSegmentResources.AsNoTracking()
+        await using DatabaseContext context = DatabaseContext.GenerateContext(_databaseSettings.ConnectionString);
+        return await SegmentResources(context, segmentId);
+    }
+
+    public Task<List<ResourceClaim>> GetSegmentResources(IUnitOfWork uow, Guid segmentId) => SegmentResources(uow.Context, segmentId);
+
+    private static async Task<List<ResourceClaim>> SegmentResources(DatabaseContext context, Guid segmentId)
+    {
+        var rows = await context.AppointmentSegmentResources.AsNoTracking()
             .Where(r => r.AppointmentSegmentId == segmentId)
             .Select(r => new { r.ResourceId, r.QuantityRequired })
             .ToListAsync();

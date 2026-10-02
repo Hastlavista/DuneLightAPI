@@ -15,11 +15,10 @@ namespace BlueDragon.DuneLight.Infrastructure.Utils;
 /// prosljeđuje hasFullScope iz kontrolera). Pozivatelj se UVIJEK razrješava na backendu (User → Employee preko
 /// IEmployeeHandler.GetByUserId); EmployeeId iz zahtjeva klijenta nikad ne dokazuje vlasništvo sam po sebi.
 ///
-/// Phase M1B — vlasništvo je SEGMENTNO: own-opseg smije mijenjati segmente kojima je pozivatelj dodijeljen i njihova
-/// sudjelovanja (operacija nad sudjelovanjem slijedi segment sudjelovanja). Operacija koja dira VIŠE segmenata (ili cijeli
-/// termin) u own-opsegu zahtijeva da je pozivatelj dodijeljen SVAKOM od njih — čim zahvaća tuđi segment, potreban je
-/// all-opseg. Za današnje jednosegmentne termine to je isto pravilo kao prije ("dodijeljen terminu"); konačna semantika
-/// own-opsega nad cijelim višesegmentnim terminom je otvorena i namjerno se ne izmišlja (vidi izvještaj M1B).
+/// Phase M1B/M1E — vlasništvo je SEGMENTNO: own-opseg smije mijenjati segmente kojima je pozivatelj dodijeljen i njihova
+/// sudjelovanja (operacija nad sudjelovanjem slijedi segment sudjelovanja). Operacija nad VIŠE segmenata (npr. Booking-wide
+/// otkazivanje) u own-opsegu zahtijeva dodjelu SVAKOM zahvaćenom segmentu (sve-ili-ništa). Operacija nad CIJELIM terminom
+/// (otkazivanje termina, bulk no-show) zahtijeva all-opseg — vidi <see cref="EnsureWholeAppointmentScope"/>.
 /// </summary>
 public static class AppointmentOwnership
 {
@@ -47,13 +46,13 @@ public static class AppointmentOwnership
             throw new BusinessRuleException(ErrorCodes.NotOwner, notOwnerMessage);
     }
 
-    /// <summary>Operacija nad cijelim terminom (otkazivanje, close-out, completion, Update/Move kompatibilnost): u own-opsegu
-    /// pozivatelj mora biti dodijeljen SVIM segmentima termina.</summary>
-    public static Task EnsureCallerOwnsWholeAppointment(
-        IEmployeeHandler employeeHandler, Guid organizationId, Guid userId, bool hasFullScope, Appointment appointment, string notOwnerMessage)
+    /// <summary>Phase M1E (zaključano pravilo): operacije nad CIJELIM terminom (otkazivanje termina, bulk no-show) djeluju na
+    /// agregat i potencijalno na tuđe segmente — zahtijevaju all-opseg (appointments.write.all). Own-opseg NIJE dovoljan ni
+    /// kad je pozivatelj slučajno dodijeljen svim trenutnim segmentima.</summary>
+    public static void EnsureWholeAppointmentScope(bool hasFullScope, string notOwnerMessage)
     {
-        ArgumentNullException.ThrowIfNull(appointment);
-        return EnsureCallerOwnsSegments(employeeHandler, organizationId, userId, hasFullScope, appointment.Segments, notOwnerMessage);
+        if (!hasFullScope)
+            throw new BusinessRuleException(ErrorCodes.NotOwner, notOwnerMessage);
     }
 
     /// <summary>Own-scope za NOVI termin: pozivatelj smije zakazati samo za sebe — svaki zatraženi zaposlenik (svih
