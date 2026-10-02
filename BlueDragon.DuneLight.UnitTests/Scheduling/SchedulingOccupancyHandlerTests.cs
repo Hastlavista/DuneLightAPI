@@ -91,14 +91,14 @@ public class SchedulingOccupancyHandlerTests
         foreach (DateTimeOffset start in new[] { SchedulingWorld.Future(9, 30), SchedulingWorld.Future(10, 30) })
         {
             Assert.Empty(await w.EmployeeOverlapping(w.Employee.Id.Value, start, 30));
-            Assert.Empty(await w.RoomOverlapping(room.Id.Value, start, 30));
+            Assert.Empty(await w.RoomUsage(room.Id.Value, start, 30));
             Assert.Empty(await w.ClientsOverlapping(clients, start, 30));
         }
 
         foreach (DateTimeOffset start in new[] { SchedulingWorld.Future(9, 31), SchedulingWorld.Future(10, 29) })
         {
             Assert.Single(await w.EmployeeOverlapping(w.Employee.Id.Value, start, 30));
-            Assert.Single(await w.RoomOverlapping(room.Id.Value, start, 30));
+            Assert.Single(await w.RoomUsage(room.Id.Value, start, 30));
             Assert.Single(await w.ClientsOverlapping(clients, start, 30));
         }
     }
@@ -136,7 +136,7 @@ public class SchedulingOccupancyHandlerTests
         DateTimeOffset from = SchedulingWorld.FutureDay, to = SchedulingWorld.FutureDay.AddDays(1), at = SchedulingWorld.Future(10);
 
         Assert.Empty(await w.EmployeeOverlapping(w.Employee.Id.Value, at, 30));
-        Assert.Empty(await w.RoomOverlapping(room.Id.Value, at, 30));
+        Assert.Empty(await w.RoomUsage(room.Id.Value, at, 30));
         Assert.Empty(await w.ClientsOverlapping(clients, at, 30));
         Assert.Empty(await occupancy.GetForEmployeeInRange(org, w.Employee.Id.Value, from, to));
         Assert.Empty(await occupancy.GetForEmployeesInRange(org, new List<Guid> { w.Employee.Id.Value }, from, to));
@@ -201,16 +201,16 @@ public class SchedulingOccupancyHandlerTests
 
     #endregion
 
-    #region Room: the seam does not interpret AllowConcurrentBookings
+    #region Room: usage is people per occupying segment (M1D)
 
     [Fact]
-    public async Task RoomQueries_ReturnAppointmentsInAConcurrentRoomToo_TheFlagIsTheCallersDecision()
+    public async Task RoomUsage_IsThePeopleCountOfEachOccupyingSegment()
     {
-        await using SchedulingWorld w = await SchedulingWorld.Create(nameof(RoomQueries_ReturnAppointmentsInAConcurrentRoomToo_TheFlagIsTheCallersDecision));
-        Room concurrent = await w.AddRoom(allowConcurrent: true);
+        await using SchedulingWorld w = await SchedulingWorld.Create(nameof(RoomUsage_IsThePeopleCountOfEachOccupyingSegment));
+        Room concurrent = await w.AddRoom(capacity: 50);
         await w.SeedAppointment(SchedulingWorld.Future(10), room: concurrent);
 
-        Assert.Single(await w.RoomOverlapping(concurrent.Id.Value, SchedulingWorld.Future(10), 30));
+        Assert.Equal(1, Assert.Single(await w.RoomUsage(concurrent.Id.Value, SchedulingWorld.Future(10), 30)).Amount); // the employee
         Assert.Single(await Occupancy(w).GetForRoomInRange(
             w.OrganizationId, concurrent.Id.Value, SchedulingWorld.FutureDay, SchedulingWorld.FutureDay.AddDays(1)));
     }
@@ -230,12 +230,12 @@ public class SchedulingOccupancyHandlerTests
         DateTimeOffset shifted = SchedulingWorld.Future(10, 15);
 
         Assert.Empty(await w.EmployeeOverlapping(w.Employee.Id.Value, shifted, 30, ownSegment));
-        Assert.Empty(await w.RoomOverlapping(room.Id.Value, shifted, 30, ownSegment));
+        Assert.Empty(await w.RoomUsage(room.Id.Value, shifted, 30, ownSegment));
         Assert.Empty(await w.ClientsOverlapping(clients, shifted, 30, ownSegment));
 
         Appointment other = await w.SeedAppointment(SchedulingWorld.Future(10, 30), room: room, bookings: (w.Client, BookingStatus.Confirmed, 50m));
         Assert.Equal(other.Id.Value, Assert.Single(await w.EmployeeOverlapping(w.Employee.Id.Value, shifted, 30, ownSegment)).AppointmentId);
-        Assert.Equal(other.Id.Value, Assert.Single(await w.RoomOverlapping(room.Id.Value, shifted, 30, ownSegment)).AppointmentId);
+        Assert.Equal(SchedulingWorld.Future(10, 30), Assert.Single(await w.RoomUsage(room.Id.Value, shifted, 30, ownSegment)).Start);
         Assert.Equal(other.Id.Value, Assert.Single(await w.ClientsOverlapping(clients, shifted, 30, ownSegment)).AppointmentId);
     }
 

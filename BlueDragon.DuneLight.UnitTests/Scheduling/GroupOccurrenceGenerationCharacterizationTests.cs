@@ -359,7 +359,7 @@ public class GroupOccurrenceGenerationCharacterizationTests
     {
         (SchedulingWorld w, ServiceEntity svc) = await Arrange(nameof(Generate_WhenTheRoomIsOccupied_FailsTheWholeBatch_AndOverrideDoesNotHelp));
         await using SchedulingWorld _ = w;
-        Room room = await w.AddRoom(allowConcurrent: false);
+        Room room = await w.AddRoom();
         Employee otherEmployee = await w.AddEmployee("Other");
         Client otherClient = await w.AddClient("Other", "Client");
         GroupDto group = await w.CreateGroup(svc, capacity: 5, room: room);
@@ -517,14 +517,24 @@ public class GroupOccurrenceGenerationCharacterizationTests
     }
 
     [Fact]
-    public async Task CreateGroup_TwoGroupsInTheSameExclusiveRoomAtTheSameWeeklySlot_IsRejected()
+    public async Task TwoGroupsInTheSameRoomAtTheSameWeeklySlot_AreAllowed_TheRoomsPeopleCapacityDecidesAtSchedulingTime()
     {
-        (SchedulingWorld w, ServiceEntity svc) = await Arrange(nameof(CreateGroup_TwoGroupsInTheSameExclusiveRoomAtTheSameWeeklySlot_IsRejected));
+        (SchedulingWorld w, ServiceEntity svc) = await Arrange(nameof(TwoGroupsInTheSameRoomAtTheSameWeeklySlot_AreAllowed_TheRoomsPeopleCapacityDecidesAtSchedulingTime));
         await using SchedulingWorld _ = w;
-        Room room = await w.AddRoom(allowConcurrent: false);
-        await w.CreateGroup(svc, capacity: 5, room: room);
+        Room room = await w.AddRoom(capacity: 3);
+        Employee secondTrainer = await w.AddEmployee("Second trainer", serviceId: svc.Id);
+        GroupDto first = await w.CreateGroup(svc, capacity: 5, room: room);
+        await w.AddGroupMember(first, w.Client);
 
-        await SchedulingAssert.BusinessRule(ErrorCodes.AppointmentOverlap, () => w.CreateGroup(svc, capacity: 5, room: room));
+        // CHANGED in M1D: the legacy "exclusive room per weekly slot" setup rule is gone — capacity is checked on real segments.
+        GroupDto second = await w.CreateGroup(svc, capacity: 5, trainer: secondTrainer, room: room);
+
+        await w.GenerateSingleOccurrence(first);   // trainer + member = 2 people
+        Appointment parallel = await w.GenerateSingleOccurrence(second); // + its trainer = 3 people: fits exactly
+        Client late = await w.AddClient("Late", "Member");
+
+        await SchedulingAssert.BusinessRule(ErrorCodes.RoomCapacityExceeded, () => w.AddGroupMember(second, late));
+        Assert.Empty((await w.LoadAppointment(parallel.Id.Value)).Bookings);
     }
 
     #endregion

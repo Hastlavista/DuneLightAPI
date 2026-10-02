@@ -459,7 +459,9 @@ public sealed class SchedulingWorld : IAsyncDisposable
         return client;
     }
 
-    public async Task<Room> AddRoom(Company company = null, bool allowConcurrent = false, bool isActive = true, int capacity = 1)
+    /// <summary>M1D: the default capacity 2 holds exactly one individual appointment (1 employee + 1 client) — an overlapping
+    /// second one in the same room exceeds it.</summary>
+    public async Task<Room> AddRoom(Company company = null, bool isActive = true, int capacity = 2)
     {
         await using DatabaseContext db = NewDb();
         Room room = new()
@@ -469,7 +471,6 @@ public sealed class SchedulingWorld : IAsyncDisposable
             CompanyId = (company ?? Company).Id.Value,
             Name = $"Room-{Guid.NewGuid():N}",
             Capacity = capacity,
-            AllowConcurrentBookings = allowConcurrent,
             IsActive = isActive,
             SortOrder = 0,
             CreatedAt = DateTimeOffset.UtcNow
@@ -477,6 +478,26 @@ public sealed class SchedulingWorld : IAsyncDisposable
         db.Rooms.Add(room);
         await db.SaveChangesAsync();
         return room;
+    }
+
+    /// <summary>M1D: a company-scoped physical resource (catalog row) with the given capacity.</summary>
+    public async Task<Resource> AddResource(Company company = null, int capacity = 3, bool isActive = true, string name = null)
+    {
+        await using DatabaseContext db = NewDb();
+        Resource resource = new()
+        {
+            Id = Guid.NewGuid(),
+            OrganizationId = OrganizationId,
+            CompanyId = (company ?? Company).Id.Value,
+            Name = name ?? $"Resource-{Guid.NewGuid():N}",
+            Capacity = capacity,
+            IsActive = isActive,
+            SortOrder = 0,
+            CreatedAt = DateTimeOffset.UtcNow
+        };
+        db.Resources.Add(resource);
+        await db.SaveChangesAsync();
+        return resource;
     }
 
     /// <summary>Price-list row (Service, optionally company-specific) effective from <paramref name="validFrom"/>.</summary>

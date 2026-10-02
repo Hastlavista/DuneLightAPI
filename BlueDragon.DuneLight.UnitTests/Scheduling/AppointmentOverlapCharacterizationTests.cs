@@ -289,24 +289,25 @@ public class AppointmentOverlapCharacterizationTests
     public async Task RoomOverlap_ExclusiveRoom_OverlappingUseIsRejected()
     {
         await using SchedulingWorld w = await SchedulingWorld.Create(nameof(RoomOverlap_ExclusiveRoom_OverlappingUseIsRejected));
-        Room room = await w.AddRoom(allowConcurrent: false);
+        Room room = await w.AddRoom();
         Client other = await w.AddClient("Other", "Client");
         Employee secondEmployee = await w.AddEmployee("Second");
         await w.CreateAppointment(SchedulingWorld.Future(10), room: room);
 
-        // Different employee and client: only the Room rule can fire.
+        // Different employee and client: only the Room rule can fire. CHANGED in M1D: the room rule is people capacity
+        // (capacity 2 = one employee + one client), reported as ROOM_CAPACITY_EXCEEDED.
         BusinessRuleExceptionHolder holder = await BusinessRuleExceptionHolder.Capture(
             () => w.CreateAppointment(SchedulingWorld.Future(10, 15), client: other, employee: secondEmployee, room: room));
 
-        Assert.Equal(ErrorCodes.AppointmentOverlap, holder.Code);
-        Assert.Contains("Prostorija", holder.Message);
+        Assert.Equal(ErrorCodes.RoomCapacityExceeded, holder.Code);
+        Assert.Contains("prostorije", holder.Message);
     }
 
     [Fact]
     public async Task RoomOverlap_ExclusiveRoom_AdjacentUseIsAllowed()
     {
         await using SchedulingWorld w = await SchedulingWorld.Create(nameof(RoomOverlap_ExclusiveRoom_AdjacentUseIsAllowed));
-        Room room = await w.AddRoom(allowConcurrent: false);
+        Room room = await w.AddRoom();
         Client other = await w.AddClient("Other", "Client");
         Employee secondEmployee = await w.AddEmployee("Second");
         await w.CreateAppointment(SchedulingWorld.Future(10), room: room);
@@ -320,7 +321,7 @@ public class AppointmentOverlapCharacterizationTests
     public async Task RoomOverlap_ExclusiveRoom_CancelledAppointmentDoesNotBlock()
     {
         await using SchedulingWorld w = await SchedulingWorld.Create(nameof(RoomOverlap_ExclusiveRoom_CancelledAppointmentDoesNotBlock));
-        Room room = await w.AddRoom(allowConcurrent: false);
+        Room room = await w.AddRoom();
         Client other = await w.AddClient("Other", "Client");
         Employee secondEmployee = await w.AddEmployee("Second");
         AppointmentDto existing = await w.CreateAppointment(SchedulingWorld.Future(10), room: room);
@@ -350,7 +351,7 @@ public class AppointmentOverlapCharacterizationTests
     public async Task RoomOverlap_ConcurrentRoom_OverlappingAppointmentsAreAllowedWithoutAnyNumericCapacity()
     {
         await using SchedulingWorld w = await SchedulingWorld.Create(nameof(RoomOverlap_ConcurrentRoom_OverlappingAppointmentsAreAllowedWithoutAnyNumericCapacity));
-        Room room = await w.AddRoom(allowConcurrent: true);
+        Room room = await w.AddRoom(capacity: 50);
 
         // Three simultaneous appointments (distinct employees and clients) in one AllowConcurrentBookings room:
         // Room has no capacity number, so the flag means "unlimited", not "up to N".
@@ -369,7 +370,7 @@ public class AppointmentOverlapCharacterizationTests
     public async Task RoomOverlap_ConcurrentRoom_StillAppliesTheEmployeeAndClientRules()
     {
         await using SchedulingWorld w = await SchedulingWorld.Create(nameof(RoomOverlap_ConcurrentRoom_StillAppliesTheEmployeeAndClientRules));
-        Room room = await w.AddRoom(allowConcurrent: true);
+        Room room = await w.AddRoom(capacity: 50);
         Client other = await w.AddClient("Other", "Client");
         await w.CreateAppointment(SchedulingWorld.Future(10), room: room);
 
@@ -379,16 +380,24 @@ public class AppointmentOverlapCharacterizationTests
     }
 
     [Fact]
-    public async Task RoomOverlap_ExclusiveRoom_IsAlsoEnforcedForGroupOccurrences()
+    public async Task RoomCapacity_IsAlsoEnforcedAgainstGroupOccurrences_CountingTheirPeople()
     {
-        await using SchedulingWorld w = await SchedulingWorld.Create(nameof(RoomOverlap_ExclusiveRoom_IsAlsoEnforcedForGroupOccurrences));
-        Room room = await w.AddRoom(allowConcurrent: false);
+        await using SchedulingWorld w = await SchedulingWorld.Create(nameof(RoomCapacity_IsAlsoEnforcedAgainstGroupOccurrences_CountingTheirPeople));
+        Room room = await w.AddRoom();
         Client other = await w.AddClient("Other", "Client");
         Employee secondEmployee = await w.AddEmployee("Second");
-        await w.SeedAppointment(SchedulingWorld.Future(10), form: AppointmentForm.Group, employee: null, room: room);
+        // CHANGED in M1D: a trainerless EMPTY occurrence holds zero people (it no longer blocks the whole room)...
+        Appointment occurrence = await w.SeedAppointment(SchedulingWorld.Future(10), form: AppointmentForm.Group, employee: null, room: room);
+        await w.CreateAppointment(SchedulingWorld.Future(10), client: other, employee: secondEmployee, room: room);
 
-        await SchedulingAssert.BusinessRule(ErrorCodes.AppointmentOverlap,
-            () => w.CreateAppointment(SchedulingWorld.Future(10), client: other, employee: secondEmployee, room: room));
+        // ...but its participants count: one confirmed member + the two people above exceed capacity 2.
+        Room second = await w.AddRoom();
+        Client member = await w.AddClient("Member", "Client");
+        await w.SeedAppointment(SchedulingWorld.Future(12), form: AppointmentForm.Group, employee: null, room: second,
+            bookings: (member, BookingStatus.Confirmed, 0m));
+        await SchedulingAssert.BusinessRule(ErrorCodes.RoomCapacityExceeded,
+            () => w.CreateAppointment(SchedulingWorld.Future(12), room: second));
+        Assert.NotNull(occurrence.Id);
     }
 
     #endregion
@@ -399,7 +408,7 @@ public class AppointmentOverlapCharacterizationTests
     public async Task Database_HasNoExclusionConstraint_OverlappingAppointmentsForTheSameEmployeeAndRoomCanBeWrittenDirectly()
     {
         await using SchedulingWorld w = await SchedulingWorld.Create(nameof(Database_HasNoExclusionConstraint_OverlappingAppointmentsForTheSameEmployeeAndRoomCanBeWrittenDirectly));
-        Room room = await w.AddRoom(allowConcurrent: false);
+        Room room = await w.AddRoom();
         Client other = await w.AddClient("Other", "Client");
 
         // Overlap protection is an APPLICATION rule (check, then write). Bypassing the service shows the schema itself would

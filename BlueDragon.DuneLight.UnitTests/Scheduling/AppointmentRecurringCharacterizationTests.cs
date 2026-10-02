@@ -141,7 +141,7 @@ public class AppointmentRecurringCharacterizationTests
     public async Task ARoomConflictOnAnyOccurrence_AbortsTheWholeSeries()
     {
         await using SchedulingWorld w = await SchedulingWorld.Create(nameof(ARoomConflictOnAnyOccurrence_AbortsTheWholeSeries));
-        Room room = await w.AddRoom(allowConcurrent: false);
+        Room room = await w.AddRoom();
         Client other = await w.AddClient("Other", "Client");
         Employee otherEmployee = await w.AddEmployee("Other");
         await w.CreateAppointment(SchedulingWorld.Future(10).AddDays(7), client: other, employee: otherEmployee, room: room);

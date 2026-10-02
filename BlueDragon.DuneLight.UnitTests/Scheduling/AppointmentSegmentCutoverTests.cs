@@ -120,7 +120,7 @@ public class AppointmentSegmentCutoverTests
     {
         await using SchedulingWorld w = await SchedulingWorld.Create(nameof(GroupGeneration_CreatesOneSegmentPerOccurrence_FromTheGroupTemplate));
         ServiceEntity groupService = await w.AddGroupService();
-        Room room = await w.AddRoom(allowConcurrent: true);
+        Room room = await w.AddRoom(capacity: 50);
         GroupDto trained = await w.CreateGroup(groupService, capacity: 5, room: room);
         GroupDto trainerless = await w.CreateGroup(groupService, capacity: 5, withTrainer: false, slots: (DayOfWeek.Monday, TimeSpan.FromHours(14)));
 

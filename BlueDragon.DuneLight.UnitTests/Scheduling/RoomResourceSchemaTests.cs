@@ -48,8 +48,10 @@ public class RoomResourceSchemaTests
 
         Assert.Equal("CHECK ((capacity >= 1))", await ConstraintDefinition("ck_rooms_capacity_positive"));
 
-        object[] legacyFlag = await Column("rooms", "allow_concurrent_bookings");
-        Assert.Equal("boolean", legacyFlag[0]);
+        // M1D: the legacy overlap flag is gone — capacity is the only room scheduling rule.
+        Assert.Empty(await Query(@"
+            SELECT 1 FROM information_schema.columns
+            WHERE table_schema = 'dunelight' AND table_name = 'rooms' AND column_name = 'allow_concurrent_bookings'"));
     }
 
     [Fact]

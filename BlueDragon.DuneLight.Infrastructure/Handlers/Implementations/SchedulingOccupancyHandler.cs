@@ -53,15 +53,70 @@ public class SchedulingOccupancyHandler : ISchedulingOccupancyHandler
             .Where(OccupiedByAnyClient(ids)));
     }
 
-    public Task<List<OccupancySlot>> GetOverlappingForRoom(
+    public async Task<List<CapacityClaim>> GetRoomUsage(
         IUnitOfWork uow, Guid organizationId, Guid roomId, DateTimeOffset start, DateTimeOffset end, IReadOnlyCollection<Guid> excludedSegmentIds)
     {
         List<Guid> excluded = Excluded(excludedSegmentIds);
-        return Project(Segments(uow.Context, organizationId)
-            .Where(SegmentOccupancy.ReservesSlot)
+        var rows = await Segments(uow.Context, organizationId)
             .Where(s => s.RoomId == roomId)
             .Where(SchedulingInterval.SegmentOverlaps(start, end))
-            .Where(s => !excluded.Contains(s.Id.Value)));
+            .Where(s => !excluded.Contains(s.Id.Value))
+            .Where(SegmentOccupancy.ReservesSlot)
+            .Select(s => new
+            {
+                s.PlannedStart,
+                s.PlannedEnd,
+                Employees = s.Employees.Count(),
+                Clients = s.Participations.AsQueryable().Count(ParticipationOccupancy.OccupiesSchedule)
+            })
+            .ToListAsync();
+        return rows.Select(r => new CapacityClaim(r.PlannedStart, r.PlannedEnd, RoomPeopleCount.Of(r.Employees, r.Clients))).ToList();
+    }
+
+    public async Task<List<CapacityClaim>> GetResourceUsage(
+        IUnitOfWork uow, Guid organizationId, Guid resourceId, DateTimeOffset start, DateTimeOffset end, IReadOnlyCollection<Guid> excludedSegmentIds)
+    {
+        List<Guid> excluded = Excluded(excludedSegmentIds);
+        var rows = await Segments(uow.Context, organizationId)
+            .Where(SchedulingInterval.SegmentOverlaps(start, end))
+            .Where(s => !excluded.Contains(s.Id.Value))
+            .Where(SegmentOccupancy.ReservesSlot)
+            .SelectMany(s => s.Resources
+                .Where(r => r.ResourceId == resourceId)
+                .Select(r => new { s.PlannedStart, s.PlannedEnd, r.QuantityRequired }))
+            .ToListAsync();
+        return rows.Select(r => new CapacityClaim(r.PlannedStart, r.PlannedEnd, r.QuantityRequired)).ToList();
+    }
+
+    public async Task<Dictionary<Guid, (string Name, int Capacity)>> GetRoomCapacities(
+        IUnitOfWork uow, Guid organizationId, IReadOnlyCollection<Guid> roomIds)
+    {
+        List<Guid> ids = roomIds.ToList();
+        var rows = await uow.Context.Rooms.AsNoTracking()
+            .Where(r => r.OrganizationId == organizationId && ids.Contains(r.Id.Value))
+            .Select(r => new { Id = r.Id.Value, r.Name, r.Capacity })
+            .ToListAsync();
+        return rows.ToDictionary(r => r.Id, r => (r.Name, r.Capacity));
+    }
+
+    public async Task<Dictionary<Guid, (string Name, int Capacity)>> GetResourceCapacities(
+        IUnitOfWork uow, Guid organizationId, IReadOnlyCollection<Guid> resourceIds)
+    {
+        List<Guid> ids = resourceIds.ToList();
+        var rows = await uow.Context.Resources.AsNoTracking()
+            .Where(r => r.OrganizationId == organizationId && ids.Contains(r.Id.Value))
+            .Select(r => new { Id = r.Id.Value, r.Name, r.Capacity })
+            .ToListAsync();
+        return rows.ToDictionary(r => r.Id, r => (r.Name, r.Capacity));
+    }
+
+    public async Task<List<ResourceClaim>> GetSegmentResources(IUnitOfWork uow, Guid segmentId)
+    {
+        var rows = await uow.Context.AppointmentSegmentResources.AsNoTracking()
+            .Where(r => r.AppointmentSegmentId == segmentId)
+            .Select(r => new { r.ResourceId, r.QuantityRequired })
+            .ToListAsync();
+        return rows.Select(r => new ResourceClaim(r.ResourceId, r.QuantityRequired)).ToList();
     }
 
     public async Task<List<OccupancySlot>> GetForEmployeeInRange(
@@ -96,19 +151,21 @@ public class SchedulingOccupancyHandler : ISchedulingOccupancyHandler
             .Where(OccupiedByAnyClient(clientIds)));
     }
 
-    public async Task LockSchedulingSubjects(IUnitOfWork uow, IEnumerable<Guid> employeeIds, IEnumerable<Guid> clientIds)
+    public async Task LockSchedulingSubjects(
+        IUnitOfWork uow, IEnumerable<Guid> employeeIds, IEnumerable<Guid> clientIds, IEnumerable<Guid> roomIds = null, IEnumerable<Guid> resourceIds = null)
     {
-        foreach (long key in SchedulingLockOrder.Keys(employeeIds, clientIds))
+        foreach (long key in SchedulingLockOrder.Keys(employeeIds, clientIds, roomIds, resourceIds))
             await uow.Context.Database.ExecuteSqlInterpolatedAsync($"SELECT pg_advisory_xact_lock({key})");
     }
 
-    public async Task<bool> TryLockClientSchedule(IUnitOfWork uow, Guid clientId)
-    {
-        long key = SchedulingLockOrder.ClientKey(clientId);
-        return await uow.Context.Database
+    public Task<bool> TryLockClientSchedule(IUnitOfWork uow, Guid clientId) => TryLock(uow, SchedulingLockOrder.ClientKey(clientId));
+
+    public Task<bool> TryLockRoomSchedule(IUnitOfWork uow, Guid roomId) => TryLock(uow, SchedulingLockOrder.RoomKey(roomId));
+
+    private static async Task<bool> TryLock(IUnitOfWork uow, long key) =>
+        await uow.Context.Database
             .SqlQuery<bool>($"SELECT pg_try_advisory_xact_lock({key}) AS \"Value\"")
             .SingleAsync();
-    }
 
     private static IQueryable<AppointmentSegment> Segments(DatabaseContext context, Guid organizationId) =>
         context.AppointmentSegments.AsNoTracking().Where(s => s.OrganizationId == organizationId);

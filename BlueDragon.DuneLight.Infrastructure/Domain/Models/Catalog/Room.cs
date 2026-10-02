@@ -25,17 +25,11 @@ public class Room
     [Column("name")]
     public string Name { get; set; }
 
-    /// <summary>Maksimalan broj OSOBA (klijenti + zaposlenici) koje istovremeno smiju boraviti u prostoriji (≥ 1).
-    /// NIJE broj termina/rezervacija i NIJE ekvivalent AllowConcurrentBookings. Za sada samo podatak — zakazivanje ga
-    /// još ne koristi; postat će autoritativan tek s validacijom kapaciteta po segmentima termina.</summary>
+    /// <summary>Maksimalan broj OSOBA (dodijeljeni zaposlenici + zauzimajući klijenti segmenata koji rezerviraju slot) koje
+    /// istovremeno smiju boraviti u prostoriji (≥ 1). Phase M1D: JEDINO, tvrdo pravilo prostorije u zakazivanju (vremenski
+    /// raslojeno, bez override-a) — NIJE broj termina/segmenata/rezervacija. Vidi RoomPeopleCount/SchedulingConflictGuard.</summary>
     [Column("capacity")]
     public int Capacity { get; set; }
-
-    /// <summary>LEGACY (privremeno): ako je false (zadano), sustav tvrdo blokira preklapajuće termine u istoj prostoriji;
-    /// ako je true, više termina smije dijeliti istu prostoriju istovremeno. Ostaje dok validacija kapaciteta po
-    /// segmentima ne postane autoritativna — ne izvodi se iz Capacity niti obrnuto.</summary>
-    [Column("allow_concurrent_bookings")]
-    public bool AllowConcurrentBookings { get; set; }
 
     [Column("is_active")]
     public bool IsActive { get; set; }

@@ -270,6 +270,9 @@ public class WaitlistService : IWaitlistService, IWaitlistPromotionService
             // ostaje Waiting za sljedeću priliku (sljedeće oslobađanje mjesta).
             if (!await _schedulingOccupancyHandler.TryLockClientSchedule(uow, entry.ClientId))
                 break;
+            // Phase M1D: prostorija — isto neblokirajuće; zauzeta prostorija odgađa promociju jednako kao zauzet klijent.
+            if (segment.RoomId.HasValue && !await _schedulingOccupancyHandler.TryLockRoomSchedule(uow, segment.RoomId.Value))
+                break;
 
             string ineligibleReason = await FindIneligibilityReason(uow, organizationId, appointment, entry);
 
@@ -294,6 +297,13 @@ public class WaitlistService : IWaitlistService, IWaitlistPromotionService
 
                 continue;
             }
+
+            // Phase M1D: fizički kapacitet prostorije (osobe) je TVRD — bez mjesta u prostoriji nema promocije (čekatelj ostaje
+            // Waiting; ni kasniji ne preskaču red). Nije isto što i Group.Capacity (poslovni broj mjesta, provjeren gore).
+            if (segment.RoomId.HasValue && (await SchedulingConflictGuard.FindCapacityViolations(
+                    _schedulingOccupancyHandler, uow, organizationId,
+                    new[] { SegmentClaim.ForParticipationActivation(appointment, segment, entry.ClientId, Array.Empty<ResourceClaim>()) })).Count > 0)
+                break;
 
             SegmentExecutionContext execution = ExecutionContextResolver.ForSegment(appointment, segment);
             ResolvePriceResponse resolvedPrice = await ResolveServicePrice(organizationId, execution.ServiceId, execution.CompanyId, execution.StartsAt);

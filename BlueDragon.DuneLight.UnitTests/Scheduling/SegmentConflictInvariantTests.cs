@@ -373,7 +373,10 @@ public class SegmentConflictInvariantTests
         };
         await using IUnitOfWork uow = await Begin(w);
         await SchedulingAssert.BusinessRule(ErrorCodes.AppointmentOverlap,
-            () => SchedulingConflictGuard.ClaimClientOnSegment(Occupancy(w), uow, w.OrganizationId, probeSegment, client));
+            () => SchedulingConflictGuard.Claim(Occupancy(w), uow, w.OrganizationId, new[]
+            {
+                new SegmentClaim(null, probeSegment.PlannedStart, probeSegment.PlannedEnd, Array.Empty<Guid>(), new[] { client })
+            }));
         Assert.Equal(2, loaded.Segments.Count);
     }
 

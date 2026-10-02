@@ -40,7 +40,7 @@ public class AppointmentReadModelCharacterizationTests
     public async Task ScheduleCell_ForAnIndividualAppointment_ExposesOneServiceOneEmployeeOneRoomAndTheClientNames()
     {
         await using SchedulingWorld w = await SchedulingWorld.Create(nameof(ScheduleCell_ForAnIndividualAppointment_ExposesOneServiceOneEmployeeOneRoomAndTheClientNames));
-        Room room = await w.AddRoom();
+        Room room = await w.AddRoom(capacity: 10);
         Client partner = await w.AddClient("Partner", "Client");
         AppointmentDto created = await w.CreateAppointment(SchedulingWorld.Future(10), room: room, extraClients: partner);
 
@@ -331,7 +331,7 @@ public class AppointmentReadModelCharacterizationTests
     {
         await using SchedulingWorld w = await SchedulingWorld.Create(nameof(AvailableSlots_DoNotConsiderRoomsOrClients_OnlyTheEmployee));
         Employee otherEmployee = await w.AddEmployee("Other");
-        Room room = await w.AddRoom(allowConcurrent: false);
+        Room room = await w.AddRoom();
         await w.CreateAppointment(SchedulingWorld.Future(10), employee: otherEmployee, room: room);
 
         List<EmployeeAvailableSlotsDto> rows = await w.Appointments.GetAvailableSlots(w.OrganizationId, SlotsFor(w));

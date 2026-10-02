@@ -39,7 +39,7 @@ public class AppointmentMoveCharacterizationTests
     public async Task Move_ChangesOnlyTheStartTime_ServiceEmployeeCompanyRoomAndClientsStayTheSame()
     {
         await using SchedulingWorld w = await SchedulingWorld.Create(nameof(Move_ChangesOnlyTheStartTime_ServiceEmployeeCompanyRoomAndClientsStayTheSame));
-        Room room = await w.AddRoom();
+        Room room = await w.AddRoom(capacity: 10);
         Client second = await w.AddClient("Second", "Client");
         AppointmentDto created = await w.CreateAppointment(SchedulingWorld.Future(10), room: room, extraClients: second);
 
@@ -328,7 +328,7 @@ public class AppointmentMoveCharacterizationTests
     public async Task Move_KeepsCheckingTheExistingExclusiveRoomAtTheNewTime()
     {
         await using SchedulingWorld w = await SchedulingWorld.Create(nameof(Move_KeepsCheckingTheExistingExclusiveRoomAtTheNewTime));
-        Room room = await w.AddRoom(allowConcurrent: false);
+        Room room = await w.AddRoom();
         Client otherClient = await w.AddClient("Other", "Client");
         Employee otherEmployee = await w.AddEmployee("Other");
         AppointmentDto created = await w.CreateAppointment(SchedulingWorld.Future(10), room: room);
@@ -338,8 +338,8 @@ public class AppointmentMoveCharacterizationTests
         BusinessRuleExceptionHolder holder = await BusinessRuleExceptionHolder.Capture(
             () => Move(w, created.Id, SchedulingWorld.Future(14)));
 
-        Assert.Equal(ErrorCodes.AppointmentOverlap, holder.Code);
-        Assert.Contains("Prostorija", holder.Message);
+        Assert.Equal(ErrorCodes.RoomCapacityExceeded, holder.Code);
+        Assert.Contains("prostorije", holder.Message);
     }
 
     [Fact]

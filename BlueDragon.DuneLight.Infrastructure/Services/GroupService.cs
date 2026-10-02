@@ -126,8 +126,6 @@ public class GroupService : IGroupService
         List<(DayOfWeek DayOfWeek, TimeSpan StartTime)> slotTuples =
             request.Slots.Select(s => (s.DayOfWeek, s.StartTime)).ToList();
 
-        await EnsureNoRoomSlotConflict(
-            organizationId, excludeGroupId: null, request.DefaultRoomId, service.DefaultDurationMinutes, slotTuples);
         List<WarningDto> warnings = await ComputeWorkingHoursWarnings(
             organizationId, request.CompanyId, request.DefaultTrainerId, service.DefaultDurationMinutes, slotTuples);
 
@@ -180,8 +178,6 @@ public class GroupService : IGroupService
         List<(DayOfWeek DayOfWeek, TimeSpan StartTime)> slotTuples = fullExisting.Slots
             .Where(s => s.IsActive).Select(s => (s.DayOfWeek, s.StartTime)).ToList();
 
-        await EnsureNoRoomSlotConflict(
-            organizationId, excludeGroupId: id, request.DefaultRoomId, service.DefaultDurationMinutes, slotTuples);
         List<WarningDto> warnings = await ComputeWorkingHoursWarnings(
             organizationId, request.CompanyId, request.DefaultTrainerId, service.DefaultDurationMinutes, slotTuples);
 
@@ -343,8 +339,6 @@ public class GroupService : IGroupService
         List<(DayOfWeek DayOfWeek, TimeSpan StartTime)> slotTuple =
             new() { (request.DayOfWeek, request.StartTime) };
 
-        await EnsureNoRoomSlotConflict(
-            organizationId, excludeGroupId: groupId, group.DefaultRoomId, service.DefaultDurationMinutes, slotTuple);
         List<WarningDto> warnings = await ComputeWorkingHoursWarnings(
             organizationId, group.CompanyId, group.DefaultTrainerId, service.DefaultDurationMinutes, slotTuple);
 
@@ -379,8 +373,6 @@ public class GroupService : IGroupService
         List<(DayOfWeek DayOfWeek, TimeSpan StartTime)> slotTuple =
             new() { (request.DayOfWeek, request.StartTime) };
 
-        await EnsureNoRoomSlotConflict(
-            organizationId, excludeGroupId: groupId, group.DefaultRoomId, service.DefaultDurationMinutes, slotTuple);
         List<WarningDto> warnings = await ComputeWorkingHoursWarnings(
             organizationId, group.CompanyId, group.DefaultTrainerId, service.DefaultDurationMinutes, slotTuple);
 
@@ -476,6 +468,11 @@ public class GroupService : IGroupService
             // Novi član odmah dobiva Confirmed Booking na SVIM već generiranim budućim terminima grupe — bez
             // ovoga bi ostao "nevidljiv" na terminima generiranim prije nego se pridružio (vidi spec section 11/37).
             List<Appointment> futureAppointments = await _appointmentHandler.GetFutureScheduledForGroup(uow, organizationId, groupId);
+            // Phase M1D: novi član je +1 osoba u prostoriji svakog budućeg occurrencea — prostorije se zaključavaju odmah nakon
+            // klijenta (uzlazno, jednim pozivom — globalni redoslijed), PRIJE Appointment lockova kapaciteta grupe niže.
+            await _schedulingOccupancyHandler.LockSchedulingSubjects(
+                uow, Array.Empty<Guid>(), Array.Empty<Guid>(),
+                futureAppointments.SelectMany(a => a.Segments).Where(seg => seg.RoomId.HasValue).Select(seg => seg.RoomId.Value).Distinct());
 
             // Klijent ne smije završiti dvostruko zakazan (spec section 17) — provjera PRIJE ijednog Bookinga,
             // cijela operacija (uklj. samo članstvo) abortira atomično (uow se baca bez commit-a = rollback) ako
@@ -497,6 +494,25 @@ public class GroupService : IGroupService
                         Date = futureSegment.PlannedStart,
                         Reason = ErrorCodes.RecurringConflictReasonAppointment
                     });
+            }
+
+            // Phase M1D: fizički kapacitet prostorije (osobe) — tvrdo, odvojeno od Group.Capacity (poslovni broj mjesta).
+            if (conflicts.Count == 0)
+            {
+                List<SegmentClaim> roomClaims = futureAppointments
+                    .Where(a => a.Bookings.All(b => b.ClientId != request.ClientId))
+                    .Select(a => SingleSegmentCompatibility.Resolve(a))
+                    .Where(seg => seg.RoomId.HasValue)
+                    .Select(seg => new SegmentClaim(null, seg.PlannedStart, seg.PlannedEnd, Array.Empty<Guid>(), Array.Empty<Guid>())
+                    {
+                        RoomId = seg.RoomId,
+                        RoomPeople = 1
+                    })
+                    .ToList();
+                CapacityViolation roomViolation = (await SchedulingConflictGuard.FindCapacityViolations(
+                    _schedulingOccupancyHandler, uow, organizationId, roomClaims)).FirstOrDefault();
+                if (roomViolation != null)
+                    throw roomViolation.ToException();
             }
 
             if (conflicts.Count > 0)
@@ -726,11 +742,12 @@ public class GroupService : IGroupService
         await _schedulingOccupancyHandler.LockSchedulingSubjects(
             uow,
             candidates.Where(c => c.Group.DefaultTrainerId.HasValue).Select(c => c.Group.DefaultTrainerId.Value),
-            candidates.SelectMany(c => c.Group.Members.Where(m => m.IsActive).Select(m => m.ClientId)));
+            candidates.SelectMany(c => c.Group.Members.Where(m => m.IsActive).Select(m => m.ClientId)),
+            candidates.Where(c => c.Group.DefaultRoomId.HasValue).Select(c => c.Group.DefaultRoomId.Value));
 
         Dictionary<(Guid SlotId, DateTimeOffset StartsAt), List<WarningDto>> warningsByCandidate =
             await EnsureNoTrainerConflicts(organizationId, candidates, request.OverrideAvailability);
-        await EnsureNoRoomConflicts(organizationId, candidates);
+        await EnsureNoRoomConflicts(uow, organizationId, candidates);
         await EnsureNoMemberConflicts(organizationId, candidates);
 
         List<Appointment> toCreate = new List<Appointment>();
@@ -979,50 +996,37 @@ public class GroupService : IGroupService
         return warningsByCandidate;
     }
 
-    /// <summary>Isti obrazac kao EnsureNoTrainerConflicts, ali po prostoriji — grupe bez DefaultRoomId ili čija
-    /// prostorija ima AllowConcurrentBookings=true se preskaču (nema tvrde blokade).</summary>
-    private async Task EnsureNoRoomConflicts(Guid organizationId, List<GroupOccurrenceCandidate> candidates)
+    /// <summary>Phase M1D — fizički kapacitet prostorije u OSOBAMA (trener ako postoji + aktivni članovi) za svaki kandidat,
+    /// vremenski raslojeno zajedno s postojećim segmentima i ostalim kandidatima istog batcha (više grupa u istoj prostoriji
+    /// smije istovremeno ako stanu). Pozivatelj je zaključao prostorije. Povrede se prijavljuju po occurrenceu
+    /// (RECURRING_CONFLICT, razlog prostorija) — cijeli batch abortira.</summary>
+    private async Task EnsureNoRoomConflicts(IUnitOfWork uow, Guid organizationId, List<GroupOccurrenceCandidate> candidates)
     {
-        List<RecurringConflictDetail> conflicts = new List<RecurringConflictDetail>();
-
-        IEnumerable<IGrouping<Guid, GroupOccurrenceCandidate>> byRoom = candidates
-            .Where(c => c.Group.DefaultRoomId.HasValue && c.Group.DefaultRoom?.AllowConcurrentBookings != true)
-            .GroupBy(c => c.Group.DefaultRoomId.GetValueOrDefault());
-
-        foreach (IGrouping<Guid, GroupOccurrenceCandidate> roomCandidates in byRoom)
+        Dictionary<SegmentClaim, GroupOccurrenceCandidate> byClaim = new(ReferenceEqualityComparer.Instance);
+        foreach (GroupOccurrenceCandidate candidate in candidates.Where(c => c.Group.DefaultRoomId.HasValue))
         {
-            Guid roomId = roomCandidates.Key;
-            List<GroupOccurrenceCandidate> ordered = roomCandidates.OrderBy(c => c.StartsAt).ToList();
-
-            DateTimeOffset rangeFrom = ordered[0].StartsAt.AddDays(-1);
-            DateTimeOffset rangeTo = ordered[^1].StartsAt.AddDays(1);
-
-            List<OccupancySlot> candidateAppointments = await _schedulingOccupancyHandler.GetForRoomInRange(
-                organizationId, roomId, rangeFrom, rangeTo);
-
-            for (int i = 0; i < ordered.Count; i++)
+            DateTimeOffset startsAt = candidate.StartsAt;
+            byClaim[new SegmentClaim(null, startsAt, startsAt.AddMinutes(candidate.Group.Service.DefaultDurationMinutes), Array.Empty<Guid>(), Array.Empty<Guid>())
             {
-                GroupOccurrenceCandidate candidate = ordered[i];
-                int durationMinutes = candidate.Group.Service.DefaultDurationMinutes;
-                DateTimeOffset startsAt = candidate.StartsAt;
-                DateTimeOffset occurrenceEnd = startsAt.AddMinutes(durationMinutes);
-
-                bool roomHit = candidateAppointments.Any(a => a.Overlaps(startsAt, occurrenceEnd));
-
-                // Candidate vs candidate u istom batchu (spec zahtjev #2) — ista soba predložena za dvije
-                // različite grupe/slotove čiji generirani occurrenceи se preklapaju. AllowConcurrentBookings=true
-                // je već filtriran iz byRoom grupiranja iznad, pa se batch provjera nikad ne primjenjuje na njih.
-                bool batchRoomHit = !roomHit && HasBatchOverlap(ordered, i, startsAt, durationMinutes);
-
-                if (roomHit || batchRoomHit)
-                    conflicts.Add(new RecurringConflictDetail { Date = startsAt, Reason = ErrorCodes.RecurringConflictReasonRoom });
-            }
+                RoomId = candidate.Group.DefaultRoomId,
+                RoomPeople = RoomPeopleCount.Of(candidate.Group.DefaultTrainerId.HasValue ? 1 : 0, candidate.Group.Members.Count(m => m.IsActive))
+            }] = candidate;
         }
+
+        List<CapacityViolation> violations = await SchedulingConflictGuard.FindCapacityViolations(
+            _schedulingOccupancyHandler, uow, organizationId, byClaim.Keys.ToList());
+        List<RecurringConflictDetail> conflicts = violations
+            .SelectMany(v => v.Claims)
+            .Select(claim => byClaim[claim].StartsAt)
+            .Distinct()
+            .OrderBy(date => date)
+            .Select(date => new RecurringConflictDetail { Date = date, Reason = ErrorCodes.RecurringConflictReasonRoom })
+            .ToList();
 
         if (conflicts.Count > 0)
             throw new BusinessRuleException(
                 ErrorCodes.RecurringConflict,
-                "Neki termini u nizu se sudaraju s postojećom zauzetošću prostorije.",
+                "Neki termini u nizu premašili bi kapacitet prostorije.",
                 new { conflicts });
     }
 
@@ -1224,51 +1228,6 @@ public class GroupService : IGroupService
     {
         int diff = ((int)dayOfWeek - (int)from.DayOfWeek + 7) % 7;
         return from.AddDays(diff);
-    }
-
-    /// <summary>Tvrda blokada (409) — druga aktivna grupa već koristi istu prostoriju u preklapajućem
-    /// danu-u-tjednu/vremenu, a prostorija ne dopušta paralelne rezervacije (AllowConcurrentBookings=false).
-    /// excludeGroupId isključuje grupu koja se upravo ažurira (ne sudara se sama sa sobom).</summary>
-    private async Task EnsureNoRoomSlotConflict(
-        Guid organizationId, Guid? excludeGroupId, Guid? roomId, int durationMinutes,
-        List<(DayOfWeek DayOfWeek, TimeSpan StartTime)> slots)
-    {
-        if (!roomId.HasValue)
-            return;
-
-        Room room = await _roomHandler.GetById(organizationId, roomId.Value);
-        if (room == null || room.AllowConcurrentBookings)
-            return;
-
-        List<Group> otherGroups = await _groupHandler.GetAll(organizationId, isActive: true);
-
-        foreach (Group other in otherGroups)
-        {
-            if (other.Id == excludeGroupId || other.DefaultRoomId != roomId)
-                continue;
-
-            int otherDuration = other.Service?.DefaultDurationMinutes ?? 0;
-
-            foreach (GroupSlot otherSlot in other.Slots.Where(s => s.IsActive))
-            {
-                TimeSpan otherStart = otherSlot.StartTime;
-                TimeSpan otherEnd = otherStart + TimeSpan.FromMinutes(otherDuration);
-
-                foreach ((DayOfWeek dayOfWeek, TimeSpan startTime) in slots)
-                {
-                    if (dayOfWeek != otherSlot.DayOfWeek)
-                        continue;
-
-                    TimeSpan end = startTime + TimeSpan.FromMinutes(durationMinutes);
-                    if (SchedulingInterval.Overlaps(startTime, end, otherStart, otherEnd))
-                    {
-                        throw new BusinessRuleException(
-                            ErrorCodes.AppointmentOverlap,
-                            $"Prostorija je već zauzeta u ovom terminu (grupa \"{other.Name}\").");
-                    }
-                }
-            }
-        }
     }
 
     private static void ValidateSlotTime(TimeSpan startTime)

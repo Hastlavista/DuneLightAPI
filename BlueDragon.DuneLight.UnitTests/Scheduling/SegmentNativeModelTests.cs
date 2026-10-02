@@ -441,22 +441,22 @@ public class SegmentNativeModelTests
     }
 
     [Fact]
-    public async Task ProductionGuard_RejectsMoreThanOneOrNoEmployee_AndResources()
+    public async Task ProductionGuard_RejectsMoreThanOneOrNoEmployee_ButNoLongerResources()
     {
-        await using SchedulingWorld w = await SchedulingWorld.Create(nameof(ProductionGuard_RejectsMoreThanOneOrNoEmployee_AndResources));
+        await using SchedulingWorld w = await SchedulingWorld.Create(nameof(ProductionGuard_RejectsMoreThanOneOrNoEmployee_ButNoLongerResources));
         Employee other = await w.AddEmployee("Other");
 
         ValidationAppException two = await SchedulingAssert.Validation(() => CreateTarget(w,
             Target(w, Segment(w, SchedulingWorld.Future(10), new[] { w.Employee.Id.Value, other.Id.Value }))));
         ValidationAppException none = await SchedulingAssert.Validation(() => CreateTarget(w,
             Target(w, Segment(w, SchedulingWorld.Future(10), Array.Empty<Guid>()))));
+        // CHANGED in M1D: resources are enabled — an unknown resource is now a structural NOT_FOUND, not a product guard.
         AppointmentSegmentCreateRequest withResource = Segment(w, SchedulingWorld.Future(10));
         withResource.Resources = new List<AppointmentSegmentResourceRequest> { new() { ResourceId = Guid.NewGuid(), QuantityRequired = 1 } };
-        ValidationAppException resources = await SchedulingAssert.Validation(() => CreateTarget(w, Target(w, withResource)));
+        await SchedulingAssert.NotFound(() => CreateTarget(w, Target(w, withResource)));
 
         Assert.Equal(ErrorCodes.MultiEmployeeNotSupported, two.Code);
         Assert.Equal(ErrorCodes.MultiEmployeeNotSupported, none.Code);
-        Assert.Equal(ErrorCodes.SegmentResourcesNotEnabled, resources.Code);
         Assert.Equal(0, await w.CountAppointments());
     }
 

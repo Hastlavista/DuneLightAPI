@@ -17,38 +17,36 @@ using Microsoft.EntityFrameworkCore;
 namespace BlueDragon.DuneLight.UnitTests.Scheduling;
 
 /// <summary>
-/// Room.Capacity (Phase C foundation): the maximum number of PEOPLE concurrently in a Room, required and ≥ 1, exposed
-/// through the Room API. It is data only for now — the legacy AllowConcurrentBookings flag still decides room overlap,
-/// and the two values are independent (neither is derived from the other).
+/// Room.Capacity: the maximum number of PEOPLE concurrently in a Room, required and ≥ 1, exposed through the Room API.
+/// M1D: it is THE room scheduling rule (the legacy AllowConcurrentBookings flag is gone) — see RoomResourceCapacityTests
+/// for the people-count and time-sliced rules.
 /// </summary>
 public class RoomCapacityTests
 {
-    private static RoomCreateRequest CreateRequest(SchedulingWorld w, string name, int capacity, bool allowConcurrent = false, Company company = null) => new()
+    private static RoomCreateRequest CreateRequest(SchedulingWorld w, string name, int capacity, Company company = null) => new()
     {
-        CompanyId = (company ?? w.Company).Id.Value, Name = name, Capacity = capacity, AllowConcurrentBookings = allowConcurrent
+        CompanyId = (company ?? w.Company).Id.Value, Name = name, Capacity = capacity
     };
 
     private static RoomUpdateRequest UpdateRequest(RoomDto room, int capacity, string name = null) => new()
     {
-        Name = name ?? room.Name, Capacity = capacity, AllowConcurrentBookings = room.AllowConcurrentBookings,
+        Name = name ?? room.Name, Capacity = capacity,
         Note = room.Note, SortOrder = room.SortOrder
     };
 
     #region Room API
 
     [Fact]
-    public async Task Create_StoresAndReturnsCapacity_IndependentlyOfTheLegacyFlag()
+    public async Task Create_StoresAndReturnsCapacity()
     {
-        await using SchedulingWorld w = await SchedulingWorld.Create(nameof(Create_StoresAndReturnsCapacity_IndependentlyOfTheLegacyFlag));
+        await using SchedulingWorld w = await SchedulingWorld.Create(nameof(Create_StoresAndReturnsCapacity));
         IRoomService rooms = w.Resolve<IRoomService>();
 
-        RoomDto exclusive = await rooms.Create(w.OrganizationId, w.ActorUserId, CreateRequest(w, "Pilates", 12, allowConcurrent: false));
-        RoomDto shared = await rooms.Create(w.OrganizationId, w.ActorUserId, CreateRequest(w, "Hall", 1, allowConcurrent: true));
+        RoomDto exclusive = await rooms.Create(w.OrganizationId, w.ActorUserId, CreateRequest(w, "Pilates", 12));
+        RoomDto shared = await rooms.Create(w.OrganizationId, w.ActorUserId, CreateRequest(w, "Hall", 1));
 
         Assert.Equal(12, exclusive.Capacity);
-        Assert.False(exclusive.AllowConcurrentBookings);
         Assert.Equal(1, shared.Capacity);
-        Assert.True(shared.AllowConcurrentBookings);
 
         Assert.Equal(12, (await rooms.GetById(w.OrganizationId, exclusive.Id)).Capacity);
         await using DatabaseContext db = w.NewDb();
@@ -145,29 +143,15 @@ public class RoomCapacityTests
 
     #endregion
 
-    #region Capacity is data only — scheduling still follows AllowConcurrentBookings
+    #region Capacity is the room scheduling rule (M1D)
 
     [Fact]
-    public async Task ExclusiveRoom_WithLargeCapacity_StillRejectsOverlappingAppointments()
+    public async Task ALargeRoom_AcceptsOverlappingAppointments_WhileThePeopleFit()
     {
-        await using SchedulingWorld w = await SchedulingWorld.Create(nameof(ExclusiveRoom_WithLargeCapacity_StillRejectsOverlappingAppointments));
-        Room room = await w.AddRoom(allowConcurrent: false, capacity: 50);
-        Client other = await w.AddClient("Other", "Client");
-        Employee secondEmployee = await w.AddEmployee("Second");
-        await w.CreateAppointment(SchedulingWorld.Future(10), room: room);
+        await using SchedulingWorld w = await SchedulingWorld.Create(nameof(ALargeRoom_AcceptsOverlappingAppointments_WhileThePeopleFit));
+        Room room = await w.AddRoom(capacity: 6);
 
-        // Two people would fit 50 times over — the legacy flag still blocks the overlap.
-        await SchedulingAssert.BusinessRule(ErrorCodes.AppointmentOverlap,
-            () => w.CreateAppointment(SchedulingWorld.Future(10, 15), client: other, employee: secondEmployee, room: room));
-    }
-
-    [Fact]
-    public async Task ConcurrentRoom_WithCapacityOne_StillAcceptsOverlappingAppointments()
-    {
-        await using SchedulingWorld w = await SchedulingWorld.Create(nameof(ConcurrentRoom_WithCapacityOne_StillAcceptsOverlappingAppointments));
-        Room room = await w.AddRoom(allowConcurrent: true, capacity: 1);
-
-        // Three overlapping appointments (six people) in a capacity-1 room: capacity is not enforced yet.
+        // Three overlapping individual appointments = six people: they fit; a fourth does not.
         for (int i = 0; i < 3; i++)
         {
             Client client = await w.AddClient($"Concurrent{i}", "Client");
@@ -176,39 +160,29 @@ public class RoomCapacityTests
             Assert.Equal(room.Id, dto.RoomId);
         }
 
+        Client last = await w.AddClient("Last", "Client");
+        Employee lastEmployee = await w.AddEmployee("Last");
+        await SchedulingAssert.BusinessRule(ErrorCodes.RoomCapacityExceeded,
+            () => w.CreateAppointment(SchedulingWorld.Future(10), client: last, employee: lastEmployee, room: room));
         Assert.Equal(3, await w.CountAppointments(q => q.Where(a => a.Segments.Any(s => s.RoomId == room.Id))));
     }
 
     [Fact]
-    public async Task ExclusiveRoom_WithCapacityOne_StillAcceptsOneAppointmentWithSeveralClients()
+    public async Task ChangingCapacity_ChangesWhatFits()
     {
-        await using SchedulingWorld w = await SchedulingWorld.Create(nameof(ExclusiveRoom_WithCapacityOne_StillAcceptsOneAppointmentWithSeveralClients));
-        Room room = await w.AddRoom(allowConcurrent: false, capacity: 1);
-        Client second = await w.AddClient("Second", "Client");
-        Client third = await w.AddClient("Third", "Client");
-
-        // One appointment with three clients plus the employee (four people) in a capacity-1 room is accepted today.
-        AppointmentDto dto = await w.CreateAppointment(SchedulingWorld.Future(10), room: room, extraClients: new[] { second, third });
-
-        Assert.Equal(room.Id, dto.RoomId);
-        Assert.Equal(AppointmentStatus.Scheduled, dto.Status);
-    }
-
-    [Fact]
-    public async Task ChangingCapacity_DoesNotChangeOverlapBehaviour()
-    {
-        await using SchedulingWorld w = await SchedulingWorld.Create(nameof(ChangingCapacity_DoesNotChangeOverlapBehaviour));
+        await using SchedulingWorld w = await SchedulingWorld.Create(nameof(ChangingCapacity_ChangesWhatFits));
         IRoomService rooms = w.Resolve<IRoomService>();
-        Room room = await w.AddRoom(allowConcurrent: false, capacity: 1);
-        RoomDto dto = await rooms.GetById(w.OrganizationId, room.Id.Value);
-        await rooms.Update(w.OrganizationId, w.ActorUserId, room.Id.Value, UpdateRequest(dto, 100));
+        Room room = await w.AddRoom(capacity: 2);
         Client other = await w.AddClient("Other", "Client");
         Employee secondEmployee = await w.AddEmployee("Second");
         await w.CreateAppointment(SchedulingWorld.Future(10), room: room);
 
-        await SchedulingAssert.BusinessRule(ErrorCodes.AppointmentOverlap,
+        await SchedulingAssert.BusinessRule(ErrorCodes.RoomCapacityExceeded,
             () => w.CreateAppointment(SchedulingWorld.Future(10), client: other, employee: secondEmployee, room: room));
-        Assert.False((await rooms.GetById(w.OrganizationId, room.Id.Value)).AllowConcurrentBookings);
+
+        RoomDto dto = await rooms.GetById(w.OrganizationId, room.Id.Value);
+        await rooms.Update(w.OrganizationId, w.ActorUserId, room.Id.Value, UpdateRequest(dto, 4));
+        await w.CreateAppointment(SchedulingWorld.Future(10), client: other, employee: secondEmployee, room: room);
     }
 
     #endregion

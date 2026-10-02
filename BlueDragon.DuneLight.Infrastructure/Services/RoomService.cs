@@ -62,7 +62,6 @@ public class RoomService : IRoomService
             CompanyId = request.CompanyId,
             Name = name,
             Capacity = request.Capacity,
-            AllowConcurrentBookings = request.AllowConcurrentBookings,
             Note = request.Note,
             SortOrder = request.SortOrder,
             IsActive = true,
@@ -88,7 +87,6 @@ public class RoomService : IRoomService
         // klasnu napomenu). Za fizički premještaj: deaktivirati ovu i kreirati novu u ciljnoj Company.
         room.Name = name;
         room.Capacity = request.Capacity;
-        room.AllowConcurrentBookings = request.AllowConcurrentBookings;
         room.Note = request.Note;
         room.SortOrder = request.SortOrder;
         room.UpdatedAt = DateTimeOffset.UtcNow;
@@ -173,8 +171,8 @@ public class RoomService : IRoomService
         return company;
     }
 
-    /// <summary>Capacity = broj osoba istovremeno u prostoriji, ≥ 1 (isto kao CHECK u bazi). Namjerno se NE izvodi iz
-    /// AllowConcurrentBookings — to su neovisni podaci (vidi Room.Capacity).</summary>
+    /// <summary>Capacity = broj osoba istovremeno u prostoriji, ≥ 1 (isto kao CHECK u bazi) — jedino pravilo prostorije u
+    /// zakazivanju (vidi Room.Capacity).</summary>
     private static void EnsureCapacityIsValid(int capacity)
     {
         if (!CatalogCapacity.IsValid(capacity))
@@ -197,7 +195,6 @@ public class RoomService : IRoomService
             CompanyName = room.Company?.Name,
             Name = room.Name,
             Capacity = room.Capacity,
-            AllowConcurrentBookings = room.AllowConcurrentBookings,
             IsActive = room.IsActive,
             Note = room.Note,
             SortOrder = room.SortOrder,

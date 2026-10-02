@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Threading.Tasks;
 using BlueDragon.DuneLight.Infrastructure.Domain.Models.Appointments;
 using BlueDragon.DuneLight.Infrastructure.UnitOfWork;
+using BlueDragon.DuneLight.Infrastructure.Utils;
 
 namespace BlueDragon.DuneLight.Infrastructure.Handlers.Interfaces;
 
@@ -41,9 +42,23 @@ public interface ISchedulingOccupancyHandler
         IUnitOfWork uow, Guid organizationId, IReadOnlyCollection<Guid> clientIds, DateTimeOffset start, DateTimeOffset end,
         IReadOnlyCollection<Guid> excludedSegmentIds);
 
-    /// <summary>Segmenti u prostoriji koji rezerviraju slot, preklapajući [start, end) (konačni fizički kapacitet: M1D).</summary>
-    Task<List<OccupancySlot>> GetOverlappingForRoom(
+    /// <summary>Phase M1D: zauzetost prostorije u OSOBAMA po segmentu koji rezervira slot i preklapa [start, end):
+    /// svi dodijeljeni zaposlenici + zauzimajuća sudjelovanja (Confirmed/Completed). Isključuju se samo zadani segmenti.</summary>
+    Task<List<CapacityClaim>> GetRoomUsage(
         IUnitOfWork uow, Guid organizationId, Guid roomId, DateTimeOffset start, DateTimeOffset end, IReadOnlyCollection<Guid> excludedSegmentIds);
+
+    /// <summary>Phase M1D: zauzetost resursa (QuantityRequired) po segmentu koji rezervira slot i preklapa [start, end).</summary>
+    Task<List<CapacityClaim>> GetResourceUsage(
+        IUnitOfWork uow, Guid organizationId, Guid resourceId, DateTimeOffset start, DateTimeOffset end, IReadOnlyCollection<Guid> excludedSegmentIds);
+
+    /// <summary>Phase M1D: kapacitet i naziv prostorija organizacije (po Id-u).</summary>
+    Task<Dictionary<Guid, (string Name, int Capacity)>> GetRoomCapacities(IUnitOfWork uow, Guid organizationId, IReadOnlyCollection<Guid> roomIds);
+
+    /// <summary>Phase M1D: kapacitet i naziv resursa organizacije (po Id-u).</summary>
+    Task<Dictionary<Guid, (string Name, int Capacity)>> GetResourceCapacities(IUnitOfWork uow, Guid organizationId, IReadOnlyCollection<Guid> resourceIds);
+
+    /// <summary>Phase M1D: resursi postojećeg segmenta (za prepisivanje vremena i reaktivaciju).</summary>
+    Task<List<ResourceClaim>> GetSegmentResources(IUnitOfWork uow, Guid segmentId);
 
     /// <summary>Svi segmenti zaposlenika koji se preklapaju s [rangeFrom, rangeTo] — kandidati za batch provjere.</summary>
     Task<List<OccupancySlot>> GetForEmployeeInRange(Guid organizationId, Guid employeeId, DateTimeOffset rangeFrom, DateTimeOffset rangeTo);
@@ -59,9 +74,13 @@ public interface ISchedulingOccupancyHandler
 
     /// <summary>Phase M1C: zaključava subjekte rasporeda (transakcijski advisory lock, redoslijed iz SchedulingLockOrder:
     /// zaposlenici pa klijenti, uzlazno). Mora biti PRVI lock u transakciji (prije Appointment/sudjelovanje/paket lockova).</summary>
-    Task LockSchedulingSubjects(IUnitOfWork uow, IEnumerable<Guid> employeeIds, IEnumerable<Guid> clientIds);
+    Task LockSchedulingSubjects(
+        IUnitOfWork uow, IEnumerable<Guid> employeeIds, IEnumerable<Guid> clientIds, IEnumerable<Guid> roomIds = null, IEnumerable<Guid> resourceIds = null);
 
     /// <summary>Phase M1C: neblokirajući lock klijenta — za tokove koji već drže lock dalje u redoslijedu (promocija s liste
     /// čekanja pod Appointment lockom). false = lock trenutno drži druga transakcija.</summary>
     Task<bool> TryLockClientSchedule(IUnitOfWork uow, Guid clientId);
+
+    /// <summary>Phase M1D: neblokirajući lock prostorije (promocija s liste čekanja).</summary>
+    Task<bool> TryLockRoomSchedule(IUnitOfWork uow, Guid roomId);
 }

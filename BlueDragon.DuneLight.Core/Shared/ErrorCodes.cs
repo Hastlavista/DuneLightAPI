@@ -72,8 +72,13 @@ public static class ErrorCodes
     /// <summary>Phase M1B: segment trenutno podržava točno jednog zaposlenika (atribucija cijene/provizije više zaposlenika
     /// je otvorena) — ograničenje proizvoda, ne sheme.</summary>
     public const string MultiEmployeeNotSupported = "MULTI_EMPLOYEE_NOT_SUPPORTED";
-    /// <summary>Phase M1B: dodjela resursa segmentu još nije omogućena (kapacitet resursa nije autoritativan).</summary>
-    public const string SegmentResourcesNotEnabled = "SEGMENT_RESOURCES_NOT_ENABLED";
+    /// <summary>Phase M1D: istovremeni broj OSOBA u prostoriji (zaposlenici + zauzimajući klijenti) premašio bi Room.Capacity —
+    /// tvrdo ograničenje, bez override-a.</summary>
+    public const string RoomCapacityExceeded = "ROOM_CAPACITY_EXCEEDED";
+    /// <summary>Phase M1D: istovremeni zbroj QuantityRequired premašio bi Resource.Capacity — tvrdo ograničenje, bez override-a.</summary>
+    public const string ResourceCapacityExceeded = "RESOURCE_CAPACITY_EXCEEDED";
+    public const string InactiveResource = "INACTIVE_RESOURCE";
+    public const string ResourceCompanyMismatch = "RESOURCE_COMPANY_MISMATCH";
     /// <summary>Phase M1B: operacija nad aktivnim sudjelovanjima (npr. bulk no-show termina) nema nijedno aktivno
     /// (Confirmed) sudjelovanje.</summary>
     public const string NoActiveParticipations = "NO_ACTIVE_PARTICIPATIONS";

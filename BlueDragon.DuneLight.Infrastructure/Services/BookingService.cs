@@ -144,7 +144,7 @@ public class BookingService : IBookingService
         {
             // Phase M1C: tvrda invarijanta klijenta nad KONKRETNIM segmentom (vide se i sestrinski segmenti istog termina),
             // pod zaključanim klijentom — PRVI lock transakcije, prije Appointment locka kapaciteta.
-            await SchedulingConflictGuard.ClaimClientOnSegment(_schedulingOccupancyHandler, uow, organizationId, segment, request.ClientId);
+            await ClaimActivation(uow, organizationId, appointment, segment, request.ClientId);
 
             if (appointment.Form == AppointmentForm.Group)
                 await EnsureGroupCapacityAvailable(uow, organizationId, appointmentId);
@@ -327,16 +327,10 @@ public class BookingService : IBookingService
         {
             await using IUnitOfWork uow = await _unitOfWorkFactory.Begin();
 
+            // Phase M1D: uključuje kapacitet prostorije (+1 osoba) i — kad ova korekcija ponovno aktivira segment eksplicitno
+            // otkazanog termina — zaposlenike, sve osobe i resurse segmenta. Neuspjeh baca prije ikakve izmjene (atomično).
             if (claimsSchedule)
-            {
-                IReadOnlyCollection<Guid> employeesToClaim = SegmentOccupancy.Reserves(appointment, addressedSegment)
-                    ? Array.Empty<Guid>()
-                    : addressedSegment.Employees.Select(e => e.EmployeeId).ToList();
-                await SchedulingConflictGuard.Claim(_schedulingOccupancyHandler, uow, organizationId, new[]
-                {
-                    new SegmentClaim(addressedSegment.Id, addressedSegment.PlannedStart, addressedSegment.PlannedEnd, employeesToClaim, new[] { preloaded.ClientId })
-                });
-            }
+                await ClaimActivation(uow, organizationId, appointment, addressedSegment, preloaded.ClientId);
 
             // Appointment-PA-sudjelovanje redoslijed zaključavanja — USKLAĐENO s dominantnim redoslijedom u agregatu
             // (AppointmentService.CompleteExisting/ChangeToTerminalStatus/CompleteGroupAppointment, GroupService.AddMember,
@@ -417,7 +411,7 @@ public class BookingService : IBookingService
             // Phase M1C: gost čije sudjelovanje zauzima raspored (Confirmed/Completed) podliježe tvrdoj invarijanti klijenta;
             // gost evidentiran kao Cancelled/NoShow ne zauzima raspored pa ne stvara sudar.
             if (ParticipationOccupancy.Occupies(BookingParticipations.ToParticipationStatus(request.Status)))
-                await SchedulingConflictGuard.ClaimClientOnSegment(_schedulingOccupancyHandler, uow, organizationId, segment, clientId);
+                await ClaimActivation(uow, organizationId, appointment, segment, clientId);
             await ApplyTransitionInTransaction(
                 uow, organizationId, userId, appointment, booking, booking.Participations.Single(), isNewGuestBooking: true, request);
             await uow.CommitAsync();
@@ -551,6 +545,18 @@ public class BookingService : IBookingService
             throw new BusinessRuleException(ErrorCodes.ClientAnonymized, "Klijent je anonimiziran.");
 
         return client;
+    }
+
+    /// <summary>Phase M1C/M1D — sudjelovanje klijenta koje POSTAJE zauzimajuće na konkretnom segmentu: tvrdo preklapanje
+    /// klijenta (i zaposlenika, ako se segment reaktivira), kapacitet prostorije (osobe) i — pri reaktivaciji — resursa, pod
+    /// zaključanim subjektima; PRVI lock transakcije.</summary>
+    private async Task ClaimActivation(IUnitOfWork uow, Guid organizationId, Appointment appointment, AppointmentSegment segment, Guid clientId)
+    {
+        IReadOnlyList<ResourceClaim> resources = SegmentOccupancy.Reserves(appointment, segment)
+            ? Array.Empty<ResourceClaim>()
+            : await _schedulingOccupancyHandler.GetSegmentResources(uow, segment.Id.GetValueOrDefault());
+        await SchedulingConflictGuard.ClaimParticipationActivation(
+            _schedulingOccupancyHandler, uow, organizationId, SegmentClaim.ForParticipationActivation(appointment, segment, clientId, resources));
     }
 
     /// <summary>Form=Group: check-in (Confirmed/NoShow/Cancelled -> Completed) razrješava pokriće/skida ulazak;

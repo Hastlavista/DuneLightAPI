@@ -14,7 +14,11 @@ public sealed record SegmentPlan(
     DateTimeOffset PlannedEnd,
     IReadOnlyList<Guid> EmployeeIds,
     Guid? RoomId,
-    IReadOnlyList<ParticipantPlan> Participants);
+    IReadOnlyList<ParticipantPlan> Participants,
+    IReadOnlyList<SegmentResourcePlan> Resources = null);
+
+/// <summary>Phase M1D: resurs koji segment zauzima, u količini QuantityRequired (&gt; 0).</summary>
+public sealed record SegmentResourcePlan(Guid ResourceId, int QuantityRequired);
 
 /// <summary>Sudionik segmenta: klijent i cjenovno stanje njegovog sudjelovanja na tom segmentu.</summary>
 public sealed record ParticipantPlan(Guid ClientId, BookingPricing Pricing);
@@ -110,6 +114,17 @@ public static class AppointmentFactory
         };
         foreach (Guid employeeId in plan.EmployeeIds.Distinct())
             segment.Employees.Add(new AppointmentSegmentEmployee { AppointmentSegmentId = segment.Id.GetValueOrDefault(), EmployeeId = employeeId });
+        foreach (SegmentResourcePlan resource in plan.Resources ?? Array.Empty<SegmentResourcePlan>())
+        {
+            if (resource.QuantityRequired <= 0)
+                throw new InvalidAppointmentSegmentStateException("Količina resursa mora biti veća od 0.");
+            if (segment.Resources.Any(r => r.ResourceId == resource.ResourceId))
+                throw new InvalidAppointmentSegmentStateException($"Resurs {resource.ResourceId} je već dodijeljen segmentu.");
+            segment.Resources.Add(new AppointmentSegmentResource
+            {
+                AppointmentSegmentId = segment.Id.GetValueOrDefault(), ResourceId = resource.ResourceId, QuantityRequired = resource.QuantityRequired
+            });
+        }
 
         appointment.Segments.Add(segment);
         return segment;
