@@ -52,7 +52,7 @@ public class SchedulingOccupancyHandlerTests
         Assert.Equal(w.Company.Id.Value, slot.CompanyId);
         Assert.Equal(SchedulingWorld.Future(10), slot.Start);
         Assert.Equal(SchedulingWorld.Future(10, 45), slot.End);
-        Assert.Equal(w.Employee.Id, slot.EmployeeId);
+        Assert.Equal(w.Employee.Id.Value, Assert.Single(slot.EmployeeIds));
         Assert.Equal(room.Id, slot.RoomId);
         Assert.Equal(
             new[] { w.Client.Id.Value, completed.Id.Value }.OrderBy(id => id),
@@ -68,7 +68,7 @@ public class SchedulingOccupancyHandlerTests
 
         OccupancySlot slot = Assert.Single(await Occupancy(w).GetForRoomInRange(
             w.OrganizationId, room.Id.Value, SchedulingWorld.FutureDay, SchedulingWorld.FutureDay.AddDays(1)));
-        Assert.Null(slot.EmployeeId);
+        Assert.Empty(slot.EmployeeIds);
         Assert.Empty(slot.ActiveClientIds);
 
         Assert.Empty(await Occupancy(w).GetForEmployeesInRange(

@@ -447,7 +447,7 @@ public class MultiSegmentHttpContractTests : IClassFixture<MultiSegmentHttpContr
         Assert.Equal(JsonValueKind.Object, malformed.Body.GetProperty("error").GetProperty("details").ValueKind);
 
         // Domain validation with its own code.
-        AssertError(HttpStatusCode.BadRequest, ErrorCodes.MultiEmployeeNotSupported,
+        AssertError(HttpStatusCode.BadRequest, ErrorCodes.PricingSourceRequired,
             await Send(HttpMethod.Patch, $"/api/segments/{physio}/employees", a.WriteAll, new { employeeIds = new[] { a.B.Id, a.World.Employee.Id } }));
         AssertError(HttpStatusCode.BadRequest, ErrorCodes.ValidationError,
             await Send(HttpMethod.Put, $"/api/segments/{physio}/resources", a.WriteAll,

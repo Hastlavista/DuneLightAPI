@@ -8,6 +8,7 @@ using BlueDragon.DuneLight.Core.Interfaces.Catalog;
 using BlueDragon.DuneLight.Core.Shared;
 using BlueDragon.DuneLight.Core.Shared.Exceptions;
 using BlueDragon.DuneLight.Infrastructure.Domain.Models.Catalog;
+using BlueDragon.DuneLight.Infrastructure.Domain.Models.Employees;
 using BlueDragon.DuneLight.Infrastructure.Handlers.Interfaces;
 using BlueDragon.DuneLight.Infrastructure.Utils;
 using ServiceEntity = BlueDragon.DuneLight.Infrastructure.Domain.Models.Catalog.Service;
@@ -21,14 +22,17 @@ public class PricingService : IPricingService
     private readonly IPackageHandler _packageHandler;
     private readonly ICompanyHandler _companyHandler;
     private readonly IPriceResolutionService _priceResolutionService;
+    private readonly IEmployeeHandler _employeeHandler;
 
     public PricingService(
         IPriceListItemHandler priceListItemHandler,
         IServiceHandler serviceHandler,
         IPackageHandler packageHandler,
         ICompanyHandler companyHandler,
-        IPriceResolutionService priceResolutionService)
+        IPriceResolutionService priceResolutionService,
+        IEmployeeHandler employeeHandler)
     {
+        _employeeHandler = employeeHandler;
         _priceListItemHandler = priceListItemHandler;
         _serviceHandler = serviceHandler;
         _packageHandler = packageHandler;
@@ -57,9 +61,11 @@ public class PricingService : IPricingService
         Guid subjectId = ValidateSubject(request.SubjectType, request.ServiceId, request.PackageId);
         await GetDefaultPrice(organizationId, request.SubjectType, subjectId, requireActive: true);
         await EnsureCompanyExists(organizationId, request.CompanyId, requireActive: true);
+        await EnsurePriceEmployee(organizationId, request.SubjectType, request.EmployeeId, requireActive: true);
         ValidateDateRange(request.ValidFrom, request.ValidTo);
 
-        await EnsureNoOverlap(organizationId, request.SubjectType, subjectId, request.CompanyId, request.ValidFrom, request.ValidTo, excludeId: null);
+        await EnsureNoOverlap(organizationId, request.SubjectType, subjectId, request.CompanyId, request.EmployeeId,
+            request.ValidFrom, request.ValidTo, excludeId: null);
 
         PriceListItem item = new PriceListItem
         {
@@ -68,6 +74,7 @@ public class PricingService : IPricingService
             ServiceId = request.SubjectType == PricingSubjectType.Service ? subjectId : null,
             PackageId = request.SubjectType == PricingSubjectType.Package ? subjectId : null,
             CompanyId = request.CompanyId,
+            EmployeeId = request.EmployeeId,
             Price = request.Price,
             ValidFrom = request.ValidFrom,
             ValidTo = request.ValidTo,
@@ -92,7 +99,7 @@ public class PricingService : IPricingService
         Guid subjectId = item.ServiceId ?? item.PackageId!.Value;
 
         if (item.IsActive)
-            await EnsureNoOverlap(organizationId, subjectType, subjectId, item.CompanyId, request.ValidFrom, request.ValidTo, excludeId: id);
+            await EnsureNoOverlap(organizationId, subjectType, subjectId, item.CompanyId, item.EmployeeId, request.ValidFrom, request.ValidTo, excludeId: id);
 
         bool changed = item.Price != request.Price || item.ValidFrom != request.ValidFrom || item.ValidTo != request.ValidTo;
         PriceListItemHistory history = changed
@@ -135,7 +142,7 @@ public class PricingService : IPricingService
         {
             PricingSubjectType subjectType = item.ServiceId != null ? PricingSubjectType.Service : PricingSubjectType.Package;
             Guid subjectId = item.ServiceId ?? item.PackageId!.Value;
-            await EnsureNoOverlap(organizationId, subjectType, subjectId, item.CompanyId, item.ValidFrom, item.ValidTo, excludeId: id);
+            await EnsureNoOverlap(organizationId, subjectType, subjectId, item.CompanyId, item.EmployeeId, item.ValidFrom, item.ValidTo, excludeId: id);
         }
 
         item.IsActive = isActive;
@@ -173,7 +180,7 @@ public class PricingService : IPricingService
                 .Where(p => p.ServiceId == service.Id)
                 .Select(ToCandidate)
                 .ToList();
-            ResolvedPrice resolved = _priceResolutionService.Resolve(candidates, service.DefaultPrice, companyId, date);
+            ResolvedPrice resolved = _priceResolutionService.Resolve(candidates, service.DefaultPrice, companyId, employeeId: null, date);
 
             result.Add(new EffectivePriceDto
             {
@@ -191,7 +198,7 @@ public class PricingService : IPricingService
                 .Where(p => p.PackageId == package.Id)
                 .Select(ToCandidate)
                 .ToList();
-            ResolvedPrice resolved = _priceResolutionService.Resolve(candidates, package.DefaultPrice, companyId, date);
+            ResolvedPrice resolved = _priceResolutionService.Resolve(candidates, package.DefaultPrice, companyId, employeeId: null, date);
 
             result.Add(new EffectivePriceDto
             {
@@ -209,19 +216,22 @@ public class PricingService : IPricingService
     public async Task<ResolvePriceResponse> ResolvePrice(Guid organizationId, ResolvePriceRequest request)
     {
         DateTimeOffset date = request.Date ?? DateTimeOffset.UtcNow;
+        if (request.EmployeeId.HasValue && request.SubjectType != PricingSubjectType.Service)
+            throw new ValidationAppException("Izvor cijene zaposlenika (EmployeeId) postoji samo za usluge.");
         decimal defaultPrice = await GetDefaultPrice(organizationId, request.SubjectType, request.SubjectId);
 
         List<PriceListItem> candidates = await _priceListItemHandler.GetActiveCandidates(
-            organizationId, request.SubjectType, request.SubjectId, request.CompanyId);
+            organizationId, request.SubjectType, request.SubjectId, request.CompanyId, request.EmployeeId);
 
         ResolvedPrice resolved = _priceResolutionService.Resolve(
-            candidates.Select(ToCandidate), defaultPrice, request.CompanyId, date);
+            candidates.Select(ToCandidate), defaultPrice, request.CompanyId, request.EmployeeId, date);
 
         return new ResolvePriceResponse
         {
             SubjectType = request.SubjectType,
             SubjectId = request.SubjectId,
             CompanyId = request.CompanyId,
+            EmployeeId = request.EmployeeId,
             Date = date,
             Price = resolved.Price,
             Source = resolved.Source
@@ -267,16 +277,34 @@ public class PricingService : IPricingService
             throw new BusinessRuleException(ErrorCodes.InactiveCompany, $"Tvrtka '{company.Name}' nije aktivna — nova stavka cjenika se ne može kreirati za nju.");
     }
 
+    /// <summary>Phase M1G: opseg stavke uključuje zaposlenika — dvije stavke se sudaraju samo kad adresiraju ISTI predmet,
+    /// tvrtku I zaposlenika (null je zasebna vrijednost opsega).</summary>
     private async Task EnsureNoOverlap(
-        Guid organizationId, PricingSubjectType subjectType, Guid subjectId, Guid? companyId,
+        Guid organizationId, PricingSubjectType subjectType, Guid subjectId, Guid? companyId, Guid? employeeId,
         DateTimeOffset validFrom, DateTimeOffset? validTo, Guid? excludeId)
     {
-        List<PriceListItem> existing = await _priceListItemHandler.GetActiveForExactCompany(
-            organizationId, subjectType, subjectId, companyId, excludeId);
+        List<PriceListItem> existing = await _priceListItemHandler.GetActiveForExactScope(
+            organizationId, subjectType, subjectId, companyId, employeeId, excludeId);
 
         bool overlaps = existing.Any(e => DateRangeOverlap.Overlaps(validFrom, validTo, e.ValidFrom, e.ValidTo));
         if (overlaps)
-            throw new BusinessRuleException(ErrorCodes.PriceOverlap, "Već postoji aktivna stavka cjenika za istu kombinaciju usluge/paketa i tvrtke koja se preklapa s odabranim razdobljem.");
+            throw new BusinessRuleException(ErrorCodes.PriceOverlap, "Već postoji aktivna stavka cjenika za istu kombinaciju usluge/paketa, tvrtke i zaposlenika koja se preklapa s odabranim razdobljem.");
+    }
+
+    /// <summary>Phase M1G: cijena zaposlenika postoji samo za uslugu; zaposlenik mora postojati u organizaciji (i biti aktivan
+    /// za novu stavku — isto pravilo kao tvrtka).</summary>
+    private async Task EnsurePriceEmployee(Guid organizationId, PricingSubjectType subjectType, Guid? employeeId, bool requireActive)
+    {
+        if (!employeeId.HasValue)
+            return;
+        if (subjectType != PricingSubjectType.Service)
+            throw new ValidationAppException("Cijena zaposlenika (EmployeeId) smije se navesti samo za uslugu, ne za paket.");
+
+        Employee employee = await _employeeHandler.GetById(organizationId, employeeId.Value);
+        if (employee == null)
+            throw new NotFoundAppException("Employee", employeeId.Value);
+        if (requireActive && !employee.IsActive)
+            throw new BusinessRuleException(ErrorCodes.InactiveEmployee, "Zaposlenik nije aktivan — nova stavka cjenika se ne može kreirati za njega.");
     }
 
     private static void ValidateDateRange(DateTimeOffset validFrom, DateTimeOffset? validTo)
@@ -306,6 +334,7 @@ public class PricingService : IPricingService
         return new PriceCandidate
         {
             CompanyId = item.CompanyId,
+            EmployeeId = item.EmployeeId,
             Price = item.Price,
             ValidFrom = item.ValidFrom,
             ValidTo = item.ValidTo,
@@ -325,6 +354,8 @@ public class PricingService : IPricingService
             PackageName = item.Package?.Name,
             CompanyId = item.CompanyId,
             CompanyName = item.Company?.Name,
+            EmployeeId = item.EmployeeId,
+            EmployeeName = item.Employee != null ? $"{item.Employee.FirstName} {item.Employee.LastName}" : null,
             Price = item.Price,
             ValidFrom = item.ValidFrom,
             ValidTo = item.ValidTo,

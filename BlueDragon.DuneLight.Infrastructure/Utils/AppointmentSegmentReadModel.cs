@@ -38,6 +38,11 @@ public static class AppointmentSegmentReadModel
                 EmployeeName = e.Employee != null ? $"{e.Employee.FirstName} {e.Employee.LastName}" : null
             })
             .ToList(),
+        PricingMode = segment.PricingMode,
+        PricingEmployeeId = segment.PricingEmployeeId,
+        PricingEmployeeName = segment.Employees.FirstOrDefault(e => e.EmployeeId == segment.PricingEmployeeId)?.Employee is { } pricing
+            ? $"{pricing.FirstName} {pricing.LastName}"
+            : null,
         Resources = segment.Resources
             .Select(r => new AppointmentSegmentResourceDto
             {

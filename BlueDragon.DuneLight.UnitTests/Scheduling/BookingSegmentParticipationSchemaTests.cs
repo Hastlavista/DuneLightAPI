@@ -58,6 +58,8 @@ public class BookingSegmentParticipationSchemaTests
             ["is_late_cancellation"] = ("boolean", "YES"),
             ["base_amount"] = ("numeric", "YES"),
             ["base_amount_source"] = ("character varying", "YES"),
+            ["pricing_mode"] = ("character varying", "YES"), // M1G: historical pricing source used by the resolution
+            ["pricing_employee_id"] = ("uuid", "YES"),
             ["adjustment_amount"] = ("numeric", "YES"),
             ["suggested_amount"] = ("numeric", "NO"),
             ["amount"] = ("numeric", "NO"),
@@ -85,7 +87,9 @@ public class BookingSegmentParticipationSchemaTests
             ["ck_booking_segment_participations_status"] = "CHECK (((status)::text = ANY ((ARRAY['Confirmed'::character varying, 'Completed'::character varying, 'Cancelled'::character varying, 'NoShow'::character varying])::text[])))",
             ["ck_booking_segment_participations_status_version"] = "CHECK ((status_version >= 0))",
             ["ck_booking_segment_participations_arrival"] = "CHECK (((arrived_by IS NULL) OR (arrived_at IS NOT NULL)))",
-            ["ck_booking_segment_participations_base_amount_source"] = "CHECK (((base_amount_source)::text = ANY ((ARRAY['CompanySpecific'::character varying, 'AllCompanies'::character varying, 'Default'::character varying])::text[])))",
+            ["ck_booking_segment_participations_base_amount_source"] = "CHECK (((base_amount_source)::text = ANY ((ARRAY['EmployeeCompanySpecific'::character varying, 'EmployeeAllCompanies'::character varying, 'CompanySpecific'::character varying, 'AllCompanies'::character varying, 'Default'::character varying])::text[])))",
+            ["fk_booking_segment_participations_pricing_employee_id"] = "FOREIGN KEY (pricing_employee_id) REFERENCES dunelight.employees(id) ON DELETE RESTRICT",
+            ["ck_booking_segment_participations_pricing_source"] = "CHECK ((((pricing_mode IS NULL) AND (pricing_employee_id IS NULL) AND (base_amount IS NULL)) OR (((pricing_mode)::text = 'Standard'::text) AND (pricing_employee_id IS NULL) AND (base_amount IS NOT NULL)) OR (((pricing_mode)::text = 'Employee'::text) AND (pricing_employee_id IS NOT NULL) AND (base_amount IS NOT NULL))))",
             ["ck_booking_segment_participations_amounts_non_negative"] = "CHECK (((base_amount >= (0)::numeric) AND (suggested_amount >= (0)::numeric) AND (amount >= (0)::numeric)))",
         }, await ConstraintsOf("booking_segment_participations"));
     }

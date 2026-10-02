@@ -6,7 +6,8 @@ namespace BlueDragon.DuneLight.Infrastructure.Domain.Models.Catalog;
 
 /// <summary>
 /// Stavka cjenika. Predmet cijene je točno jedno od ServiceId/PackageId.
-/// CompanyId == null znači "sve tvrtke".
+/// CompanyId == null znači "sve tvrtke". Phase M1G: EmployeeId (samo za uslugu) = cijena određenog zaposlenika — razina
+/// koju koristi samo izvor cijene Employee (vidi IPriceResolutionService); null = cijena bez zaposlenika.
 /// </summary>
 [Table("price_list_items")]
 public class PriceListItem
@@ -27,6 +28,9 @@ public class PriceListItem
 
     [Column("company_id")]
     public Guid? CompanyId { get; set; }
+
+    [Column("employee_id")]
+    public Guid? EmployeeId { get; set; }
 
     [Column("price")]
     public decimal Price { get; set; }
@@ -55,4 +59,5 @@ public class PriceListItem
     public Service Service { get; set; }
     public Package Package { get; set; }
     public Company Company { get; set; }
+    public Employees.Employee Employee { get; set; }
 }

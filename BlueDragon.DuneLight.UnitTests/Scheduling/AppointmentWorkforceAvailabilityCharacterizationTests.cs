@@ -331,7 +331,7 @@ public class AppointmentWorkforceAvailabilityCharacterizationTests
     public async Task Override_DoesNotBypassStructuralEligibility()
     {
         await using SchedulingWorld w = await SchedulingWorld.Create(nameof(Override_DoesNotBypassStructuralEligibility));
-        Employee unauthorized = await w.AddEmployee(assignedToService: false);
+        Employee unauthorized = await w.AddEmployeeRestrictedToAnotherService();
 
         await SchedulingAssert.BusinessRule(ErrorCodes.EmployeeNotAssignedToService,
             () => w.CreateAppointment(w.CreateRequest(SchedulingWorld.Future(10), employee: unauthorized, overrideAvailability: true)));

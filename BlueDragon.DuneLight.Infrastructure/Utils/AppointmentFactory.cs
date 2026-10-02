@@ -7,7 +7,8 @@ using BlueDragon.DuneLight.Infrastructure.Domain.Models.Appointments;
 namespace BlueDragon.DuneLight.Infrastructure.Utils;
 
 /// <summary>Phase M1B — plan jednog segmenta za konstrukciju termina: izvršni podaci segmenta i njegovi sudionici.
-/// Zaposlenici su skup (shema podržava više; broj ograničava validacija servisa — ograničenje proizvoda).</summary>
+/// Zaposlenici su skup ravnopravnih izvršitelja (Phase M1G: 0..N). PricingSource = već normalizirani izvor cijene
+/// (<see cref="SegmentPricingSource"/>); izostavljen se izvodi automatski — samo za 0/1 zaposlenika (2+ zahtijeva izvor).</summary>
 public sealed record SegmentPlan(
     Guid ServiceId,
     DateTimeOffset PlannedStart,
@@ -16,7 +17,8 @@ public sealed record SegmentPlan(
     Guid? RoomId,
     IReadOnlyList<ParticipantPlan> Participants,
     IReadOnlyList<SegmentResourcePlan> Resources = null,
-    Guid? GroupSegmentTemplateId = null);
+    Guid? GroupSegmentTemplateId = null,
+    PricingSourceValue? PricingSource = null);
 
 /// <summary>Phase M1D: resurs koji segment zauzima, u količini QuantityRequired (&gt; 0).</summary>
 public sealed record SegmentResourcePlan(Guid ResourceId, int QuantityRequired);
@@ -153,6 +155,12 @@ public static class AppointmentFactory
         };
         foreach (Guid employeeId in plan.EmployeeIds.Distinct())
             segment.Employees.Add(new AppointmentSegmentEmployee { AppointmentSegmentId = segment.Id.GetValueOrDefault(), EmployeeId = employeeId });
+        List<Guid> employeeIds = plan.EmployeeIds.Distinct().ToList();
+        PricingSourceValue pricingSource = plan.PricingSource ?? SegmentPricingSource.Normalize(employeeIds, null, null);
+        // Ponovna provjera konzistentnosti već normaliziranog izvora (programska greška inače — validacija je u servisu).
+        SegmentPricingSource.Normalize(employeeIds, pricingSource.Mode, pricingSource.PricingEmployeeId);
+        segment.PricingMode = pricingSource.Mode;
+        segment.PricingEmployeeId = pricingSource.PricingEmployeeId;
         foreach (SegmentResourcePlan resource in plan.Resources ?? Array.Empty<SegmentResourcePlan>())
         {
             if (resource.QuantityRequired <= 0)

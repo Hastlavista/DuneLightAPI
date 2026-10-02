@@ -346,6 +346,14 @@ public sealed class SchedulingWorld : IAsyncDisposable
         return await db.Employees.AsNoTracking().SingleAsync(e => e.Id == employeeId);
     }
 
+    /// <summary>M1G: an employee NOT allowed to perform the world's service — restricted to another service (an employee with
+    /// no service assignments may perform every service).</summary>
+    public async Task<Employee> AddEmployeeRestrictedToAnotherService(string name = "Unauthorized")
+    {
+        ServiceEntity other = await AddService(30, 10m, name: "Other service");
+        return await AddEmployee(name, serviceId: other.Id);
+    }
+
     public async Task MakeServiceAvailableAt(ServiceEntity service, Company company)
     {
         await using DatabaseContext db = NewDb();

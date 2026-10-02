@@ -78,6 +78,15 @@ public class BookingSegmentParticipation
     [Column("base_amount_source")]
     public PriceSource? BaseAmountSource { get; set; }
 
+    /// <summary>Phase M1G — POVIJESNI izvor cijene korišten pri razrješavanju (Standard/Employee); null kad BaseAmount nije
+    /// razriješen iz cjenika. Nikad se ne izvodi iz trenutnog stanja segmenta.</summary>
+    [Column("pricing_mode")]
+    public Core.Enums.SegmentPricingMode? PricingMode { get; set; }
+
+    /// <summary>Zaposlenik čije su razine cjenika razmatrane pri razrješavanju (izvor Employee); inače null.</summary>
+    [Column("pricing_employee_id")]
+    public Guid? PricingEmployeeId { get; set; }
+
     [Column("adjustment_amount")]
     public decimal? AdjustmentAmount { get; set; }
 

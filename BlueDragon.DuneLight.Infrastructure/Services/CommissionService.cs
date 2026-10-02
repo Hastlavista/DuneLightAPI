@@ -318,6 +318,8 @@ public class CommissionService : ICommissionRuleService, ICommissionService, ICo
             SourceType = entry.SourceType,
             AppointmentId = entry.AppointmentId,
             BookingId = entry.BookingId,
+            BookingSegmentParticipationId = entry.BookingSegmentParticipationId,
+            AppointmentSegmentId = entry.AppointmentSegmentId,
             CheckoutItemId = entry.CheckoutItemId,
             BaseAmount = entry.BaseAmount,
             CalculationType = entry.CalculationType,
@@ -336,73 +338,94 @@ public class CommissionService : ICommissionRuleService, ICommissionService, ICo
         IUnitOfWork uow, Guid organizationId, ParticipationExecutionContext execution, BookingSegmentParticipation participation)
     {
         ArgumentNullException.ThrowIfNull(participation);
-        if (!execution.EmployeeId.HasValue)
-            return;
 
-        CommissionRule rule = await _ruleHandler.GetActiveForSubject(
-            organizationId, execution.EmployeeId.Value, CommissionSubjectType.Service, execution.ServiceId, null, null);
-        if (rule == null)
-            return;
-
-        decimal bookingAmount = participation.Amount;
-        decimal commissionAmount = Calculate(rule.CalculationType, rule.Value, bookingAmount);
-
-        await TryAdd(uow, new CommissionEntry
+        // Phase M1G: SVAKI zaposlenik segmenta zarađuje NEOVISNO prema SVOM pravilu (bez dijeljenja, bez dijeljenja brojem
+        // zaposlenika, bez "glavnog" zaposlenika; izvor cijene NIJE korisnik provizije). Osnovica postotka je konačna cijena
+        // sudjelovanja (Amount — nakon razrješavanja, prilagodbe i ručnog iznosa; neovisno o paketu i naplati).
+        decimal finalPrice = participation.Amount;
+        foreach (Guid employeeId in execution.EmployeeIds.Distinct().OrderBy(id => id))
         {
-            Id = Guid.NewGuid(),
-            OrganizationId = organizationId,
-            EmployeeId = execution.EmployeeId.Value,
-            CompanyId = execution.CompanyId,
-            CommissionRuleId = rule.Id.GetValueOrDefault(),
-            SourceType = CommissionSourceType.IndividualService,
-            AppointmentId = execution.AppointmentId,
-            BookingId = participation.BookingId,
-            BookingSegmentParticipationId = participation.Id,
-            BaseAmount = bookingAmount,
-            CalculationType = rule.CalculationType,
-            RuleValue = rule.Value,
-            CommissionAmount = commissionAmount,
-            Status = CommissionEntryStatus.Earned,
-            // StatusVersion IZVORNOG SUDJELOVANJA NAKON prijelaza u Completed (pozivatelj TrySetStatus prije ovog poziva)
-            // — daje ovoj completion-pojavi zaseban identitet naspram eventualnog narednog completiona nakon korekcije
-            // (vidi CommissionEntry.cs SourceVersion napomenu). Phase M0: eksplicitno sudjelovanje, ne "jedino" Bookinga.
-            SourceVersion = participation.StatusVersion,
-            EarnedAt = DateTimeOffset.UtcNow,
-            CreatedAt = DateTimeOffset.UtcNow
-        });
+            CommissionRule rule = await _ruleHandler.GetActiveForSubject(
+                organizationId, employeeId, CommissionSubjectType.Service, execution.ServiceId, null, null);
+            if (rule == null)
+                continue;
+
+            await TryAdd(uow, new CommissionEntry
+            {
+                Id = Guid.NewGuid(),
+                OrganizationId = organizationId,
+                EmployeeId = employeeId,
+                CompanyId = execution.CompanyId,
+                CommissionRuleId = rule.Id.GetValueOrDefault(),
+                SourceType = CommissionSourceType.IndividualService,
+                AppointmentId = execution.AppointmentId,
+                BookingId = participation.BookingId,
+                BookingSegmentParticipationId = participation.Id,
+                BaseAmount = finalPrice,
+                CalculationType = rule.CalculationType,
+                RuleValue = rule.Value,
+                CommissionAmount = Calculate(rule.CalculationType, rule.Value, finalPrice),
+                Status = CommissionEntryStatus.Earned,
+                // StatusVersion IZVORNOG SUDJELOVANJA NAKON prijelaza u Completed (pozivatelj TrySetStatus prije ovog poziva)
+                // — daje ovoj completion-pojavi zaseban identitet naspram eventualnog narednog completiona nakon korekcije
+                // (vidi CommissionEntry.cs SourceVersion napomenu). Phase M0: eksplicitno sudjelovanje, ne "jedino" Bookinga.
+                SourceVersion = participation.StatusVersion,
+                EarnedAt = DateTimeOffset.UtcNow,
+                CreatedAt = DateTimeOffset.UtcNow
+            });
+        }
     }
 
-    public async Task GenerateForGroupServiceCompletion(IUnitOfWork uow, Guid organizationId, SegmentExecutionContext execution)
+    public async Task<List<WarningDto>> GenerateForGroupServiceCompletion(IUnitOfWork uow, Guid organizationId, SegmentExecutionContext execution)
     {
-        if (!execution.EmployeeId.HasValue)
-            return;
+        List<WarningDto> unsupported = new();
 
-        CommissionRule rule = await _ruleHandler.GetActiveForSubject(
-            organizationId, execution.EmployeeId.Value, CommissionSubjectType.Service, execution.ServiceId, null, null);
-
-        // Defensive — CommissionRuleService već odbija Percentage za Group-mode Service kod kreiranja/izmjene
-        // pravila, ovo je samo backstop ako se Service.ExecutionMode promijeni nakon što je pravilo stvoreno.
-        if (rule == null || rule.CalculationType != CommissionCalculationType.Fixed)
-            return;
-
-        await TryAdd(uow, new CommissionEntry
+        // Phase M1G: izvor je SEGMENT occurrencea; svaki zaposlenik segmenta dobiva Fixed proviziju sesije JEDNOM (broj
+        // klijenata je ne množi). Segment bez zaposlenika nema korisnika provizije.
+        foreach (Guid employeeId in execution.EmployeeIds.Distinct().OrderBy(id => id))
         {
-            Id = Guid.NewGuid(),
-            OrganizationId = organizationId,
-            EmployeeId = execution.EmployeeId.Value,
-            CompanyId = execution.CompanyId,
-            CommissionRuleId = rule.Id.GetValueOrDefault(),
-            SourceType = CommissionSourceType.GroupService,
-            AppointmentId = execution.AppointmentId,
-            BookingId = null,
-            BaseAmount = 0m,
-            CalculationType = rule.CalculationType,
-            RuleValue = rule.Value,
-            CommissionAmount = rule.Value,
-            Status = CommissionEntryStatus.Earned,
-            EarnedAt = DateTimeOffset.UtcNow,
-            CreatedAt = DateTimeOffset.UtcNow
-        });
+            CommissionRule rule = await _ruleHandler.GetActiveForSubject(
+                organizationId, employeeId, CommissionSubjectType.Service, execution.ServiceId, null, null);
+            if (rule == null)
+                continue;
+
+            // Grupna sesija nema osnovicu za postotak (ni jedan klijent, ni zbroj klijenata, ni prihod termina) — pravilo se
+            // ne evaluira i ne tretira tiho kao Fixed: eksplicitno upozorenje (CommissionRuleService ga već odbija za
+            // Group-mode usluge; ovo pokriva promjenu načina izvođenja usluge nakon stvaranja pravila).
+            if (rule.CalculationType != CommissionCalculationType.Fixed)
+            {
+                unsupported.Add(new WarningDto(WarningCodes.GroupCommissionRuleNotSupported, new WarningGroupCommissionRuleDetails
+                {
+                    SegmentId = execution.SegmentId,
+                    EmployeeId = employeeId,
+                    CommissionRuleId = rule.Id.GetValueOrDefault(),
+                    CalculationType = rule.CalculationType.ToString()
+                }));
+                continue;
+            }
+
+            await TryAdd(uow, new CommissionEntry
+            {
+                Id = Guid.NewGuid(),
+                OrganizationId = organizationId,
+                EmployeeId = employeeId,
+                CompanyId = execution.CompanyId,
+                CommissionRuleId = rule.Id.GetValueOrDefault(),
+                SourceType = CommissionSourceType.GroupService,
+                AppointmentId = execution.AppointmentId,
+                AppointmentSegmentId = execution.SegmentId,
+                BookingId = null,
+                BaseAmount = 0m,
+                CalculationType = rule.CalculationType,
+                RuleValue = rule.Value,
+                CommissionAmount = rule.Value,
+                Status = CommissionEntryStatus.Earned,
+                EarnedAt = DateTimeOffset.UtcNow,
+                CreatedAt = DateTimeOffset.UtcNow
+            });
+        }
+
+        return unsupported;
     }
 
     public async Task GenerateForCheckoutCompletion(IUnitOfWork uow, Guid organizationId, Guid completedByUserId, Checkout checkout)
@@ -479,15 +502,16 @@ public class CommissionService : ICommissionRuleService, ICommissionService, ICo
     public async Task ReverseForIndividualServiceCorrection(
         IUnitOfWork uow, Guid organizationId, Guid userId, BookingSegmentParticipation participation)
     {
-        CommissionEntry entry = await _entryHandler.GetActiveForParticipation(uow, organizationId, participation.Id.GetValueOrDefault());
-        if (entry == null)
-            return;
-
-        entry.Status = CommissionEntryStatus.Reversed;
-        entry.ReversedAt = DateTimeOffset.UtcNow;
-        entry.ReversedBy = userId;
-
-        await _entryHandler.Update(uow, entry);
+        // Phase M1G: reverziraju se SVI aktivni zapisi sudjelovanja (svaki zaposlenik segmenta), ne samo jedan.
+        List<CommissionEntry> entries = await _entryHandler.GetActiveForParticipation(uow, organizationId, participation.Id.GetValueOrDefault());
+        DateTimeOffset now = DateTimeOffset.UtcNow;
+        foreach (CommissionEntry entry in entries)
+        {
+            entry.Status = CommissionEntryStatus.Reversed;
+            entry.ReversedAt = now;
+            entry.ReversedBy = userId;
+            await _entryHandler.Update(uow, entry);
+        }
     }
 
     /// <summary>Namjerno BEZ catch(DbUpdateException) ovdje — Postgres transakcija se prekida (aborted) nakon

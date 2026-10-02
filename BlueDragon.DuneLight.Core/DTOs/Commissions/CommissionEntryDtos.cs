@@ -14,6 +14,11 @@ public class CommissionEntryDto
     public CommissionSourceType SourceType { get; set; }
     public Guid? AppointmentId { get; set; }
     public Guid? BookingId { get; set; }
+
+    /// <summary>Phase M1G — izvorno sudjelovanje (IndividualService) ili segment sesije (GroupService); jedno sudjelovanje
+    /// smije imati više zapisa (po jedan za svakog zaposlenika segmenta).</summary>
+    public Guid? BookingSegmentParticipationId { get; set; }
+    public Guid? AppointmentSegmentId { get; set; }
     public Guid? CheckoutItemId { get; set; }
     public decimal BaseAmount { get; set; }
     public CommissionCalculationType CalculationType { get; set; }

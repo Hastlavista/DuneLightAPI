@@ -45,6 +45,16 @@ public class AppointmentSegment
     [Column("room_id")]
     public Guid? RoomId { get; set; }
 
+    /// <summary>Phase M1G — izvor cijene segmenta (vidi <see cref="Core.Enums.SegmentPricingMode"/> i
+    /// <see cref="Utils.SegmentPricingSource"/>). NIJE vlasništvo ni korisnik provizije.</summary>
+    [Column("pricing_mode")]
+    public Core.Enums.SegmentPricingMode PricingMode { get; set; }
+
+    /// <summary>Zaposlenik čije razine cjenika koristi izvor Employee — uvijek jedan od <see cref="Employees"/> (provodi
+    /// domena); null za Standard.</summary>
+    [Column("pricing_employee_id")]
+    public Guid? PricingEmployeeId { get; set; }
+
     /// <summary>Phase M1F — predložak grupe koji je generirao ovaj segment (null za negrupne segmente). Jedinstven po
     /// terminu: jedan predložak → jedan segment occurrencea. Segment je konkretan snapshot; izmjena predloška ga ne mijenja.</summary>
     [Column("group_segment_template_id")]

@@ -35,10 +35,6 @@ public class Group
     [Column("company_id")]
     public Guid CompanyId { get; set; }
 
-    /// <summary>Prijedlog trenera za generirane termine. Smije biti prazan (ručna dodjela po terminu).</summary>
-    [Column("default_trainer_id")]
-    public Guid? DefaultTrainerId { get; set; }
-
     [Column("is_active")]
     public bool IsActive { get; set; }
 
@@ -63,7 +59,6 @@ public class Group
     public Guid? UpdatedBy { get; set; }
 
     public Company Company { get; set; }
-    public Employee DefaultTrainer { get; set; }
     public List<GroupSlot> Slots { get; set; } = new();
 
     /// <summary>Phase M1F — izvršna definicija grupe: svaki predložak generira točno jedan segment occurrencea (usluga,

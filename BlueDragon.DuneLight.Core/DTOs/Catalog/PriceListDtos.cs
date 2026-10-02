@@ -14,6 +14,10 @@ public class PriceListItemDto
     public string PackageName { get; set; }
     public Guid? CompanyId { get; set; }
     public string CompanyName { get; set; }
+
+    /// <summary>Phase M1G — cijena zaposlenika (samo stavke usluge); null = cijena bez zaposlenika.</summary>
+    public Guid? EmployeeId { get; set; }
+    public string EmployeeName { get; set; }
     public decimal Price { get; set; }
     public DateTimeOffset ValidFrom { get; set; }
     public DateTimeOffset? ValidTo { get; set; }
@@ -37,6 +41,10 @@ public class PriceListItemCreateRequest
 
     /// <summary>Null = vrijedi za sve tvrtke.</summary>
     public Guid? CompanyId { get; set; }
+
+    /// <summary>Phase M1G — cijena određenog zaposlenika (samo za SubjectType = Service; paket je uvijek bez zaposlenika).
+    /// Null = cijena bez zaposlenika.</summary>
+    public Guid? EmployeeId { get; set; }
 
     [Range(0, double.MaxValue, ErrorMessage = "Cijena ne smije biti negativna.")]
     public decimal Price { get; set; }
@@ -78,6 +86,10 @@ public class ResolvePriceRequest
 
     public Guid? CompanyId { get; set; }
 
+    /// <summary>Phase M1G — izvor cijene: zaposlenik čije razine cjenika imaju prednost (Employee način). Null = Standard
+    /// (razine zaposlenika se preskaču). Smije se navesti samo za SubjectType = Service.</summary>
+    public Guid? EmployeeId { get; set; }
+
     public DateTimeOffset? Date { get; set; }
 }
 
@@ -86,13 +98,19 @@ public class ResolvePriceResponse
     public PricingSubjectType SubjectType { get; set; }
     public Guid SubjectId { get; set; }
     public Guid? CompanyId { get; set; }
+
+    /// <summary>Zaposlenik čije su razine razmatrane (izvor Employee); null = Standard.</summary>
+    public Guid? EmployeeId { get; set; }
     public DateTimeOffset Date { get; set; }
     public decimal Price { get; set; }
     public PriceSource Source { get; set; }
 }
 
+/// <summary>Razina cjenika iz koje je cijena razriješena. Phase M1G: Employee* razine postoje samo za izvor cijene Employee.</summary>
 public enum PriceSource
 {
+    EmployeeCompanySpecific,
+    EmployeeAllCompanies,
     CompanySpecific,
     AllCompanies,
     Default

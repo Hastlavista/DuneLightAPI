@@ -291,10 +291,11 @@ public class EmployeeHandler : IEmployeeHandler
     public async Task<bool> CanEmployeePerformService(Guid organizationId, Guid employeeId, Guid serviceId)
     {
         await using DatabaseContext context = DatabaseContext.GenerateContext(_databaseSettings.ConnectionString);
-        return await context.EmployeeServiceAssignments.AnyAsync(es =>
-            es.EmployeeId == employeeId &&
-            es.ServiceId == serviceId &&
-            es.Employee.OrganizationId == organizationId);
+        // Phase M1G (namjerna ispravka legacy ponašanja): zaposlenik BEZ ijedne eksplicitne dodjele usluge smije izvoditi
+        // SVE usluge; s jednom ili više dodjela — samo dodijeljene. Isto pravilo za termine, grupe i čitanja.
+        IQueryable<EmployeeServiceAssignment> assignments = context.EmployeeServiceAssignments.Where(es =>
+            es.EmployeeId == employeeId && es.Employee.OrganizationId == organizationId);
+        return !await assignments.AnyAsync() || await assignments.AnyAsync(es => es.ServiceId == serviceId);
     }
 
     public async Task<bool> HasBusinessReferences(Guid organizationId, Guid employeeId)
@@ -316,7 +317,7 @@ public class EmployeeHandler : IEmployeeHandler
             return true;
         if (await context.Clients.AnyAsync(c => c.OrganizationId == organizationId && c.HomeTrainerId == employeeId))
             return true;
-        if (await context.Groups.AnyAsync(g => g.OrganizationId == organizationId && g.DefaultTrainerId == employeeId))
+        if (await context.GroupSegmentTemplateEmployees.AnyAsync(e => e.EmployeeId == employeeId && e.Template.Group.OrganizationId == organizationId))
             return true;
         if (await context.CommissionRules.AnyAsync(r => r.OrganizationId == organizationId && r.EmployeeId == employeeId))
             return true;

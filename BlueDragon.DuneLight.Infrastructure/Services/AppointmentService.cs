@@ -172,17 +172,17 @@ public partial class AppointmentService : IAppointmentService
             EnsureSegmentProductLimits(segment, requireParticipants: true);
     }
 
-    /// <summary>Po segmentu: točno jedan zaposlenik (MULTI_EMPLOYEE_NOT_SUPPORTED — atribucija cijene/provizije više
-    /// zaposlenika unutar segmenta je otvorena; ograničenje proizvoda, ne sheme), ispravni resursi (količina &gt; 0, bez
-    /// duplikata — ne spajaju se tiho), sudionici bez duplikata. Kod kreiranja termina svaki segment ima barem jednog
-    /// sudionika; segment dodan postojećem terminu smije biti bez sudionika (sesija bez klijenata je valjana).</summary>
+    /// <summary>Po segmentu: barem jedan zaposlenik (Phase M1G: 1..N ravnopravnih zaposlenika; individualni segment bez
+    /// zaposlenika i dalje nije podržan), bez duplikata zaposlenika (skup — ne spaja se tiho), izvor cijene valjan za broj
+    /// zaposlenika (<see cref="SegmentPricingSource"/>), ispravni resursi (količina &gt; 0, bez duplikata), sudionici bez
+    /// duplikata. Kod kreiranja termina svaki segment ima barem jednog sudionika; segment dodan postojećem terminu smije biti
+    /// bez sudionika (sesija bez klijenata je valjana).</summary>
     private static void EnsureSegmentProductLimits(AppointmentSegmentCreateRequest segment, bool requireParticipants)
     {
         if (segment == null)
             throw new ValidationAppException("Segment je obavezan.");
-        if (segment.EmployeeIds == null || segment.EmployeeIds.Distinct().Count() != 1)
-            throw new ValidationAppException(ErrorCodes.MultiEmployeeNotSupported,
-                "Segment trenutno mora imati točno jednog zaposlenika.");
+        EnsureEmployeeSet(segment.EmployeeIds, allowEmpty: false);
+        SegmentPricingSource.Normalize(segment.EmployeeIds, segment.PricingMode, segment.PricingEmployeeId);
         if (segment.Resources is { Count: > 0 })
         {
             if (segment.Resources.Any(r => r.QuantityRequired <= 0))
@@ -203,7 +203,8 @@ public partial class AppointmentService : IAppointmentService
         Guid organizationId, Guid companyId, AppointmentSegmentCreateRequest segment, PricingMode pricingMode)
     {
         ServiceEntity service = await LoadServiceOrThrow(organizationId, segment.ServiceId);
-        List<Guid> employeeIds = segment.EmployeeIds.Distinct().ToList();
+        List<Guid> employeeIds = segment.EmployeeIds.ToList();
+        PricingSourceValue pricingSource = SegmentPricingSource.Normalize(employeeIds, segment.PricingMode, segment.PricingEmployeeId);
         foreach (Guid employeeId in employeeIds)
             await EnsureStructuralEligibility(organizationId, service, companyId, employeeId);
         Room room = await EnsureRoomExists(organizationId, companyId, segment.RoomId);
@@ -219,7 +220,8 @@ public partial class AppointmentService : IAppointmentService
         if (plannedEnd <= segment.PlannedStart)
             throw new ValidationAppException("Kraj segmenta mora biti nakon početka.");
 
-        ResolvePriceResponse resolvedPrice = await ResolveServicePrice(organizationId, segment.ServiceId, companyId, segment.PlannedStart);
+        ResolvePriceResponse resolvedPrice = await ResolveServicePrice(
+            organizationId, segment.ServiceId, companyId, pricingSource.PricingEmployeeId, segment.PlannedStart);
         List<ParticipantPlan> participants = segment.Participants
             .Select(p => new ParticipantPlan(p.ClientId, pricingMode == PricingMode.SuggestedOnly
                 ? BookingPricing.AtSuggested(resolvedPrice)
@@ -227,8 +229,19 @@ public partial class AppointmentService : IAppointmentService
             .ToList();
 
         return new ValidatedSegment(
-            new SegmentPlan(segment.ServiceId, segment.PlannedStart, plannedEnd, employeeIds, segment.RoomId, participants, resources),
+            new SegmentPlan(segment.ServiceId, segment.PlannedStart, plannedEnd, employeeIds, segment.RoomId, participants, resources,
+                PricingSource: pricingSource),
             service, room, clients);
+    }
+
+    /// <summary>Phase M1G — skup zaposlenika segmenta: bez duplikata (odbija se, ne spaja tiho); prazan samo gdje tok to
+    /// dopušta (grupni predložak bez trenera) — individualni segment ima barem jednog zaposlenika.</summary>
+    internal static void EnsureEmployeeSet(IReadOnlyCollection<Guid> employeeIds, bool allowEmpty)
+    {
+        if (employeeIds == null || (!allowEmpty && employeeIds.Count == 0))
+            throw new ValidationAppException("Segment mora imati barem jednog zaposlenika.");
+        if (employeeIds.Distinct().Count() != employeeIds.Count)
+            throw new ValidationAppException("Isti zaposlenik se na segmentu smije navesti samo jednom.");
     }
 
     /// <summary>/recurring namjerno ignorira ručni iznos (svaki occurrence po svojoj predloženoj cijeni).</summary>
@@ -253,7 +266,7 @@ public partial class AppointmentService : IAppointmentService
         ValidatedSegment validated = await ValidateSegment(organizationId, request.CompanyId, segmentRequest, PricingMode.WithManualOverride);
         List<Client> clients = validated.Clients;
         Room room = validated.Room;
-        ResolvePriceResponse resolvedPrice = await ResolveServicePrice(organizationId, request.ServiceId, request.CompanyId, request.StartsAt);
+        ResolvePriceResponse resolvedPrice = await ResolveServicePrice(organizationId, request.ServiceId, request.CompanyId, request.EmployeeId, request.StartsAt);
 
         Dictionary<Guid, AppointmentClientSettlement> settlementByClient = await ValidateSettlements(
             organizationId, clients.Select(c => c.Id.GetValueOrDefault()).ToList(), request.ServiceId, request.CompanyId, request.StartsAt, request.Settlements);
@@ -390,13 +403,15 @@ public partial class AppointmentService : IAppointmentService
         // SEGMENT_SELECTION_REQUIRED, ciljni put je ParticipationId); vlasništvo slijedi taj segment.
         AppointmentSegment legacySegment = LegacySingleSegment.Resolve(appointment);
         await AppointmentOwnership.EnsureCallerOwnsSegments(_employeeHandler, organizationId, userId, hasFullScope, new[] { legacySegment }, NotOwnerMessage);
+        // Phase M1G: plosnati completion nosi JEDNOG zaposlenika — segment s više zaposlenika se ne sažima.
+        LegacySingleEmployee.Of(legacySegment);
 
         ServiceEntity service = await LoadServiceOrThrow(organizationId, request.ServiceId);
         await EnsureStructuralEligibility(organizationId, service, request.CompanyId, request.EmployeeId);
         Room room = await EnsureRoomExists(organizationId, request.CompanyId, request.RoomId);
         List<Client> clients = await EnsureClientsExist(organizationId, request.ClientIds);
 
-        ResolvePriceResponse resolvedPrice = await ResolveServicePrice(organizationId, request.ServiceId, request.CompanyId, request.StartsAt);
+        ResolvePriceResponse resolvedPrice = await ResolveServicePrice(organizationId, request.ServiceId, request.CompanyId, request.EmployeeId, request.StartsAt);
 
         Dictionary<Guid, AppointmentClientSettlement> settlementByClient = await ValidateSettlements(
             organizationId, clients.Select(c => c.Id.GetValueOrDefault()).ToList(), request.ServiceId, request.CompanyId, request.StartsAt, request.Settlements);
@@ -433,11 +448,12 @@ public partial class AppointmentService : IAppointmentService
 
             // Segment se razrješava na granici ovog kompatibilnog ugovora i mijenja eksplicitnim segmentnim operacijama.
             AppointmentSegment executionSegment = LegacySingleSegment.Resolve(appointment);
+            LegacySingleEmployee.Of(executionSegment);
             DateTimeOffset now = DateTimeOffset.UtcNow;
             SegmentMutator.ChangeService(executionSegment, request.ServiceId, now);
             SegmentMutator.ChangeTime(executionSegment, request.StartsAt, plannedEnd, now);
             SegmentMutator.ChangeRoom(executionSegment, request.RoomId, now);
-            SegmentMutator.AssignEmployees(executionSegment, employeeIds, now);
+            LegacySingleEmployee.Assign(executionSegment, request.EmployeeId, now);
             appointment.CompanyId = request.CompanyId;
             appointment.Note = request.Note;
             appointment.UpdatedAt = DateTimeOffset.UtcNow;
@@ -556,7 +572,7 @@ public partial class AppointmentService : IAppointmentService
     public async Task<AppointmentDto> CompleteGroupAppointment(Guid organizationId, Guid userId, bool hasFullScope, Guid id)
     {
         Appointment appointment;
-        bool commissionSkipped = false;
+        List<WarningDto> commissionWarnings = new();
 
         await using (IUnitOfWork uow = await _unitOfWorkFactory.Begin())
         {
@@ -603,16 +619,13 @@ public partial class AppointmentService : IAppointmentService
                 await _waitlistPromotionService.ExpireWaitingForAppointment(
                     uow, organizationId, id, userId, WaitlistExpiredReasons.AppointmentCompleted);
 
-                // Provizija se zarađuje PO CIJELOM odrađenom terminu (sesiji), ne po sudioniku: korisnik = zaposlenik segmenta,
-                // pravilo = (zaposlenik, USLUGA sesije), Fixed. Jednom: zaštićena close-out činjenicom iznad (pod lockom termina).
-                // Phase M1F: postojeće pravilo je jednoznačno SAMO za jednosegmentni occurrence (jedna usluga). Za višesegmentni
-                // occurrence (više usluga) NE izmišlja se atribucija (ni "prvi" segment, ni zbroj, ni prosjek) — provizija se
-                // ne stvara i close-out vraća upozorenje (dug faze provizija).
-                if (appointment.Segments.Count == 1)
-                    await _commissionLedgerService.GenerateForGroupServiceCompletion(
-                        uow, organizationId, ExecutionContextResolver.ForSegment(appointment, appointment.Segments[0]));
-                else
-                    commissionSkipped = true;
+                // Provizija se zarađuje PO SESIJI, ne po sudioniku. Phase M1G: izvor je SVAKI SEGMENT occurrencea (njegova usluga
+                // i njegovi zaposlenici) — za svakog zaposlenika segmenta jedan Fixed zapis (pravilo zaposlenik × usluga
+                // segmenta). Nema "prvog" segmenta ni usluge termina. Jednom: zaštićeno close-out činjenicom iznad (pod lockom
+                // termina) i jedinstvenošću (segment, zaposlenik) u bazi.
+                foreach (AppointmentSegment segment in appointment.Segments.OrderBy(s => s.PlannedStart).ThenBy(s => s.Id))
+                    commissionWarnings.AddRange(await _commissionLedgerService.GenerateForGroupServiceCompletion(
+                        uow, organizationId, ExecutionContextResolver.ForSegment(appointment, segment)));
             }
 
             // Status se ne postavlja — izvodi se (no-op kad je već usklađen).
@@ -631,8 +644,7 @@ public partial class AppointmentService : IAppointmentService
         if (unresolvedClientIds.Count > 0)
             dto.Warnings.Add(new WarningDto(
                 WarningCodes.GroupAppointmentUnresolvedBookings, new WarningUnresolvedBookingsDetails { ClientIds = unresolvedClientIds }));
-        if (commissionSkipped)
-            dto.Warnings.Add(new WarningDto(WarningCodes.GroupCommissionNotSupportedForMultiSegment, null));
+        dto.Warnings.AddRange(commissionWarnings);
 
         return dto;
     }
@@ -659,7 +671,7 @@ public partial class AppointmentService : IAppointmentService
         List<Client> clients = await EnsureClientsExist(organizationId, request.ClientIds);
 
         BookingPricing pricing = BookingPricing.FromResolution(
-            await ResolveServicePrice(organizationId, request.ServiceId, request.CompanyId, request.StartsAt), request.Amount);
+            await ResolveServicePrice(organizationId, request.ServiceId, request.CompanyId, request.EmployeeId, request.StartsAt), request.Amount);
         decimal amount = pricing.Amount;
 
         // Re-cijenjenje (persistira ga AppointmentHandler.UpdateWithBookings niže) se primjenjuje samo na
@@ -681,7 +693,7 @@ public partial class AppointmentService : IAppointmentService
                 await LogAmountChange(id, booking.Id, participation.Amount, amount, userId);
         }
 
-        Guid? currentEmployeeId = AppointmentSegments.GetSingleEmployeeId(executionSegment);
+        Guid? currentEmployeeId = LegacySingleEmployee.Of(executionSegment);
         if (currentEmployeeId != request.EmployeeId)
             await LogEmployeeChange(id, currentEmployeeId, request.EmployeeId, userId);
 
@@ -694,7 +706,7 @@ public partial class AppointmentService : IAppointmentService
         DateTimeOffset plannedEnd = request.StartsAt.AddMinutes(service.DefaultDurationMinutes);
         DateTimeOffset now = DateTimeOffset.UtcNow;
         SegmentMutator.ChangeService(executionSegment, request.ServiceId, now);
-        SegmentMutator.AssignEmployees(executionSegment, new[] { request.EmployeeId }, now);
+        LegacySingleEmployee.Assign(executionSegment, request.EmployeeId, now);
         SegmentMutator.ChangeTime(executionSegment, request.StartsAt, plannedEnd, now);
         SegmentMutator.ChangeRoom(executionSegment, request.RoomId, now);
         appointment.CompanyId = request.CompanyId;
@@ -753,7 +765,7 @@ public partial class AppointmentService : IAppointmentService
         if (request.CompanyId.HasValue)
             await EnsureCompanyExists(organizationId, request.CompanyId.Value);
 
-        Guid? currentEmployeeId = AppointmentSegments.GetSingleEmployeeId(movedSegment);
+        Guid? currentEmployeeId = LegacySingleEmployee.Of(movedSegment);
         Guid effectiveEmployeeId = request.EmployeeId ?? currentEmployeeId.GetValueOrDefault();
         Guid effectiveCompanyId = request.CompanyId ?? appointment.CompanyId;
 
@@ -778,7 +790,7 @@ public partial class AppointmentService : IAppointmentService
         TimeSpan duration = movedSegment.PlannedEnd - movedSegment.PlannedStart;
         SegmentMutator.ChangeTime(movedSegment, request.StartsAt, request.StartsAt + duration, now);
         if (request.EmployeeId.HasValue)
-            SegmentMutator.AssignEmployees(movedSegment, new[] { request.EmployeeId.Value }, now);
+            LegacySingleEmployee.Assign(movedSegment, request.EmployeeId.Value, now);
         if (request.RoomId.HasValue)
             SegmentMutator.ChangeRoom(movedSegment, request.RoomId, now);
         if (request.CompanyId.HasValue)
@@ -882,7 +894,7 @@ public partial class AppointmentService : IAppointmentService
 
         foreach (DateTimeOffset occurrence in occurrences)
         {
-            ResolvePriceResponse resolvedPrice = await ResolveServicePrice(organizationId, request.ServiceId, request.CompanyId, occurrence);
+            ResolvePriceResponse resolvedPrice = await ResolveServicePrice(organizationId, request.ServiceId, request.CompanyId, request.EmployeeId, occurrence);
 
             // Phase M1B: svaki occurrence kroz konstrukcijsku jezgru (jedan segment; /recurring namjerno ignorira ručni iznos
             // — request nema Amount — svaki occurrence po svojoj predloženoj cijeni).
@@ -1126,10 +1138,9 @@ public partial class AppointmentService : IAppointmentService
         if (query.EmployeeId.HasValue)
             employees = employees.Where(e => e.Id == query.EmployeeId.Value).ToList();
 
-        // Capability je isključivo eksplicitna (vidi EmployeeServiceAssignment) — prazan popis znači
-        // zaposlenik ne smije nijednu uslugu, ne "smije sve".
+        // Phase M1G: isto pravilo podobnosti kao Create (EmployeeServiceEligibility — bez dodjela = sve usluge).
         employees = employees
-            .Where(e => e.IsActive && e.Services.Any(s => s.ServiceId == query.ServiceId))
+            .Where(e => e.IsActive && EmployeeServiceEligibility.CanPerform(e.Services.Select(s => s.ServiceId).ToList(), query.ServiceId))
             .ToList();
 
         if (employees.Count == 0)
@@ -1504,13 +1515,15 @@ public partial class AppointmentService : IAppointmentService
 
     /// <remarks>Phase D3B2: vraća cijelo razrješavanje (Price + Source) — Source je istinit snapshot za
     /// BookingSegmentParticipation.BaseAmountSource (vidi BookingPricing.FromResolution).</remarks>
-    private Task<ResolvePriceResponse> ResolveServicePrice(Guid organizationId, Guid serviceId, Guid companyId, DateTimeOffset date)
+    private Task<ResolvePriceResponse> ResolveServicePrice(
+        Guid organizationId, Guid serviceId, Guid companyId, Guid? pricingEmployeeId, DateTimeOffset date)
     {
         return _pricingService.ResolvePrice(organizationId, new ResolvePriceRequest
         {
             SubjectType = PricingSubjectType.Service,
             SubjectId = serviceId,
             CompanyId = companyId,
+            EmployeeId = pricingEmployeeId,
             Date = date
         });
     }

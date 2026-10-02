@@ -57,3 +57,13 @@ public class WarningRosterOverlapDetails
     public TimeSpan? StartTime { get; set; }
     public TimeSpan? EndTime { get; set; }
 }
+
+/// <summary>Phase M1G — GROUP_COMMISSION_RULE_NOT_SUPPORTED: pravilo provizije zaposlenika za uslugu segmenta koje grupna
+/// sesija ne evaluira (unos nije stvoren).</summary>
+public class WarningGroupCommissionRuleDetails
+{
+    public Guid SegmentId { get; set; }
+    public Guid EmployeeId { get; set; }
+    public Guid CommissionRuleId { get; set; }
+    public string CalculationType { get; set; }
+}

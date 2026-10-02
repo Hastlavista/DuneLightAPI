@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 
 namespace BlueDragon.DuneLight.Infrastructure.Domain.Models.Appointments;
 
@@ -14,8 +15,8 @@ namespace BlueDragon.DuneLight.Infrastructure.Domain.Models.Appointments;
 public record SegmentExecutionContext
 {
     public SegmentExecutionContext(
-        Guid organizationId, Guid appointmentId, Guid segmentId, Guid companyId, Guid serviceId, string serviceName, Guid? employeeId,
-        DateTimeOffset startsAt)
+        Guid organizationId, Guid appointmentId, Guid segmentId, Guid companyId, Guid serviceId, string serviceName,
+        IReadOnlyList<Guid> employeeIds, Guid? pricingEmployeeId, DateTimeOffset startsAt)
     {
         OrganizationId = organizationId;
         AppointmentId = appointmentId;
@@ -23,7 +24,8 @@ public record SegmentExecutionContext
         CompanyId = companyId;
         ServiceId = serviceId;
         ServiceName = serviceName;
-        EmployeeId = employeeId;
+        EmployeeIds = employeeIds;
+        PricingEmployeeId = pricingEmployeeId;
         StartsAt = startsAt;
     }
 
@@ -40,8 +42,13 @@ public record SegmentExecutionContext
     /// <summary>Naziv usluge segmenta — null ako navigacija nije učitana (jedini potrošač je opis CheckoutItem stavke).</summary>
     public string ServiceName { get; }
 
-    /// <summary>Zaposlenik segmenta (danas najviše jedan — ograničenje proizvoda, ne sheme); null bez zaposlenika.</summary>
-    public Guid? EmployeeId { get; }
+    /// <summary>Phase M1G — SVI zaposlenici segmenta (ravnopravni izvršitelji, bez "glavnog"; prazno bez zaposlenika).
+    /// Provizija se računa neovisno za svakog.</summary>
+    public IReadOnlyList<Guid> EmployeeIds { get; }
+
+    /// <summary>Phase M1G — zaposlenik čije razine cjenika koristi izvor cijene segmenta (Employee); null = Standard.
+    /// Samo za cijenu — NIJE korisnik provizije ni vlasnik.</summary>
+    public Guid? PricingEmployeeId { get; }
 
     /// <summary>Planirani početak segmenta — datum za cijenu, valjanost paketa i rok otkazivanja.</summary>
     public DateTimeOffset StartsAt { get; }

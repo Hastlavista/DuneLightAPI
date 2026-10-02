@@ -25,10 +25,6 @@ public sealed record OccupancySlot(
     Guid? RoomId,
     IReadOnlyList<Guid> ActiveClientIds)
 {
-    /// <summary>Jedini zaposlenik segmenta (null bez zaposlenika); segment s više zaposlenika se eksplicitno odbija dok
-    /// višezaposlenički segmenti nisu omogućeni (vidi AppointmentSegments.GetSingleEmployeeId).</summary>
-    public Guid? EmployeeId => AppointmentSegments.GetSingleEmployeeId(SegmentId, EmployeeIds);
-
     /// <summary>Centralno pravilo (<see cref="SchedulingInterval"/>): susjedni intervali NISU sudar.</summary>
     public bool Overlaps(DateTimeOffset start, DateTimeOffset end) => SchedulingInterval.Overlaps(Start, End, start, end);
 }

@@ -149,7 +149,7 @@ public class AppointmentMoveCharacterizationTests
     public async Task Move_ToAnEmployeeNotAuthorizedForTheService_IsRejected()
     {
         await using SchedulingWorld w = await SchedulingWorld.Create(nameof(Move_ToAnEmployeeNotAuthorizedForTheService_IsRejected));
-        Employee unauthorized = await w.AddEmployee(assignedToService: false);
+        Employee unauthorized = await w.AddEmployeeRestrictedToAnotherService();
         AppointmentDto created = await w.CreateAppointment(SchedulingWorld.Future(10));
 
         await SchedulingAssert.BusinessRule(ErrorCodes.EmployeeNotAssignedToService,

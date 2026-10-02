@@ -73,7 +73,21 @@ public static class ErrorCodes
     public const string LastSegmentCannotBeRemoved = "LAST_SEGMENT_CANNOT_BE_REMOVED";
     /// <summary>Phase M1B: segment trenutno podržava točno jednog zaposlenika (atribucija cijene/provizije više zaposlenika
     /// je otvorena) — ograničenje proizvoda, ne sheme.</summary>
-    public const string MultiEmployeeNotSupported = "MULTI_EMPLOYEE_NOT_SUPPORTED";
+    /// <summary>Phase M1G — segment s 2+ zaposlenika zahtijeva eksplicitan izvor cijene (PricingMode, uz PricingEmployeeId za
+    /// Employee) — nikad se ne pogađa.</summary>
+    public const string PricingSourceRequired = "PRICING_SOURCE_REQUIRED";
+
+    /// <summary>Phase M1G — izvor cijene ne odgovara zaposlenicima segmenta/predloška (Standard uz zaposlenika, Employee bez
+    /// zaposlenika ili sa zaposlenikom koji nije dodijeljen, Standard za segment s točno jednim zaposlenikom...).</summary>
+    public const string InvalidPricingSource = "INVALID_PRICING_SOURCE";
+
+    /// <summary>Phase M1G — legacy plosnata operacija s jednim zaposlenikom ne smije prepisati segment s više zaposlenika;
+    /// koristi se segmentna naredba (PATCH /api/segments/{id}/employees).</summary>
+    public const string EmployeeSetCommandRequired = "EMPLOYEE_SET_COMMAND_REQUIRED";
+
+    /// <summary>Phase M1G — zaposlenici segmenta s izvršnom poviješću (odrađeno sudjelovanje ili zatvorena grupna sesija) se
+    /// ne mijenjaju — povijesno izvršenje i provizija se ne prepisuju.</summary>
+    public const string SegmentExecutionHistoryLocked = "SEGMENT_EXECUTION_HISTORY_LOCKED";
     /// <summary>Phase M1D: istovremeni broj OSOBA u prostoriji (zaposlenici + zauzimajući klijenti) premašio bi Room.Capacity —
     /// tvrdo ograničenje, bez override-a.</summary>
     public const string RoomCapacityExceeded = "ROOM_CAPACITY_EXCEEDED";

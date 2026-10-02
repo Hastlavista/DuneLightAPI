@@ -98,13 +98,15 @@ public class BookingService : IBookingService
     /// razrješavanja cijene, samo poziva centralni resolver po Service/Company/datumu termina.</summary>
     /// <remarks>Phase D3B2: vraća cijelo razrješavanje (Price + Source) — Source je istinit snapshot za
     /// BookingSegmentParticipation.BaseAmountSource (vidi BookingPricing.FromResolution).</remarks>
-    private Task<ResolvePriceResponse> ResolveServicePrice(Guid organizationId, Guid serviceId, Guid companyId, DateTimeOffset date)
+    private Task<ResolvePriceResponse> ResolveServicePrice(
+        Guid organizationId, Guid serviceId, Guid companyId, Guid? pricingEmployeeId, DateTimeOffset date)
     {
         return _pricingService.ResolvePrice(organizationId, new ResolvePriceRequest
         {
             SubjectType = PricingSubjectType.Service,
             SubjectId = serviceId,
             CompanyId = companyId,
+            EmployeeId = pricingEmployeeId,
             Date = date
         });
     }
@@ -147,7 +149,7 @@ public class BookingService : IBookingService
         Client client = await LoadEligibleClient(organizationId, request.ClientId);
 
         SegmentExecutionContext execution = ExecutionContextResolver.ForSegment(appointment, segment);
-        ResolvePriceResponse resolvedPrice = await ResolveServicePrice(organizationId, execution.ServiceId, execution.CompanyId, execution.StartsAt);
+        ResolvePriceResponse resolvedPrice = await ResolveServicePrice(organizationId, execution.ServiceId, execution.CompanyId, execution.PricingEmployeeId, execution.StartsAt);
 
         await using (IUnitOfWork uow = await _unitOfWorkFactory.Begin())
         {
@@ -441,7 +443,7 @@ public class BookingService : IBookingService
 
         SegmentExecutionContext guestExecution = ExecutionContextResolver.ForSegment(appointment, segment);
         ResolvePriceResponse guestPrice = await ResolveServicePrice(
-            organizationId, guestExecution.ServiceId, guestExecution.CompanyId, guestExecution.StartsAt);
+            organizationId, guestExecution.ServiceId, guestExecution.CompanyId, guestExecution.PricingEmployeeId, guestExecution.StartsAt);
 
         DateTimeOffset now = DateTimeOffset.UtcNow;
         Booking booking = existingBooking ?? BookingFactory.CreateConfirmed(
@@ -724,7 +726,7 @@ public class BookingService : IBookingService
         ParticipationExecutionContext execution = ExecutionContextResolver.ForParticipation(appointment, booking, participation);
         if (request.Amount.HasValue)
             ParticipationPrice.Apply(participation, BookingPricing.FromResolution(
-                await ResolveServicePrice(organizationId, execution.ServiceId, execution.CompanyId, execution.StartsAt), request.Amount));
+                await ResolveServicePrice(organizationId, execution.ServiceId, execution.CompanyId, execution.PricingEmployeeId, execution.StartsAt), request.Amount));
 
         ParticipationLifecycle.TrySetStatus(participation, ParticipationStatus.Completed);
 
@@ -934,7 +936,7 @@ public class BookingService : IBookingService
         }
 
         BookingPricing pricing = BookingPricing.FromResolution(
-            await ResolveServicePrice(organizationId, execution.ServiceId, execution.CompanyId, execution.StartsAt), request.Amount);
+            await ResolveServicePrice(organizationId, execution.ServiceId, execution.CompanyId, execution.PricingEmployeeId, execution.StartsAt), request.Amount);
         decimal amount = pricing.Amount;
         ParticipationPrice.Apply(participation, pricing);
 

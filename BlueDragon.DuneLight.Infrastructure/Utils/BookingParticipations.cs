@@ -174,6 +174,8 @@ public static class ParticipationPrice
         participation.IsAmountManuallyOverridden = pricing.IsAmountManuallyOverridden;
         participation.BaseAmount = pricing.BaseAmount;
         participation.BaseAmountSource = pricing.BaseAmountSource;
+        participation.PricingMode = pricing.PricingMode;
+        participation.PricingEmployeeId = pricing.PricingEmployeeId;
     }
 }
 

@@ -28,6 +28,9 @@ public interface IAppointmentService
 
     Task<AppointmentDto> ChangeSegmentEmployees(Guid organizationId, Guid userId, bool hasFullScope, Guid segmentId, AppointmentSegmentEmployeesChangeRequest request);
 
+    /// <summary>Phase M1G — samo izvor cijene segmenta (skup zaposlenika ostaje isti).</summary>
+    Task<AppointmentDto> ChangeSegmentPricingSource(Guid organizationId, Guid userId, bool hasFullScope, Guid segmentId, AppointmentSegmentPricingSourceChangeRequest request);
+
     Task<AppointmentDto> ChangeSegmentRoom(Guid organizationId, Guid userId, bool hasFullScope, Guid segmentId, AppointmentSegmentRoomChangeRequest request);
 
     Task<AppointmentDto> ChangeSegmentResources(Guid organizationId, Guid userId, bool hasFullScope, Guid segmentId, AppointmentSegmentResourcesChangeRequest request);

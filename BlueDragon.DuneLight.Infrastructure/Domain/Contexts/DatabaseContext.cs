@@ -79,6 +79,7 @@ public class DatabaseContext : DbContext
     public DbSet<WaitlistEntry> WaitlistEntries { get; set; }
     public DbSet<GroupSegmentTemplate> GroupSegmentTemplates { get; set; }
     public DbSet<GroupSegmentTemplateResource> GroupSegmentTemplateResources { get; set; }
+    public DbSet<GroupSegmentTemplateEmployee> GroupSegmentTemplateEmployees { get; set; }
     public DbSet<GroupMemberSegmentTemplate> GroupMemberSegmentTemplates { get; set; }
 
     public DbSet<RosterType> RosterTypes { get; set; }
@@ -241,6 +242,11 @@ public class DatabaseContext : DbContext
             .HasOne(p => p.Company)
             .WithMany()
             .HasForeignKey(p => p.CompanyId)
+            .OnDelete(DeleteBehavior.Restrict);
+        modelBuilder.Entity<PriceListItem>()
+            .HasOne(p => p.Employee)
+            .WithMany()
+            .HasForeignKey(p => p.EmployeeId)
             .OnDelete(DeleteBehavior.Restrict);
 
         modelBuilder.Entity<PriceListItemHistory>().HasKey(h => h.Id);
@@ -469,6 +475,14 @@ public class DatabaseContext : DbContext
             .HasForeignKey(s => s.RoomId)
             .OnDelete(DeleteBehavior.Restrict);
         modelBuilder.Entity<AppointmentSegment>()
+            .Property(s => s.PricingMode)
+            .HasConversion(v => v.ToString(), v => Enum.Parse<SegmentPricingMode>(v));
+        modelBuilder.Entity<AppointmentSegment>()
+            .HasOne<Employee>()
+            .WithMany()
+            .HasForeignKey(s => s.PricingEmployeeId)
+            .OnDelete(DeleteBehavior.Restrict);
+        modelBuilder.Entity<AppointmentSegment>()
             .HasOne(s => s.GroupSegmentTemplate)
             .WithMany()
             .HasForeignKey(s => s.GroupSegmentTemplateId)
@@ -510,6 +524,14 @@ public class DatabaseContext : DbContext
         modelBuilder.Entity<BookingSegmentParticipation>()
             .Property(p => p.BaseAmountSource)
             .HasConversion(v => v.ToString(), v => Enum.Parse<PriceSource>(v));
+        modelBuilder.Entity<BookingSegmentParticipation>()
+            .Property(p => p.PricingMode)
+            .HasConversion(v => v.ToString(), v => Enum.Parse<SegmentPricingMode>(v));
+        modelBuilder.Entity<BookingSegmentParticipation>()
+            .HasOne<Employee>()
+            .WithMany()
+            .HasForeignKey(p => p.PricingEmployeeId)
+            .OnDelete(DeleteBehavior.Restrict);
         modelBuilder.Entity<BookingSegmentParticipation>()
             .HasOne(p => p.Booking)
             .WithMany(b => b.Participations)
@@ -815,6 +837,11 @@ public class DatabaseContext : DbContext
             .HasForeignKey(e => e.BookingId)
             .OnDelete(DeleteBehavior.Cascade);
         modelBuilder.Entity<CommissionEntry>()
+            .HasOne<AppointmentSegment>()
+            .WithMany()
+            .HasForeignKey(e => e.AppointmentSegmentId)
+            .OnDelete(DeleteBehavior.NoAction);
+        modelBuilder.Entity<CommissionEntry>()
             .HasOne(e => e.CheckoutItem)
             .WithMany()
             .HasForeignKey(e => e.CheckoutItemId)
@@ -852,11 +879,6 @@ public class DatabaseContext : DbContext
             .WithMany()
             .HasForeignKey(g => g.CompanyId)
             .OnDelete(DeleteBehavior.Restrict);
-        modelBuilder.Entity<Group>()
-            .HasOne(g => g.DefaultTrainer)
-            .WithMany()
-            .HasForeignKey(g => g.DefaultTrainerId)
-            .OnDelete(DeleteBehavior.Restrict);
 
         // Phase M1F — predlošci segmenata (CHECK-ovi, kompozitni FK-ovi odabira i jedinstvenosti su u migraciji
         // Migration_2026_10_20_GroupSegmentTemplates).
@@ -875,6 +897,28 @@ public class DatabaseContext : DbContext
             .HasOne(t => t.Room)
             .WithMany()
             .HasForeignKey(t => t.RoomId)
+            .OnDelete(DeleteBehavior.Restrict);
+
+        modelBuilder.Entity<GroupSegmentTemplate>()
+            .Property(t => t.PricingMode)
+            .HasConversion(v => v.ToString(), v => Enum.Parse<SegmentPricingMode>(v));
+        modelBuilder.Entity<GroupSegmentTemplate>()
+            .HasOne<Employee>()
+            .WithMany()
+            .HasForeignKey(t => t.PricingEmployeeId)
+            .OnDelete(DeleteBehavior.Restrict);
+
+        // Phase M1G — osoblje predloška (Migration_2026_10_22_MultiEmployeeSegments).
+        modelBuilder.Entity<GroupSegmentTemplateEmployee>().HasKey(e => new { e.GroupSegmentTemplateId, e.EmployeeId });
+        modelBuilder.Entity<GroupSegmentTemplateEmployee>()
+            .HasOne(e => e.Template)
+            .WithMany(t => t.Employees)
+            .HasForeignKey(e => e.GroupSegmentTemplateId)
+            .OnDelete(DeleteBehavior.Cascade);
+        modelBuilder.Entity<GroupSegmentTemplateEmployee>()
+            .HasOne(e => e.Employee)
+            .WithMany()
+            .HasForeignKey(e => e.EmployeeId)
             .OnDelete(DeleteBehavior.Restrict);
 
         modelBuilder.Entity<GroupSegmentTemplateResource>().HasKey(r => new { r.GroupSegmentTemplateId, r.ResourceId });

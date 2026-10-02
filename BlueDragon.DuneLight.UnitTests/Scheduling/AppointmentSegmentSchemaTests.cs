@@ -63,6 +63,8 @@ public class AppointmentSegmentSchemaTests
             ["created_at"] = ("timestamp with time zone", "NO"),
             ["updated_at"] = ("timestamp with time zone", "YES"),
             ["group_segment_template_id"] = ("uuid", "YES"), // M1F: which group template generated the segment
+            ["pricing_mode"] = ("character varying", "NO"), // M1G: explicit pricing source
+            ["pricing_employee_id"] = ("uuid", "YES"),
         }, await Columns("appointment_segments")); // no company_id: derived through the appointment
 
         Assert.Equal(new Dictionary<string, string>
@@ -73,6 +75,8 @@ public class AppointmentSegmentSchemaTests
             ["fk_appointment_segments_service_id"] = "FOREIGN KEY (service_id) REFERENCES dunelight.services(id)",
             ["fk_appointment_segments_room_id"] = "FOREIGN KEY (room_id) REFERENCES dunelight.rooms(id)",
             ["fk_appointment_segments_group_segment_template_id"] = "FOREIGN KEY (group_segment_template_id) REFERENCES dunelight.group_segment_templates(id) ON DELETE RESTRICT",
+            ["fk_appointment_segments_pricing_employee_id"] = "FOREIGN KEY (pricing_employee_id) REFERENCES dunelight.employees(id) ON DELETE RESTRICT",
+            ["ck_appointment_segments_pricing_source"] = "CHECK (((((pricing_mode)::text = 'Standard'::text) AND (pricing_employee_id IS NULL)) OR (((pricing_mode)::text = 'Employee'::text) AND (pricing_employee_id IS NOT NULL))))",
             ["ck_appointment_segments_planned_range"] = "CHECK ((planned_end > planned_start))",
             ["ck_appointment_segments_actual_range"] = "CHECK (((actual_end IS NULL) OR ((actual_start IS NOT NULL) AND (actual_end >= actual_start))))",
         }, await Constraints("appointment_segments"));

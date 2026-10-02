@@ -14,30 +14,38 @@ namespace BlueDragon.DuneLight.Infrastructure.Utils;
 /// </summary>
 public static class AppointmentSegments
 {
-    /// <summary>Zaposlenik segmenta (null = bez zaposlenika, npr. grupa bez trenera). Više zaposlenika na segmentu je
-    /// OGRANIČENJE PROIZVODA (atribucija cijene/provizije je otvorena odluka), ne sheme — baca iznimku.</summary>
-    public static Guid? GetSingleEmployeeId(AppointmentSegment segment)
-    {
-        ArgumentNullException.ThrowIfNull(segment);
-        return GetSingleEmployeeId(segment.Id, segment.Employees.Select(e => e.EmployeeId).ToList());
-    }
-
-    /// <summary>Isto pravilo nad projekcijom (bez učitanog entiteta) — vidi SchedulingOccupancyHandler.</summary>
-    public static Guid? GetSingleEmployeeId(Guid? segmentId, IReadOnlyList<Guid> employeeIds)
-    {
-        return employeeIds.Count switch
-        {
-            0 => null,
-            1 => employeeIds[0],
-            _ => throw new InvalidAppointmentSegmentStateException(
-                $"Segment {segmentId} ima {employeeIds.Count} zaposlenika — više zaposlenika po segmentu još nije podržano.")
-        };
-    }
-
     /// <summary>Trajanje segmenta izvedeno iz planiranog raspona.</summary>
     public static int DurationMinutes(AppointmentSegment segment) => (int)(segment.PlannedEnd - segment.PlannedStart).TotalMinutes;
 
     public static bool HasEmployee(AppointmentSegment segment, Guid employeeId) => segment.Employees.Any(e => e.EmployeeId == employeeId);
+}
+
+/// <summary>
+/// Phase M1G — granica LEGACY plosnatih operacija s JEDNIM zaposlenikom (plosnati Update/Move/CompleteExisting nose jedan
+/// EmployeeId). Segment s 2+ zaposlenika se ovdje nikad ne sažima na jednog (ni "prvi", ni "cjenovni"): poslovna greška
+/// EMPLOYEE_SET_COMMAND_REQUIRED — ciljni put je segmentna naredba nad skupom zaposlenika. Ne koristiti u ciljnim tokovima.
+/// </summary>
+public static class LegacySingleEmployee
+{
+    /// <summary>Jedini zaposlenik segmenta (null = bez zaposlenika).</summary>
+    public static Guid? Of(AppointmentSegment segment)
+    {
+        ArgumentNullException.ThrowIfNull(segment);
+        return segment.Employees.Count switch
+        {
+            0 => null,
+            1 => segment.Employees[0].EmployeeId,
+            _ => throw new BusinessRuleException(ErrorCodes.EmployeeSetCommandRequired,
+                "Segment ima više zaposlenika — ova operacija nosi jednog zaposlenika; koristite izmjenu zaposlenika segmenta (EmployeeIds).")
+        };
+    }
+
+    /// <summary>Plosnata operacija postavlja JEDNOG zaposlenika: izvor cijene je automatski Employee/taj zaposlenik.</summary>
+    public static void Assign(AppointmentSegment segment, Guid employeeId, DateTimeOffset updatedAt)
+    {
+        SegmentMutator.AssignEmployees(segment, new[] { employeeId }, updatedAt);
+        SegmentPricingSource.Apply(segment, SegmentPricingSource.Normalize(new[] { employeeId }, null, null), updatedAt);
+    }
 }
 
 /// <summary>

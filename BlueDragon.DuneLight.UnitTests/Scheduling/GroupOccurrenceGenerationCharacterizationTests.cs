@@ -517,7 +517,7 @@ public class GroupOccurrenceGenerationCharacterizationTests
     {
         (SchedulingWorld w, ServiceEntity svc) = await Arrange(nameof(CreateGroup_WithATrainerNotAuthorizedForTheService_IsRejected));
         await using SchedulingWorld _ = w;
-        Employee unauthorized = await w.AddEmployee("Unauthorized", assignedToService: false);
+        Employee unauthorized = await w.AddEmployeeRestrictedToAnotherService();
 
         await SchedulingAssert.BusinessRule(ErrorCodes.EmployeeNotAssignedToService, () => w.CreateGroup(svc, capacity: 5, trainer: unauthorized));
     }

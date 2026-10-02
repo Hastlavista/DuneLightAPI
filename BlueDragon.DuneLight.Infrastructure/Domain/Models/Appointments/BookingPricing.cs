@@ -1,4 +1,6 @@
+using System;
 using BlueDragon.DuneLight.Core.DTOs.Catalog;
+using BlueDragon.DuneLight.Core.Enums;
 
 namespace BlueDragon.DuneLight.Infrastructure.Domain.Models.Appointments;
 
@@ -10,9 +12,11 @@ namespace BlueDragon.DuneLight.Infrastructure.Domain.Models.Appointments;
 /// Phase D3B2: BaseAmount/BaseAmountSource su ISTINIT snapshot razrješavanja cjenika (ResolvePriceResponse.Price/Source)
 /// i popunjeni su SAMO kad cijena dolazi iz razrješavanja; inače (npr. <see cref="Zero"/>) ostaju NULL. Trenutni model
 /// nema eksplicitnu prilagodbu: SuggestedAmount = razriješena cijena, pa se AdjustmentAmount ne piše (ostaje NULL).
+/// Phase M1G: uz snapshot razrješavanja ide i IZVOR cijene (PricingMode/PricingEmployeeId) koji je razrješavanje koristilo.
 /// </summary>
 public readonly record struct BookingPricing(
-    decimal Amount, decimal SuggestedAmount, bool IsAmountManuallyOverridden, decimal? BaseAmount = null, PriceSource? BaseAmountSource = null)
+    decimal Amount, decimal SuggestedAmount, bool IsAmountManuallyOverridden, decimal? BaseAmount = null, PriceSource? BaseAmountSource = null,
+    SegmentPricingMode? PricingMode = null, Guid? PricingEmployeeId = null)
 {
     /// <summary>Po razriješenoj cijeni uz opcionalni ručni iznos — isto pravilo kao prije na Bookingu: Amount = ručni ??
     /// predloženi, ručni iznos jednak predloženom NIJE ručna promjena.</summary>
@@ -21,7 +25,9 @@ public readonly record struct BookingPricing(
         resolved.Price,
         manualAmount.HasValue && manualAmount.Value != resolved.Price,
         resolved.Price,
-        resolved.Source);
+        resolved.Source,
+        resolved.EmployeeId.HasValue ? SegmentPricingMode.Employee : SegmentPricingMode.Standard,
+        resolved.EmployeeId);
 
     /// <summary>Booking po predloženoj cijeni, bez ručnog iznosa (grupni termin, gost, lista čekanja, /recurring, AddBooking).</summary>
     public static BookingPricing AtSuggested(ResolvePriceResponse resolved) => FromResolution(resolved, null);

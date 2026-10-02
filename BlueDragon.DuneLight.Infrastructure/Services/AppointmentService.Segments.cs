@@ -32,10 +32,10 @@ namespace BlueDragon.DuneLight.Infrastructure.Services;
 /// </summary>
 public partial class AppointmentService
 {
-    /// <summary>Ciljno stanje segmenta koji se prepisuje.</summary>
+    /// <summary>Ciljno stanje segmenta koji se prepisuje. PricingSource null = izvor cijene segmenta se ne mijenja.</summary>
     private sealed record SegmentTarget(
         DateTimeOffset PlannedStart, DateTimeOffset PlannedEnd, Guid ServiceId, IReadOnlyList<Guid> EmployeeIds, Guid? RoomId,
-        IReadOnlyList<ResourceClaim> Resources, bool Reprice, string Change);
+        IReadOnlyList<ResourceClaim> Resources, bool Reprice, string Change, PricingSourceValue? PricingSource = null);
 
     public Task<AppointmentDto> ChangeSegmentTime(
         Guid organizationId, Guid userId, bool hasFullScope, Guid segmentId, AppointmentSegmentTimeChangeRequest request) =>
@@ -76,11 +76,16 @@ public partial class AppointmentService
         Guid organizationId, Guid userId, bool hasFullScope, Guid segmentId, AppointmentSegmentEmployeesChangeRequest request) =>
         RewriteSegment(organizationId, userId, hasFullScope, segmentId, async (appointment, segment, resources) =>
         {
-            List<Guid> employees = (request.EmployeeIds ?? new List<Guid>()).Distinct().ToList();
-            if (employees.Count != 1)
-                throw new ValidationAppException(ErrorCodes.MultiEmployeeNotSupported, "Segment trenutno mora imati točno jednog zaposlenika.");
-            // Own-opseg ne smije dodijeliti segment drugom zaposleniku (isto pravilo kao kreiranje).
-            await AppointmentOwnership.EnsureCallerIsEmployee(_employeeHandler, organizationId, userId, hasFullScope, employees, NotOwnerMessage);
+            List<Guid> employees = (request.EmployeeIds ?? new List<Guid>()).ToList();
+            EnsureEmployeeSet(employees, allowEmpty: appointment.Form == AppointmentForm.Group);
+            // Phase M1G: rezultat s 2+ zaposlenika uvijek traži eksplicitan izvor cijene (bez zaključivanja namjere).
+            PricingSourceValue pricingSource = SegmentPricingSource.Normalize(employees, request.PricingMode, request.PricingEmployeeId);
+            // Own-opseg (vlasnik segmenta) ne smije dodavati NI uklanjati suradnike: stari i novi skup smiju sadržavati samo
+            // pozivatelja — izmjena popisa zaposlenika s drugim zaposlenicima zahtijeva appointments.write.all.
+            await AppointmentOwnership.EnsureCallerIsEmployee(_employeeHandler, organizationId, userId, hasFullScope,
+                employees.Concat(segment.Employees.Select(e => e.EmployeeId)), NotOwnerMessage);
+            if (!employees.ToHashSet().SetEquals(segment.Employees.Select(e => e.EmployeeId)))
+                EnsureNoExecutionHistory(appointment, segment);
 
             ServiceEntity service = await LoadServiceOrThrow(organizationId, segment.ServiceId);
             foreach (Guid employeeId in employees)
@@ -88,8 +93,34 @@ public partial class AppointmentService
             List<WarningDto> warnings = await EnsureWorkforceAvailability(
                 organizationId, employees, appointment.CompanyId, segment.PlannedStart, segment.PlannedEnd, request.OverrideAvailability && hasFullScope);
             return (new SegmentTarget(segment.PlannedStart, segment.PlannedEnd, segment.ServiceId, employees, segment.RoomId, resources, Reprice: true,
-                $"employees:{string.Join(",", employees)}"), warnings);
+                $"employees:{string.Join(",", employees.OrderBy(id => id))};pricing:{pricingSource.Mode}:{pricingSource.EmployeeId}", pricingSource), warnings);
         });
+
+    /// <summary>Phase M1G — samo izvor cijene segmenta (skup zaposlenika ostaje isti, zauzetost se ne mijenja — validacija
+    /// zauzetosti je no-op nad nepromijenjenim stanjem). Aktivna sudjelovanja se ponovno cijene.</summary>
+    public Task<AppointmentDto> ChangeSegmentPricingSource(
+        Guid organizationId, Guid userId, bool hasFullScope, Guid segmentId, AppointmentSegmentPricingSourceChangeRequest request) =>
+        RewriteSegment(organizationId, userId, hasFullScope, segmentId, (appointment, segment, resources) =>
+        {
+            if (request.PricingMode == null)
+                throw new ValidationAppException(ErrorCodes.PricingSourceRequired, "PricingMode je obavezan.");
+            List<Guid> employees = segment.Employees.Select(e => e.EmployeeId).ToList();
+            PricingSourceValue pricingSource = SegmentPricingSource.Normalize(employees, request.PricingMode, request.PricingEmployeeId);
+            return Task.FromResult((new SegmentTarget(segment.PlannedStart, segment.PlannedEnd, segment.ServiceId, employees, segment.RoomId,
+                resources, Reprice: true, $"pricing:{pricingSource.Mode}:{pricingSource.EmployeeId}", pricingSource), new List<WarningDto>()));
+        });
+
+    /// <summary>Phase M1G — povijesno izvršenje se ne prepisuje: zaposlenici segmenta s odrađenim sudjelovanjem (zarađena
+    /// individualna provizija pripada TIM zaposlenicima) ili zatvorene grupne sesije (grupna provizija po segmentu) se ne
+    /// mijenjaju. Korekcija odrađenog sudjelovanja (Completed → Confirmed) najprije reverzira proviziju i otključava segment.</summary>
+    private static void EnsureNoExecutionHistory(Appointment appointment, AppointmentSegment segment)
+    {
+        bool completed = appointment.Bookings.SelectMany(b => b.Participations)
+            .Any(p => p.AppointmentSegmentId == segment.Id && p.Status == ParticipationStatus.Completed);
+        if (completed || appointment.ClosedOutAt.HasValue)
+            throw new BusinessRuleException(ErrorCodes.SegmentExecutionHistoryLocked,
+                "Segment ima izvršnu povijest (odrađeno sudjelovanje ili zatvorena sesija) — zaposlenici se ne mogu mijenjati.");
+    }
 
     public Task<AppointmentDto> ChangeSegmentRoom(
         Guid organizationId, Guid userId, bool hasFullScope, Guid segmentId, AppointmentSegmentRoomChangeRequest request) =>
@@ -158,7 +189,12 @@ public partial class AppointmentService
             DateTimeOffset now = DateTimeOffset.UtcNow;
             SegmentMutator.ChangeService(lockedSegment, target.ServiceId, now);
             SegmentMutator.ChangeTime(lockedSegment, target.PlannedStart, target.PlannedEnd, now);
+            // Phase M1G: povijest se ponovno provjerava POD lockom termina (sudjelovanje je moglo biti odrađeno od čitanja).
+            if (!target.EmployeeIds.ToHashSet().SetEquals(lockedSegment.Employees.Select(e => e.EmployeeId)))
+                EnsureNoExecutionHistory(locked, lockedSegment);
             SegmentMutator.AssignEmployees(lockedSegment, target.EmployeeIds.ToList(), now);
+            if (target.PricingSource is PricingSourceValue pricingSource)
+                SegmentPricingSource.Apply(lockedSegment, pricingSource, now);
             SegmentMutator.ChangeRoom(lockedSegment, target.RoomId, now);
             SegmentMutator.ReplaceResources(lockedSegment, target.Resources.Select(r => (r.ResourceId, r.Quantity)).ToList(), now);
             if (target.Reprice)
@@ -309,7 +345,7 @@ public partial class AppointmentService
         {
             List<ResourceClaim> resources = await _schedulingOccupancyHandler.GetSegmentResources(segment.Id.GetValueOrDefault());
             BookingPricing pricing = BookingPricing.FromResolution(
-                await ResolveServicePrice(organizationId, segment.ServiceId, appointment.CompanyId, segment.PlannedStart), selection.Amount);
+                await ResolveServicePrice(organizationId, segment.ServiceId, appointment.CompanyId, SegmentPricingSource.PricingEmployeeOf(segment), segment.PlannedStart), selection.Amount);
             plans.Add((segment, SegmentSnapshot.Capture(appointment, segment, resources), pricing,
                 SegmentClaim.ForParticipationActivation(appointment, segment, request.ClientId, resources)));
         }
@@ -424,7 +460,7 @@ public partial class AppointmentService
     /// se osvježava predložena cijena). Terminalna sudjelovanja zadržavaju povijesnu cijenu.</summary>
     private async Task RepriceSegment(Guid organizationId, Appointment locked, AppointmentSegment segment)
     {
-        ResolvePriceResponse resolved = await ResolveServicePrice(organizationId, segment.ServiceId, locked.CompanyId, segment.PlannedStart);
+        ResolvePriceResponse resolved = await ResolveServicePrice(organizationId, segment.ServiceId, locked.CompanyId, SegmentPricingSource.PricingEmployeeOf(segment), segment.PlannedStart);
         foreach (BookingSegmentParticipation participation in locked.Bookings.SelectMany(b => b.Participations)
                      .Where(p => p.AppointmentSegmentId == segment.Id && p.Status == ParticipationStatus.Confirmed))
             ParticipationPrice.Apply(participation, participation.IsAmountManuallyOverridden

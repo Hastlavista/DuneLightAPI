@@ -22,14 +22,15 @@ public interface IPriceListItemHandler
     Task Delete(PriceListItem item);
     Task<bool> HasHistory(Guid priceListItemId);
 
-    /// <summary>Aktivne stavke za TOČNO istu tvrtku (uklj. null) — koristi se za provjeru preklapanja.</summary>
-    Task<List<PriceListItem>> GetActiveForExactCompany(
-        Guid organizationId, PricingSubjectType subjectType, Guid subjectId, Guid? companyId, Guid? excludeId);
+    /// <summary>Aktivne stavke za TOČNO isti opseg (tvrtka i zaposlenik, uklj. null) — koristi se za provjeru preklapanja.</summary>
+    Task<List<PriceListItem>> GetActiveForExactScope(
+        Guid organizationId, PricingSubjectType subjectType, Guid subjectId, Guid? companyId, Guid? employeeId, Guid? excludeId);
 
-    /// <summary>Aktivne stavke za tvrtku ILI "sve tvrtke" — kandidati za razrješavanje cijene.</summary>
+    /// <summary>Aktivne stavke za tvrtku ILI "sve tvrtke", bez zaposlenika ILI za zadanog zaposlenika — kandidati za
+    /// razrješavanje cijene (stavke drugih zaposlenika se nikad ne učitavaju).</summary>
     Task<List<PriceListItem>> GetActiveCandidates(
-        Guid organizationId, PricingSubjectType subjectType, Guid subjectId, Guid? companyId);
+        Guid organizationId, PricingSubjectType subjectType, Guid subjectId, Guid? companyId, Guid? employeeId);
 
-    /// <summary>Sve aktivne stavke važeće na dani datum za tvrtku ILI "sve tvrtke" — za pregledni cjenik.</summary>
+    /// <summary>Sve aktivne stavke BEZ zaposlenika važeće na dani datum za tvrtku ILI "sve tvrtke" — za pregledni cjenik.</summary>
     Task<List<PriceListItem>> GetActiveForCompany(Guid organizationId, Guid? companyId, DateTimeOffset date);
 }

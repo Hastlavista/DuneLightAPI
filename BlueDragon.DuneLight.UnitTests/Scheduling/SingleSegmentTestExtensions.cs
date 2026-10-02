@@ -20,7 +20,7 @@ public static class SingleSegmentTestExtensions
         public DateTimeOffset StartsAt => appointment.OnlySegment.PlannedStart;
         public int DurationMinutes => AppointmentSegments.DurationMinutes(appointment.OnlySegment);
         public Guid ServiceId => appointment.OnlySegment.ServiceId;
-        public Guid? EmployeeId => AppointmentSegments.GetSingleEmployeeId(appointment.OnlySegment);
+        public Guid? EmployeeId => LegacySingleEmployee.Of(appointment.OnlySegment);
         public Guid? RoomId => appointment.OnlySegment.RoomId;
     }
 

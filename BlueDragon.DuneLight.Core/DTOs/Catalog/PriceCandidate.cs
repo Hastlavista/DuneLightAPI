@@ -9,6 +9,9 @@ namespace BlueDragon.DuneLight.Core.DTOs.Catalog;
 public class PriceCandidate
 {
     public Guid? CompanyId { get; set; }
+
+    /// <summary>Phase M1G — razina zaposlenika (samo stavke usluge); null = stavka bez zaposlenika.</summary>
+    public Guid? EmployeeId { get; set; }
     public decimal Price { get; set; }
     public DateTimeOffset ValidFrom { get; set; }
     public DateTimeOffset? ValidTo { get; set; }

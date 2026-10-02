@@ -275,7 +275,6 @@ public class AppointmentSegmentCutoverTests
             () => w.CreateAppointment(Z(10), client: other, employee: second));
         OccupancySlot slot = Assert.Single(await w.EmployeeOverlapping(second.Id.Value, Z(10), 30));
         Assert.Equal(new[] { w.Employee.Id.Value, second.Id.Value }.OrderBy(id => id), slot.EmployeeIds.OrderBy(id => id));
-        Assert.Throws<InvalidAppointmentSegmentStateException>(() => slot.EmployeeId);
     }
 
     [Fact]
@@ -332,7 +331,7 @@ public class AppointmentSegmentCutoverTests
 
         Assert.Equal(soon, execution.StartsAt);
         Assert.Equal(w.Service.Id, execution.ServiceId);
-        Assert.Equal(w.Employee.Id, execution.EmployeeId);
+        Assert.Equal(w.Employee.Id.Value, Assert.Single(execution.EmployeeIds));
         Assert.True((await w.LoadBooking(created.Id, w.Client)).IsLateCancellation); // within the cutoff of the SEGMENT start
     }
 

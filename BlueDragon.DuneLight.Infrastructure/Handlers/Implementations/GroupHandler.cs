@@ -27,11 +27,11 @@ public class GroupHandler : IGroupHandler
     {
         return query
             .Include(g => g.Company)
-            .Include(g => g.DefaultTrainer)
             .Include(g => g.Slots)
             .Include(g => g.SegmentTemplates).ThenInclude(t => t.Service)
             .Include(g => g.SegmentTemplates).ThenInclude(t => t.Room)
             .Include(g => g.SegmentTemplates).ThenInclude(t => t.Resources).ThenInclude(r => r.Resource)
+            .Include(g => g.SegmentTemplates).ThenInclude(t => t.Employees).ThenInclude(e => e.Employee)
             .Include(g => g.Members.Where(m => m.IsActive)).ThenInclude(m => m.Client)
             .Include(g => g.Members.Where(m => m.IsActive)).ThenInclude(m => m.SegmentTemplates)
             .AsSplitQuery();
@@ -126,7 +126,7 @@ public class GroupHandler : IGroupHandler
     public async Task<GroupSegmentTemplate> GetTemplateById(Guid organizationId, Guid groupId, Guid templateId)
     {
         await using DatabaseContext context = DatabaseContext.GenerateContext(_databaseSettings.ConnectionString);
-        return await context.GroupSegmentTemplates.Include(t => t.Resources)
+        return await context.GroupSegmentTemplates.Include(t => t.Resources).Include(t => t.Employees)
             .SingleOrDefaultAsync(t => t.Id == templateId && t.GroupId == groupId && t.Group.OrganizationId == organizationId);
     }
 

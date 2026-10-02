@@ -26,6 +26,11 @@ namespace BlueDragon.DuneLight.Infrastructure.Domain.Models.Commissions;
 /// Phase M0: za IndividualService izvor je SUDJELOVANJE (BookingSegmentParticipationId), unique indeks je na
 /// (BookingSegmentParticipationId, SourceVersion); BookingId ostaje kontekst.
 ///
+/// Phase M1G (više zaposlenika): KORISNIK je dio identiteta — individualna provizija je jedinstvena po (sudjelovanje,
+/// zaposlenik, SourceVersion): svaki zaposlenik segmenta zarađuje SVOJ zapis neovisno (bez dijeljenja, bez "glavnog");
+/// grupna provizija je jedinstvena po (AppointmentSegmentId, zaposlenik) — izvor grupne sesije je KONKRETNI SEGMENT
+/// occurrencea (ne termin, ne prvi segment), jednom po zaposleniku segmenta.
+///
 /// SourceVersion (samo za SourceType=IndividualService, inače uvijek 0) je StatusVersion sudjelovanja snapshotan u
 /// TRENUTKU zarade — daje stabilan identitet JEDNOJ konkretnoj completion-pojavi istog Bookinga (isti obrazac kao
 /// Booking.StatusVersion/Notification.SourceVersion), jer se Individual Booking legitimno može vratiti na
@@ -81,6 +86,11 @@ public class CommissionEntry
 
     [Column("checkout_item_id")]
     public Guid? CheckoutItemId { get; set; }
+
+    /// <summary>Phase M1G — izvor GroupService provizije: segment occurrencea (usluga + zaposlenici sesije). Null za ostale
+    /// izvore.</summary>
+    [Column("appointment_segment_id")]
+    public Guid? AppointmentSegmentId { get; set; }
 
     /// <summary>Snapshot retail vrijednosti izvora u trenutku zarade (Booking.Amount za IndividualService,
     /// CheckoutItem.Amount za Product/PackageSale). 0 za GroupService (nema nedvosmislene per-occurrence

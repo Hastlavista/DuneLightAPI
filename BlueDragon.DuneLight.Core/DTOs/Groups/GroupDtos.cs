@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.ComponentModel.DataAnnotations;
 using BlueDragon.DuneLight.Core.DTOs.Appointments;
+using BlueDragon.DuneLight.Core.Enums;
 using BlueDragon.DuneLight.Core.Shared;
 
 namespace BlueDragon.DuneLight.Core.DTOs.Groups;
@@ -89,6 +90,14 @@ public class GroupSegmentTemplateDto
     public int Capacity { get; set; }
 
     public List<GroupSegmentTemplateResourceDto> Resources { get; set; } = new();
+
+    /// <summary>Phase M1G — osoblje predloška (ravnopravni zaposlenici; prazno = sesija bez trenera). Kopira se u generirani
+    /// segment.</summary>
+    public List<AppointmentSegmentEmployeeDto> Employees { get; set; } = new();
+
+    /// <summary>Phase M1G — izvor cijene generiranih segmenata (isto pravilo kao segment).</summary>
+    public SegmentPricingMode PricingMode { get; set; }
+    public Guid? PricingEmployeeId { get; set; }
 }
 
 public class GroupSegmentTemplateResourceRequest
@@ -121,6 +130,16 @@ public class GroupSegmentTemplateRequest
     public int Capacity { get; set; }
 
     public List<GroupSegmentTemplateResourceRequest> Resources { get; set; } = new();
+
+    /// <summary>Phase M1G — osoblje predloška (skup, bez duplikata; prazno = bez trenera). Null: kod kreiranja grupe =
+    /// KOMPATIBILNI DefaultTrainerId zahtjeva (ako je naveden); kod dodavanja predloška = bez osoblja; kod izmjene predloška =
+    /// zadržava se postojeće osoblje i izvor cijene.</summary>
+    public List<Guid> EmployeeIds { get; set; }
+
+    /// <summary>Phase M1G — izvor cijene (isto pravilo kao segment): 1 zaposlenik → automatski; 2+ → obavezan.</summary>
+    public SegmentPricingMode? PricingMode { get; set; }
+
+    public Guid? PricingEmployeeId { get; set; }
 }
 
 public class GroupDto
@@ -136,6 +155,9 @@ public class GroupDto
 
     /// <summary>KOMPATIBILNOST (nije autoritativno): kapacitet JEDINOG predloška; null za višesegmentnu grupu.</summary>
     public int? Capacity { get; set; }
+
+    /// <summary>KOMPATIBILNOST (Phase M1G, nije autoritativno — osoblje je po predlošku): zaposlenik JEDINOG predloška kad ga
+    /// ima točno jednog; inače null (više predložaka, bez osoblja ili više zaposlenika — nema "lažnog" trenera).</summary>
     public Guid? DefaultTrainerId { get; set; }
     public string DefaultTrainerName { get; set; }
 
@@ -183,6 +205,8 @@ public class GroupCreateRequest
     [Range(1, int.MaxValue, ErrorMessage = "Kapacitet mora biti veći od 0.")]
     public int? Capacity { get; set; }
 
+    /// <summary>KOMPATIBILNOST (Phase M1G): zaposlenik predložaka koji ne navode EmployeeIds (plosnata grupa = jedini
+    /// predložak). Ne sprema se na grupu — osoblje je po predlošku.</summary>
     public Guid? DefaultTrainerId { get; set; }
 
     /// <summary>KOMPATIBILNOST: prostorija plosnatog (jedinog) predloška — mora pripadati istoj CompanyId.</summary>
@@ -213,6 +237,9 @@ public class GroupUpdateRequest
     [Range(1, int.MaxValue, ErrorMessage = "Kapacitet mora biti veći od 0.")]
     public int? Capacity { get; set; }
 
+    /// <summary>KOMPATIBILNOST (Phase M1G): vrijednost jednaka trenutnoj projekciji (GroupDto.DefaultTrainerId) = bez promjene
+    /// osoblja. Različita vrijednost mijenja osoblje JEDINOG predloška ([zaposlenik] ili bez osoblja); višepredloška grupa je
+    /// ne prihvaća (SEGMENT_SELECTION_REQUIRED — osoblje se mijenja po predlošku).</summary>
     public Guid? DefaultTrainerId { get; set; }
 
     /// <summary>KOMPATIBILNOST: prostorija jedinog predloška (vidi ServiceId).</summary>

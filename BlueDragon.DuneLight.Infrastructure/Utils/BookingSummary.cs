@@ -145,7 +145,11 @@ public static class BookingReadModel
             PackageCovered = settlement.EntitlementCovered,
             ClientPackageId = PackageConsumptions.CoverageOf(participation, form).ClientPackageId,
             CancellationReason = participation.CancellationReason,
-            IsLateCancellation = participation.IsLateCancellation
+            IsLateCancellation = participation.IsLateCancellation,
+            BaseAmount = participation.BaseAmount,
+            BaseAmountSource = participation.BaseAmountSource,
+            PricingMode = participation.PricingMode,
+            PricingEmployeeId = participation.PricingEmployeeId
         };
     }
 }

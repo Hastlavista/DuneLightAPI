@@ -17,7 +17,8 @@ public interface ICommissionEntryHandler
     /// izvora za reverziju (ApplyIndividualCompletionCorrection), nikad po iznosu/datumu/zaposleniku (vidi spec
     /// section 14). Najviše jedan takav redak može postojati u danom trenutku (svaki Earned zapis se reverzira
     /// PRIJE nego Booking uopće može ponovno zaraditi novi, vidi CommissionEntry.cs SourceVersion napomenu).</summary>
-    Task<CommissionEntry> GetActiveForParticipation(IUnitOfWork uow, Guid organizationId, Guid participationId);
+    /// <summary>Phase M1G — SVI aktivni (Earned) zapisi sudjelovanja (po jedan za svakog zaposlenika segmenta).</summary>
+    Task<List<CommissionEntry>> GetActiveForParticipation(IUnitOfWork uow, Guid organizationId, Guid participationId);
 
 
     /// <summary>Sprema promjene na postojećem zapisu (isključivo Status/ReversedAt/ReversedBy — sve ostalo je

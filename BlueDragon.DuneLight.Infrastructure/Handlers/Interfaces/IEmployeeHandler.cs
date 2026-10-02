@@ -52,8 +52,8 @@ public interface IEmployeeHandler
     /// Građevni blok za buduću Appointment eligibility (vidi domensku napomenu na EmployeeCompany).</summary>
     Task<bool> IsEmployeeAssignedToCompany(Guid organizationId, Guid employeeId, Guid companyId);
 
-    /// <summary>Eksplicitna EmployeeServiceAssignment veza (capability) — bez "prazno = sve" fallbacka.
-    /// Građevni blok za buduću Appointment eligibility (vidi domensku napomenu na EmployeeServiceAssignment).</summary>
+    /// <summary>Phase M1G (zaključano pravilo): zaposlenik BEZ ijedne EmployeeServiceAssignment dodjele smije izvoditi SVE
+    /// usluge; s jednom ili više dodjela — samo eksplicitno dodijeljene. Jedino pravilo podobnosti za termine i grupe.</summary>
     Task<bool> CanEmployeePerformService(Guid organizationId, Guid employeeId, Guid serviceId);
 
     /// <summary>Ima li zaposlenik ikakvu povijesnu/poslovnu referencu (termini, pauze, roster, radno vrijeme,

@@ -5,8 +5,9 @@ using BlueDragon.DuneLight.Infrastructure.Domain.Models.Catalog;
 
 namespace BlueDragon.DuneLight.Infrastructure.Domain.Models.Employees;
 
-/// <summary>Usluga koju zaposlenik smije izvoditi. Prazan popis za zaposlenika = ne smije nijednu uslugu
-/// (isti obrazac kao ServiceCompany — nema implicitnog "prazno = sve").</summary>
+/// <summary>Usluga koju zaposlenik smije izvoditi. Phase M1G (namjerna ispravka legacy ponašanja "prazno = nijedna"):
+/// zaposlenik BEZ ijedne dodjele smije izvoditi SVE usluge; s jednom ili više dodjela — samo dodijeljene
+/// (IEmployeeHandler.CanEmployeePerformService).</summary>
 [Table("employee_services")]
 public class EmployeeServiceAssignment
 {

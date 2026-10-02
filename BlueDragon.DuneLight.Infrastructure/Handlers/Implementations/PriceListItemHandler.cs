@@ -30,6 +30,7 @@ public class PriceListItemHandler : IPriceListItemHandler
             .Include(p => p.Service)
             .Include(p => p.Package)
             .Include(p => p.Company)
+            .Include(p => p.Employee)
             .Where(p => p.OrganizationId == organizationId);
 
         if (companyId.HasValue)
@@ -66,6 +67,7 @@ public class PriceListItemHandler : IPriceListItemHandler
             .Include(p => p.Service)
             .Include(p => p.Package)
             .Include(p => p.Company)
+            .Include(p => p.Employee)
             .SingleOrDefaultAsync(p => p.OrganizationId == organizationId && p.Id == id);
     }
 
@@ -104,8 +106,8 @@ public class PriceListItemHandler : IPriceListItemHandler
         return await context.PriceListItemHistory.AnyAsync(h => h.PriceListItemId == priceListItemId);
     }
 
-    public async Task<List<PriceListItem>> GetActiveForExactCompany(
-        Guid organizationId, PricingSubjectType subjectType, Guid subjectId, Guid? companyId, Guid? excludeId)
+    public async Task<List<PriceListItem>> GetActiveForExactScope(
+        Guid organizationId, PricingSubjectType subjectType, Guid subjectId, Guid? companyId, Guid? employeeId, Guid? excludeId)
     {
         await using DatabaseContext context = DatabaseContext.GenerateContext(_databaseSettings.ConnectionString);
 
@@ -113,6 +115,7 @@ public class PriceListItemHandler : IPriceListItemHandler
             p.OrganizationId == organizationId &&
             p.IsActive &&
             p.CompanyId == companyId &&
+            p.EmployeeId == employeeId &&
             (excludeId == null || p.Id != excludeId));
 
         query = subjectType == PricingSubjectType.Service
@@ -123,14 +126,15 @@ public class PriceListItemHandler : IPriceListItemHandler
     }
 
     public async Task<List<PriceListItem>> GetActiveCandidates(
-        Guid organizationId, PricingSubjectType subjectType, Guid subjectId, Guid? companyId)
+        Guid organizationId, PricingSubjectType subjectType, Guid subjectId, Guid? companyId, Guid? employeeId)
     {
         await using DatabaseContext context = DatabaseContext.GenerateContext(_databaseSettings.ConnectionString);
 
         IQueryable<PriceListItem> query = context.PriceListItems.Where(p =>
             p.OrganizationId == organizationId &&
             p.IsActive &&
-            (p.CompanyId == companyId || p.CompanyId == null));
+            (p.CompanyId == companyId || p.CompanyId == null) &&
+            (p.EmployeeId == null || p.EmployeeId == employeeId));
 
         query = subjectType == PricingSubjectType.Service
             ? query.Where(p => p.ServiceId == subjectId)
@@ -148,6 +152,7 @@ public class PriceListItemHandler : IPriceListItemHandler
                 p.OrganizationId == organizationId &&
                 p.IsActive &&
                 (p.CompanyId == companyId || p.CompanyId == null) &&
+                p.EmployeeId == null &&
                 p.ValidFrom <= date &&
                 (p.ValidTo == null || p.ValidTo >= date))
             .ToListAsync();

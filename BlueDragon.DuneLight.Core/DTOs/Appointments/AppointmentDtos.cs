@@ -74,6 +74,13 @@ public class BookingParticipationDto
     public Guid? ClientPackageId { get; set; }
     public string CancellationReason { get; set; }
     public bool? IsLateCancellation { get; set; }
+
+    /// <summary>Phase M1G — POVIJESNI cjenovni snapshot sudjelovanja: razriješena osnovna cijena i razina cjenika, te izvor
+    /// cijene (način + zaposlenik) korišten pri razrješavanju. Null kad cijena nije razriješena iz cjenika.</summary>
+    public decimal? BaseAmount { get; set; }
+    public Catalog.PriceSource? BaseAmountSource { get; set; }
+    public SegmentPricingMode? PricingMode { get; set; }
+    public Guid? PricingEmployeeId { get; set; }
 }
 
 public class AppointmentDto
@@ -565,8 +572,14 @@ public class AppointmentSegmentDto
     public Guid? RoomId { get; set; }
     public string RoomName { get; set; }
 
-    /// <summary>Dodijeljeni zaposlenici (bez uloga — primarni/sekundarni nisu modelirani).</summary>
+    /// <summary>Dodijeljeni zaposlenici — ravnopravni izvršitelji (bez uloga: primarni/sekundarni ne postoje).</summary>
     public List<AppointmentSegmentEmployeeDto> Employees { get; set; } = new();
+
+    /// <summary>Phase M1G — izvor cijene segmenta: Standard (bez razina zaposlenika) ili Employee (razine
+    /// PricingEmployeeId). NIJE "glavni" zaposlenik niti korisnik provizije.</summary>
+    public SegmentPricingMode PricingMode { get; set; }
+    public Guid? PricingEmployeeId { get; set; }
+    public string PricingEmployeeName { get; set; }
 
     /// <summary>Dodijeljeni resursi (čitanje; dodjela kroz kreiranje/izmjenu još nije omogućena — kapacitet resursa).</summary>
     public List<AppointmentSegmentResourceDto> Resources { get; set; } = new();
@@ -588,9 +601,7 @@ public class AppointmentSegmentResourceDto
 /// <summary>
 /// Phase M1B — CILJNI ugovor kreiranja termina: termin (poslovnica, napomena) + segmenti; svaki segment nosi svoje
 /// izvršne podatke i sudionike. Klijent koji se pojavi u više segmenata dobiva JEDAN Booking i po jedno sudjelovanje
-/// po segmentu. PRIVREMENO (dok segmentna validacija preklapanja i fizičkog kapaciteta nije potpuna): točno jedan
-/// segment, točno jedan zaposlenik po segmentu (atribucija cijene/provizije više zaposlenika je otvorena — ograničenje
-/// proizvoda, ne sheme) i bez resursa (kapacitet resursa još nije autoritativan) — inače validacijska greška.
+/// po segmentu. Phase M1G: segment ima jednog ili više ravnopravnih zaposlenika; za 2+ zaposlenika izvor cijene je obavezan.
 /// </summary>
 public class AppointmentCreateRequest
 {
@@ -618,7 +629,14 @@ public class AppointmentSegmentCreateRequest
     /// <summary>Null = PlannedStart + zadano trajanje usluge.</summary>
     public DateTimeOffset? PlannedEnd { get; set; }
 
+    /// <summary>Skup zaposlenika segmenta (bez duplikata; svi ravnopravni izvršitelji).</summary>
     public List<Guid> EmployeeIds { get; set; } = new();
+
+    /// <summary>Phase M1G — izvor cijene. Izostavljen: 1 zaposlenik → automatski Employee/taj zaposlenik. Za 2+ zaposlenika
+    /// OBAVEZAN: Standard (bez PricingEmployeeId) ili Employee uz PricingEmployeeId jednog od EmployeeIds.</summary>
+    public SegmentPricingMode? PricingMode { get; set; }
+
+    public Guid? PricingEmployeeId { get; set; }
 
     /// <summary>Opcionalno — mora pripadati CompanyId termina.</summary>
     public Guid? RoomId { get; set; }
@@ -685,14 +703,30 @@ public class AppointmentSegmentServiceChangeRequest
     public bool OverrideAvailability { get; set; }
 }
 
-/// <summary>Phase M1E — dodjela zaposlenika JEDNOM segmentu (oblik je skup; proizvod trenutno zahtijeva točno jednog —
-/// MULTI_EMPLOYEE_NOT_SUPPORTED).</summary>
+/// <summary>Phase M1E/M1G — novi SKUP zaposlenika JEDNOG segmenta (bez duplikata). Izvor cijene: rezultat s 1 zaposlenikom →
+/// automatski Employee/taj zaposlenik; rezultat s 2+ zaposlenika → PricingMode je OBAVEZAN (i kad prethodni zaposlenik izvora
+/// ostaje dodijeljen — namjera se ne zaključuje).</summary>
 public class AppointmentSegmentEmployeesChangeRequest
 {
     [Required]
     public List<Guid> EmployeeIds { get; set; } = new();
 
+    public SegmentPricingMode? PricingMode { get; set; }
+
+    public Guid? PricingEmployeeId { get; set; }
+
     public bool OverrideAvailability { get; set; }
+}
+
+/// <summary>Phase M1G — promjena SAMO izvora cijene segmenta (skup zaposlenika ostaje isti). Valjano prema broju zaposlenika:
+/// 0 → Standard; 1 → isključivo Employee/taj zaposlenik (Standard nije dopušten); 2+ → Standard ili Employee uz zaposlenika
+/// segmenta. Aktivna (Confirmed) sudjelovanja se ponovno cijene (ručni iznos se čuva).</summary>
+public class AppointmentSegmentPricingSourceChangeRequest
+{
+    [Required]
+    public SegmentPricingMode? PricingMode { get; set; }
+
+    public Guid? PricingEmployeeId { get; set; }
 }
 
 /// <summary>Phase M1E — prostorija JEDNOG segmenta (null = bez prostorije).</summary>

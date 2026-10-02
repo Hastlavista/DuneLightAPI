@@ -73,7 +73,7 @@ public class ExecutionContextResolverTests
         Assert.Equal(appointment.CompanyId, execution.CompanyId);
         Assert.Equal(service.Id.Value, execution.ServiceId);
         Assert.Equal("Massage", execution.ServiceName);
-        Assert.Equal(employeeId, execution.EmployeeId);
+        Assert.Equal(employeeId, Assert.Single(execution.EmployeeIds));
         Assert.Equal(StartsAt, execution.StartsAt);
     }
 
@@ -82,7 +82,7 @@ public class ExecutionContextResolverTests
     {
         Appointment appointment = NewAppointment(employeeId: null);
 
-        Assert.Null(ExecutionContextResolver.ForSegment(appointment, Only(appointment)).EmployeeId);
+        Assert.Empty(ExecutionContextResolver.ForSegment(appointment, Only(appointment)).EmployeeIds);
     }
 
     [Fact]
@@ -112,7 +112,7 @@ public class ExecutionContextResolverTests
         SegmentExecutionContext execution = ExecutionContextResolver.ForSegment(appointment, segment);
 
         Assert.Equal(newService, execution.ServiceId);
-        Assert.Equal(newEmployee, execution.EmployeeId);
+        Assert.Equal(newEmployee, Assert.Single(execution.EmployeeIds));
         Assert.Equal(newStart, execution.StartsAt);
     }
 
@@ -130,8 +130,8 @@ public class ExecutionContextResolverTests
         SegmentExecutionContext ctxA = ExecutionContextResolver.ForSegment(appointment, a);
         SegmentExecutionContext ctxB = ExecutionContextResolver.ForSegment(appointment, b);
 
-        Assert.Equal((a.Id.Value, serviceA.Id.Value, "A", (Guid?)employeeA, StartsAt), (ctxA.SegmentId, ctxA.ServiceId, ctxA.ServiceName, ctxA.EmployeeId, ctxA.StartsAt));
-        Assert.Equal((b.Id.Value, serviceB.Id.Value, "B", (Guid?)employeeB, StartsAt.AddMinutes(60)), (ctxB.SegmentId, ctxB.ServiceId, ctxB.ServiceName, ctxB.EmployeeId, ctxB.StartsAt));
+        Assert.Equal((a.Id.Value, serviceA.Id.Value, "A", (Guid?)employeeA, StartsAt), (ctxA.SegmentId, ctxA.ServiceId, ctxA.ServiceName, ctxA.EmployeeIds.SingleOrDefault() as Guid?, ctxA.StartsAt));
+        Assert.Equal((b.Id.Value, serviceB.Id.Value, "B", (Guid?)employeeB, StartsAt.AddMinutes(60)), (ctxB.SegmentId, ctxB.ServiceId, ctxB.ServiceName, ctxB.EmployeeIds.SingleOrDefault() as Guid?, ctxB.StartsAt));
     }
 
     [Fact]
@@ -174,7 +174,7 @@ public class ExecutionContextResolverTests
         Assert.Equal(appointment.CompanyId, execution.CompanyId);
         Assert.Equal(service.Id.Value, execution.ServiceId);
         Assert.Equal("Pilates", execution.ServiceName);
-        Assert.Equal(employeeId, execution.EmployeeId);
+        Assert.Equal(employeeId, Assert.Single(execution.EmployeeIds));
         Assert.Equal(StartsAt, execution.StartsAt);
     }
 
@@ -193,11 +193,11 @@ public class ExecutionContextResolverTests
         ParticipationExecutionContext ctxB = ExecutionContextResolver.ForParticipation(appointment, booking, onB);
 
         Assert.Equal(a.Id.Value, ctxA.SegmentId);
-        Assert.Equal(employeeA, ctxA.EmployeeId);
+        Assert.Equal(employeeA, Assert.Single(ctxA.EmployeeIds));
         Assert.Equal(a.ServiceId, ctxA.ServiceId);
         Assert.Equal(StartsAt, ctxA.StartsAt);
         Assert.Equal(b.Id.Value, ctxB.SegmentId);
-        Assert.Equal(employeeB, ctxB.EmployeeId);
+        Assert.Equal(employeeB, Assert.Single(ctxB.EmployeeIds));
         Assert.Equal(b.ServiceId, ctxB.ServiceId);
         Assert.Equal(StartsAt.AddMinutes(90), ctxB.StartsAt);
         Assert.Equal(ctxA.BookingId, ctxB.BookingId);
@@ -211,7 +211,7 @@ public class ExecutionContextResolverTests
         appointment.Form = AppointmentForm.Group;
         Booking booking = NewBooking(appointment);
 
-        Assert.Null(ExecutionContextResolver.ForParticipation(appointment, booking, Participate(booking, Only(appointment))).EmployeeId);
+        Assert.Empty(ExecutionContextResolver.ForParticipation(appointment, booking, Participate(booking, Only(appointment))).EmployeeIds);
     }
 
     [Fact]

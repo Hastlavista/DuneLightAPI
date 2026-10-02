@@ -116,13 +116,15 @@ public class GroupService : IGroupService
     }
 
     /// <summary>Isti IPricingService poziv kao AppointmentService.ResolveServicePrice — centralni resolver.</summary>
-    private Task<ResolvePriceResponse> ResolveServicePrice(Guid organizationId, Guid serviceId, Guid companyId, DateTimeOffset date)
+    private Task<ResolvePriceResponse> ResolveServicePrice(
+        Guid organizationId, Guid serviceId, Guid companyId, Guid? pricingEmployeeId, DateTimeOffset date)
     {
         return _pricingService.ResolvePrice(organizationId, new ResolvePriceRequest
         {
             SubjectType = PricingSubjectType.Service,
             SubjectId = serviceId,
             CompanyId = companyId,
+            EmployeeId = pricingEmployeeId,
             Date = date
         });
     }
@@ -138,18 +140,19 @@ public class GroupService : IGroupService
             ValidateSlotTime(slot.StartTime);
 
         List<GroupSegmentTemplateRequest> templateRequests = ToTemplateRequests(request);
-        await EnsureCompanyAndTrainer(organizationId, request.CompanyId, request.DefaultTrainerId);
+        await EnsureCompany(organizationId, request.CompanyId);
 
         Guid groupId = Guid.NewGuid();
         DateTimeOffset now = DateTimeOffset.UtcNow;
+        // KOMPATIBILNOST: DefaultTrainerId je osoblje predložaka koji ne navode EmployeeIds (ne sprema se na grupu).
+        List<Guid> legacyTrainer = request.DefaultTrainerId.HasValue ? new List<Guid> { request.DefaultTrainerId.Value } : new List<Guid>();
         List<GroupSegmentTemplate> templates = new();
         foreach (GroupSegmentTemplateRequest templateRequest in templateRequests)
-            templates.Add(await BuildTemplate(organizationId, groupId, request.CompanyId, request.DefaultTrainerId, templateRequest, now));
+            templates.Add(await BuildTemplate(organizationId, groupId, request.CompanyId, templateRequest, legacyTrainer, now));
         EnsureAnchorTemplate(templates);
 
         List<WarningDto> warnings = await ComputeWorkingHoursWarnings(
-            organizationId, request.CompanyId, request.DefaultTrainerId, templates,
-            request.Slots.Select(s => (s.DayOfWeek, s.StartTime)).ToList());
+            organizationId, request.CompanyId, templates, request.Slots.Select(s => (s.DayOfWeek, s.StartTime)).ToList());
 
         Group group = new Group
         {
@@ -157,7 +160,6 @@ public class GroupService : IGroupService
             OrganizationId = organizationId,
             Name = request.Name,
             CompanyId = request.CompanyId,
-            DefaultTrainerId = request.DefaultTrainerId,
             IsActive = true,
             Note = request.Note,
             CreatedAt = now,
@@ -220,7 +222,19 @@ public class GroupService : IGroupService
             compatTemplate = existing.SegmentTemplates[0];
         }
 
-        await EnsureCompanyAndTrainer(organizationId, request.CompanyId, request.DefaultTrainerId);
+        await EnsureCompany(organizationId, request.CompanyId);
+
+        // KOMPATIBILNOST (Phase M1G): plosnati trener mijenja osoblje SAMO kad se razlikuje od trenutne projekcije (inače bi
+        // izostavljen/null trener tiho obrisao osoblje predložaka). Višepredloška grupa ga ne prihvaća — osoblje po predlošku.
+        Guid? currentTrainerProjection = LegacyTrainerProjection(existing.SegmentTemplates);
+        GroupSegmentTemplate staffedTemplate = null;
+        if (request.DefaultTrainerId != currentTrainerProjection)
+        {
+            if (existing.SegmentTemplates.Count != 1)
+                throw new BusinessRuleException(ErrorCodes.SegmentSelectionRequired,
+                    "Grupa ima više predložaka segmenata — osoblje mijenjajte po predlošku (/segment-templates).");
+            staffedTemplate = existing.SegmentTemplates[0];
+        }
 
         DateTimeOffset now = DateTimeOffset.UtcNow;
         int? oldCapacity = compatTemplate?.Capacity;
@@ -237,21 +251,31 @@ public class GroupService : IGroupService
             compatTemplate.UpdatedAt = now;
         }
 
-        // Svaki predložak mora ostati strukturno valjan za (novu) poslovnicu i trenera.
+        List<Guid> newStaff = request.DefaultTrainerId.HasValue ? new List<Guid> { request.DefaultTrainerId.Value } : new List<Guid>();
+        PricingSourceValue newStaffPricing = SegmentPricingSource.Normalize(newStaff, null, null);
+
+        // Svaki predložak mora ostati strukturno valjan za (novu) poslovnicu i svoje (eventualno novo) osoblje.
         foreach (GroupSegmentTemplate template in existing.SegmentTemplates)
-            await ValidateTemplate(organizationId, request.CompanyId, request.DefaultTrainerId, template.ServiceId, template.RoomId,
-                template.Resources.Select(r => (r.ResourceId, r.QuantityRequired)).ToList());
+            await ValidateTemplate(organizationId, request.CompanyId,
+                template == staffedTemplate ? newStaff : template.Employees.Select(e => e.EmployeeId).ToList(),
+                template.ServiceId, template.RoomId, template.Resources.Select(r => (r.ResourceId, r.QuantityRequired)).ToList());
+
+        if (staffedTemplate != null)
+        {
+            staffedTemplate.Employees = newStaff.Select(e => new GroupSegmentTemplateEmployee
+            {
+                GroupSegmentTemplateId = staffedTemplate.Id.GetValueOrDefault(), EmployeeId = e
+            }).ToList();
+            staffedTemplate.PricingMode = newStaffPricing.Mode;
+            staffedTemplate.PricingEmployeeId = newStaffPricing.PricingEmployeeId;
+        }
 
         List<WarningDto> warnings = await ComputeWorkingHoursWarnings(
-            organizationId, request.CompanyId, request.DefaultTrainerId, existing.SegmentTemplates,
+            organizationId, request.CompanyId, existing.SegmentTemplates,
             existing.Slots.Where(s => s.IsActive).Select(s => (s.DayOfWeek, s.StartTime)).ToList());
-
-        bool trainerChanged = existing.DefaultTrainerId != request.DefaultTrainerId;
-        string oldTrainerId = existing.DefaultTrainerId?.ToString();
 
         existing.Name = request.Name;
         existing.CompanyId = request.CompanyId;
-        existing.DefaultTrainerId = request.DefaultTrainerId;
         existing.Note = request.Note;
         existing.UpdatedAt = now;
         existing.UpdatedBy = userId;
@@ -259,18 +283,21 @@ public class GroupService : IGroupService
         await using (IUnitOfWork uow = await _unitOfWorkFactory.Begin())
         {
             await _groupHandler.UpdateScalar(uow, Scalar(existing));
-            if (compatTemplate != null)
+            if (compatTemplate != null || staffedTemplate != null)
             {
-                uow.Context.GroupSegmentTemplates.Update(TemplateScalar(compatTemplate));
+                uow.Context.GroupSegmentTemplates.Update(TemplateScalar(compatTemplate ?? staffedTemplate));
                 await uow.Context.SaveChangesAsync();
             }
 
-            if (trainerChanged)
+            if (staffedTemplate != null)
+            {
+                await ReplaceTemplateStaff(uow, staffedTemplate.Id.GetValueOrDefault(), newStaff);
                 await _auditLogHandler.Add(uow, new GroupAuditLog
                 {
-                    Id = Guid.NewGuid(), GroupId = id, ChangeType = "DefaultTrainer", OldValue = oldTrainerId,
+                    Id = Guid.NewGuid(), GroupId = id, ChangeType = "DefaultTrainer", OldValue = currentTrainerProjection?.ToString(),
                     NewValue = request.DefaultTrainerId?.ToString(), ChangedAt = now, ChangedBy = userId
                 });
+            }
 
             if (compatTemplate != null && oldCapacity != compatTemplate.Capacity)
                 await _auditLogHandler.Add(uow, new GroupAuditLog
@@ -386,7 +413,7 @@ public class GroupService : IGroupService
         ValidateSlotTime(request.StartTime);
 
         List<WarningDto> warnings = await ComputeWorkingHoursWarnings(
-            organizationId, group.CompanyId, group.DefaultTrainerId, group.SegmentTemplates, new() { (request.DayOfWeek, request.StartTime) });
+            organizationId, group.CompanyId, group.SegmentTemplates, new() { (request.DayOfWeek, request.StartTime) });
 
         await _groupHandler.AddSlot(new GroupSlot
         {
@@ -416,7 +443,7 @@ public class GroupService : IGroupService
         ValidateSlotTime(request.StartTime);
 
         List<WarningDto> warnings = await ComputeWorkingHoursWarnings(
-            organizationId, group.CompanyId, group.DefaultTrainerId, group.SegmentTemplates, new() { (request.DayOfWeek, request.StartTime) });
+            organizationId, group.CompanyId, group.SegmentTemplates, new() { (request.DayOfWeek, request.StartTime) });
 
         // Izmjena ne dira već generirane termine (GroupSlotId ostaje isti) — utječe samo na sljedeća generiranja.
         slot.DayOfWeek = request.DayOfWeek;
@@ -458,11 +485,11 @@ public class GroupService : IGroupService
         Group group = await _groupHandler.GetById(organizationId, groupId)
             ?? throw new NotFoundAppException("Group", groupId);
         DateTimeOffset now = DateTimeOffset.UtcNow;
-        GroupSegmentTemplate template = await BuildTemplate(organizationId, groupId, group.CompanyId, group.DefaultTrainerId, request, now);
+        GroupSegmentTemplate template = await BuildTemplate(organizationId, groupId, group.CompanyId, request, new List<Guid>(), now);
         EnsureAnchorTemplate(group.SegmentTemplates.Append(template).ToList());
 
         List<WarningDto> warnings = await ComputeWorkingHoursWarnings(
-            organizationId, group.CompanyId, group.DefaultTrainerId, new[] { template },
+            organizationId, group.CompanyId, new[] { template },
             group.Slots.Where(s => s.IsActive).Select(s => (s.DayOfWeek, s.StartTime)).ToList());
 
         await using (IUnitOfWork uow = await _unitOfWorkFactory.Begin())
@@ -494,7 +521,17 @@ public class GroupService : IGroupService
             ?? throw new NotFoundAppException("GroupSegmentTemplate", templateId);
 
         DateTimeOffset now = DateTimeOffset.UtcNow;
-        GroupSegmentTemplate updated = await BuildTemplate(organizationId, groupId, group.CompanyId, group.DefaultTrainerId, request, now);
+        // Phase M1G: izostavljeno osoblje (EmployeeIds = null, bez izvora cijene) = zadržava se postojeće osoblje i izvor.
+        if (request.EmployeeIds == null && request.PricingMode == null && request.PricingEmployeeId == null)
+        {
+            request.EmployeeIds = existing.Employees.Select(e => e.EmployeeId).ToList();
+            if (request.EmployeeIds.Count >= 2)
+            {
+                request.PricingMode = existing.PricingMode;
+                request.PricingEmployeeId = existing.PricingEmployeeId;
+            }
+        }
+        GroupSegmentTemplate updated = await BuildTemplate(organizationId, groupId, group.CompanyId, request, new List<Guid>(), now);
         EnsureAnchorTemplate(group.SegmentTemplates.Where(t => t.Id != templateId).Append(updated).ToList());
 
         await using (IUnitOfWork uow = await _unitOfWorkFactory.Begin())
@@ -507,9 +544,12 @@ public class GroupService : IGroupService
             tracked.DurationMinutes = updated.DurationMinutes;
             tracked.RoomId = updated.RoomId;
             tracked.Capacity = updated.Capacity;
+            tracked.PricingMode = updated.PricingMode;
+            tracked.PricingEmployeeId = updated.PricingEmployeeId;
             tracked.UpdatedAt = now;
             uow.Context.GroupSegmentTemplateResources.RemoveRange(tracked.Resources);
             await uow.Context.SaveChangesAsync();
+            await ReplaceTemplateStaff(uow, templateId, updated.Employees.Select(e => e.EmployeeId).ToList());
             uow.Context.GroupSegmentTemplateResources.AddRange(updated.Resources.Select(r => new GroupSegmentTemplateResource
             {
                 GroupSegmentTemplateId = templateId, ResourceId = r.ResourceId, QuantityRequired = r.QuantityRequired
@@ -565,8 +605,10 @@ public class GroupService : IGroupService
         return await GetDtoById(organizationId, groupId);
     }
 
+    /// <summary>Phase M1G: osoblje predloška = request.EmployeeIds (skup, bez duplikata; prazno = bez trenera) ili, kad je
+    /// izostavljeno, <paramref name="defaultEmployees"/> (KOMPATIBILNI trener grupe). Izvor cijene po istom pravilu kao segment.</summary>
     private async Task<GroupSegmentTemplate> BuildTemplate(
-        Guid organizationId, Guid groupId, Guid companyId, Guid? trainerId, GroupSegmentTemplateRequest request, DateTimeOffset now)
+        Guid organizationId, Guid groupId, Guid companyId, GroupSegmentTemplateRequest request, List<Guid> defaultEmployees, DateTimeOffset now)
     {
         if (request == null)
             throw new ValidationAppException("Predložak segmenta je obavezan.");
@@ -577,7 +619,11 @@ public class GroupService : IGroupService
 
         List<(Guid ResourceId, int Quantity)> resources = (request.Resources ?? new List<GroupSegmentTemplateResourceRequest>())
             .Select(r => (r.ResourceId, r.QuantityRequired)).ToList();
-        ServiceEntity service = await ValidateTemplate(organizationId, companyId, trainerId, request.ServiceId, request.RoomId, resources);
+        List<Guid> employees = request.EmployeeIds?.ToList() ?? defaultEmployees;
+        if (employees.Distinct().Count() != employees.Count)
+            throw new ValidationAppException("Isti zaposlenik se na predlošku smije navesti samo jednom.");
+        PricingSourceValue pricingSource = SegmentPricingSource.Normalize(employees, request.PricingMode, request.PricingEmployeeId);
+        ServiceEntity service = await ValidateTemplate(organizationId, companyId, employees, request.ServiceId, request.RoomId, resources);
 
         // Zadano trajanje usluge je samo PRIJEDLOG; predložak posjeduje svoje trajanje.
         int duration = request.DurationMinutes ?? service.DefaultDurationMinutes;
@@ -594,21 +640,43 @@ public class GroupService : IGroupService
             DurationMinutes = duration,
             RoomId = request.RoomId,
             Capacity = request.Capacity,
+            PricingMode = pricingSource.Mode,
+            PricingEmployeeId = pricingSource.PricingEmployeeId,
             CreatedAt = now,
             Resources = resources.Select(r => new GroupSegmentTemplateResource
             {
                 GroupSegmentTemplateId = templateId, ResourceId = r.ResourceId, QuantityRequired = r.Quantity
-            }).ToList()
+            }).ToList(),
+            Employees = employees.Select(e => new GroupSegmentTemplateEmployee { GroupSegmentTemplateId = templateId, EmployeeId = e }).ToList()
         };
     }
 
-    /// <summary>Strukturna valjanost predloška: usluga (grupni način, ponuđena u poslovnici, trener je smije izvoditi),
-    /// prostorija i resursi (aktivni, ista poslovnica, količina &gt; 0, svaki jednom).</summary>
+    /// <summary>Zamjenjuje osoblje predloška (skup) unutar transakcije pozivatelja.</summary>
+    private static async Task ReplaceTemplateStaff(IUnitOfWork uow, Guid templateId, IReadOnlyCollection<Guid> employeeIds)
+    {
+        uow.Context.GroupSegmentTemplateEmployees.RemoveRange(
+            await uow.Context.GroupSegmentTemplateEmployees.Where(e => e.GroupSegmentTemplateId == templateId).ToListAsync());
+        await uow.Context.SaveChangesAsync();
+        uow.Context.GroupSegmentTemplateEmployees.AddRange(
+            employeeIds.Select(e => new GroupSegmentTemplateEmployee { GroupSegmentTemplateId = templateId, EmployeeId = e }));
+        await uow.Context.SaveChangesAsync();
+    }
+
+    /// <summary>KOMPATIBILNA projekcija plosnatog trenera: zaposlenik JEDINOG predloška kad ga ima točno jednog; inače null.</summary>
+    private static Guid? LegacyTrainerProjection(IReadOnlyCollection<GroupSegmentTemplate> templates) =>
+        templates.Count == 1 && templates.Single().Employees.Count == 1 ? templates.Single().Employees[0].EmployeeId : null;
+
+    /// <summary>Strukturna valjanost predloška: usluga (grupni način, ponuđena u poslovnici, SVAKI zaposlenik predloška je
+    /// aktivan, dodijeljen poslovnici i smije je izvoditi), prostorija i resursi (aktivni, ista poslovnica, količina &gt; 0,
+    /// svaki jednom).</summary>
     private async Task<ServiceEntity> ValidateTemplate(
-        Guid organizationId, Guid companyId, Guid? trainerId, Guid serviceId, Guid? roomId, List<(Guid ResourceId, int Quantity)> resources)
+        Guid organizationId, Guid companyId, IReadOnlyCollection<Guid> employeeIds, Guid serviceId, Guid? roomId,
+        List<(Guid ResourceId, int Quantity)> resources)
     {
         ServiceEntity service = await EnsureServiceExists(organizationId, serviceId);
-        await EnsureStructuralEligibility(organizationId, service, companyId, trainerId);
+        await EnsureStructuralEligibility(organizationId, service, companyId, null);
+        foreach (Guid employeeId in employeeIds)
+            await EnsureStructuralEligibility(organizationId, service, companyId, employeeId);
         await EnsureRoomExists(organizationId, companyId, roomId);
 
         if (resources.Any(r => r.Quantity <= 0))
@@ -638,14 +706,12 @@ public class GroupService : IGroupService
             throw new ValidationAppException("Barem jedan predložak mora počinjati u vrijeme slota (pomak 0).");
     }
 
-    private async Task EnsureCompanyAndTrainer(Guid organizationId, Guid companyId, Guid? trainerId)
+    private async Task EnsureCompany(Guid organizationId, Guid companyId)
     {
         Company company = await _companyHandler.GetById(organizationId, companyId)
             ?? throw new NotFoundAppException("Company", companyId);
         if (!company.IsActive)
             throw new BusinessRuleException(ErrorCodes.InactiveCompany, $"Poslovnica '{company.Name}' nije aktivna.");
-        if (trainerId.HasValue && await _employeeHandler.GetById(organizationId, trainerId.Value) == null)
-            throw new NotFoundAppException("Employee", trainerId.Value);
     }
 
     #endregion
@@ -992,7 +1058,7 @@ public class GroupService : IGroupService
                             await _schedulingOccupancyHandler.GetSegmentResources(uow, segment.Id.GetValueOrDefault()))
                     }, includeParticipants: false);
 
-                ResolvePriceResponse resolvedPrice = await ResolveServicePrice(organizationId, segment.ServiceId, appointment.CompanyId, segment.PlannedStart);
+                ResolvePriceResponse resolvedPrice = await ResolveServicePrice(organizationId, segment.ServiceId, appointment.CompanyId, SegmentPricingSource.PricingEmployeeOf(segment), segment.PlannedStart);
                 created.Add(BookingFactory.AddParticipation(booking, segment, ParticipationStatus.Confirmed, BookingPricing.AtSuggested(resolvedPrice), now));
             }
 
@@ -1282,7 +1348,7 @@ public class GroupService : IGroupService
         await using IUnitOfWork uow = await _unitOfWorkFactory.Begin();
         await _schedulingOccupancyHandler.LockSchedulingSubjects(
             uow,
-            candidates.Where(c => c.Group.DefaultTrainerId.HasValue).Select(c => c.Group.DefaultTrainerId.Value),
+            allSegments.SelectMany(s => s.Template.Employees.Select(e => e.EmployeeId)),
             allSegments.SelectMany(s => s.ClientIds),
             allSegments.Where(s => s.Template.RoomId.HasValue).Select(s => s.Template.RoomId.Value),
             allSegments.SelectMany(s => s.Template.Resources.Select(r => r.ResourceId)));
@@ -1315,14 +1381,18 @@ public class GroupService : IGroupService
             List<SegmentPlan> plans = new();
             foreach (CandidateSegment segment in candidate.Segments)
             {
-                ResolvePriceResponse resolvedPrice = await ResolveServicePrice(organizationId, segment.Template.ServiceId, group.CompanyId, segment.Start);
+                // Phase M1G: osoblje i izvor cijene se KOPIRAJU iz predloška (generiranje ne bira drugi izvor).
+                PricingSourceValue pricingSource = new(segment.Template.PricingMode, segment.Template.PricingEmployeeId);
+                ResolvePriceResponse resolvedPrice = await ResolveServicePrice(
+                    organizationId, segment.Template.ServiceId, group.CompanyId, pricingSource.PricingEmployeeId, segment.Start);
                 plans.Add(new SegmentPlan(
                     segment.Template.ServiceId, segment.Start, segment.End,
-                    group.DefaultTrainerId.HasValue ? new[] { group.DefaultTrainerId.Value } : Array.Empty<Guid>(),
+                    segment.Template.Employees.Select(e => e.EmployeeId).ToList(),
                     segment.Template.RoomId,
                     segment.ClientIds.Select(c => new ParticipantPlan(c, BookingPricing.AtSuggested(resolvedPrice))).ToList(),
                     segment.Template.Resources.Select(r => new SegmentResourcePlan(r.ResourceId, r.QuantityRequired)).ToList(),
-                    segment.Template.Id));
+                    segment.Template.Id,
+                    pricingSource));
             }
 
             Appointment appointment = AppointmentFactory.CreateGroupOccurrence(
@@ -1333,6 +1403,7 @@ public class GroupService : IGroupService
             warningsByCandidate.TryGetValue((slot.Id.GetValueOrDefault(), candidate.StartsAt), out List<WarningDto> occurrenceWarnings);
             AppointmentRange range = AppointmentRange.Of(appointment);
             GroupSegmentTemplate single = group.SegmentTemplates.Count == 1 ? group.SegmentTemplates[0] : null;
+            GroupSegmentTemplateEmployee singleEmployee = single?.Employees.Count == 1 ? single.Employees[0] : null;
 
             createdDtos.Add(new AppointmentScheduleCellDto
             {
@@ -1346,8 +1417,8 @@ public class GroupService : IGroupService
                 ServiceId = single?.ServiceId,
                 ServiceName = single?.Service?.Name,
                 ServiceCategoryColorHex = single?.Service?.ColorHex,
-                EmployeeId = group.DefaultTrainerId,
-                EmployeeName = group.DefaultTrainer != null ? $"{group.DefaultTrainer.FirstName} {group.DefaultTrainer.LastName}" : null,
+                EmployeeId = singleEmployee?.EmployeeId,
+                EmployeeName = singleEmployee?.Employee != null ? $"{singleEmployee.Employee.FirstName} {singleEmployee.Employee.LastName}" : null,
                 CompanyId = group.CompanyId,
                 CompanyName = group.Company?.Name,
                 RoomId = single?.RoomId,
@@ -1405,7 +1476,7 @@ public class GroupService : IGroupService
 
     private static SegmentClaim ClaimOf(GroupOccurrenceCandidate candidate, CandidateSegment segment)
     {
-        List<Guid> employees = candidate.Group.DefaultTrainerId.HasValue ? new List<Guid> { candidate.Group.DefaultTrainerId.Value } : new List<Guid>();
+        List<Guid> employees = segment.Template.Employees.Select(e => e.EmployeeId).ToList();
         return new SegmentClaim(null, segment.Start, segment.End, employees, segment.ClientIds)
         {
             RoomId = segment.Template.RoomId,
@@ -1452,15 +1523,15 @@ public class GroupService : IGroupService
         List<RecurringConflictDetail> hardConflicts = new List<RecurringConflictDetail>();
         Dictionary<(Guid, DateTimeOffset), List<WarningDto>> warningsByCandidate = new Dictionary<(Guid, DateTimeOffset), List<WarningDto>>();
 
+        // Phase M1G: SVAKI zaposlenik svakog segmenta (osoblje predloška) prolazi istu provjeru neovisno.
         var byEmployee = candidates
-            .Where(c => c.Group.DefaultTrainerId.HasValue)
-            .SelectMany(c => c.Segments.Select(s => (Candidate: c, Segment: s)))
-            .GroupBy(x => x.Candidate.Group.DefaultTrainerId.GetValueOrDefault());
+            .SelectMany(c => c.Segments.SelectMany(s => s.Template.Employees.Select(e => (EmployeeId: e.EmployeeId, Candidate: c, Segment: s))))
+            .GroupBy(x => x.EmployeeId);
 
         foreach (var employeeItems in byEmployee)
         {
             Guid employeeId = employeeItems.Key;
-            var ordered = employeeItems.OrderBy(x => x.Segment.Start).ToList();
+            var ordered = employeeItems.Select(x => (x.Candidate, x.Segment)).OrderBy(x => x.Segment.Start).ToList();
 
             DateTimeOffset rangeFrom = ordered[0].Segment.Start.AddDays(-1);
             DateTimeOffset rangeTo = ordered[^1].Segment.End.AddDays(1);
@@ -1678,17 +1749,23 @@ public class GroupService : IGroupService
             && WorkingHoursCalculator.IsWithinIntervals(companyIntervals, start, end);
     }
 
-    /// <summary>Radno vrijeme (trener/poslovnica) za definiciju grupe je UPOZORENJE — za svaki slot i svaki predložak (početak
-    /// slota + pomak, trajanje predloška) na najbližem budućem datumu tog dana; jedno upozorenje po slotu.</summary>
+    /// <summary>Radno vrijeme (zaposlenici predloška/poslovnica) za definiciju grupe je UPOZORENJE — za svaki slot, svaki
+    /// predložak (početak slota + pomak, trajanje predloška) i SVAKOG zaposlenika tog predloška (Phase M1G) na najbližem
+    /// budućem datumu tog dana; jedno upozorenje po slotu. Predlošci bez osoblja se preskaču.</summary>
     private async Task<List<WarningDto>> ComputeWorkingHoursWarnings(
-        Guid organizationId, Guid companyId, Guid? trainerId, IReadOnlyCollection<GroupSegmentTemplate> templates,
+        Guid organizationId, Guid companyId, IReadOnlyCollection<GroupSegmentTemplate> templates,
         List<(DayOfWeek DayOfWeek, TimeSpan StartTime)> slots)
     {
         List<WarningDto> warnings = new List<WarningDto>();
-        if (!trainerId.HasValue || templates.Count == 0)
+        List<(GroupSegmentTemplate Template, Guid EmployeeId)> staffed = templates
+            .SelectMany(t => t.Employees.Select(e => (t, e.EmployeeId)))
+            .ToList();
+        if (staffed.Count == 0)
             return warnings;
 
-        WorkingHoursTemplate employeeTemplate = await _workingHoursTemplateHandler.GetForEmployee(organizationId, trainerId.Value);
+        Dictionary<Guid, WorkingHoursTemplate> employeeTemplates = new();
+        foreach (Guid employeeId in staffed.Select(x => x.EmployeeId).Distinct())
+            employeeTemplates[employeeId] = await _workingHoursTemplateHandler.GetForEmployee(organizationId, employeeId);
         WorkingHoursTemplate companyTemplate = await _workingHoursTemplateHandler.GetForCompany(organizationId, companyId);
         OrganizationCalendar calendar = await _organizationCalendarService.GetCompanyCalendar(organizationId, companyId);
         DateOnly today = calendar.LocalDate(DateTimeOffset.UtcNow);
@@ -1696,12 +1773,12 @@ public class GroupService : IGroupService
         foreach ((DayOfWeek dayOfWeek, TimeSpan startTime) in slots)
         {
             DateOnly representativeDate = NextOccurrenceDate(today, dayOfWeek);
-            bool outside = templates.Any(t =>
+            bool outside = staffed.Any(x =>
             {
-                TimeSpan localStart = startTime + TimeSpan.FromMinutes(t.StartOffsetMinutes);
+                TimeSpan localStart = startTime + TimeSpan.FromMinutes(x.Template.StartOffsetMinutes);
                 DateOnly date = representativeDate.AddDays((int)localStart.TotalDays);
-                return !IsWithinWorkingHours(employeeTemplate, companyTemplate, new List<RosterEntry>(), date,
-                    TimeSpan.FromTicks(localStart.Ticks % TimeSpan.TicksPerDay), t.DurationMinutes);
+                return !IsWithinWorkingHours(employeeTemplates[x.EmployeeId], companyTemplate, new List<RosterEntry>(), date,
+                    TimeSpan.FromTicks(localStart.Ticks % TimeSpan.TicksPerDay), x.Template.DurationMinutes);
             });
 
             if (outside)
@@ -1798,7 +1875,7 @@ public class GroupService : IGroupService
     private static Group Scalar(Group group) => new()
     {
         Id = group.Id, OrganizationId = group.OrganizationId, Name = group.Name, CompanyId = group.CompanyId,
-        DefaultTrainerId = group.DefaultTrainerId, IsActive = group.IsActive, Note = group.Note, CreatedAt = group.CreatedAt,
+        IsActive = group.IsActive, Note = group.Note, CreatedAt = group.CreatedAt,
         CreatedBy = group.CreatedBy, UpdatedAt = group.UpdatedAt, UpdatedBy = group.UpdatedBy
     };
 
@@ -1806,6 +1883,7 @@ public class GroupService : IGroupService
     {
         Id = template.Id, GroupId = template.GroupId, ServiceId = template.ServiceId, StartOffsetMinutes = template.StartOffsetMinutes,
         DurationMinutes = template.DurationMinutes, RoomId = template.RoomId, Capacity = template.Capacity,
+        PricingMode = template.PricingMode, PricingEmployeeId = template.PricingEmployeeId,
         CreatedAt = template.CreatedAt, UpdatedAt = template.UpdatedAt
     };
 
@@ -1833,8 +1911,10 @@ public class GroupService : IGroupService
         dto.CompanyId = group.CompanyId;
         dto.CompanyName = group.Company?.Name;
         dto.Capacity = single?.Capacity;
-        dto.DefaultTrainerId = group.DefaultTrainerId;
-        dto.DefaultTrainerName = group.DefaultTrainer != null ? $"{group.DefaultTrainer.FirstName} {group.DefaultTrainer.LastName}" : null;
+        // KOMPATIBILNOST (Phase M1G): plosnati trener samo za jednopredlošku grupu s točno jednim zaposlenikom.
+        GroupSegmentTemplateEmployee trainer = single?.Employees.Count == 1 ? single.Employees[0] : null;
+        dto.DefaultTrainerId = trainer?.EmployeeId;
+        dto.DefaultTrainerName = trainer?.Employee != null ? $"{trainer.Employee.FirstName} {trainer.Employee.LastName}" : null;
         dto.DefaultRoomId = single?.RoomId;
         dto.DefaultRoomName = single?.Room?.Name;
         dto.SegmentTemplates = templates.Select(t => new GroupSegmentTemplateDto
@@ -1850,7 +1930,14 @@ public class GroupService : IGroupService
             Resources = t.Resources.Select(r => new GroupSegmentTemplateResourceDto
             {
                 ResourceId = r.ResourceId, ResourceName = r.Resource?.Name, QuantityRequired = r.QuantityRequired
-            }).ToList()
+            }).ToList(),
+            Employees = t.Employees.OrderBy(e => e.EmployeeId).Select(e => new AppointmentSegmentEmployeeDto
+            {
+                EmployeeId = e.EmployeeId,
+                EmployeeName = e.Employee != null ? $"{e.Employee.FirstName} {e.Employee.LastName}" : null
+            }).ToList(),
+            PricingMode = t.PricingMode,
+            PricingEmployeeId = t.PricingEmployeeId
         }).ToList();
         dto.IsActive = group.IsActive;
         dto.Note = group.Note;
@@ -1877,8 +1964,10 @@ public class GroupService : IGroupService
         dto.ServiceCategoryColorHex = template?.Service?.ColorHex;
         dto.RoomName = template?.Room?.Name;
         foreach (AppointmentSegmentEmployeeDto employee in dto.Employees)
-            if (group.DefaultTrainer != null && employee.EmployeeId == group.DefaultTrainerId)
-                employee.EmployeeName = $"{group.DefaultTrainer.FirstName} {group.DefaultTrainer.LastName}";
+            if (template?.Employees.SingleOrDefault(e => e.EmployeeId == employee.EmployeeId)?.Employee is Employee staff)
+                employee.EmployeeName = $"{staff.FirstName} {staff.LastName}";
+        if (template?.Employees.SingleOrDefault(e => e.EmployeeId == dto.PricingEmployeeId)?.Employee is Employee pricing)
+            dto.PricingEmployeeName = $"{pricing.FirstName} {pricing.LastName}";
         return dto;
     }
 

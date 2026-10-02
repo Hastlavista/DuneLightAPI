@@ -20,9 +20,14 @@ public static class WarningCodes
     // Groups
     public const string GroupCapacityExceeded = "GROUP_CAPACITY_EXCEEDED";
     public const string GroupAppointmentUnresolvedBookings = "GROUP_APPOINTMENT_UNRESOLVED_BOOKINGS";
-    /// <summary>Phase M1F — close-out višesegmentnog grupnog occurrencea: provizija po sesiji nije izračunata jer postojeće
-    /// pravilo (trener × JEDNA usluga sesije) nije jednoznačno za više usluga (dug faze provizija).</summary>
+    /// <summary>UMIROVLJENO (Phase M1G — više se ne emitira): close-out višesegmentnog occurrencea sada računa grupnu
+    /// proviziju po SEGMENTU i zaposleniku. Vrijednost ostaje rezervirana (stabilan ugovor prema frontendu).</summary>
     public const string GroupCommissionNotSupportedForMultiSegment = "GROUP_COMMISSION_NOT_SUPPORTED_FOR_MULTI_SEGMENT";
+
+    /// <summary>Phase M1G — close-out grupne sesije: zaposlenik segmenta ima aktivno pravilo provizije koje grupna sesija ne
+    /// podržava (Percentage — za grupnu sesiju ne postoji osnovica; ne izmišlja se). Unos se NE stvara; details:
+    /// WarningGroupCommissionRuleDetails.</summary>
+    public const string GroupCommissionRuleNotSupported = "GROUP_COMMISSION_RULE_NOT_SUPPORTED";
 
     // Roster
     public const string RosterEntryOverlap = "ROSTER_ENTRY_OVERLAP";

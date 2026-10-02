@@ -169,16 +169,17 @@ public class MultiSegmentAppointmentTests
     }
 
     [Fact]
-    public async Task Create_MultiEmployeeSegment_IsStillRejected()
+    public async Task Create_MultiEmployeeSegment_WithoutAPricingSource_IsRejected()
     {
-        await using SchedulingWorld w = await SchedulingWorld.Create(nameof(Create_MultiEmployeeSegment_IsStillRejected));
+        await using SchedulingWorld w = await SchedulingWorld.Create(nameof(Create_MultiEmployeeSegment_WithoutAPricingSource_IsRejected));
         Spa spa = await SetUp(w);
         AppointmentSegmentCreateRequest two = Seg(spa.Physio, SchedulingWorld.Future(10), spa.B, w.Client);
         two.EmployeeIds.Add(spa.A.Id.Value);
 
         ValidationAppException ex = await SchedulingAssert.Validation(() => Create(w, Seg(spa.Massage, SchedulingWorld.Future(9), spa.A, w.Client), two));
 
-        Assert.Equal(ErrorCodes.MultiEmployeeNotSupported, ex.Code);
+        // CHANGED in M1G: multi-employee segments are enabled, but 2+ employees require an explicit pricing source.
+        Assert.Equal(ErrorCodes.PricingSourceRequired, ex.Code);
         Assert.Equal(0, await w.CountAppointments());
     }
 
@@ -342,7 +343,7 @@ public class MultiSegmentAppointmentTests
 
         ValidationAppException two = await SchedulingAssert.Validation(() => w.Appointments.ChangeSegmentEmployees(w.OrganizationId, w.ActorUserId, true, physio,
             new AppointmentSegmentEmployeesChangeRequest { EmployeeIds = new List<Guid> { spa.B.Id.Value, c.Id.Value } }));
-        Assert.Equal(ErrorCodes.MultiEmployeeNotSupported, two.Code);
+        Assert.Equal(ErrorCodes.PricingSourceRequired, two.Code); // CHANGED in M1G: allowed with an explicit pricing source
         // A is busy in the sibling massage until 10:00? No — physio starts at 10:00; A is free but not assigned to Physio.
         await SchedulingAssert.BusinessRule(ErrorCodes.EmployeeNotAssignedToService, () => w.Appointments.ChangeSegmentEmployees(
             w.OrganizationId, w.ActorUserId, true, physio, new AppointmentSegmentEmployeesChangeRequest { EmployeeIds = new List<Guid> { spa.A.Id.Value } }));

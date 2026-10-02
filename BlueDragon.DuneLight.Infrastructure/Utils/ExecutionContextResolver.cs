@@ -32,7 +32,8 @@ public static class ExecutionContextResolver
             appointment.CompanyId,
             segment.ServiceId,
             segment.Service?.Name,
-            AppointmentSegments.GetSingleEmployeeId(segment),
+            segment.Employees.Select(e => e.EmployeeId).OrderBy(id => id).ToList(),
+            SegmentPricingSource.PricingEmployeeOf(segment),
             segment.PlannedStart);
     }
 

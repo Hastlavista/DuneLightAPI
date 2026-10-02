@@ -69,13 +69,15 @@ public class WaitlistService : IWaitlistService, IWaitlistPromotionService
     /// resolver, ne duplicira logiku razrješavanja cijene (vidi spec section 44).</summary>
     /// <remarks>Phase D3B2: vraća cijelo razrješavanje (Price + Source) — Source je istinit snapshot za
     /// BookingSegmentParticipation.BaseAmountSource (vidi BookingPricing.FromResolution).</remarks>
-    private Task<ResolvePriceResponse> ResolveServicePrice(Guid organizationId, Guid serviceId, Guid companyId, DateTimeOffset date)
+    private Task<ResolvePriceResponse> ResolveServicePrice(
+        Guid organizationId, Guid serviceId, Guid companyId, Guid? pricingEmployeeId, DateTimeOffset date)
     {
         return _pricingService.ResolvePrice(organizationId, new ResolvePriceRequest
         {
             SubjectType = PricingSubjectType.Service,
             SubjectId = serviceId,
             CompanyId = companyId,
+            EmployeeId = pricingEmployeeId,
             Date = date
         });
     }
@@ -324,7 +326,7 @@ public class WaitlistService : IWaitlistService, IWaitlistPromotionService
                     new[] { SegmentClaim.ForParticipationActivation(appointment, segment, entry.ClientId, Array.Empty<ResourceClaim>()) })).Count > 0)
                 break;
 
-            ResolvePriceResponse resolvedPrice = await ResolveServicePrice(organizationId, segment.ServiceId, appointment.CompanyId, segment.PlannedStart);
+            ResolvePriceResponse resolvedPrice = await ResolveServicePrice(organizationId, segment.ServiceId, appointment.CompanyId, SegmentPricingSource.PricingEmployeeOf(segment), segment.PlannedStart);
 
             // Obična Confirmed rezervacija bez paketa/plaćanja (razrješava se kroz uobičajeni check-in). Phase M1F: klijent s
             // postojećim Bookingom occurrencea (npr. sudjeluje u drugom segmentu) dobiva SAMO novo sudjelovanje.

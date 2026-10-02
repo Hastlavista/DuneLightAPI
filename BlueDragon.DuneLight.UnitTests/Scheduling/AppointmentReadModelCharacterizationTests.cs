@@ -346,7 +346,7 @@ public class AppointmentReadModelCharacterizationTests
     public async Task AvailableSlots_OmitEmployeesWhoCannotPerformTheServiceOrAreInactive_AndEmployeesOnAbsence()
     {
         await using SchedulingWorld w = await SchedulingWorld.Create(nameof(AvailableSlots_OmitEmployeesWhoCannotPerformTheServiceOrAreInactive_AndEmployeesOnAbsence));
-        await w.AddEmployee("Incapable", assignedToService: false);
+        await w.AddEmployeeRestrictedToAnotherService("Incapable");
         await w.AddEmployee("Inactive", isActive: false);
         Employee absent = await w.AddEmployee("Absent");
         await w.AddAbsence(absent, SchedulingWorld.FutureDay);

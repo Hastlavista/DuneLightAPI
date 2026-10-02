@@ -457,8 +457,9 @@ public class SegmentNativeModelTests
         withResource.Resources = new List<AppointmentSegmentResourceRequest> { new() { ResourceId = Guid.NewGuid(), QuantityRequired = 1 } };
         await SchedulingAssert.NotFound(() => CreateTarget(w, Target(w, withResource)));
 
-        Assert.Equal(ErrorCodes.MultiEmployeeNotSupported, two.Code);
-        Assert.Equal(ErrorCodes.MultiEmployeeNotSupported, none.Code);
+        // CHANGED in M1G: two employees are allowed but need an explicit pricing source; an individual segment still needs one.
+        Assert.Equal(ErrorCodes.PricingSourceRequired, two.Code);
+        Assert.Null(none.Code);
         Assert.Equal(0, await w.CountAppointments());
     }
 

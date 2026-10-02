@@ -50,6 +50,15 @@ public class SegmentsController : ControllerBase
             this.CurrentOrganizationId(), this.CurrentUserId(), this.HasGrant(Grants.AppointmentsWriteAll), segmentId, request));
     }
 
+    /// <summary>Phase M1G — izvor cijene segmenta bez promjene zaposlenika (Standard ili Employee + zaposlenik segmenta).</summary>
+    [HttpPatch("{segmentId:guid}/pricing-source")]
+    [RequireGrant(Grants.AppointmentsWriteOwn, Grants.AppointmentsWriteAll)]
+    public async Task<ActionResult<AppointmentDto>> ChangePricingSource(Guid segmentId, [FromBody] AppointmentSegmentPricingSourceChangeRequest request)
+    {
+        return Ok(await _appointmentService.ChangeSegmentPricingSource(
+            this.CurrentOrganizationId(), this.CurrentUserId(), this.HasGrant(Grants.AppointmentsWriteAll), segmentId, request));
+    }
+
     [HttpPatch("{segmentId:guid}/room")]
     [RequireGrant(Grants.AppointmentsWriteOwn, Grants.AppointmentsWriteAll)]
     public async Task<ActionResult<AppointmentDto>> ChangeRoom(Guid segmentId, [FromBody] AppointmentSegmentRoomChangeRequest request)

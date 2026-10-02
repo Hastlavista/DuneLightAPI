@@ -13,6 +13,10 @@ namespace BlueDragon.DuneLight.Infrastructure.Domain.Models.Groups;
 /// vrijeme (ono je na generiranom AppointmentSegmentu). Capacity je MEKI poslovni broj mjesta TOG segmenta (prekoračenje
 /// samo eksplicitnim zahtjevom uz groups.capacity.override); fizički kapacitet prostorije/resursa ostaje tvrd i odvojen.
 /// Usluga.DefaultDuration je samo prijedlog pri kreiranju — predložak posjeduje svoje trajanje.
+///
+/// Phase M1G — OSOBLJE je po predlošku: Employees (0..N ravnopravnih zaposlenika; prazno = sesija bez trenera) i izvor
+/// cijene (PricingMode/PricingEmployeeId, ista pravila kao segment — SegmentPricingSource). Generirani segment ih KOPIRA
+/// (konkretan snapshot); izmjena predloška vrijedi samo za buduća generiranja.
 /// </summary>
 [Table("group_segment_templates")]
 public class GroupSegmentTemplate
@@ -40,6 +44,12 @@ public class GroupSegmentTemplate
     [Column("capacity")]
     public int Capacity { get; set; }
 
+    [Column("pricing_mode")]
+    public Core.Enums.SegmentPricingMode PricingMode { get; set; }
+
+    [Column("pricing_employee_id")]
+    public Guid? PricingEmployeeId { get; set; }
+
     [Column("created_at")]
     public DateTimeOffset CreatedAt { get; set; }
 
@@ -50,6 +60,21 @@ public class GroupSegmentTemplate
     public Service Service { get; set; }
     public Room Room { get; set; }
     public List<GroupSegmentTemplateResource> Resources { get; set; } = new();
+    public List<GroupSegmentTemplateEmployee> Employees { get; set; } = new();
+}
+
+/// <summary>Phase M1G — zaposlenik predloška (isti oblik kao AppointmentSegmentEmployee); kopira se u generirani segment.</summary>
+[Table("group_segment_template_employees")]
+public class GroupSegmentTemplateEmployee
+{
+    [Column("group_segment_template_id")]
+    public Guid GroupSegmentTemplateId { get; set; }
+
+    [Column("employee_id")]
+    public Guid EmployeeId { get; set; }
+
+    public GroupSegmentTemplate Template { get; set; }
+    public Employees.Employee Employee { get; set; }
 }
 
 /// <summary>Phase M1F — generički resurs predloška (isti oblik kao AppointmentSegmentResource); kopira se u generirani segment.</summary>

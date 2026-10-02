@@ -517,7 +517,8 @@ public class MultiSegmentGroupTests
 
         AppointmentDto closed = await w.Appointments.CompleteGroupAppointment(w.OrganizationId, w.ActorUserId, true, occurrence.Id.Value);
         Assert.Contains(closed.Warnings, x => x.Code == WarningCodes.GroupAppointmentUnresolvedBookings); // only C (Marko) is unresolved
-        Assert.Contains(closed.Warnings, x => x.Code == WarningCodes.GroupCommissionNotSupportedForMultiSegment);
+        // CHANGED in M1G: multi-template close-out computes session commission per segment — no blanket warning.
+        Assert.DoesNotContain(closed.Warnings, x => x.Code == WarningCodes.GroupCommissionNotSupportedForMultiSegment);
         Appointment a1 = await w.LoadAppointment(occurrence.Id.Value);
         Assert.NotNull(a1.ClosedOutAt);
         Assert.Equal(AppointmentStatus.Scheduled, a1.Status); // derived: Marko is still Confirmed
