@@ -59,9 +59,9 @@ public class PricingService : IPricingService
     public async Task<PriceListItemDto> Create(Guid organizationId, Guid userId, PriceListItemCreateRequest request)
     {
         Guid subjectId = ValidateSubject(request.SubjectType, request.ServiceId, request.PackageId);
+        await EnsurePriceEmployee(organizationId, request.SubjectType, request.EmployeeId, requireActive: true);
         await GetDefaultPrice(organizationId, request.SubjectType, subjectId, requireActive: true);
         await EnsureCompanyExists(organizationId, request.CompanyId, requireActive: true);
-        await EnsurePriceEmployee(organizationId, request.SubjectType, request.EmployeeId, requireActive: true);
         ValidateDateRange(request.ValidFrom, request.ValidTo);
 
         await EnsureNoOverlap(organizationId, request.SubjectType, subjectId, request.CompanyId, request.EmployeeId,

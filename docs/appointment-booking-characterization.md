@@ -181,6 +181,30 @@ Legend — **Test**: the characterization test(s) that pin it. **Later**: whethe
   without a participation, only for future, non-cancelled segments). Guests appear only as Recorded (`IsMember = false`).
   Top-level Expected = union of segment Expected for clients without a Booking (past occurrences list no gaps any more).
   Test: `MultiSegmentGroupConsistencyTests.Attendance_*`.
+* **F-26 Multi-employee segments — ENABLED in M1G (intentional).** `MULTI_EMPLOYEE_NOT_SUPPORTED` is gone. A segment has
+  1..N equal employees (individual) or 0..N (group template / trainerless session). Pricing source per segment
+  (`SegmentPricingMode`): 0 employees → Standard; 1 → automatic Employee/that employee; 2+ → explicit Standard or
+  Employee + an assigned employee (`PRICING_SOURCE_REQUIRED` / `INVALID_PRICING_SOURCE`), re-required on every employee-set
+  change resulting in 2+. Price precedence: Employee mode = employee+company → employee → company → organization →
+  default; Standard skips the employee tiers. Participations snapshot `pricing_mode`/`pricing_employee_id`. Legacy flat
+  Update/Move/CompleteExisting on a 2+ segment → `EMPLOYEE_SET_COMMAND_REQUIRED`. Employee-set changes on a segment with a
+  Completed participation or a closed-out session → `SEGMENT_EXECUTION_HISTORY_LOCKED`. Own scope may not add/remove
+  coworkers. Test: `MultiEmployeeSegmentTests`, `MultiEmployeeHttpContractTests`.
+* **F-27 Commission per employee — CHANGED in M1G (intentional).** Individual: every segment employee earns independently
+  from the participation's final price (percentage) or the fixed amount; unique per (participation, employee, source
+  version); a correction reverses every employee's entry. Group: fixed session commission per (segment, employee) at
+  close-out (no per-client multiplication, trainerless segment earns nothing); `GROUP_COMMISSION_NOT_SUPPORTED_FOR_MULTI_SEGMENT`
+  is no longer emitted; a non-Fixed rule is not evaluated and yields `GROUP_COMMISSION_RULE_NOT_SUPPORTED`.
+  Test: `MultiEmployeeSegmentTests.Commission_*`, `MultiEmployeeGroupTests.CloseOut_*`.
+* **F-28 Group staffing per template — CHANGED in M1G (intentional).** `groups.default_trainer_id` is dropped; staff and
+  pricing source live on `GroupSegmentTemplate` and are copied into generated segments (template edits affect future
+  generation only). `DefaultTrainerId` remains a non-authoritative DTO projection (one template with one employee) and a
+  legacy input for one-template groups. Test: `MultiEmployeeGroupTests`.
+* **F-29 Employee/service eligibility — FIXED in M1G (intentional).** Old: no assignments = no services. Target: no
+  assignments = every service; any assignment restricts (create, segment employees, templates, generation, available slots).
+* **DB enforcement audit (M1G).** "Pricing employee ∈ segment/template employees" would need a circular (deferred) FK from
+  the segment to its own employee rows — enforced in the domain (`SegmentPricingSource`); the DB only checks mode/employee
+  consistency (CHECK) and the FK to employees.
 * **DB enforcement audit (M1F.1).** Occurrence identity (`group_slot_id`, first segment start) spans appointments and
   segments and cannot be a unique constraint without denormalization; "segment template belongs to the appointment's group"
   needs `group_id` on `appointment_segments`. Both stay application-enforced (slot advisory lock / generation validation).

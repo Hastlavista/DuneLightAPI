@@ -108,7 +108,8 @@ public class AppointmentsController : ControllerBase
 
     /// <summary>"Zakaži" — status Scheduled, bez naplate.</summary>
     /// <summary>Phase M1B — ciljni segmentni ugovor kreiranja (termin + segmenti + sudionici po segmentu). Phase M1E: više
-    /// segmenata je omogućeno (atomično; segment trenutno ima točno jednog zaposlenika — MULTI_EMPLOYEE_NOT_SUPPORTED).</summary>
+    /// segmenata je omogućeno (atomično). Phase M1G: segment ima 1..N ravnopravnih zaposlenika; za 2+ zaposlenika izvor cijene
+    /// (PricingMode/PricingEmployeeId) je obavezan.</summary>
     [HttpPost]
     [RequireGrant(Grants.AppointmentsWriteOwn, Grants.AppointmentsWriteAll)]
     public async Task<ActionResult<AppointmentDto>> CreateSegmented([FromBody] AppointmentCreateRequest request)

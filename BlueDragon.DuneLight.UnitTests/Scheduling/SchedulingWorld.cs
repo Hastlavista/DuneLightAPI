@@ -182,6 +182,7 @@ public sealed class SchedulingWorld : IAsyncDisposable
             "DELETE FROM dunelight.grant_group_grants WHERE grant_group_id IN (SELECT id FROM dunelight.grant_groups WHERE organization_id = {0})",
             "DELETE FROM dunelight.group_members WHERE group_id IN (SELECT id FROM dunelight.groups WHERE organization_id = {0})",
             "DELETE FROM dunelight.group_segment_template_resources WHERE group_segment_template_id IN (SELECT t.id FROM dunelight.group_segment_templates t JOIN dunelight.groups g ON g.id = t.group_id WHERE g.organization_id = {0})",
+            "DELETE FROM dunelight.group_segment_template_employees WHERE group_segment_template_id IN (SELECT t.id FROM dunelight.group_segment_templates t JOIN dunelight.groups g ON g.id = t.group_id WHERE g.organization_id = {0})",
             "DELETE FROM dunelight.group_segment_templates WHERE group_id IN (SELECT id FROM dunelight.groups WHERE organization_id = {0})",
             "DELETE FROM dunelight.group_slots WHERE group_id IN (SELECT id FROM dunelight.groups WHERE organization_id = {0})",
             "DELETE FROM dunelight.employee_companies WHERE employee_id IN (SELECT id FROM dunelight.employees WHERE organization_id = {0})",
@@ -514,7 +515,8 @@ public sealed class SchedulingWorld : IAsyncDisposable
     }
 
     /// <summary>Price-list row (Service, optionally company-specific) effective from <paramref name="validFrom"/>.</summary>
-    public async Task AddPriceListItem(ServiceEntity service, decimal price, DateTimeOffset validFrom, Guid? companyId = null, DateTimeOffset? validTo = null)
+    public async Task AddPriceListItem(
+        ServiceEntity service, decimal price, DateTimeOffset validFrom, Guid? companyId = null, DateTimeOffset? validTo = null, Guid? employeeId = null)
     {
         await using DatabaseContext db = NewDb();
         db.PriceListItems.Add(new PriceListItem
@@ -523,6 +525,7 @@ public sealed class SchedulingWorld : IAsyncDisposable
             OrganizationId = OrganizationId,
             ServiceId = service.Id,
             CompanyId = companyId,
+            EmployeeId = employeeId,
             Price = price,
             ValidFrom = validFrom,
             ValidTo = validTo,

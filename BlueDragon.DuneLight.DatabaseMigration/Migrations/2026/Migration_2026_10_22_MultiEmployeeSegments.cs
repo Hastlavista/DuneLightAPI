@@ -53,6 +53,7 @@ public class MultiEmployeeSegments : DuneLightMigration
 
             ALTER TABLE dunelight.{Tables.BookingSegmentParticipations}
                 DROP CONSTRAINT ck_booking_segment_participations_base_amount_source,
+                ALTER COLUMN base_amount_source TYPE varchar(32),
                 ADD CONSTRAINT ck_booking_segment_participations_base_amount_source CHECK (base_amount_source IN
                     ('EmployeeCompanySpecific', 'EmployeeAllCompanies', 'CompanySpecific', 'AllCompanies', 'Default')),
                 ADD COLUMN pricing_mode varchar(32) NULL,
@@ -183,6 +184,7 @@ public class MultiEmployeeSegments : DuneLightMigration
             UPDATE dunelight.{Tables.BookingSegmentParticipations} SET base_amount_source = 'AllCompanies'
              WHERE base_amount_source = 'EmployeeAllCompanies';
             ALTER TABLE dunelight.{Tables.BookingSegmentParticipations}
+                ALTER COLUMN base_amount_source TYPE varchar(20),
                 ADD CONSTRAINT ck_booking_segment_participations_base_amount_source
                     CHECK (base_amount_source IN ('CompanySpecific', 'AllCompanies', 'Default'));
 

@@ -39,7 +39,7 @@ Dodatno: **Organization Branding** (logo/boje/favicon per-tenant) i **Onboarding
 - **`Room`** — `CompanyId` (obavezan), `AllowConcurrentBookings` (default false = tvrdo blokira preklapanja u istoj sobi).
 
 ### 2.4 Zaposlenici
-- **`Employee`** — `FirstName/LastName, Oib, EngagementTypeId, UserId` (1:1 s User, unique) → **`EmployeeCompany`** (M:N, `IsPrimary` — točno jedan primarni per employee, partial unique index), **`EmployeeServiceAssignment`** (M:N; prazno = ne smije nijednu uslugu — eksplicitna capability, isti obrazac kao ServiceCompany).
+- **`Employee`** — `FirstName/LastName, Oib, EngagementTypeId, UserId` (1:1 s User, unique) → **`EmployeeCompany`** (M:N, `IsPrimary` — točno jedan primarni per employee, partial unique index), **`EmployeeServiceAssignment`** (M:N; Phase M1G: bez ijedne dodjele = smije SVE usluge, s jednom ili više dodjela = samo dodijeljene — `EmployeeServiceEligibility`).
 - **`EngagementType`** — codebook tipova angažmana.
 - **`EmployeeAuditLog`** — log promjena statusa/uloge (free-text `ChangeType`).
 
