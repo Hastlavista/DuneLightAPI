@@ -201,7 +201,7 @@ public class ScheduleBreakService : IScheduleBreakService
             }
 
             bool breakHit = candidateBreaks.Any(b =>
-                b.StartsAt < occurrenceEnd && occurrence < b.StartsAt.AddMinutes(b.DurationMinutes));
+                SchedulingInterval.Overlaps(b.StartsAt, b.StartsAt.AddMinutes(b.DurationMinutes), occurrence, occurrenceEnd));
 
             if (breakHit)
                 conflicts.Add(new RecurringConflictDetail { Date = occurrence, Reason = ErrorCodes.RecurringConflictReasonScheduleBreak });
@@ -217,7 +217,7 @@ public class ScheduleBreakService : IScheduleBreakService
     private async Task EnsureNoOverlap(Guid organizationId, Guid employeeId, DateTimeOffset startsAt, int durationMinutes, Guid? excludeId)
     {
         List<OccupancySlot> appointmentOverlaps = await _schedulingOccupancyHandler.GetOverlappingForEmployee(
-            organizationId, employeeId, startsAt, durationMinutes, excludeId: null);
+            organizationId, employeeId, startsAt, startsAt.AddMinutes(durationMinutes));
         if (appointmentOverlaps.Count > 0)
             throw new BusinessRuleException(ErrorCodes.AppointmentOverlap, "Trener već ima termin u ovom vremenskom razdoblju.");
 

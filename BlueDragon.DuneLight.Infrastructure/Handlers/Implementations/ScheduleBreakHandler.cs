@@ -7,6 +7,7 @@ using BlueDragon.DuneLight.Infrastructure.Domain.Contexts;
 using BlueDragon.DuneLight.Infrastructure.Domain.Models.Appointments;
 using BlueDragon.DuneLight.Infrastructure.Domain.Settings;
 using BlueDragon.DuneLight.Infrastructure.Handlers.Interfaces;
+using BlueDragon.DuneLight.Infrastructure.Utils;
 using Microsoft.EntityFrameworkCore;
 
 namespace BlueDragon.DuneLight.Infrastructure.Handlers.Implementations;
@@ -78,7 +79,7 @@ public class ScheduleBreakHandler : IScheduleBreakHandler
                 (excludeId == null || b.Id != excludeId))
             .ToListAsync();
 
-        return candidates.Where(b => b.StartsAt < newEnd && startsAt < b.StartsAt.AddMinutes(b.DurationMinutes)).ToList();
+        return candidates.Where(b => SchedulingInterval.Overlaps(b.StartsAt, b.StartsAt.AddMinutes(b.DurationMinutes), startsAt, newEnd)).ToList();
     }
 
     public async Task<List<ScheduleBreak>> GetForEmployeeInRange(

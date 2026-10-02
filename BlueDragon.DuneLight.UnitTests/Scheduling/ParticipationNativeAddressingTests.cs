@@ -313,9 +313,9 @@ public class ParticipationNativeAddressingTests
 
         // Segment A (10:00, Confirmed) occupies the client; segment B (14:00, Cancelled) does not — even though the SAME
         // Booking has an active participation (the old Booking-level predicate would have reported both).
-        OccupancySlot atA = Assert.Single(await occupancy.GetOverlappingForClients(w.OrganizationId, clientIds, SchedulingWorld.Future(10), 30, null));
+        OccupancySlot atA = Assert.Single(await w.ClientsOverlapping(clientIds, SchedulingWorld.Future(10), 30));
         Assert.Contains(w.Client.Id.Value, atA.ActiveClientIds);
-        Assert.Empty(await occupancy.GetOverlappingForClients(w.OrganizationId, clientIds, SchedulingWorld.Future(14), 30, null));
+        Assert.Empty(await w.ClientsOverlapping(clientIds, SchedulingWorld.Future(14), 30));
 
         // Range read: one slot per segment; only A lists the client as active.
         List<OccupancySlot> range = await occupancy.GetForClientsInRange(
@@ -332,8 +332,8 @@ public class ParticipationNativeAddressingTests
             await db.SaveChangesAsync();
         }
         await SetParticipation(w, first, BookingStatus.Cancelled);
-        Assert.Empty(await occupancy.GetOverlappingForClients(w.OrganizationId, clientIds, SchedulingWorld.Future(10), 30, null));
-        Assert.Single(await occupancy.GetOverlappingForClients(w.OrganizationId, clientIds, SchedulingWorld.Future(14), 30, null));
+        Assert.Empty(await w.ClientsOverlapping(clientIds, SchedulingWorld.Future(10), 30));
+        Assert.Single(await w.ClientsOverlapping(clientIds, SchedulingWorld.Future(14), 30));
     }
 
     #endregion

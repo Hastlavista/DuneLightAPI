@@ -134,8 +134,6 @@ public class BookingService : IBookingService
 
         Client client = await LoadEligibleClient(organizationId, request.ClientId);
 
-        await EnsureClientHasNoOverlap(organizationId, appointment, segment, request.ClientId);
-
         SegmentExecutionContext execution = ExecutionContextResolver.ForSegment(appointment, segment);
         ResolvePriceResponse resolvedPrice = await ResolveServicePrice(organizationId, execution.ServiceId, execution.CompanyId, execution.StartsAt);
 
@@ -144,6 +142,10 @@ public class BookingService : IBookingService
 
         await using (IUnitOfWork uow = await _unitOfWorkFactory.Begin())
         {
+            // Phase M1C: tvrda invarijanta klijenta nad KONKRETNIM segmentom (vide se i sestrinski segmenti istog termina),
+            // pod zaključanim klijentom — PRVI lock transakcije, prije Appointment locka kapaciteta.
+            await SchedulingConflictGuard.ClaimClientOnSegment(_schedulingOccupancyHandler, uow, organizationId, segment, request.ClientId);
+
             if (appointment.Form == AppointmentForm.Group)
                 await EnsureGroupCapacityAvailable(uow, organizationId, appointmentId);
 
@@ -314,9 +316,27 @@ public class BookingService : IBookingService
 
         ValidateTransition(appointment, addressed, request);
 
+        // Phase M1C: prijelaz koji sudjelovanje VRAĆA u zauzimanje rasporeda (Cancelled/NoShow -> Confirmed/Completed) je novi
+        // zahtjev za klijentov raspored (i za zaposlenike segmenta, ako segment trenutno ne rezervira slot jer je termin
+        // eksplicitno otkazan) — ista tvrda invarijanta kao nastanak sudjelovanja.
+        AppointmentSegment addressedSegment = appointment.Segments.Single(seg => seg.Id == addressed.AppointmentSegmentId);
+        bool targetOccupies = ParticipationOccupancy.Occupies(BookingParticipations.ToParticipationStatus(request.Status));
+        bool claimsSchedule = targetOccupies && !ParticipationOccupancy.Occupies(addressed.Status);
+
         try
         {
             await using IUnitOfWork uow = await _unitOfWorkFactory.Begin();
+
+            if (claimsSchedule)
+            {
+                IReadOnlyCollection<Guid> employeesToClaim = SegmentOccupancy.Reserves(appointment, addressedSegment)
+                    ? Array.Empty<Guid>()
+                    : addressedSegment.Employees.Select(e => e.EmployeeId).ToList();
+                await SchedulingConflictGuard.Claim(_schedulingOccupancyHandler, uow, organizationId, new[]
+                {
+                    new SegmentClaim(addressedSegment.Id, addressedSegment.PlannedStart, addressedSegment.PlannedEnd, employeesToClaim, new[] { preloaded.ClientId })
+                });
+            }
 
             // Appointment-PA-sudjelovanje redoslijed zaključavanja — USKLAĐENO s dominantnim redoslijedom u agregatu
             // (AppointmentService.CompleteExisting/ChangeToTerminalStatus/CompleteGroupAppointment, GroupService.AddMember,
@@ -336,6 +356,11 @@ public class BookingService : IBookingService
 
             BookingSegmentParticipation participation = BookingParticipations.ById(booking, participationId);
             ValidateTransition(appointment, participation, request);
+            // Stanje se promijenilo od pred-transakcijskog čitanja tako da je prijelaz POSTAO reaktivacija bez provjere
+            // rasporeda — ne nastavlja se naslijepo.
+            if (targetOccupies && !claimsSchedule && !ParticipationOccupancy.Occupies(participation.Status))
+                throw new BusinessRuleException(
+                    ErrorCodes.ConcurrencyConflict, "Podaci su upravo promijenjeni od strane drugog zahtjeva — pokušajte ponovno.");
 
             await ApplyTransitionInTransaction(uow, organizationId, userId, appointment, booking, participation, isNewGuestBooking: false, request);
 
@@ -379,8 +404,6 @@ public class BookingService : IBookingService
                 "Prisustvo gosta (Completed/NoShow) može se evidentirati tek nakon početka termina.");
         }
 
-        await EnsureClientHasNoOverlap(organizationId, appointment, segment, clientId);
-
         SegmentExecutionContext guestExecution = ExecutionContextResolver.ForSegment(appointment, segment);
         ResolvePriceResponse guestPrice = await ResolveServicePrice(
             organizationId, guestExecution.ServiceId, guestExecution.CompanyId, guestExecution.StartsAt);
@@ -391,6 +414,10 @@ public class BookingService : IBookingService
         try
         {
             await using IUnitOfWork uow = await _unitOfWorkFactory.Begin();
+            // Phase M1C: gost čije sudjelovanje zauzima raspored (Confirmed/Completed) podliježe tvrdoj invarijanti klijenta;
+            // gost evidentiran kao Cancelled/NoShow ne zauzima raspored pa ne stvara sudar.
+            if (ParticipationOccupancy.Occupies(BookingParticipations.ToParticipationStatus(request.Status)))
+                await SchedulingConflictGuard.ClaimClientOnSegment(_schedulingOccupancyHandler, uow, organizationId, segment, clientId);
             await ApplyTransitionInTransaction(
                 uow, organizationId, userId, appointment, booking, booking.Participations.Single(), isNewGuestBooking: true, request);
             await uow.CommitAsync();
@@ -524,20 +551,6 @@ public class BookingService : IBookingService
             throw new BusinessRuleException(ErrorCodes.ClientAnonymized, "Klijent je anonimiziran.");
 
         return client;
-    }
-
-    /// <summary>Koristi postojeći AppointmentHandler overlap kriterij: samo aktivni Booking statusi na
-    /// neotkazanim terminima blokiraju interval. Pravilo ostaje strict-open interval pa su susjedni termini valjani.</summary>
-    private async Task EnsureClientHasNoOverlap(Guid organizationId, Appointment appointment, AppointmentSegment segment, Guid clientId)
-    {
-        // Phase M1B: raspon SEGMENTA u kojem bi klijent sudjelovao (ne okvir termina).
-        List<OccupancySlot> overlapping = await _schedulingOccupancyHandler.GetOverlappingForClients(
-            organizationId, new List<Guid> { clientId }, segment.PlannedStart, AppointmentSegments.DurationMinutes(segment), excludeId: appointment.Id);
-
-        if (overlapping.Count > 0)
-            throw new BusinessRuleException(
-                ErrorCodes.AppointmentOverlap,
-                "Klijent je već zakazan u vremenskom razdoblju ovog termina.");
     }
 
     /// <summary>Form=Group: check-in (Confirmed/NoShow/Cancelled -> Completed) razrješava pokriće/skida ulazak;

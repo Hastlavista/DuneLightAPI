@@ -274,11 +274,15 @@ public class AppointmentService : IAppointmentService
             warnings.AddRange(await EnsureWorkforceAvailability(
                 organizationId, plan.EmployeeIds, request.CompanyId, plan.PlannedStart, plan.PlannedEnd, overrideAvailability));
 
-        await EnsureNoHardOverlap(organizationId, plan.EmployeeIds, clients, plan.PlannedStart, plan.PlannedEnd, excludeId: null, room);
-
         try
         {
             await using IUnitOfWork uow = await _unitOfWorkFactory.Begin();
+
+            // Phase M1C: tvrde invarijante pod zaključanim subjektima, PRVO u transakciji.
+            await EnsureNoHardOverlap(uow, organizationId, new[]
+            {
+                new HardOverlapTarget(null, plan.PlannedStart, plan.PlannedEnd, plan.EmployeeIds, clients, room)
+            });
 
             await _appointmentHandler.Add(uow, appointment);
 
@@ -370,11 +374,17 @@ public class AppointmentService : IAppointmentService
 
         DateTimeOffset plannedEnd = request.StartsAt.AddMinutes(service.DefaultDurationMinutes);
         List<Guid> employeeIds = new List<Guid> { request.EmployeeId };
-        await EnsureNoHardOverlap(organizationId, employeeIds, clients, request.StartsAt, plannedEnd, excludeId: id, room);
+        Guid? completedSegmentId = SingleSegmentCompatibility.Resolve(appointment).Id;
 
         try
         {
             await using IUnitOfWork uow = await _unitOfWorkFactory.Begin();
+
+            // Phase M1C: prepisuje se (jedini) segment — isključuje se SAMO on; subjekti se zaključavaju PRIJE Appointment locka.
+            await EnsureNoHardOverlap(uow, organizationId, new[]
+            {
+                new HardOverlapTarget(completedSegmentId, request.StartsAt, plannedEnd, employeeIds, clients, room)
+            });
 
             // Zaključava Appointment redak (FOR UPDATE) i ponovno čita Status prije mutacije — sprječava utrku s
             // konkurentnim drugim completion/cancel zahtjevom na ISTOM terminu (drugi zahtjev čeka na lock pa vidi
@@ -640,12 +650,15 @@ public class AppointmentService : IAppointmentService
         warnings.AddRange(await EnsureWorkforceAvailability(
             organizationId, requestedEmployeeIds, request.CompanyId, request.StartsAt, plannedEnd, overrideAvailability));
 
-        await EnsureNoHardOverlap(organizationId, requestedEmployeeIds, clients, request.StartsAt, plannedEnd, excludeId: id, room);
-
         // Phase M1A: Update može dodati Confirmed sudjelovanja (novi klijenti) ili ukloniti netaknuta — status termina se
         // zatim IZVODI u istoj transakciji (npr. dodan klijent na Closed termin → Scheduled).
         await using (IUnitOfWork uow = await _unitOfWorkFactory.Begin())
         {
+            // Phase M1C: isključuje se SAMO segment koji se mijenja — sestrinski segmenti istog termina ostaju vidljivi.
+            await EnsureNoHardOverlap(uow, organizationId, new[]
+            {
+                new HardOverlapTarget(executionSegment.Id, request.StartsAt, plannedEnd, requestedEmployeeIds, clients, room)
+            });
             await _appointmentHandler.UpdateWithBookings(uow, appointment, executionSegment, requestedClientIds, pricing);
             await AppointmentLifecycle.Refresh(_appointmentHandler, _auditLogHandler, uow, organizationId, id, userId);
             await uow.CommitAsync();
@@ -716,9 +729,16 @@ public class AppointmentService : IAppointmentService
         warnings.AddRange(await EnsureWorkforceAvailability(
             organizationId, effectiveEmployeeIds, appointment.CompanyId, movedSegment.PlannedStart, movedSegment.PlannedEnd, overrideAvailability));
 
-        await EnsureNoHardOverlap(organizationId, effectiveEmployeeIds, clients, movedSegment.PlannedStart, movedSegment.PlannedEnd, excludeId: id, room);
-
-        await _appointmentHandler.UpdateScalar(appointment);
+        await using (IUnitOfWork uow = await _unitOfWorkFactory.Begin())
+        {
+            // Phase M1C: isključuje se SAMO pomaknuti segment — sestrinski segmenti istog termina ostaju vidljivi.
+            await EnsureNoHardOverlap(uow, organizationId, new[]
+            {
+                new HardOverlapTarget(movedSegment.Id, movedSegment.PlannedStart, movedSegment.PlannedEnd, effectiveEmployeeIds, clients, room)
+            });
+            await _appointmentHandler.UpdateScalar(uow, appointment);
+            await uow.CommitAsync();
+        }
 
         AppointmentDto dto = await GetByIdInternal(organizationId, id);
         dto.Warnings = warnings;
@@ -772,6 +792,11 @@ public class AppointmentService : IAppointmentService
         await EnsureStructuralEligibility(organizationId, service, request.CompanyId, request.EmployeeId);
         Room room = await EnsureRoomExists(organizationId, request.CompanyId, request.RoomId);
 
+        // Phase M1C: cijeli niz se validira i upisuje u JEDNOJ transakciji koja najprije zaključa subjekte rasporeda
+        // (zaposlenik + klijenti) — batch provjere niže tada vide sve što je konkurentno commitano prije njih.
+        await using IUnitOfWork uow = await _unitOfWorkFactory.Begin();
+        await _schedulingOccupancyHandler.LockSchedulingSubjects(uow, new[] { request.EmployeeId }, request.ClientIds ?? new List<Guid>());
+
         Dictionary<DateTimeOffset, List<WarningDto>> warningsByOccurrence = await EnsureNoRecurringConflicts(
             organizationId, request.EmployeeId, request.CompanyId, occurrences, service.DefaultDurationMinutes, overrideAvailability, room);
 
@@ -799,7 +824,8 @@ public class AppointmentService : IAppointmentService
             toCreate.Add(appointment);
         }
 
-        await _appointmentHandler.AddRange(toCreate);
+        await _appointmentHandler.AddRange(uow, toCreate);
+        await uow.CommitAsync();
 
         List<AppointmentDto> created = new List<AppointmentDto>();
         foreach (Appointment appointment in toCreate)
@@ -875,7 +901,7 @@ public class AppointmentService : IAppointmentService
                 hardConflicts.Add(new RecurringConflictDetail { Date = occurrence, Reason = ErrorCodes.RecurringConflictReasonRoom });
 
             bool breakHit = candidateBreaks.Any(b =>
-                b.StartsAt < occurrenceEnd && occurrence < b.StartsAt.AddMinutes(b.DurationMinutes));
+                SchedulingInterval.Overlaps(b.StartsAt, b.StartsAt.AddMinutes(b.DurationMinutes), occurrence, occurrenceEnd));
 
             DateOnly localDate = calendar.LocalDate(occurrence);
 
@@ -1058,7 +1084,7 @@ public class AppointmentService : IAppointmentService
             // Lokalni početak u zoni organizacije + trajanje (ne lokalni kraj) — interval koji prelazi ponoć ne smije se
             // "zamotati" na sljedeći dan.
             busy.AddRange(appointments
-                .Where(a => a.EmployeeId == employeeId)
+                .Where(a => a.EmployeeIds.Contains(employeeId))
                 .Select(a => (calendar.LocalTimeOfDay(a.Start), calendar.LocalTimeOfDay(a.Start) + (a.End - a.Start))));
             busy.AddRange(breaks
                 .Where(b => b.EmployeeId == employeeId)
@@ -1100,11 +1126,20 @@ public class AppointmentService : IAppointmentService
         {
             warnings.AddRange(await EnsureWorkforceAvailability(
                 organizationId, segment.Plan.EmployeeIds, request.CompanyId, segment.Plan.PlannedStart, segment.Plan.PlannedEnd, overrideAvailability));
-            await EnsureNoHardOverlap(
-                organizationId, segment.Plan.EmployeeIds, segment.Clients, segment.Plan.PlannedStart, segment.Plan.PlannedEnd, excludeId: null, segment.Room);
         }
 
-        await _appointmentHandler.Add(appointment);
+        // Phase M1C: ciljno stanje SVIH segmenata (i međusobni sudari) + postojeće stanje pod zaključanim subjektima, u istoj
+        // transakciji kao upis — dva konkurentna Create-a za istog zaposlenika/klijenta ne mogu oba proći.
+        await using (IUnitOfWork uow = await _unitOfWorkFactory.Begin())
+        {
+            await EnsureNoHardOverlap(uow, organizationId, segments
+                .Select(segment => new HardOverlapTarget(
+                    null, segment.Plan.PlannedStart, segment.Plan.PlannedEnd, segment.Plan.EmployeeIds,
+                    segment.Clients, segment.Room))
+                .ToList());
+            await _appointmentHandler.Add(uow, appointment);
+            await uow.CommitAsync();
+        }
 
         AppointmentDto dto = await GetByIdInternal(organizationId, appointmentId);
         dto.Warnings = warnings;
@@ -1412,45 +1447,48 @@ public class AppointmentService : IAppointmentService
         return result;
     }
 
-    /// <summary>Koriste svi write endpointi (Create/CompleteNew/CompleteExisting/Update/Move preko poziva ovdje) —
-    /// STVARNI sudari (trener već ima termin/grupu, soba zauzeta, klijent već zakazan) uvijek bacaju
-    /// APPOINTMENT_OVERLAP (409), NIKAD se ne mogu zaobići s OverrideAvailability (vidi spec section 20/21-23) —
-    /// za razliku od EnsureWorkforceAvailability, ovdje nema override parametra.</summary>
-    /// <remarks>Phase M1B: ulaz je SEGMENT (planirani raspon, zaposlenici segmenta, prostorija segmenta, klijenti koji u
-    /// njemu sudjeluju) — nema okvira termina. Potpuna višesegmentna tvrda invarijanta (npr. sudar segmenata istog termina
-    /// međusobno) dolazi u sljedećoj fazi; za jednosegmentne termine ponašanje je identično.</remarks>
-    private async Task EnsureNoHardOverlap(
-        Guid organizationId, IReadOnlyList<Guid> employeeIds, List<Client> clients, DateTimeOffset plannedStart, DateTimeOffset plannedEnd,
-        Guid? excludeId, Room room)
+    /// <summary>Ciljno stanje jednog segmenta za tvrdu provjeru: <paramref name="SegmentId"/> = postojeći segment koji se
+    /// prepisuje (isključuje se SAMO on) ili null za novi; prostorija se provjerava trenutnim (M1D: konačni kapacitet) pravilom.</summary>
+    private sealed record HardOverlapTarget(
+        Guid? SegmentId, DateTimeOffset PlannedStart, DateTimeOffset PlannedEnd, IReadOnlyList<Guid> EmployeeIds, IReadOnlyList<Client> Clients, Room Room);
+
+    /// <summary>Koriste svi write endpointi (Create/CompleteNew/CompleteExisting/Update/Move/recurring) — STVARNI sudari
+    /// (zaposlenik već ima segment, prostorija zauzeta, klijent već sudjeluje) uvijek bacaju APPOINTMENT_OVERLAP (409), NIKAD
+    /// se ne mogu zaobići s OverrideAvailability (vidi spec section 20/21-23).</summary>
+    /// <remarks>Phase M1C: segmentno i konkurentno sigurno — poziva se UNUTAR transakcije upisa kao PRVI korak (zaključava
+    /// subjekte rasporeda, vidi SchedulingConflictGuard/SchedulingLockOrder), provjerava sudare između ciljnih segmenata u
+    /// memoriji pa postojeće segmente u bazi (zaposlenik → prostorija → klijent, isto kao prije), isključujući samo segmente
+    /// koji se prepisuju. Pretraga zaposlenika/klijenta nije ograničena na poslovnicu.</remarks>
+    private Task EnsureNoHardOverlap(IUnitOfWork uow, Guid organizationId, IReadOnlyList<HardOverlapTarget> targets)
     {
-        int durationMinutes = (int)(plannedEnd - plannedStart).TotalMinutes;
-        DateTimeOffset startsAt = plannedStart;
-        foreach (Guid employeeId in employeeIds)
+        Dictionary<Guid, string> clientNames = targets.SelectMany(t => t.Clients)
+            .GroupBy(c => c.Id.GetValueOrDefault())
+            .ToDictionary(g => g.Key, g => $"{g.First().FirstName} {g.First().LastName}");
+        List<Guid> rewritten = targets.Where(t => t.SegmentId.HasValue).Select(t => t.SegmentId.Value).ToList();
+        Dictionary<SegmentClaim, Room> roomByClaim = new Dictionary<SegmentClaim, Room>(ReferenceEqualityComparer.Instance);
+        List<SegmentClaim> claims = new List<SegmentClaim>();
+        foreach (HardOverlapTarget target in targets)
         {
-            List<OccupancySlot> employeeOverlaps = await _schedulingOccupancyHandler
-                .GetOverlappingForEmployee(organizationId, employeeId, startsAt, durationMinutes, excludeId);
-            if (employeeOverlaps.Count > 0)
-                throw new BusinessRuleException(ErrorCodes.AppointmentOverlap, "Trener već ima termin u ovom vremenskom razdoblju.");
+            SegmentClaim claim = new SegmentClaim(
+                target.SegmentId, target.PlannedStart, target.PlannedEnd, target.EmployeeIds.Distinct().ToList(),
+                target.Clients.Select(c => c.Id.GetValueOrDefault()).Distinct().ToList());
+            claims.Add(claim);
+            roomByClaim[claim] = target.Room;
         }
 
-        if (room != null && !room.AllowConcurrentBookings)
-        {
-            List<OccupancySlot> roomOverlaps = await _schedulingOccupancyHandler
-                .GetOverlappingForRoom(organizationId, room.Id.GetValueOrDefault(), startsAt, durationMinutes, excludeId);
-            if (roomOverlaps.Count > 0)
-                throw new BusinessRuleException(ErrorCodes.AppointmentOverlap, "Prostorija je već zauzeta u ovom vremenskom razdoblju.");
-        }
-
-        List<Guid> clientIds = clients.Select(c => c.Id.GetValueOrDefault()).ToList();
-        List<OccupancySlot> clientOverlaps = await _schedulingOccupancyHandler
-            .GetOverlappingForClients(organizationId, clientIds, startsAt, durationMinutes, excludeId);
-
-        foreach (Client client in clients)
-        {
-            bool hasOverlap = clientOverlaps.Any(a => a.ActiveClientIds.Contains(client.Id.GetValueOrDefault()));
-            if (hasOverlap)
-                throw new BusinessRuleException(ErrorCodes.AppointmentOverlap, $"Klijent {client.FirstName} {client.LastName} je već zakazan u ovom vremenskom razdoblju.");
-        }
+        return SchedulingConflictGuard.Claim(
+            _schedulingOccupancyHandler, uow, organizationId, claims,
+            clientId => clientNames.TryGetValue(clientId, out string name) ? name : null,
+            async claim =>
+            {
+                Room room = roomByClaim[claim];
+                if (room == null || room.AllowConcurrentBookings)
+                    return;
+                List<OccupancySlot> roomOverlaps = await _schedulingOccupancyHandler.GetOverlappingForRoom(
+                    uow, organizationId, room.Id.GetValueOrDefault(), claim.PlannedStart, claim.PlannedEnd, rewritten);
+                if (roomOverlaps.Count > 0)
+                    throw new BusinessRuleException(ErrorCodes.AppointmentOverlap, "Prostorija je već zauzeta u ovom vremenskom razdoblju.");
+            });
     }
 
     /// <summary>Zamjenjuje staro BuildWorkingHoursWarning — sada TVRDA blokada (throw) za sve četiri "meke"
@@ -1551,7 +1589,7 @@ public class AppointmentService : IAppointmentService
             while (candidateStart + duration <= interval.End)
             {
                 TimeSpan candidateEnd = candidateStart + duration;
-                bool overlapsBusy = busy.Any(b => candidateStart < b.End && b.Start < candidateEnd);
+                bool overlapsBusy = busy.Any(b => SchedulingInterval.Overlaps(candidateStart, candidateEnd, b.Start, b.End));
 
                 if (!overlapsBusy)
                     slots.Add(new AvailableSlotDto { Start = candidateStart, End = candidateEnd });

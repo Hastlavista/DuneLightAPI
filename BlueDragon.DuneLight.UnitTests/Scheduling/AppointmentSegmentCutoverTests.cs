@@ -256,9 +256,9 @@ public class AppointmentSegmentCutoverTests
     }
 
     [Fact]
-    public async Task Occupancy_ExplicitlyRejectsASegmentWithSeveralEmployees()
+    public async Task Occupancy_ASegmentWithSeveralEmployees_OccupiesEachOfThem_ButTheSingleEmployeeProjectionRefusesIt()
     {
-        await using SchedulingWorld w = await SchedulingWorld.Create(nameof(Occupancy_ExplicitlyRejectsASegmentWithSeveralEmployees));
+        await using SchedulingWorld w = await SchedulingWorld.Create(nameof(Occupancy_ASegmentWithSeveralEmployees_OccupiesEachOfThem_ButTheSingleEmployeeProjectionRefusesIt));
         Employee second = await w.AddEmployee("Second");
         Client other = await w.AddClient("Other", "Client");
         AppointmentDto created = await w.CreateAppointment(Z(10));
@@ -269,9 +269,13 @@ public class AppointmentSegmentCutoverTests
             await db.SaveChangesAsync();
         }
 
-        // Multi-employee occupancy is not defined yet: the legacy single-employee slot refuses to collapse it.
-        await Assert.ThrowsAsync<InvalidAppointmentSegmentStateException>(
+        // CHANGED in M1C: the employee hard overlap is per (segment, employee) — the slot carries every assigned employee, so
+        // the second employee is busy too (no collapse needed). Only the legacy single-employee projection still refuses.
+        await SchedulingAssert.BusinessRule(ErrorCodes.AppointmentOverlap,
             () => w.CreateAppointment(Z(10), client: other, employee: second));
+        OccupancySlot slot = Assert.Single(await w.EmployeeOverlapping(second.Id.Value, Z(10), 30));
+        Assert.Equal(new[] { w.Employee.Id.Value, second.Id.Value }.OrderBy(id => id), slot.EmployeeIds.OrderBy(id => id));
+        Assert.Throws<InvalidAppointmentSegmentStateException>(() => slot.EmployeeId);
     }
 
     [Fact]

@@ -1,26 +1,34 @@
 using System;
 using System.Collections.Generic;
+using BlueDragon.DuneLight.Infrastructure.Utils;
 
 namespace BlueDragon.DuneLight.Infrastructure.Domain.Models.Appointments;
 
 /// <summary>
-/// Zauzetost rasporeda koju jedan termin stvara — jedini oblik u kojem provjere preklapanja (trener, prostorija,
-/// klijent) i available-slots vide postojeće termine (vidi ISchedulingOccupancyHandler). Nije EF entitet i nema
-/// tablicu: od Phase D3A projekcija nad AppointmentSegment (jedan slot po segmentu) i Booking retcima termina.
+/// Zauzetost rasporeda koju stvara JEDAN SEGMENT — jedini oblik u kojem provjere preklapanja (zaposlenik, prostorija,
+/// klijent) i available-slots vide postojeće stanje (vidi ISchedulingOccupancyHandler). Nije EF entitet i nema tablicu:
+/// projekcija nad AppointmentSegment i sudjelovanjima tog segmenta.
 ///
-/// Start/End = PlannedStart/PlannedEnd segmenta (UTC instanti). EmployeeId = jedini zaposlenik segmenta (segment s više
-/// zaposlenika se eksplicitno odbija dok višezaposlenička zauzetost nije definirana). ActiveClientIds sadrži
-/// klijente čiji Booking na ovom terminu NIJE Cancelled/NoShow (klijent koji je otkazao/izostao ne zauzima raspored).
+/// Phase M1C: izvršni identitet je <see cref="SegmentId"/> (AppointmentId je samo kontekst — sestrinski segmenti istog
+/// termina su zasebne zauzetosti). Start/End = PlannedStart/PlannedEnd segmenta (UTC instanti, poluotvoreno [Start, End)).
+/// EmployeeIds = zaposlenici segmenta (samo za segmente koji rezerviraju slot — SegmentOccupancy). ActiveClientIds =
+/// klijenti čije sudjelovanje NA OVOM SEGMENTU zauzima raspored (ParticipationOccupancy: Confirmed/Completed).
 /// </summary>
 public sealed record OccupancySlot(
+    Guid OrganizationId,
+    Guid CompanyId,
     Guid AppointmentId,
+    Guid SegmentId,
     DateTimeOffset Start,
     DateTimeOffset End,
-    Guid? EmployeeId,
+    IReadOnlyList<Guid> EmployeeIds,
     Guid? RoomId,
     IReadOnlyList<Guid> ActiveClientIds)
 {
-    /// <summary>Standardno pravilo preklapanja (Start &lt; end &amp;&amp; start &lt; End) — susjedni intervali (kraj
-    /// jednog = početak drugog) NISU sudar.</summary>
-    public bool Overlaps(DateTimeOffset start, DateTimeOffset end) => Start < end && start < End;
+    /// <summary>Jedini zaposlenik segmenta (null bez zaposlenika); segment s više zaposlenika se eksplicitno odbija dok
+    /// višezaposlenički segmenti nisu omogućeni (vidi AppointmentSegments.GetSingleEmployeeId).</summary>
+    public Guid? EmployeeId => AppointmentSegments.GetSingleEmployeeId(SegmentId, EmployeeIds);
+
+    /// <summary>Centralno pravilo (<see cref="SchedulingInterval"/>): susjedni intervali NISU sudar.</summary>
+    public bool Overlaps(DateTimeOffset start, DateTimeOffset end) => SchedulingInterval.Overlaps(Start, End, start, end);
 }

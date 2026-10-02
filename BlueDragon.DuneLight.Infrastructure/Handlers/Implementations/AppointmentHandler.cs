@@ -490,14 +490,13 @@ public class AppointmentHandler : IAppointmentHandler
             .ToDictionaryAsync(g => g.ClientId, g => g.Count);
     }
 
-    public async Task AddRange(List<Appointment> appointments)
+    public async Task AddRange(IUnitOfWork uow, List<Appointment> appointments)
     {
         if (appointments.Count == 0)
             return;
 
-        await using DatabaseContext context = DatabaseContext.GenerateContext(_databaseSettings.ConnectionString);
-        context.Appointments.AddRange(appointments);
-        await context.SaveChangesAsync();
+        uow.Context.Appointments.AddRange(appointments);
+        await uow.Context.SaveChangesAsync();
     }
 
     /// <summary>Jedan upit nad Booking — individualni i grupni termini dijele istu tablicu, pa više nema potrebe

@@ -209,13 +209,28 @@ public class GroupHandler : IGroupHandler
         if (appointments.Count == 0)
             return true;
 
+        await using DatabaseContext context = DatabaseContext.GenerateContext(_databaseSettings.ConnectionString);
+        await using IDbContextTransaction transaction = await context.Database.BeginTransactionAsync();
+        if (!await AddAppointmentsCore(context, appointments))
+            return false;
+        await transaction.CommitAsync();
+        return true;
+    }
+
+    public async Task<bool> AddAppointments(IUnitOfWork uow, List<Appointment> appointments)
+    {
+        if (appointments.Count == 0)
+            return true;
+
+        return await AddAppointmentsCore(uow.Context, appointments);
+    }
+
+    private static async Task<bool> AddAppointmentsCore(DatabaseContext context, List<Appointment> appointments)
+    {
         List<(Guid SlotId, DateTimeOffset StartsAt)> keys = appointments
             .Select(a => (a.GroupSlotId.GetValueOrDefault(), AppointmentRange.Of(a).PlannedStart))
             .ToList();
         List<Guid> slotIds = keys.Select(k => k.SlotId).Distinct().OrderBy(id => id).ToList();
-
-        await using DatabaseContext context = DatabaseContext.GenerateContext(_databaseSettings.ConnectionString);
-        await using IDbContextTransaction transaction = await context.Database.BeginTransactionAsync();
 
         // Uvijek istim redoslijedom (sortirani slotovi) — dva generiranja preko istih slotova se ne mogu zaključati uzajamno.
         foreach (Guid slotId in slotIds)
@@ -229,7 +244,6 @@ public class GroupHandler : IGroupHandler
 
         context.Appointments.AddRange(appointments);
         await context.SaveChangesAsync();
-        await transaction.CommitAsync();
         return true;
     }
 

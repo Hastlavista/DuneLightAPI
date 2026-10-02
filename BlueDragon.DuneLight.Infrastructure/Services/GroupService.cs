@@ -448,6 +448,10 @@ public class GroupService : IGroupService
 
         await using (IUnitOfWork uow = await _unitOfWorkFactory.Begin())
         {
+            // Phase M1C: klijentov raspored se zaključava PRVI u transakciji (prije Appointment lockova kapaciteta niže) —
+            // provjera sudara i upis Bookinga na budućim occurrenceima su time serijalizirani s ostalim upisima klijenta.
+            await _schedulingOccupancyHandler.LockSchedulingSubjects(uow, Array.Empty<Guid>(), new[] { request.ClientId });
+
             await _groupHandler.AddMember(uow, new GroupMember
             {
                 Id = Guid.NewGuid(),
@@ -485,8 +489,7 @@ public class GroupService : IGroupService
                 // Član dobiva sudjelovanje na (jedinom) segmentu occurrencea — preklapanje se provjerava nad TIM segmentom.
                 AppointmentSegment futureSegment = SingleSegmentCompatibility.Resolve(futureAppointment);
                 List<OccupancySlot> overlapping = await _schedulingOccupancyHandler.GetOverlappingForClients(
-                    organizationId, new List<Guid> { request.ClientId },
-                    futureSegment.PlannedStart, AppointmentSegments.DurationMinutes(futureSegment), excludeId: futureAppointment.Id);
+                    uow, organizationId, new[] { request.ClientId }, futureSegment.PlannedStart, futureSegment.PlannedEnd, excludedSegmentIds: null);
 
                 if (overlapping.Count > 0)
                     conflicts.Add(new RecurringConflictDetail
@@ -716,6 +719,15 @@ public class GroupService : IGroupService
         // (nemoguć broj sudionika). Provjerava se samo nad grupama koje stvarno imaju kandidata u ovom rasponu.
         EnsureCapacityNotExceeded(candidates.Select(c => c.Group).GroupBy(g => g.Id).Select(g => g.First()).ToList());
 
+        // Phase M1C: provjere sudara trenera/prostorije/članova i upis idu u JEDNOJ transakciji koja najprije zaključa subjekte
+        // rasporeda (treneri, pa aktivni članovi) — tek zatim (redoslijed!) advisory lock slota u AddAppointments. Provjere
+        // niže tada vide sve što je konkurentno commitano prije njih.
+        await using IUnitOfWork uow = await _unitOfWorkFactory.Begin();
+        await _schedulingOccupancyHandler.LockSchedulingSubjects(
+            uow,
+            candidates.Where(c => c.Group.DefaultTrainerId.HasValue).Select(c => c.Group.DefaultTrainerId.Value),
+            candidates.SelectMany(c => c.Group.Members.Where(m => m.IsActive).Select(m => m.ClientId)));
+
         Dictionary<(Guid SlotId, DateTimeOffset StartsAt), List<WarningDto>> warningsByCandidate =
             await EnsureNoTrainerConflicts(organizationId, candidates, request.OverrideAvailability);
         await EnsureNoRoomConflicts(organizationId, candidates);
@@ -793,7 +805,7 @@ public class GroupService : IGroupService
 
         // Phase D3A: jedinstvenost (slot, početak) provodi GroupHandler.AddAppointments (advisory lock + ponovna provjera
         // pod lockom) umjesto nekadašnjeg unique indeksa nad appointments.starts_at — isti ishod za pozivatelja.
-        bool added = await _groupHandler.AddAppointments(toCreate);
+        bool added = await _groupHandler.AddAppointments(uow, toCreate);
         if (!added)
         {
             throw new BusinessRuleException(
@@ -808,6 +820,8 @@ public class GroupService : IGroupService
                     }).ToList()
                 });
         }
+
+        await uow.CommitAsync();
 
         return new GenerateGroupAppointmentsResult
         {
@@ -919,7 +933,7 @@ public class GroupService : IGroupService
                 }
 
                 bool breakHit = candidateBreaks.Any(b =>
-                    b.StartsAt < occurrenceEnd && startsAt < b.StartsAt.AddMinutes(b.DurationMinutes));
+                    SchedulingInterval.Overlaps(b.StartsAt, b.StartsAt.AddMinutes(b.DurationMinutes), startsAt, occurrenceEnd));
 
                 OrganizationCalendar calendar = calendarsByCompany[candidate.Group.CompanyId];
                 DateOnly localDate = calendar.LocalDate(startsAt);
@@ -1017,9 +1031,7 @@ public class GroupService : IGroupService
     /// u ovoj klasi (trener/soba/član) umjesto da svaka duplicira vlastitu formulu preklapanja.</summary>
     private static bool IntervalsOverlap(DateTimeOffset aStart, int aDurationMinutes, DateTimeOffset bStart, int bDurationMinutes)
     {
-        DateTimeOffset aEnd = aStart.AddMinutes(aDurationMinutes);
-        DateTimeOffset bEnd = bStart.AddMinutes(bDurationMinutes);
-        return aStart < bEnd && aEnd > bStart;
+        return SchedulingInterval.Overlaps(aStart, aStart.AddMinutes(aDurationMinutes), bStart, bStart.AddMinutes(bDurationMinutes));
     }
 
     /// <summary>Ima li kandidat na poziciji <paramref name="excludeIndex"/> preklapanje s BILO KOJIM drugim
@@ -1248,7 +1260,7 @@ public class GroupService : IGroupService
                         continue;
 
                     TimeSpan end = startTime + TimeSpan.FromMinutes(durationMinutes);
-                    if (startTime < otherEnd && otherStart < end)
+                    if (SchedulingInterval.Overlaps(startTime, end, otherStart, otherEnd))
                     {
                         throw new BusinessRuleException(
                             ErrorCodes.AppointmentOverlap,

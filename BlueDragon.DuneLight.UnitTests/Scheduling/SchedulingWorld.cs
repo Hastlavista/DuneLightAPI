@@ -882,6 +882,9 @@ public sealed class SchedulingWorld : IAsyncDisposable
             Form = form,
             CompanyId = Company.Id.Value,
             Status = status,
+            // M1A.1/M1C: a Cancelled appointment is an EXPLICITLY cancelled one (the production shape) — segment occupancy
+            // reads the explicit marker, never the aggregate status.
+            CancelledAt = status == AppointmentStatus.Cancelled ? DateTimeOffset.UtcNow : null,
             GroupId = groupId,
             GroupSlotId = groupSlotId,
             CreatedAt = DateTimeOffset.UtcNow

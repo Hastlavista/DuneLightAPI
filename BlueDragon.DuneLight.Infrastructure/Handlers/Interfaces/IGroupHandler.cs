@@ -68,6 +68,10 @@ public interface IGroupHandler
     /// </summary>
     Task<bool> AddAppointments(List<Appointment> appointments);
 
+    /// <summary>Kao gore, unutar pozivateljeve transakcije (Phase M1C: pozivatelj je prije zaključao subjekte rasporeda;
+    /// lock slota dolazi nakon njih). Ne commita.</summary>
+    Task<bool> AddAppointments(IUnitOfWork uow, List<Appointment> appointments);
+
     Task<List<Appointment>> GetAppointmentsForGroup(Guid organizationId, Guid groupId, DateTimeOffset from, DateTimeOffset to);
 
     /// <summary>Ima li grupa ijedan generirani termin (bilo kada) ili ijedan članski redak (aktivan ili

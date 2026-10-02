@@ -2,31 +2,50 @@ using System;
 using System.Collections.Generic;
 using System.Threading.Tasks;
 using BlueDragon.DuneLight.Infrastructure.Domain.Models.Appointments;
+using BlueDragon.DuneLight.Infrastructure.UnitOfWork;
 
 namespace BlueDragon.DuneLight.Infrastructure.Handlers.Interfaces;
 
 /// <summary>
-/// Čitanje zauzetosti rasporeda (termini trenera/prostorije/klijenta) za provjere preklapanja, recurring/grupne
-/// batch provjere, pauze i available-slots. Vraća <see cref="OccupancySlot"/> umjesto Appointment entiteta, tako da
-/// pozivatelji ne ovise o obliku pohrane termina. Od Phase D3A se gradi iz AppointmentSegment (jedan slot po segmentu:
-/// PlannedStart/PlannedEnd, prostorija i zaposlenik segmenta, aktivni klijenti termina).
+/// Čitanje zauzetosti rasporeda (zaposlenik/prostorija/klijent) za provjere preklapanja, recurring/grupne batch provjere,
+/// pauze i available-slots, te zaključavanje subjekata rasporeda. Vraća <see cref="OccupancySlot"/> (jedan po SEGMENTU).
 ///
-/// Svi upiti isključuju termine sa Status = Cancelled. Metode "Overlapping" dohvaćaju kandidate čiji PlannedStart pada
-/// unutar ±1 dan od traženog početka i zatim u memoriji zadržavaju samo stvarna preklapanja (susjedni intervali nisu
-/// sudar); metode "InRange" vraćaju sve segmente čiji PlannedStart pada unutar [rangeFrom, rangeTo] (uključivo), a precizna
-/// provjera po occurrenceu radi se kod pozivatelja.
+/// Phase M1C:
+/// <list type="bullet">
+/// <item>preklapanje je poluotvoreno [start, end) i računa se u SQL-u istom formulom (SchedulingInterval) — bez ±1 dan
+/// prozora;</item>
+/// <item>zaposlenik/prostorija: samo segmenti koji rezerviraju slot (SegmentOccupancy — po segmentu, ne po
+/// Appointment.Status); klijent: samo sudjelovanja koja zauzimaju raspored (ParticipationOccupancy);</item>
+/// <item>isključenje je po SEGMENTU (<c>excludedSegmentIds</c>) — nikad cijeli termin, pa sestrinski segmenti istog termina
+/// ostaju vidljivi;</item>
+/// <item>pretraga zaposlenika i klijenta NIJE ograničena na poslovnicu (identitet subjekta je iznad poslovnice), uvijek
+/// jest na organizaciju.</item>
+/// </list>
+/// Metode s <see cref="IUnitOfWork"/> čitaju unutar pozivateljeve transakcije (vide i njezine nespremljene upise) — za tvrde
+/// provjere POD zaključanim subjektima (<see cref="LockSchedulingSubjects"/>).
 /// </summary>
 public interface ISchedulingOccupancyHandler
 {
-    Task<List<OccupancySlot>> GetOverlappingForEmployee(Guid organizationId, Guid employeeId, DateTimeOffset startsAt, int durationMinutes, Guid? excludeId);
+    /// <summary>Segmenti koji rezerviraju slot, s barem jednim od zaposlenika, preklapajući [start, end).</summary>
+    Task<List<OccupancySlot>> GetOverlappingForEmployees(
+        IUnitOfWork uow, Guid organizationId, IReadOnlyCollection<Guid> employeeIds, DateTimeOffset start, DateTimeOffset end,
+        IReadOnlyCollection<Guid> excludedSegmentIds);
 
-    /// <summary>Termini gdje BAREM JEDAN od zadanih klijenata ima AKTIVAN Booking (Confirmed/Completed — ne
-    /// Cancelled/NoShow) koji se preklapa s traženim intervalom.</summary>
-    Task<List<OccupancySlot>> GetOverlappingForClients(Guid organizationId, List<Guid> clientIds, DateTimeOffset startsAt, int durationMinutes, Guid? excludeId);
+    /// <summary>Kao gore, izvan transakcije (vlastiti DbContext) — pauze zaposlenika.</summary>
+    Task<List<OccupancySlot>> GetOverlappingForEmployee(
+        Guid organizationId, Guid employeeId, DateTimeOffset start, DateTimeOffset end, IReadOnlyCollection<Guid> excludedSegmentIds = null);
 
-    Task<List<OccupancySlot>> GetOverlappingForRoom(Guid organizationId, Guid roomId, DateTimeOffset startsAt, int durationMinutes, Guid? excludeId);
+    /// <summary>Segmenti na kojima BAREM JEDAN od klijenata ima sudjelovanje koje zauzima raspored (Confirmed/Completed),
+    /// preklapajući [start, end).</summary>
+    Task<List<OccupancySlot>> GetOverlappingForClients(
+        IUnitOfWork uow, Guid organizationId, IReadOnlyCollection<Guid> clientIds, DateTimeOffset start, DateTimeOffset end,
+        IReadOnlyCollection<Guid> excludedSegmentIds);
 
-    /// <summary>Svi termini trenera unutar raspona — kandidati za preklapanje cijelog recurring niza odjednom.</summary>
+    /// <summary>Segmenti u prostoriji koji rezerviraju slot, preklapajući [start, end) (konačni fizički kapacitet: M1D).</summary>
+    Task<List<OccupancySlot>> GetOverlappingForRoom(
+        IUnitOfWork uow, Guid organizationId, Guid roomId, DateTimeOffset start, DateTimeOffset end, IReadOnlyCollection<Guid> excludedSegmentIds);
+
+    /// <summary>Svi segmenti zaposlenika koji se preklapaju s [rangeFrom, rangeTo] — kandidati za batch provjere.</summary>
     Task<List<OccupancySlot>> GetForEmployeeInRange(Guid organizationId, Guid employeeId, DateTimeOffset rangeFrom, DateTimeOffset rangeTo);
 
     /// <summary>Kao <see cref="GetForEmployeeInRange"/>, ali za više zaposlenika u jednom upitu (available-slots).</summary>
@@ -35,6 +54,14 @@ public interface ISchedulingOccupancyHandler
     /// <summary>Kao <see cref="GetForEmployeeInRange"/>, ali po prostoriji.</summary>
     Task<List<OccupancySlot>> GetForRoomInRange(Guid organizationId, Guid roomId, DateTimeOffset rangeFrom, DateTimeOffset rangeTo);
 
-    /// <summary>Svi termini s AKTIVNIM Bookingom bilo kojeg od klijenata unutar raspona.</summary>
+    /// <summary>Svi segmenti sa sudjelovanjem bilo kojeg od klijenata koje zauzima raspored, unutar raspona.</summary>
     Task<List<OccupancySlot>> GetForClientsInRange(Guid organizationId, List<Guid> clientIds, DateTimeOffset rangeFrom, DateTimeOffset rangeTo);
+
+    /// <summary>Phase M1C: zaključava subjekte rasporeda (transakcijski advisory lock, redoslijed iz SchedulingLockOrder:
+    /// zaposlenici pa klijenti, uzlazno). Mora biti PRVI lock u transakciji (prije Appointment/sudjelovanje/paket lockova).</summary>
+    Task LockSchedulingSubjects(IUnitOfWork uow, IEnumerable<Guid> employeeIds, IEnumerable<Guid> clientIds);
+
+    /// <summary>Phase M1C: neblokirajući lock klijenta — za tokove koji već drže lock dalje u redoslijedu (promocija s liste
+    /// čekanja pod Appointment lockom). false = lock trenutno drži druga transakcija.</summary>
+    Task<bool> TryLockClientSchedule(IUnitOfWork uow, Guid clientId);
 }

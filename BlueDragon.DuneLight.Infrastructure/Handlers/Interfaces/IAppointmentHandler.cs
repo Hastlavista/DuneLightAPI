@@ -83,7 +83,7 @@ public interface IAppointmentHandler
     Task<List<Appointment>> GetForDashboard(Guid organizationId, Guid companyId, DateTimeOffset dayStart, DateTimeOffset dayEnd);
 
     /// <summary>Batch insert za recurring niz — appointment.Bookings mora biti popunjen za svaki termin prije poziva, jedan SaveChangesAsync za cijeli niz.</summary>
-    Task AddRange(List<Appointment> appointments);
+    Task AddRange(IUnitOfWork uow, List<Appointment> appointments);
 
     Task<(List<Appointment> Items, int TotalCount)> GetByClient(Guid organizationId, Guid clientId, PagedRequest request);
 

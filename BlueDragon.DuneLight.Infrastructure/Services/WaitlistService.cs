@@ -264,6 +264,13 @@ public class WaitlistService : IWaitlistService, IWaitlistPromotionService
             if (freeSeats <= 0)
                 break;
 
+            // Phase M1C: promocija se izvršava POD Appointment lockom (kasnije u globalnom redoslijedu od subjekata rasporeda),
+            // pa klijenta zaključava samo NEBLOKIRAJUĆE — nikad ne čeka, pa ne može zatvoriti ciklus. Ako klijentov raspored
+            // upravo mijenja druga transakcija, promocija se odgađa (FIFO: ni kasniji čekatelji ne preskaču ovog) — čekatelj
+            // ostaje Waiting za sljedeću priliku (sljedeće oslobađanje mjesta).
+            if (!await _schedulingOccupancyHandler.TryLockClientSchedule(uow, entry.ClientId))
+                break;
+
             string ineligibleReason = await FindIneligibilityReason(uow, organizationId, appointment, entry);
 
             if (ineligibleReason != null)
@@ -340,9 +347,8 @@ public class WaitlistService : IWaitlistService, IWaitlistPromotionService
     }
 
     /// <summary>Revalidacija PRIJE promocije (spec section 13/51) — sve unutar ISTE transakcije/uow.Context kao
-    /// zaključani Appointment redak, tako da odluka odražava stvarno trenutno stanje. GetOverlappingForClients
-    /// namjerno koristi handler (zaseban DbContext) jer provjerava DRUGE termine klijenta, ne stanje koje ova
-    /// transakcija mijenja — reuse postojeće infrastrukture preklapanja umjesto duplicirane logike (section 51).</summary>
+    /// zaključani Appointment redak (i zaključan klijentov raspored), tako da odluka odražava stvarno trenutno stanje.
+    /// Phase M1C: sudar se traži nad SEGMENTIMA (uključivo sestrinske segmente istog termina), unutar ove transakcije.</summary>
     private async Task<string> FindIneligibilityReason(IUnitOfWork uow, Guid organizationId, Appointment appointment, WaitlistEntry entry)
     {
         Client client = await uow.Context.Clients.SingleOrDefaultAsync(c => c.Id == entry.ClientId && c.OrganizationId == organizationId);
@@ -360,7 +366,7 @@ public class WaitlistService : IWaitlistService, IWaitlistPromotionService
             return WaitlistExpiredReasons.AppointmentNoLongerAvailable;
 
         List<OccupancySlot> overlapping = await _schedulingOccupancyHandler.GetOverlappingForClients(
-            organizationId, new List<Guid> { entry.ClientId }, segment.PlannedStart, AppointmentSegments.DurationMinutes(segment), excludeId: appointment.Id);
+            uow, organizationId, new[] { entry.ClientId }, segment.PlannedStart, segment.PlannedEnd, excludedSegmentIds: null);
         if (overlapping.Count > 0)
             return WaitlistExpiredReasons.ClientScheduleConflict;
 
