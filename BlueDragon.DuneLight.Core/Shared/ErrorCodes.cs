@@ -77,6 +77,10 @@ public static class ErrorCodes
     public const string RoomCapacityExceeded = "ROOM_CAPACITY_EXCEEDED";
     /// <summary>Phase M1D: istovremeni zbroj QuantityRequired premašio bi Resource.Capacity — tvrdo ograničenje, bez override-a.</summary>
     public const string ResourceCapacityExceeded = "RESOURCE_CAPACITY_EXCEEDED";
+    /// <summary>Phase M1D.1: smanjenje Room.Capacity ispod vršne zauzetosti (osobe) tekućih/budućih segmenata.</summary>
+    public const string RoomCapacityBelowScheduledUsage = "ROOM_CAPACITY_BELOW_SCHEDULED_USAGE";
+    /// <summary>Phase M1D.1: smanjenje Resource.Capacity ispod vršne zauzetosti (QuantityRequired) tekućih/budućih segmenata.</summary>
+    public const string ResourceCapacityBelowScheduledUsage = "RESOURCE_CAPACITY_BELOW_SCHEDULED_USAGE";
     public const string InactiveResource = "INACTIVE_RESOURCE";
     public const string ResourceCompanyMismatch = "RESOURCE_COMPANY_MISMATCH";
     /// <summary>Phase M1B: operacija nad aktivnim sudjelovanjima (npr. bulk no-show termina) nema nijedno aktivno

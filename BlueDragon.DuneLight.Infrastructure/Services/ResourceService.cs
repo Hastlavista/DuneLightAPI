@@ -8,6 +8,8 @@ using BlueDragon.DuneLight.Core.Shared;
 using BlueDragon.DuneLight.Core.Shared.Exceptions;
 using BlueDragon.DuneLight.Infrastructure.Domain.Models.Catalog;
 using BlueDragon.DuneLight.Infrastructure.Handlers.Interfaces;
+using BlueDragon.DuneLight.Infrastructure.UnitOfWork;
+using BlueDragon.DuneLight.Infrastructure.Utils;
 
 namespace BlueDragon.DuneLight.Infrastructure.Services;
 
@@ -21,11 +23,17 @@ public class ResourceService : IResourceService
 {
     private readonly IResourceHandler _resourceHandler;
     private readonly ICompanyHandler _companyHandler;
+    private readonly ISchedulingOccupancyHandler _schedulingOccupancyHandler;
+    private readonly IUnitOfWorkFactory _unitOfWorkFactory;
 
-    public ResourceService(IResourceHandler resourceHandler, ICompanyHandler companyHandler)
+    public ResourceService(
+        IResourceHandler resourceHandler, ICompanyHandler companyHandler, ISchedulingOccupancyHandler schedulingOccupancyHandler,
+        IUnitOfWorkFactory unitOfWorkFactory)
     {
         _resourceHandler = resourceHandler;
         _companyHandler = companyHandler;
+        _schedulingOccupancyHandler = schedulingOccupancyHandler;
+        _unitOfWorkFactory = unitOfWorkFactory;
     }
 
     public async Task<PagedResult<ResourceDto>> GetPaged(Guid organizationId, Guid? companyId, PagedRequest request)
@@ -77,23 +85,37 @@ public class ResourceService : IResourceService
 
     public async Task<ResourceDto> Update(Guid organizationId, Guid userId, Guid id, ResourceUpdateRequest request)
     {
-        Resource resource = await _resourceHandler.GetById(organizationId, id);
-        if (resource == null)
+        Resource existing = await _resourceHandler.GetById(organizationId, id);
+        if (existing == null)
             throw new NotFoundAppException("Resource", id);
 
         string name = request.Name?.Trim();
         EnsureCapacityIsValid(request.Capacity);
-        await EnsureNameIsUnique(organizationId, resource.CompanyId, name, excludeId: id);
+        await EnsureNameIsUnique(organizationId, existing.CompanyId, name, excludeId: id);
 
-        // Id, OrganizationId i CompanyId se namjerno ne diraju — resurs nikad ne mijenja poslovnicu ni organizaciju.
-        resource.Name = name;
-        resource.Capacity = request.Capacity;
-        resource.Note = request.Note;
-        resource.SortOrder = request.SortOrder;
-        resource.UpdatedAt = DateTimeOffset.UtcNow;
-        resource.UpdatedBy = userId;
+        // Phase M1D.1: kapacitet je TVRDA invarijanta zakazivanja — izmjena uzima ISTI lock subjekta rasporeda kao upisi
+        // zakazivanja (SchedulingLockOrder; jedini lock ove transakcije), tek zatim čita trenutni kapacitet i (kod smanjenja)
+        // vršnu tekuću/buduću zauzetost; commit dok je lock još držan. Povećanje je uvijek dopušteno.
+        await using (IUnitOfWork uow = await _unitOfWorkFactory.Begin())
+        {
+            await _schedulingOccupancyHandler.LockSchedulingSubjects(uow, null, null, null, new[] { id });
+            Resource resource = await _resourceHandler.GetForCapacityChange(uow, organizationId, id);
+            if (resource == null)
+                throw new NotFoundAppException("Resource", id);
 
-        await _resourceHandler.Update(resource);
+            await CapacityChangeGuard.EnsureResourceCapacityChange(
+                _schedulingOccupancyHandler, uow, organizationId, id, resource.Name, resource.Capacity, request.Capacity, DateTimeOffset.UtcNow);
+
+            // Id, OrganizationId i CompanyId se namjerno ne diraju — Resource nikad ne mijenja poslovnicu.
+            resource.Name = name;
+            resource.Capacity = request.Capacity;
+            resource.Note = request.Note;
+            resource.SortOrder = request.SortOrder;
+            resource.UpdatedAt = DateTimeOffset.UtcNow;
+            resource.UpdatedBy = userId;
+            await uow.CommitAsync();
+        }
+
         return await GetById(organizationId, id);
     }
 

@@ -27,34 +27,30 @@ public readonly record struct CapacityEvaluation(int PeakUsage, DateTimeOffset? 
 /// </summary>
 public static class IntervalCapacity
 {
+    /// <summary>Phase M1D.1: najveća istovremena zauzetost SVIH zadanih zauzetosti (isti sweep, isto [start, end)) i trenutak
+    /// njezina početka — za provjeru smanjenja kapaciteta nad postojećim stanjem.</summary>
+    public static (int PeakUsage, DateTimeOffset? PeakAt) Peak(IReadOnlyList<CapacityClaim> claims)
+    {
+        ArgumentNullException.ThrowIfNull(claims);
+        int peak = 0;
+        DateTimeOffset? peakAt = null;
+        foreach ((DateTimeOffset from, DateTimeOffset _, int usage) in Slices(claims))
+        {
+            if (usage <= peak)
+                continue;
+            peak = usage;
+            peakAt = from;
+        }
+
+        return (peak, peakAt);
+    }
+
     public static CapacityEvaluation Evaluate(IReadOnlyList<CapacityClaim> existing, IReadOnlyList<CapacityClaim> proposed, int capacity)
     {
         ArgumentNullException.ThrowIfNull(existing);
         ArgumentNullException.ThrowIfNull(proposed);
 
-        List<(DateTimeOffset At, int Delta)> events = new();
-        foreach (CapacityClaim claim in existing.Concat(proposed))
-        {
-            if (claim.End <= claim.Start)
-                throw new ArgumentException("Zauzetost mora završiti nakon početka.");
-            if (claim.Amount <= 0)
-                continue;
-            events.Add((claim.Start, claim.Amount));
-            events.Add((claim.End, -claim.Amount));
-        }
-
-        // Isti trenutak: negativne promjene (krajevi) prije pozitivnih (počeci) — [start, end).
-        events.Sort((a, b) => a.At != b.At ? a.At.CompareTo(b.At) : a.Delta.CompareTo(b.Delta));
-
-        // Konstantni odsječci [from, to) s pripadnom zauzetošću.
-        List<(DateTimeOffset From, DateTimeOffset To, int Usage)> slices = new();
-        int usage = 0;
-        for (int i = 0; i < events.Count; i++)
-        {
-            usage += events[i].Delta;
-            if (i + 1 < events.Count && events[i + 1].At > events[i].At && usage > 0)
-                slices.Add((events[i].At, events[i + 1].At, usage));
-        }
+        List<(DateTimeOffset From, DateTimeOffset To, int Usage)> slices = Slices(existing.Concat(proposed).ToList());
 
         int peak = 0;
         DateTimeOffset? peakAt = null;
@@ -82,5 +78,34 @@ public static class IntervalCapacity
         }
 
         return new CapacityEvaluation(peak, peakAt, violating);
+    }
+
+    /// <summary>Konstantni odsječci [from, to) s pripadnom (pozitivnom) zauzetošću — sweep po granicama; na istom trenutku
+    /// krajevi prije početaka.</summary>
+    private static List<(DateTimeOffset From, DateTimeOffset To, int Usage)> Slices(IReadOnlyList<CapacityClaim> claims)
+    {
+        List<(DateTimeOffset At, int Delta)> events = new();
+        foreach (CapacityClaim claim in claims)
+        {
+            if (claim.End <= claim.Start)
+                throw new ArgumentException("Zauzetost mora završiti nakon početka.");
+            if (claim.Amount <= 0)
+                continue;
+            events.Add((claim.Start, claim.Amount));
+            events.Add((claim.End, -claim.Amount));
+        }
+
+        events.Sort((a, b) => a.At != b.At ? a.At.CompareTo(b.At) : a.Delta.CompareTo(b.Delta));
+
+        List<(DateTimeOffset From, DateTimeOffset To, int Usage)> slices = new();
+        int usage = 0;
+        for (int i = 0; i < events.Count; i++)
+        {
+            usage += events[i].Delta;
+            if (i + 1 < events.Count && events[i + 1].At > events[i].At && usage > 0)
+                slices.Add((events[i].At, events[i + 1].At, usage));
+        }
+
+        return slices;
     }
 }

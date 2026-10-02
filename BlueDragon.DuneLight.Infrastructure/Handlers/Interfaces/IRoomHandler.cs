@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Threading.Tasks;
 using BlueDragon.DuneLight.Core.Shared;
 using BlueDragon.DuneLight.Infrastructure.Domain.Models.Catalog;
+using BlueDragon.DuneLight.Infrastructure.UnitOfWork;
 
 namespace BlueDragon.DuneLight.Infrastructure.Handlers.Interfaces;
 
@@ -14,7 +15,14 @@ public interface IRoomHandler
     /// <summary>Batch dohvat po ID-evima u jednom upitu — izbjegava N+1 kod validacije liste prostorija.</summary>
     Task<List<Room>> GetByIds(Guid organizationId, List<Guid> ids);
     Task Add(Room room);
+    /// <summary>Opća izmjena kataloga (naziv, napomena, redoslijed, aktivnost) — Phase M1D.1: NIKAD ne piše Capacity (stara
+    /// vrijednost učitanog entiteta ne smije prepisati kapacitet mimo zaključane provjere); kapacitet mijenja samo
+    /// <see cref="GetForCapacityChange"/> put.</summary>
     Task Update(Room room);
+
+    /// <summary>Phase M1D.1: praćen room učitan UNUTAR transakcije nakon što je pozivatelj zaključao subjekt rasporeda — jedini
+    /// put kojim se mijenja Capacity (sprema ga pozivateljev CommitAsync).</summary>
+    Task<Room> GetForCapacityChange(IUnitOfWork uow, Guid organizationId, Guid id);
     Task Delete(Room room);
 
     /// <summary>Naziv se uspoređuje normalizirano (trim + case-insensitive) unutar iste Company, isto kao

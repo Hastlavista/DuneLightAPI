@@ -7,6 +7,7 @@ using BlueDragon.DuneLight.Infrastructure.Domain.Contexts;
 using BlueDragon.DuneLight.Infrastructure.Domain.Models.Catalog;
 using BlueDragon.DuneLight.Infrastructure.Domain.Settings;
 using BlueDragon.DuneLight.Infrastructure.Handlers.Interfaces;
+using BlueDragon.DuneLight.Infrastructure.UnitOfWork;
 using Microsoft.EntityFrameworkCore;
 
 namespace BlueDragon.DuneLight.Infrastructure.Handlers.Implementations;
@@ -76,8 +77,12 @@ public class RoomHandler : IRoomHandler
     {
         await using DatabaseContext context = DatabaseContext.GenerateContext(_databaseSettings.ConnectionString);
         context.Rooms.Update(room);
+        context.Entry(room).Property(x => x.Capacity).IsModified = false;
         await context.SaveChangesAsync();
     }
+
+    public Task<Room> GetForCapacityChange(IUnitOfWork uow, Guid organizationId, Guid id) =>
+        uow.Context.Rooms.SingleOrDefaultAsync(x => x.OrganizationId == organizationId && x.Id == id);
 
     public async Task Delete(Room room)
     {

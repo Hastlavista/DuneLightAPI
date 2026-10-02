@@ -8,6 +8,8 @@ using BlueDragon.DuneLight.Core.Shared;
 using BlueDragon.DuneLight.Core.Shared.Exceptions;
 using BlueDragon.DuneLight.Infrastructure.Domain.Models.Catalog;
 using BlueDragon.DuneLight.Infrastructure.Handlers.Interfaces;
+using BlueDragon.DuneLight.Infrastructure.UnitOfWork;
+using BlueDragon.DuneLight.Infrastructure.Utils;
 
 namespace BlueDragon.DuneLight.Infrastructure.Services;
 
@@ -22,11 +24,17 @@ public class RoomService : IRoomService
 {
     private readonly IRoomHandler _roomHandler;
     private readonly ICompanyHandler _companyHandler;
+    private readonly ISchedulingOccupancyHandler _schedulingOccupancyHandler;
+    private readonly IUnitOfWorkFactory _unitOfWorkFactory;
 
-    public RoomService(IRoomHandler roomHandler, ICompanyHandler companyHandler)
+    public RoomService(
+        IRoomHandler roomHandler, ICompanyHandler companyHandler, ISchedulingOccupancyHandler schedulingOccupancyHandler,
+        IUnitOfWorkFactory unitOfWorkFactory)
     {
         _roomHandler = roomHandler;
         _companyHandler = companyHandler;
+        _schedulingOccupancyHandler = schedulingOccupancyHandler;
+        _unitOfWorkFactory = unitOfWorkFactory;
     }
 
     public async Task<PagedResult<RoomDto>> GetPaged(Guid organizationId, Guid? companyId, PagedRequest request)
@@ -75,24 +83,37 @@ public class RoomService : IRoomService
 
     public async Task<RoomDto> Update(Guid organizationId, Guid userId, Guid id, RoomUpdateRequest request)
     {
-        Room room = await _roomHandler.GetById(organizationId, id);
-        if (room == null)
+        Room existing = await _roomHandler.GetById(organizationId, id);
+        if (existing == null)
             throw new NotFoundAppException("Room", id);
 
         string name = request.Name?.Trim();
         EnsureCapacityIsValid(request.Capacity);
-        await EnsureNameIsUnique(organizationId, room.CompanyId, name, excludeId: id);
+        await EnsureNameIsUnique(organizationId, existing.CompanyId, name, excludeId: id);
 
-        // Id, OrganizationId i CompanyId se namjerno ne diraju — Room nikad ne mijenja poslovnicu (vidi
-        // klasnu napomenu). Za fizički premještaj: deaktivirati ovu i kreirati novu u ciljnoj Company.
-        room.Name = name;
-        room.Capacity = request.Capacity;
-        room.Note = request.Note;
-        room.SortOrder = request.SortOrder;
-        room.UpdatedAt = DateTimeOffset.UtcNow;
-        room.UpdatedBy = userId;
+        // Phase M1D.1: kapacitet je TVRDA invarijanta zakazivanja — izmjena uzima ISTI lock subjekta rasporeda kao upisi
+        // zakazivanja (SchedulingLockOrder; jedini lock ove transakcije), tek zatim čita trenutni kapacitet i (kod smanjenja)
+        // vršnu tekuću/buduću zauzetost; commit dok je lock još držan. Povećanje je uvijek dopušteno.
+        await using (IUnitOfWork uow = await _unitOfWorkFactory.Begin())
+        {
+            await _schedulingOccupancyHandler.LockSchedulingSubjects(uow, null, null, new[] { id });
+            Room room = await _roomHandler.GetForCapacityChange(uow, organizationId, id);
+            if (room == null)
+                throw new NotFoundAppException("Room", id);
 
-        await _roomHandler.Update(room);
+            await CapacityChangeGuard.EnsureRoomCapacityChange(
+                _schedulingOccupancyHandler, uow, organizationId, id, room.Name, room.Capacity, request.Capacity, DateTimeOffset.UtcNow);
+
+            // Id, OrganizationId i CompanyId se namjerno ne diraju — Room nikad ne mijenja poslovnicu.
+            room.Name = name;
+            room.Capacity = request.Capacity;
+            room.Note = request.Note;
+            room.SortOrder = request.SortOrder;
+            room.UpdatedAt = DateTimeOffset.UtcNow;
+            room.UpdatedBy = userId;
+            await uow.CommitAsync();
+        }
+
         return await GetById(organizationId, id);
     }
 

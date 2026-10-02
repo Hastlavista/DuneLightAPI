@@ -7,6 +7,7 @@ using BlueDragon.DuneLight.Infrastructure.Domain.Contexts;
 using BlueDragon.DuneLight.Infrastructure.Domain.Models.Catalog;
 using BlueDragon.DuneLight.Infrastructure.Domain.Settings;
 using BlueDragon.DuneLight.Infrastructure.Handlers.Interfaces;
+using BlueDragon.DuneLight.Infrastructure.UnitOfWork;
 using Microsoft.EntityFrameworkCore;
 
 namespace BlueDragon.DuneLight.Infrastructure.Handlers.Implementations;
@@ -69,8 +70,12 @@ public class ResourceHandler : IResourceHandler
     {
         await using DatabaseContext context = DatabaseContext.GenerateContext(_databaseSettings.ConnectionString);
         context.Resources.Update(resource);
+        context.Entry(resource).Property(x => x.Capacity).IsModified = false;
         await context.SaveChangesAsync();
     }
+
+    public Task<Resource> GetForCapacityChange(IUnitOfWork uow, Guid organizationId, Guid id) =>
+        uow.Context.Resources.SingleOrDefaultAsync(x => x.OrganizationId == organizationId && x.Id == id);
 
     public async Task Delete(Resource resource)
     {
