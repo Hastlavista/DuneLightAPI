@@ -102,7 +102,7 @@ public class BookingParticipationPricingTests
         await using SchedulingWorld w = await SchedulingWorld.Create(nameof(EveryCreationPath_PricesItsParticipationFromAResolution_AndTheBookingHasNoPrice));
         Client added = await w.AddClient("Added", "Client");
 
-        // Individual: Create, recurring, CompleteNew, Update adding a client.
+        // Individual: Create, recurring, CompleteNow, AddClient.
         AppointmentDto single = await w.CreateAppointment(Z(8));
         await w.Appointments.CreateRecurring(w.OrganizationId, w.ActorUserId, true, new RecurringAppointmentCreateRequest
         {
@@ -111,8 +111,7 @@ public class BookingParticipationPricingTests
             FirstOccurrenceStartsAt = Z(9), EndDate = Z(9).AddDays(14)
         });
         await w.CompleteNew(w.CompleteRequest(Z(13)));
-        await w.Appointments.Update(w.OrganizationId, w.ActorUserId, true, single.Id,
-            w.UpdateRequest(single, r => r.ClientIds = new List<Guid> { w.Client.Id.Value, added.Id.Value }));
+        await w.AddClientToOnlySegment(single.Id, added);
 
         // Group: generation, AddMember after generation, guest (AddBooking), waitlist promotion.
         ServiceEntity groupService = await w.AddGroupService();
@@ -121,7 +120,8 @@ public class BookingParticipationPricingTests
         await w.AddGroupMember(group, member);
         Appointment occurrence = await w.GenerateSingleOccurrence(group);
         Client waiter = await w.AddClient("Waiter", "Client");
-        await w.Waitlist.Join(w.OrganizationId, w.ActorUserId, true, occurrence.Id.Value, new WaitlistJoinRequest { ClientId = waiter.Id.Value });
+        await w.Waitlist.Join(w.OrganizationId, w.ActorUserId, true, occurrence.Id.Value,
+            new WaitlistJoinRequest { ClientId = waiter.Id.Value, SegmentId = Assert.Single(occurrence.Segments).Id });
         await w.SetBookingStatus(occurrence.Id.Value, member, BookingStatus.Cancelled, "cannot come"); // promotes the waiter
         GroupDto roomy = await w.CreateGroup(groupService, capacity: 5, slots: (DayOfWeek.Monday, TimeSpan.FromHours(16)));
         Appointment roomyOccurrence = await w.GenerateSingleOccurrence(roomy);
@@ -157,44 +157,31 @@ public class BookingParticipationPricingTests
     #region Repricing
 
     [Fact]
-    public async Task Update_RepricesTheParticipations_AndPricingIsNotLifecycleHistory()
+    public async Task ParticipationPriceChange_RepricesOnlyThatParticipation_AndPricingIsNotLifecycleHistory()
     {
-        await using SchedulingWorld w = await SchedulingWorld.Create(nameof(Update_RepricesTheParticipations_AndPricingIsNotLifecycleHistory));
+        await using SchedulingWorld w = await SchedulingWorld.Create(nameof(ParticipationPriceChange_RepricesOnlyThatParticipation_AndPricingIsNotLifecycleHistory));
         Client second = await w.AddClient("Second", "Client");
         AppointmentDto created = await w.CreateAppointment(Z(10), extraClients: second);
 
-        await w.Appointments.Update(w.OrganizationId, w.ActorUserId, true, created.Id, w.UpdateRequest(created, r => r.Amount = 20m));
+        await w.SetParticipationPrice(created.Id, second, 20m);
 
         BookingSegmentParticipation p = await ParticipationOf(w, created.Id, second);
         AssertPrice(p, 20m, 50m, true, 50m, PriceSource.Default);
+        AssertPrice(await ParticipationOf(w, created.Id, w.Client), 50m, 50m, false, 50m, PriceSource.Default);
         Assert.Equal(0, p.StatusVersion);
         Assert.True(ParticipationHistory.IsUntouched(p)); // a repriced participation is still deletable
 
-        AppointmentDto current = await w.Appointments.GetById(w.OrganizationId, created.Id);
-        await w.Appointments.Update(w.OrganizationId, w.ActorUserId, true, created.Id,
-            w.UpdateRequest(current, r => r.ClientIds = new List<Guid> { w.Client.Id.Value }));
+        await w.RemoveClientFromOnlySegment(created.Id, second);
         Assert.Equal(w.Client.Id, Assert.Single((await w.LoadAppointment(created.Id)).Bookings).ClientId);
     }
 
     [Fact]
-    public async Task Update_AfterAPriceListChange_ReResolvesTheSnapshot()
+    public async Task CompletingWithASettlementAmount_RepricesTheParticipation()
     {
-        await using SchedulingWorld w = await SchedulingWorld.Create(nameof(Update_AfterAPriceListChange_ReResolvesTheSnapshot));
-        AppointmentDto created = await w.CreateAppointment(Z(10));
-        await w.AddPriceListItem(w.Service, 65m, validFrom: LongAgo, companyId: w.Company.Id);
-
-        await w.Appointments.Update(w.OrganizationId, w.ActorUserId, true, created.Id, w.UpdateRequest(created));
-
-        AssertPrice(await ParticipationOf(w, created.Id, w.Client), 65m, 65m, false, 65m, PriceSource.CompanySpecific);
-    }
-
-    [Fact]
-    public async Task CompleteExisting_RepricesTheParticipationFromTheSettlement()
-    {
-        await using SchedulingWorld w = await SchedulingWorld.Create(nameof(CompleteExisting_RepricesTheParticipationFromTheSettlement));
+        await using SchedulingWorld w = await SchedulingWorld.Create(nameof(CompletingWithASettlementAmount_RepricesTheParticipation));
         AppointmentDto created = await w.CreateAppointment(Z(10));
 
-        await w.CompleteExisting(created.Id, w.CompleteRequest(Z(10), settlementAmount: 42m));
+        await w.CompleteParticipations(created.Id, w.CompleteRequest(Z(10), settlementAmount: 42m));
 
         AssertPrice(await ParticipationOf(w, created.Id, w.Client), 42m, 50m, true, 50m, PriceSource.Default);
     }

@@ -304,8 +304,12 @@ public class CapacityEditInvariantTests
 
             Exception[] outcomes = await Gated(w, SchedulingLockOrder.RoomKey(room.Id.Value),
                 gate => occupancy.LockSchedulingSubjects(gate, null, null, new[] { room.Id.Value }),
-                () => InOwnScope(sp => sp.GetRequiredService<IBookingService>().AddBooking(
-                    w.OrganizationId, w.ActorUserId, true, created.Id, new BookingCreateRequest { ClientId = joiner.Id.Value })),
+                () => InOwnScope(sp => sp.GetRequiredService<IAppointmentService>().AddClient(
+                    w.OrganizationId, w.ActorUserId, true, created.Id, new AppointmentClientAddRequest
+                    {
+                        ClientId = joiner.Id.Value,
+                        Participations = new List<AppointmentClientParticipationRequest> { new() { SegmentId = created.Segments[0].Id } }
+                    })),
                 () => InOwnScope(sp => sp.GetRequiredService<IRoomService>().Update(
                     w.OrganizationId, w.ActorUserId, room.Id.Value, RoomEdit(room, 2))));
 

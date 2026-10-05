@@ -43,13 +43,13 @@ dotnet test BlueDragon.DuneLight.UnitTests --filter "FullyQualifiedName~Scheduli
 | `AppointmentCreateCharacterizationTests` | A — create, snapshots, structural eligibility, authorization scope |
 | `AppointmentOverlapCharacterizationTests` | B, C, D — employee / client / room overlap; DB-level constraints |
 | `AppointmentWorkforceAvailabilityCharacterizationTests` | E — working hours, absence, break, holiday, override, per-flow differences |
-| `AppointmentUpdateCharacterizationTests` | F — full edit |
-| `AppointmentMoveCharacterizationTests` | G — move |
+| ~~`AppointmentUpdateCharacterizationTests`~~ | F — full edit: **deleted in M1H** (the flat `PUT /{id}` Update was removed) |
+| ~~`AppointmentMoveCharacterizationTests`~~ | G — move: **deleted in M1H** (the flat `PATCH /{id}/move` was removed; segment commands own time/employees/room) |
 | `GroupOccurrenceGenerationCharacterizationTests` | H — Group → Slot → occurrence → Bookings |
 | `GroupCapacityCharacterizationTests` | I — hard capacity (roster, occurrence, return-to-Confirmed, concurrent race) |
 | `GroupWaitlistCharacterizationTests` | S (+ I) — waitlist, FIFO promotion |
 | `BookingStatusVersioningCharacterizationTests` | J — `StatusVersion` |
-| `IndividualCompletionCharacterizationTests` | K, T — individual completion, group close asymmetry |
+| `IndividualCompletionCharacterizationTests` | K, T — individual completion per participation and through CompleteNow, group close asymmetry |
 | `BookingNoShowAndCancellationCharacterizationTests` | L, M — no-show, cancellation, outbox → notification |
 | `BookingCorrectionCharacterizationTests` | N, Q — corrections, payment reversal |
 | `PackageCoverageCharacterizationTests` | O — package coverage and the package-XOR-money rule |
@@ -62,21 +62,135 @@ dotnet test BlueDragon.DuneLight.UnitTests --filter "FullyQualifiedName~Scheduli
 | `ScheduleBreakOverlapCharacterizationTests` | schedule break vs appointment overlap (single, update, recurring) — added with S1 |
 | `SchedulingOccupancyHandlerTests` | S1 occupancy read seam (`ISchedulingOccupancyHandler`) contract — not a characterization test of a service |
 | `ExecutionContextResolverTests` | S2 execution-context seam (`ExecutionContextResolver`) mapping and guards — pure unit tests, no database |
-| `ExecutionContextConsumerCharacterizationTests` | checkout item description; CompleteExisting commission / package deduction for a rewritten service+employee — added with S2 |
+| `ExecutionContextConsumerCharacterizationTests` | checkout item description; completion commission / package deduction after segment commands changed service+employee — added with S2 |
 | `AppointmentWriteSeamTests` | S3 write seams (`AppointmentFactory`, `AppointmentFrameMutator`, `BookingFactory`, ownership predicate) — pure unit tests, no database |
 | `AppointmentOwnershipCharacterizationTests` | appointment own scope through `AppointmentOwnership` (helper + Cancel / booking SetStatus / waitlist Join messages) — added with S3 |
 | `OrganizationCalendarTests` | local ↔ UTC conversion, DST gap/overlap, local-time recurrence, IANA id validation — pure unit tests |
 | `TimezoneSchedulingTests` | Europe/Zagreb organization: local absences, working hours, holidays, available slots, DST, recurrence, group generation, timezone setting |
 | `CompanyTimeZoneTests` | Company timezone override: inheritance/override/clearing via the Company API, validation, org change vs overridden companies, Company-local hours, absences, holidays, slots, recurring appointments/breaks and group occurrences across DST, dashboard day boundaries |
-| `BookingParticipationLifecycleTests` | D3B1 — lifecycle authoritative on `BookingSegmentParticipation`: creation seam, lifecycle writes, single-participation resolver failures, read model, dropped booking columns, the "untouched = deletable" rule for Update / CompleteExisting omission and same-day Delete |
+| `BookingParticipationLifecycleTests` | D3B1 — lifecycle authoritative on `BookingSegmentParticipation`: creation seam, lifecycle writes, a Booking always has participations, read model, dropped booking columns, the "untouched = deletable" rule for RemoveParticipation and same-day Delete |
 | `BookingParticipationLifecycleCutoverMigrationTests` (project root) | D3B1 migration on a throw-away database: backfill, guards, rollback |
-| `BookingParticipationPricingTests` | D3B2 — price authoritative on `BookingSegmentParticipation`: every creation path, truthful resolution snapshot (BaseAmount/BaseAmountSource), manual override, repricing (Update, CompleteExisting, group un-check-in reset), pricing is not lifecycle history, checkout reads the participation price |
+| `BookingParticipationPricingTests` | D3B2 — price authoritative on `BookingSegmentParticipation`: every creation path, truthful resolution snapshot (BaseAmount/BaseAmountSource), manual override, repricing (participation price command, completion settlement amount, group un-check-in reset), pricing is not lifecycle history, checkout reads the participation price |
 | `BookingParticipationPricingCutoverMigrationTests` (project root) | D3B2 migration on a throw-away database: exact price copy, no fabricated history, guards, identical rollback |
 | `PackageConsumptionLedgerTests` | D3B3A — PackageConsumption ledger: eligibility (service, client, exhausted, expired), service-performance-date validity incl. company-local date (F-08), once-only/idempotent/concurrent consumption, reversal history (never twice, consume again), timing setting, history rule, schema |
 | `PackageValidityCalendarTests` | D3B3A.1 — ValidUntilDate as a date, inclusive boundary, Zagreb/New York company boundaries, two companies per organization, sale-company business date, ledger uses the same rule, unlimited expiry, /eligible company context, clock-free reversal status |
+| `TargetCommandTests` | M1H — CompleteNow matrix (staffing/pricing source, several clients, package + money, per-employee commission, room/resource capacity, overlap, past service, atomic rollback), `ChangeNote`, `SetParticipationPrice`, no company reassignment |
 | `ParticipationSettlementTests` | D3B3B — participation is the settlement boundary: service item -> participation (tenant FK), derived settled/outstanding (partial, split, voided, prepaid, completed with debt), no over-settlement across checkouts or concurrently, check-in pays only the remainder, package is not money (single exclusivity policy), F-09 history rule, dashboard |
 
+## Phase M1H — compatibility surface removed; target API and domain
+
+The development database has no production data, so M1H removes the single-segment / single-employee compatibility surface
+instead of keeping it alongside the target model. These are **intentional breaking API changes**.
+
+### Removed endpoints and contracts
+
+| Removed | Target replacement |
+|---|---|
+| `PUT /api/appointments/{id}` (`AppointmentUpdateRequest`, flat Update) | segment commands (`PATCH /api/segments/{id}/` + `time`, `service`, `employees`, `pricing-source`, `room`; `PUT .../resources`), `POST /{id}/clients`, `DELETE /api/participations/{id}`, `PATCH /{id}/note`, `PATCH /api/participations/{id}/price` |
+| `PATCH /api/appointments/{id}/move` (`AppointmentMoveRequest`) | `PATCH /api/segments/{id}/time` (+ `/employees`, `/room`) |
+| `PATCH /api/appointments/{id}/complete` (CompleteExisting) | `PATCH /api/participations/{id}/status` per participation (settlement in `BookingSetStatusRequest`) |
+| `POST /api/appointments/schedule` (`AppointmentSingleSegmentRequest`) | `POST /api/appointments` (`AppointmentCreateRequest.Segments`) |
+| old flat body of `POST /api/appointments/complete` (`AppointmentCompleteRequest`, `AppointmentClientSettlement`) | `AppointmentCompleteNowRequest` (one explicit `Segment` + `Clients`) on the same route |
+| `PATCH /api/appointments/{id}/bookings/{clientId}/no-show` and `/confirm` | `PATCH /api/participations/{id}/no-show` / `/confirm` / `/status` |
+| `POST /api/appointments/{id}/bookings` for an individual appointment, and without `SegmentId` | group guest only, `SegmentId` required; individual: `POST /{id}/clients` |
+| singular projections `StartsAt`, `DurationMinutes`, `ServiceId/Name/ColorHex`, `EmployeeId/Name`, `RoomId/Name` on `AppointmentDto`, `AppointmentScheduleCellDto`, `ClientAppointmentHistoryDto`, `DashboardScheduleOccurrenceDto` | `PlannedStart`/`PlannedEnd` + `Segments` |
+| `GroupDto.ServiceId/ServiceName/Capacity/DefaultTrainerId/Name/DefaultRoomId/Name`; flat `ServiceId/Capacity/DefaultRoomId/DefaultTrainerId` on `GroupCreateRequest`/`GroupUpdateRequest` | `SegmentTemplates` (create), template commands (`POST/PUT/DELETE /api/groups/{id}/segment-templates`); `GroupUpdateRequest` = name, company, note |
+| `ClientGroupMembershipDto.ServiceName` | `ServiceNames` (services of the client's selected templates) |
+| implicit selectors (one-template inference) | required `GroupMemberAddRequest.SegmentTemplateIds`, `WaitlistJoinRequest.SegmentId`, waitlist cancel `segmentId`, `BookingCreateRequest.SegmentId`, `SetGroupAttendanceRequest.SegmentId` |
+| occurrence-level `GroupAttendanceListDto.Expected/Recorded` | `GroupAttendanceListDto.Segments[].Expected/Recorded` |
+| `CheckoutAddBookingItemRequest.BookingId` | `ParticipationId` (required) |
+| error codes `SEGMENT_SELECTION_REQUIRED`, `EMPLOYEE_SET_COMMAND_REQUIRED`, `BOOKING_PARTICIPATION_AMBIGUOUS`, `PARTICIPATION_BOOKING_MISMATCH`; warning `GROUP_COMMISSION_NOT_SUPPORTED_FOR_MULTI_SEGMENT` | a missing selector is now a 400 validation error; the ambiguous paths no longer exist |
+
+Removed internals: `LegacySingleSegment`, `LegacySingleEmployee`, `SingleSegmentProjection`, the `GroupOccurrenceSegments`
+inference (only `Require` remains), `BookingParticipations.GetSingleParticipation`, `AppointmentHandler.UpdateWithBookings`,
+`GroupHandler.GetTemplateById`, the non-transactional `IAppointmentHandler.GetBookingById`, `BookingFactory.CreateCompletedAtCreation`
+and the `initialStatus` parameter of `AppointmentFactory.CreateIndividual`, the legacy-trainer projections in `GroupService`.
+**Database:** no change — the schema had no compatibility-only column left (fresh-database migration verified).
+
+### New narrow target commands
+
+* **`PATCH /api/appointments/{id}/note`** (`AppointmentNoteChangeRequest { Note }`) — the appointment note only; same ownership rule
+  as other appointment edits (own scope must be assigned to every segment); never touches segments, pricing, schedule or lifecycle.
+* **`PATCH /api/participations/{id}/price`** (`ParticipationPriceChangeRequest { Amount }`, null = back to the suggested price) —
+  addressed by ParticipationId only; individual + `Confirmed` only (terminal → `ALREADY_COMPLETED`, group → 400); ownership follows
+  the segment; the resolution snapshot (Suggested/Base amount and source, pricing mode/employee) is kept, the manual marker is
+  `Amount != SuggestedAmount`; a price below the money already settled → `PAYMENT_EXCEEDS_OUTSTANDING_AMOUNT`; audited
+  (`Amount`, with BookingId + ParticipationId); settlement derives from the new price; package/payment exclusivity unchanged.
+* **Company reassignment:** Appointment company reassignment was a legacy capability and is intentionally not exposed by the
+  target API. If the product needs cross-company appointment movement later, implement it as a dedicated
+  MoveAppointmentToCompany use case with explicit business rules.
+
+### CompleteNow (POST /api/appointments/complete) — kept as an explicit atomic command
+
+The POS "record work already done" workflow stays ONE command (never "create + several PATCH calls"). The request carries exactly
+ONE explicit segment (`ServiceId`, `PlannedStart`, `PlannedEnd?`, `EmployeeIds`, `PricingMode?`, `PricingEmployeeId?`, `RoomId?`,
+`Resources`) and `Clients[]` (`ClientId`, `Amount?`, `PaymentMethod?`, `ClientPackageId?`, `IsPaid`). It validates the segment
+exactly like create (M1G staffing, pricing source, eligibility, room people, resources), allows past and present starts
+(workforce availability is checked only for a future start), creates one Booking + one Participation per client (Confirmed) and,
+in the SAME transaction, completes each participation through the participation lifecycle core (`IParticipationLifecycleService`,
+the code path of `PATCH /api/participations/{id}/status`): StatusVersion, audit, per-employee commission, package consumption and
+check-in payment. Hard overlaps and capacity are checked under the existing scheduling locks first; any failure (e.g. an
+ineligible package of the second client) rolls back everything — no Appointment, Segment, Booking, Participation, Payment,
+Checkout, PackageConsumption or CommissionEntry survives. Behaviour change vs the old CompleteNew: `StatusVersion 1` (was 0), a
+`BookingStatus` audit row per participation, commission `SourceVersion 1`.
+
+### Target API (appointments and groups)
+
+* Appointments: `POST /api/appointments` (multi-segment create), `POST /api/appointments/complete` (CompleteNow),
+  `POST /api/appointments/recurring` (recurrence keeps its flat one-service series request — recurrence feature, not compatibility),
+  `GET /api/appointments/{id}`, `/schedule`, `/by-client/{id}`, `/by-employee/{id}`, `/available-slots`,
+  `POST /{id}/segments`, `POST /{id}/clients`, `PATCH /{id}/note`, `POST /{id}/cancel`, `POST /{id}/no-show`, `DELETE /{id}`.
+* Segments: `PATCH /api/segments/{id}/time|service|employees|pricing-source|room`, `PUT /api/segments/{id}/resources`,
+  `DELETE /api/segments/{id}`.
+* Participations: `PATCH /api/participations/{id}/status|cancel|no-show|confirm|price`, `DELETE /api/participations/{id}`.
+* Bookings (whole-client operations): `GET /{id}/bookings`, `PATCH /{id}/bookings/{clientId}/cancel` (every active
+  participation), `GET /{id}/bookings/{clientId}/payments`; group guest `POST /{id}/bookings` (explicit `SegmentId`).
+* Waitlist: `GET/POST /api/appointments/{id}/waitlist`, `DELETE .../waitlist/{clientId}?segmentId=` (segment-specific).
+* Groups: `POST /api/groups` (≥1 `SegmentTemplates`), `PUT /api/groups/{id}` (name/company/note), template, slot and member
+  commands (explicit `SegmentTemplateIds`, `PUT .../members/{memberId}/segment-templates`, `OverrideCapacity` with
+  `groups.capacity.override`), `POST /api/groups/generate-appointments`, attendance
+  `POST /api/groups/appointments/{id}/attendance` (explicit `SegmentId`; guest check-in), close-out
+  `PATCH /api/groups/appointments/{id}/complete`.
+
+### Target domain summary
+
+* **Appointment** — the aggregate: company, form (Individual / Group occurrence), note, explicit cancellation/close-out facts
+  and a status *derived* from its participations. It has no service, employee, room or time of its own: `PlannedStart/End` are
+  derived from its segments.
+* **AppointmentSegment** — one execution unit: service, `PlannedStart/End`, 0..N equal employees, pricing source
+  (`Standard` / `Employee` + pricing employee), room, resources; group segments link to their `GroupSegmentTemplate`.
+* **Booking** — one client inside one appointment (identity + package view); it has no status or price of its own.
+* **BookingSegmentParticipation** — a booking's participation in one segment: lifecycle (Confirmed / Completed / Cancelled /
+  NoShow, StatusVersion), price (amount, suggested amount, resolution snapshot, manual marker), settlement (checkout items →
+  allocations → payments) and package consumption. All per-client operations address it by ParticipationId.
+* **Group** — name, company, note, slots and ≥1 segment templates (service, offset, duration, capacity, room, resources, staff,
+  pricing source); members explicitly select templates; generation copies the templates into occurrence segments.
+* **Commission** — individual: per (participation, employee) from the participation's final price at completion; group: fixed
+  session commission per (segment, employee) at close-out.
+
+### Remaining NON-compatibility debt (documented, intentionally not changed in M1H)
+
+* Pricing employee ∈ segment employees is enforced only in the service layer (no DB constraint).
+* Close-out authorization for differently staffed templates (own scope must own every segment of the occurrence).
+* Over-locking of pricing-source changes.
+* Group percentage commission is not supported (`GROUP_COMMISSION_RULE_NOT_SUPPORTED`).
+* Template edits do not propagate to already generated occurrences.
+* Checkout item snapshot (description/amount fixed at item creation).
+* Discount feature (no adjustment layer; `AdjustmentAmount` is never written).
+* Group cancellation → reactivation provenance.
+* Occurrence identity is not DB-enforced (slot advisory lock only).
+* Break scheduling.
+* Notification grouping (per participation).
+* Unauthenticated requests answer 401 without the error envelope.
+* Catalog deactivation policy.
+
 ## Current behaviour findings
+
+> **M1H note.** Findings F-01, F-02, F-03, F-05 and F-06 describe the removed flat commands (`Update`, `Move`,
+> `CompleteExisting`); those commands and their tests are gone, so the findings are historical only. F-04 now applies to the
+> segment commands (ownership = assignment to the addressed segment). F-07 is **resolved**: CompleteNow runs the participation
+> lifecycle core, so every completion path is `StatusVersion 1`, writes the `BookingStatus` audit row and the
+> `BookingPackageCoverageApplied` row, and commission `SourceVersion 1`. See "Phase M1H" below.
 
 Legend — **Test**: the characterization test(s) that pin it. **Later**: whether it must be decided during target-model work.
 
@@ -179,15 +293,15 @@ Legend — **Test**: the characterization test(s) that pin it. **Later**: whethe
 * **F-25 Group attendance is per segment — CHANGED in M1F.1 (intentional).** `Segments[]` reports Recorded (concrete
   participations on that segment, authoritative for history) and Expected (active members selecting the segment's template
   without a participation, only for future, non-cancelled segments). Guests appear only as Recorded (`IsMember = false`).
-  Top-level Expected = union of segment Expected for clients without a Booking (past occurrences list no gaps any more).
+  M1H: the occurrence-level `Expected`/`Recorded` lists are removed — attendance is per segment only.
   Test: `MultiSegmentGroupConsistencyTests.Attendance_*`.
 * **F-26 Multi-employee segments — ENABLED in M1G (intentional).** `MULTI_EMPLOYEE_NOT_SUPPORTED` is gone. A segment has
   1..N equal employees (individual) or 0..N (group template / trainerless session). Pricing source per segment
   (`SegmentPricingMode`): 0 employees → Standard; 1 → automatic Employee/that employee; 2+ → explicit Standard or
   Employee + an assigned employee (`PRICING_SOURCE_REQUIRED` / `INVALID_PRICING_SOURCE`), re-required on every employee-set
   change resulting in 2+. Price precedence: Employee mode = employee+company → employee → company → organization →
-  default; Standard skips the employee tiers. Participations snapshot `pricing_mode`/`pricing_employee_id`. Legacy flat
-  Update/Move/CompleteExisting on a 2+ segment → `EMPLOYEE_SET_COMMAND_REQUIRED`. Employee-set changes on a segment with a
+  default; Standard skips the employee tiers. Participations snapshot `pricing_mode`/`pricing_employee_id`. (M1H: the flat
+  Update/Move/CompleteExisting and `EMPLOYEE_SET_COMMAND_REQUIRED` are removed.) Employee-set changes on a segment with a
   Completed participation or a closed-out session → `SEGMENT_EXECUTION_HISTORY_LOCKED`. Own scope may not add/remove
   coworkers. Test: `MultiEmployeeSegmentTests`, `MultiEmployeeHttpContractTests`.
 * **F-27 Commission per employee — CHANGED in M1G (intentional).** Individual: every segment employee earns independently
@@ -198,8 +312,8 @@ Legend — **Test**: the characterization test(s) that pin it. **Later**: whethe
   Test: `MultiEmployeeSegmentTests.Commission_*`, `MultiEmployeeGroupTests.CloseOut_*`.
 * **F-28 Group staffing per template — CHANGED in M1G (intentional).** `groups.default_trainer_id` is dropped; staff and
   pricing source live on `GroupSegmentTemplate` and are copied into generated segments (template edits affect future
-  generation only). `DefaultTrainerId` remains a non-authoritative DTO projection (one template with one employee) and a
-  legacy input for one-template groups. Test: `MultiEmployeeGroupTests`.
+  generation only). M1H: the `DefaultTrainerId` projection/input is removed — staff is only
+  ever set per template (`EmployeeIds`). Test: `MultiEmployeeGroupTests`.
 * **F-29 Employee/service eligibility — FIXED in M1G (intentional).** Old: no assignments = no services. Target: no
   assignments = every service; any assignment restricts (create, segment employees, templates, generation, available slots).
 * **DB enforcement audit (M1G).** "Pricing employee ∈ segment/template employees" would need a circular (deferred) FK from
@@ -242,8 +356,8 @@ Legend — **Test**: the characterization test(s) that pin it. **Later**: whethe
   deactivation does **not** delete future occurrences (doc says it does); the error code and warning code for working hours differ
   (`OUTSIDE_WORKING_HOURS` vs `OUTSIDE_WORKING_HOURS_WARNING`); `ValidatePackageSelections` is now `ValidateSettlements`.
   Test: `AppointmentWorkforceAvailabilityCharacterizationTests`, `GeneratedOccurrence_SurvivesGroupDeactivationAndSlotRemoval`.
-* **F-16 Workforce checks differ per flow.** Create/Update/Move always check; `CompleteNew` checks only for a future start;
-  `CompleteExisting` never checks; recurring/group generation report aggregated `RECURRING_CONFLICT` (and skip holidays silently for
+* **F-16 Workforce checks differ per flow.** Create and the segment commands always check; `CompleteNow` checks only for a
+  future start; completing an existing participation never checks (it schedules nothing); recurring/group generation report aggregated `RECURRING_CONFLICT` (and skip holidays silently for
   groups); the recurring **client** overlap still surfaces as `APPOINTMENT_OVERLAP`. A missing working-hours template means "never
   available". Absence with `DateTo = null` is open-ended.
 
@@ -260,13 +374,13 @@ Legend — **Test**: the characterization test(s) that pin it. **Later**: whethe
   The race itself is **not** asserted (non-deterministic); only the absence of a database guard is.
 * **D3B1 hard-delete rule (locked).** A Booking and its Participation are hard-deleted only while the participation is
   *untouched* (Confirmed, `StatusVersion` 0, no arrival, no cancellation reason, no late classification) — one definition,
-  `ParticipationHistory`. Update / CompleteExisting omitting a Confirmed client with history → `REFERENCED_CANNOT_DELETE`
-  (omitted terminal bookings are still preserved silently); same-day Delete is refused if any participation has history.
+  `ParticipationHistory`. Removing a participation with history (`DELETE /participations/{id}`) → `REFERENCED_CANNOT_DELETE`
+  (terminal participations included); same-day Delete is refused if any participation has history.
   Participations are deleted explicitly before their bookings — never by cascade. F-09 is unchanged for untouched bookings
   that sit on a checkout (a Completed-then-corrected booking is now stopped earlier by the history rule).
   Test: `BookingParticipationLifecycleTests` (deletion region).
-* **F-18 Small hazards.** Appointment-wide `Cancel` twice silently overwrites the appointment's `CancellationReason`; `AddBooking` on
-  an Individual appointment has no capacity concept; available-slot search ignores rooms and clients and lists absent employees
+* **F-18 Small hazards.** Appointment-wide `Cancel` twice silently overwrites the appointment's `CancellationReason`; adding a client to
+  an Individual appointment has no capacity concept beyond the room's people limit; available-slot search ignores rooms and clients and lists absent employees
   with empty slot lists; read models join Service/Employee/Room names live (no name snapshot).
 
 ### Host environment
@@ -329,7 +443,7 @@ Legend — **Test**: the characterization test(s) that pin it. **Later**: whethe
 
 ## Known limits of the suite
 
-* **Race conditions on Create/Update/Move** cannot be asserted deterministically without changing production code (see F-17).
+* **Race conditions on Create and segment commands** cannot be asserted deterministically without changing production code (see F-17).
 * **OutboxProcessorService** (claim/lock/retry) is not exercised — handlers are invoked directly, so the outbox → Notification step
   is covered but delivery mechanics are not.
 * **HTTP layer / `RequireGrant` attributes** are not exercised; services take `hasFullScope` directly, which is the boundary the

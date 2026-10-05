@@ -4,7 +4,7 @@ namespace BlueDragon.DuneLight.Core.Events;
 
 /// <summary>
 /// Payload za OutboxEventTypes.BookingNoShowV1 — vidi BookingCancelledEvent za obrazloženje oblika. Emitira se
-/// samo za stvaran persistiran prijelaz Confirmed -&gt; NoShow (BookingService.SetStatus/AppointmentService
+/// samo za stvaran persistiran prijelaz Confirmed -&gt; NoShow (BookingService.SetParticipationStatus/AppointmentService
 /// appointment-wide), nikad izveden iz proteka vremena (vidi spec section 36).
 /// </summary>
 public class BookingNoShowEvent

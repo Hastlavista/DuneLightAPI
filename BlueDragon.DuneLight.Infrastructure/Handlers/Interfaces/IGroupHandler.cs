@@ -12,7 +12,7 @@ public interface IGroupHandler
     /// <summary>group.Slots mora biti popunjen prije poziva — cascade insert.</summary>
     Task Add(Group group);
 
-    /// <summary>Puni graf (Service, Company, DefaultTrainer, Slots, Members.Client) — za prikaz/detalj.</summary>
+    /// <summary>Puni graf (Company, Slots, predlošci s uslugom/prostorijom/resursima/osobljem, Members.Client) — za prikaz/detalj.</summary>
     Task<Group> GetById(Guid organizationId, Guid id);
 
     /// <summary>Samo osnovni redak, bez navigacijskih kolekcija — za pripremu mutacije.</summary>
@@ -35,7 +35,6 @@ public interface IGroupHandler
     Task<int> CountActiveMembers(Guid groupId);
 
     /// <summary>Phase M1F.</summary>
-    Task<GroupSegmentTemplate> GetTemplateById(Guid organizationId, Guid groupId, Guid templateId);
 
     /// <summary>Phase M1F — meki kapacitet ČLANSTVA predloška: aktivni članovi (aktivan, neanonimiziran klijent) koji ga biraju.</summary>
     Task<int> CountActiveMembersSelecting(IUnitOfWork uow, Guid templateId);

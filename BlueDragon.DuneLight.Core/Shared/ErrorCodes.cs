@@ -61,18 +61,8 @@ public static class ErrorCodes
     public const string ParticipationAppointmentMismatch = "PARTICIPATION_APPOINTMENT_MISMATCH";
     /// <summary>Phase D2: Booking već sudjeluje u tom segmentu.</summary>
     public const string DuplicateParticipation = "DUPLICATE_PARTICIPATION";
-    /// <summary>Phase M0: naredba adresirana Bookingom (privremena kompatibilnost) cilja Booking s više sudjelovanja —
-    /// treba adresirati sudjelovanje (ParticipationId).</summary>
-    public const string BookingParticipationAmbiguous = "BOOKING_PARTICIPATION_AMBIGUOUS";
-    /// <summary>Phase M0: zadani BookingId i ParticipationId se ne odnose na isto sudjelovanje.</summary>
-    public const string ParticipationBookingMismatch = "PARTICIPATION_BOOKING_MISMATCH";
-    /// <summary>Phase M1E: legacy (plosnata, jednosegmentna) operacija nad višesegmentnim terminom — segment se ne pogađa;
-    /// potrebna je naredba nad segmentom (SegmentId) ili sudjelovanjem (ParticipationId).</summary>
-    public const string SegmentSelectionRequired = "SEGMENT_SELECTION_REQUIRED";
     /// <summary>Phase M1E: termin mora zadržati barem jedan segment.</summary>
     public const string LastSegmentCannotBeRemoved = "LAST_SEGMENT_CANNOT_BE_REMOVED";
-    /// <summary>Phase M1B: segment trenutno podržava točno jednog zaposlenika (atribucija cijene/provizije više zaposlenika
-    /// je otvorena) — ograničenje proizvoda, ne sheme.</summary>
     /// <summary>Phase M1G — segment s 2+ zaposlenika zahtijeva eksplicitan izvor cijene (PricingMode, uz PricingEmployeeId za
     /// Employee) — nikad se ne pogađa.</summary>
     public const string PricingSourceRequired = "PRICING_SOURCE_REQUIRED";
@@ -80,10 +70,6 @@ public static class ErrorCodes
     /// <summary>Phase M1G — izvor cijene ne odgovara zaposlenicima segmenta/predloška (Standard uz zaposlenika, Employee bez
     /// zaposlenika ili sa zaposlenikom koji nije dodijeljen, Standard za segment s točno jednim zaposlenikom...).</summary>
     public const string InvalidPricingSource = "INVALID_PRICING_SOURCE";
-
-    /// <summary>Phase M1G — legacy plosnata operacija s jednim zaposlenikom ne smije prepisati segment s više zaposlenika;
-    /// koristi se segmentna naredba (PATCH /api/segments/{id}/employees).</summary>
-    public const string EmployeeSetCommandRequired = "EMPLOYEE_SET_COMMAND_REQUIRED";
 
     /// <summary>Phase M1G — zaposlenici segmenta s izvršnom poviješću (odrađeno sudjelovanje ili zatvorena grupna sesija) se
     /// ne mijenjaju — povijesno izvršenje i provizija se ne prepisuju.</summary>

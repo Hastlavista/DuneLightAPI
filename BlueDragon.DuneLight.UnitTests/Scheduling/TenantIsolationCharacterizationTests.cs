@@ -29,7 +29,7 @@ public class TenantIsolationCharacterizationTests
         (SchedulingWorld mine, SchedulingWorld foreign) = await TwoTenants(nameof(Create_WithAClientOfAnotherOrganization_IsNotFound));
         await using SchedulingWorld a = mine;
         await using SchedulingWorld b = foreign;
-        AppointmentSingleSegmentRequest request = mine.CreateRequest(SchedulingWorld.Future(10));
+        TestAppointmentSpec request = mine.CreateRequest(SchedulingWorld.Future(10));
         request.ClientIds = new() { foreign.Client.Id.Value };
 
         await SchedulingAssert.NotFound(() => mine.CreateAppointment(request));
@@ -43,7 +43,7 @@ public class TenantIsolationCharacterizationTests
         (SchedulingWorld mine, SchedulingWorld foreign) = await TwoTenants(nameof(Create_WithAnEmployeeOfAnotherOrganization_IsNotFound));
         await using SchedulingWorld a = mine;
         await using SchedulingWorld b = foreign;
-        AppointmentSingleSegmentRequest request = mine.CreateRequest(SchedulingWorld.Future(10));
+        TestAppointmentSpec request = mine.CreateRequest(SchedulingWorld.Future(10));
         request.EmployeeId = foreign.Employee.Id.Value;
 
         await SchedulingAssert.NotFound(() => mine.CreateAppointment(request));
@@ -55,7 +55,7 @@ public class TenantIsolationCharacterizationTests
         (SchedulingWorld mine, SchedulingWorld foreign) = await TwoTenants(nameof(Create_WithAServiceOfAnotherOrganization_IsNotFound));
         await using SchedulingWorld a = mine;
         await using SchedulingWorld b = foreign;
-        AppointmentSingleSegmentRequest request = mine.CreateRequest(SchedulingWorld.Future(10));
+        TestAppointmentSpec request = mine.CreateRequest(SchedulingWorld.Future(10));
         request.ServiceId = foreign.Service.Id.Value;
 
         await SchedulingAssert.NotFound(() => mine.CreateAppointment(request));
@@ -67,7 +67,7 @@ public class TenantIsolationCharacterizationTests
         (SchedulingWorld mine, SchedulingWorld foreign) = await TwoTenants(nameof(Create_WithACompanyOfAnotherOrganization_IsNotFound));
         await using SchedulingWorld a = mine;
         await using SchedulingWorld b = foreign;
-        AppointmentSingleSegmentRequest request = mine.CreateRequest(SchedulingWorld.Future(10));
+        TestAppointmentSpec request = mine.CreateRequest(SchedulingWorld.Future(10));
         request.CompanyId = foreign.Company.Id.Value;
 
         await SchedulingAssert.NotFound(() => mine.CreateAppointment(request));
@@ -80,25 +80,30 @@ public class TenantIsolationCharacterizationTests
         await using SchedulingWorld a = mine;
         await using SchedulingWorld b = foreign;
         Room foreignRoom = await foreign.AddRoom();
-        AppointmentSingleSegmentRequest request = mine.CreateRequest(SchedulingWorld.Future(10));
+        TestAppointmentSpec request = mine.CreateRequest(SchedulingWorld.Future(10));
         request.RoomId = foreignRoom.Id;
 
         await SchedulingAssert.NotFound(() => mine.CreateAppointment(request));
     }
 
     [Fact]
-    public async Task ChangingAnAppointmentOfAnotherOrganization_IsNotFound_ForMoveCancelUpdateAndComplete()
+    public async Task ChangingAnAppointmentOfAnotherOrganization_IsNotFound_ForSegmentTimeNoteCancelAndComplete()
     {
-        (SchedulingWorld mine, SchedulingWorld foreign) = await TwoTenants(nameof(ChangingAnAppointmentOfAnotherOrganization_IsNotFound_ForMoveCancelUpdateAndComplete));
+        (SchedulingWorld mine, SchedulingWorld foreign) = await TwoTenants(nameof(ChangingAnAppointmentOfAnotherOrganization_IsNotFound_ForSegmentTimeNoteCancelAndComplete));
         await using SchedulingWorld a = mine;
         await using SchedulingWorld b = foreign;
         AppointmentDto theirs = await foreign.CreateAppointment(SchedulingWorld.Future(10));
 
-        await SchedulingAssert.NotFound(() => mine.Appointments.Move(mine.OrganizationId, mine.ActorUserId, true, theirs.Id, new AppointmentMoveRequest { StartsAt = SchedulingWorld.Future(12) }));
+        await SchedulingAssert.NotFound(() => mine.Appointments.ChangeSegmentTime(mine.OrganizationId, mine.ActorUserId, true, theirs.Segments[0].Id,
+            new AppointmentSegmentTimeChangeRequest { PlannedStart = SchedulingWorld.Future(12) }));
         await SchedulingAssert.NotFound(() => mine.Appointments.Cancel(mine.OrganizationId, mine.ActorUserId, true, theirs.Id, new AppointmentCancelRequest()));
         await SchedulingAssert.NotFound(() => mine.Appointments.MarkNoShow(mine.OrganizationId, mine.ActorUserId, true, theirs.Id, new AppointmentCancelRequest()));
-        await SchedulingAssert.NotFound(() => mine.Appointments.Update(mine.OrganizationId, mine.ActorUserId, true, theirs.Id, mine.UpdateRequest(theirs)));
-        await SchedulingAssert.NotFound(() => mine.Appointments.CompleteExisting(mine.OrganizationId, mine.ActorUserId, true, theirs.Id, mine.CompleteRequest(SchedulingWorld.Future(10))));
+        await SchedulingAssert.NotFound(() => mine.Appointments.ChangeNote(mine.OrganizationId, mine.ActorUserId, true, theirs.Id,
+            new AppointmentNoteChangeRequest { Note = "x" }));
+        await SchedulingAssert.NotFound(() => mine.Bookings.SetParticipationStatus(mine.OrganizationId, mine.ActorUserId, true,
+            Assert.Single(theirs.Bookings[0].Participations).Id, new BookingSetStatusRequest { Status = BookingStatus.Completed }));
+        await SchedulingAssert.NotFound(() => mine.Bookings.SetParticipationPrice(mine.OrganizationId, mine.ActorUserId, true,
+            Assert.Single(theirs.Bookings[0].Participations).Id, new ParticipationPriceChangeRequest { Amount = 1m }));
         await SchedulingAssert.NotFound(() => mine.Appointments.CompleteGroupAppointment(mine.OrganizationId, mine.ActorUserId, true, theirs.Id));
 
         // ... and the foreign appointment is untouched.
@@ -115,21 +120,25 @@ public class TenantIsolationCharacterizationTests
         AppointmentDto theirs = await foreign.CreateAppointment(SchedulingWorld.Future(10));
 
         await SchedulingAssert.NotFound(() => mine.SetBookingStatus(theirs.Id, foreign.Client, BookingStatus.Cancelled));
-        await SchedulingAssert.NotFound(() => mine.Bookings.AddBooking(mine.OrganizationId, mine.ActorUserId, true, theirs.Id, new BookingCreateRequest { ClientId = mine.Client.Id.Value }));
+        await SchedulingAssert.NotFound(() => mine.Appointments.AddClient(mine.OrganizationId, mine.ActorUserId, true, theirs.Id,
+            new AppointmentClientAddRequest
+            {
+                ClientId = mine.Client.Id.Value,
+                Participations = new List<AppointmentClientParticipationRequest> { new() { SegmentId = theirs.Segments[0].Id } }
+            }));
 
         Assert.Equal(BookingStatus.Confirmed, (await foreign.LoadBooking(theirs.Id, foreign.Client)).Status);
     }
 
     [Fact]
-    public async Task AddingAForeignClientAsAGuest_IsNotFound()
+    public async Task AddingAForeignClient_IsNotFound()
     {
-        (SchedulingWorld mine, SchedulingWorld foreign) = await TwoTenants(nameof(AddingAForeignClientAsAGuest_IsNotFound));
+        (SchedulingWorld mine, SchedulingWorld foreign) = await TwoTenants(nameof(AddingAForeignClient_IsNotFound));
         await using SchedulingWorld a = mine;
         await using SchedulingWorld b = foreign;
         AppointmentDto created = await mine.CreateAppointment(SchedulingWorld.Future(10));
 
-        await SchedulingAssert.NotFound(() => mine.Bookings.AddBooking(mine.OrganizationId, mine.ActorUserId, true, created.Id,
-            new BookingCreateRequest { ClientId = foreign.Client.Id.Value }));
+        await SchedulingAssert.NotFound(() => mine.AddClientToOnlySegment(created.Id, foreign.Client));
     }
 
     [Fact]
@@ -143,6 +152,6 @@ public class TenantIsolationCharacterizationTests
             new CheckoutCreateRequest { ClientId = mine.Client.Id.Value, CompanyId = mine.Company.Id.Value });
 
         await SchedulingAssert.NotFound(() => mine.Checkouts.AddBookingItem(mine.OrganizationId, mine.ActorUserId, checkout.Id,
-            new CheckoutAddBookingItemRequest { BookingId = theirs.Bookings[0].Id }));
+            new CheckoutAddBookingItemRequest { ParticipationId = Assert.Single(theirs.Bookings[0].Participations).Id }));
     }
 }

@@ -259,29 +259,15 @@ public class SchedulingOccupancyHandlerTests
     }
 
     [Fact]
-    public async Task Move_OntoAnOverlappingPartOfItsOwnSlot_DoesNotConflictWithItself()
+    public async Task SegmentTimeChange_OntoAnOverlappingPartOfItsOwnSlot_DoesNotConflictWithItself()
     {
-        await using SchedulingWorld w = await SchedulingWorld.Create(nameof(Move_OntoAnOverlappingPartOfItsOwnSlot_DoesNotConflictWithItself));
+        await using SchedulingWorld w = await SchedulingWorld.Create(nameof(SegmentTimeChange_OntoAnOverlappingPartOfItsOwnSlot_DoesNotConflictWithItself));
         Room room = await w.AddRoom();
         AppointmentDto created = await w.CreateAppointment(SchedulingWorld.Future(10), room: room);
 
-        AppointmentDto moved = await w.Appointments.Move(w.OrganizationId, w.ActorUserId, true, created.Id,
-            new AppointmentMoveRequest { StartsAt = SchedulingWorld.Future(10, 15) });
+        AppointmentDto moved = await w.MoveOnlySegment(created.Id, SchedulingWorld.Future(10, 15));
 
         Assert.Equal(SchedulingWorld.Future(10, 15), moved.StartsAt);
-    }
-
-    [Fact]
-    public async Task Update_OntoAnOverlappingPartOfItsOwnSlot_DoesNotConflictWithItself()
-    {
-        await using SchedulingWorld w = await SchedulingWorld.Create(nameof(Update_OntoAnOverlappingPartOfItsOwnSlot_DoesNotConflictWithItself));
-        Room room = await w.AddRoom();
-        AppointmentDto created = await w.CreateAppointment(SchedulingWorld.Future(10), room: room);
-
-        AppointmentDto updated = await w.Appointments.Update(w.OrganizationId, w.ActorUserId, true, created.Id,
-            w.UpdateRequest(created, r => r.StartsAt = SchedulingWorld.Future(10, 15)));
-
-        Assert.Equal(SchedulingWorld.Future(10, 15), updated.StartsAt);
     }
 
     #endregion

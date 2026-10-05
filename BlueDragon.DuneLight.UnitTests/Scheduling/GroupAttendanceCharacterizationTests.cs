@@ -21,7 +21,8 @@ namespace BlueDragon.DuneLight.UnitTests.Scheduling;
 /// Confirmed → null (not yet recorded), Completed → true, NoShow / Cancelled → false.
 ///
 /// "Expected" (active members without a Booking row) is a legacy shape: since generation now creates a Confirmed Booking per
-/// active member, it is normally empty.
+/// active member, it is normally empty. M1H: attendance is read and written PER SEGMENT only (these one-template occurrences
+/// have exactly one segment).
 /// </summary>
 public class GroupAttendanceCharacterizationTests
 {
@@ -34,10 +35,16 @@ public class GroupAttendanceCharacterizationTests
         return (w, group, await w.GenerateSingleOccurrence(group));
     }
 
-    private static Task<GroupAttendanceListDto> Set(SchedulingWorld w, Guid appointmentId, Client client, bool attended, bool hasFullScope = true, Guid? userId = null,
+    /// <summary>M1H: attendance is addressed by (occurrence, client, EXPLICIT segment) — here the one-template occurrence's only
+    /// segment.</summary>
+    private static async Task<GroupAttendanceListDto> Set(SchedulingWorld w, Guid appointmentId, Client client, bool attended, bool hasFullScope = true, Guid? userId = null,
         decimal? amount = null, PaymentMethod? method = null, bool isPaid = true) =>
-        w.GroupAttendance.SetAttendance(w.OrganizationId, userId ?? w.ActorUserId, hasFullScope, appointmentId,
-            new SetGroupAttendanceRequest { ClientId = client.Id.Value, Attended = attended, Amount = amount, PaymentMethod = method, IsPaid = isPaid });
+        await w.GroupAttendance.SetAttendance(w.OrganizationId, userId ?? w.ActorUserId, hasFullScope, appointmentId,
+            new SetGroupAttendanceRequest
+            {
+                ClientId = client.Id.Value, SegmentId = Assert.Single((await w.LoadAppointment(appointmentId)).Segments).Id,
+                Attended = attended, Amount = amount, PaymentMethod = method, IsPaid = isPaid
+            });
 
     #region Reading attendance
 
@@ -49,8 +56,8 @@ public class GroupAttendanceCharacterizationTests
 
         GroupAttendanceListDto list = await w.GroupAttendance.GetAttendance(w.OrganizationId, occurrence.Id.Value);
 
-        Assert.Empty(list.Expected);
-        GroupAttendanceEntryDto entry = Assert.Single(list.Recorded);
+        Assert.Empty(Assert.Single(list.Segments).Expected);
+        GroupAttendanceEntryDto entry = Assert.Single(Assert.Single(list.Segments).Recorded);
         Assert.Null(entry.Attended);
         Assert.True(entry.IsMember);
         Assert.Equal(15m, entry.Amount);
@@ -72,8 +79,8 @@ public class GroupAttendanceCharacterizationTests
 
         GroupAttendanceListDto list = await w.GroupAttendance.GetAttendance(w.OrganizationId, occurrence.Id.Value);
 
-        Assert.Empty(list.Recorded);
-        GroupAttendanceEntryDto expected = Assert.Single(list.Expected);
+        Assert.Empty(Assert.Single(list.Segments).Recorded);
+        GroupAttendanceEntryDto expected = Assert.Single(Assert.Single(list.Segments).Expected);
         Assert.Equal(w.Client.Id, expected.ClientId);
         Assert.Null(expected.Attended);
         Assert.True(expected.IsMember);
@@ -99,11 +106,11 @@ public class GroupAttendanceCharacterizationTests
         await using SchedulingWorld _w = w;
 
         GroupAttendanceListDto attended = await Set(w, occurrence.Id.Value, w.Client, attended: true);
-        Assert.True(Assert.Single(attended.Recorded).Attended);
+        Assert.True(Assert.Single(Assert.Single(attended.Segments).Recorded).Attended);
         Assert.Equal(BookingStatus.Completed, (await w.LoadBooking(occurrence.Id.Value, w.Client)).Status);
 
         GroupAttendanceListDto absent = await Set(w, occurrence.Id.Value, w.Client, attended: false);
-        Assert.False(Assert.Single(absent.Recorded).Attended);
+        Assert.False(Assert.Single(Assert.Single(absent.Segments).Recorded).Attended);
         Booking b = await w.LoadBooking(occurrence.Id.Value, w.Client);
         Assert.Equal(BookingStatus.NoShow, b.Status);
         Assert.Equal(2, b.StatusVersion); // Confirmed(0) -> Completed(1) -> NoShow(2): toggling is allowed for groups
@@ -118,7 +125,7 @@ public class GroupAttendanceCharacterizationTests
 
         GroupAttendanceListDto list = await w.GroupAttendance.GetAttendance(w.OrganizationId, occurrence.Id.Value);
 
-        Assert.False(Assert.Single(list.Recorded).Attended); // Cancelled is folded into "false" by the adapter
+        Assert.False(Assert.Single(Assert.Single(list.Segments).Recorded).Attended); // Cancelled is folded into "false" by the adapter
     }
 
     [Fact]
@@ -129,7 +136,7 @@ public class GroupAttendanceCharacterizationTests
 
         GroupAttendanceListDto list = await Set(w, occurrence.Id.Value, w.Client, attended: true, amount: 12m, method: PaymentMethod.Cash);
 
-        GroupAttendanceEntryDto entry = Assert.Single(list.Recorded);
+        GroupAttendanceEntryDto entry = Assert.Single(Assert.Single(list.Segments).Recorded);
         Assert.Equal(12m, entry.Amount);
         Assert.Equal(15m, entry.SuggestedAmount);
         Assert.Equal(12m, entry.PaidAmount);
@@ -164,7 +171,7 @@ public class GroupAttendanceCharacterizationTests
         GroupAttendanceListDto list = await Set(w, past.Id.Value, guest, attended: true);
 
         // Capacity is enforced when a Booking takes a Confirmed seat; a guest recorded straight as attended never does.
-        GroupAttendanceEntryDto entry = list.Recorded.Single(e => e.ClientId == guest.Id);
+        GroupAttendanceEntryDto entry = Assert.Single(list.Segments).Recorded.Single(e => e.ClientId == guest.Id);
         Assert.True(entry.Attended);
         Assert.False(entry.IsMember);
         Assert.Equal(2, (await w.LoadAppointment(past.Id.Value)).Bookings.Count); // 2 bookings on a capacity-1 group
@@ -182,7 +189,7 @@ public class GroupAttendanceCharacterizationTests
 
         GroupAttendanceListDto list = await Set(w, occurrence.Id.Value, w.Client, attended: true, hasFullScope: false, userId: w.Employee.UserId);
 
-        Assert.True(Assert.Single(list.Recorded).Attended);
+        Assert.True(Assert.Single(Assert.Single(list.Segments).Recorded).Attended);
     }
 
     [Fact]

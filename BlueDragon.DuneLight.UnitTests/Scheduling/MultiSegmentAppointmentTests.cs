@@ -794,53 +794,28 @@ public class MultiSegmentAppointmentTests
 
     #endregion
 
-    #region Legacy single-segment endpoints
+    #region Target-only addressing (M1H)
 
     [Fact]
-    public async Task LegacyEndpoints_OnAMultiSegmentAppointment_AnswerWithABusinessError_AndChangeNothing()
+    public async Task GroupOnlyBookingPaths_OnAnIndividualAppointment_AreRejected_AndChangeNothing()
     {
-        await using SchedulingWorld w = await SchedulingWorld.Create(nameof(LegacyEndpoints_OnAMultiSegmentAppointment_AnswerWithABusinessError_AndChangeNothing));
+        await using SchedulingWorld w = await SchedulingWorld.Create(nameof(GroupOnlyBookingPaths_OnAnIndividualAppointment_AreRejected_AndChangeNothing));
         Spa spa = await SetUp(w);
         Client partner = await w.AddClient("Partner");
         AppointmentDto created = await CreateMassageThenPhysio(w, spa);
+        Guid firstSegment = created.Segments.OrderBy(s => s.PlannedStart).First().Id;
 
-        await SchedulingAssert.BusinessRule(ErrorCodes.SegmentSelectionRequired,
-            () => w.CompleteExisting(created.Id, w.CompleteRequest(SchedulingWorld.Future(9), service: spa.Massage)));
-        // The compatibility projection has no single ServiceId/EmployeeId for a multi-segment appointment — build the flat
-        // request explicitly.
-        AppointmentUpdateRequest flatUpdate = new()
-        {
-            StartsAt = SchedulingWorld.Future(12),
-            ServiceId = spa.Massage.Id.Value,
-            EmployeeId = spa.A.Id.Value,
-            CompanyId = w.Company.Id.Value,
-            ClientIds = new List<Guid> { w.Client.Id.Value }
-        };
-        await SchedulingAssert.BusinessRule(ErrorCodes.SegmentSelectionRequired,
-            () => w.Appointments.Update(w.OrganizationId, w.ActorUserId, true, created.Id, flatUpdate));
-        await SchedulingAssert.BusinessRule(ErrorCodes.SegmentSelectionRequired, () => w.Appointments.Move(
-            w.OrganizationId, w.ActorUserId, true, created.Id, new AppointmentMoveRequest { StartsAt = SchedulingWorld.Future(12) }));
-        await SchedulingAssert.BusinessRule(ErrorCodes.SegmentSelectionRequired, () => w.Bookings.AddBooking(
-            w.OrganizationId, w.ActorUserId, true, created.Id, new BookingCreateRequest { ClientId = partner.Id.Value }));
-        await SchedulingAssert.BusinessRule(ErrorCodes.BookingParticipationAmbiguous,
-            () => w.SetBookingStatus(created.Id, w.Client, BookingStatus.Cancelled));
+        // M1H: the flat single-segment commands are gone; the (appointment, client, segment) paths are the GROUP guest and
+        // attendance paths — an individual appointment adds clients via AddClient and transitions participations by id.
+        await SchedulingAssert.Validation(() => w.Bookings.AddGroupGuest(w.OrganizationId, w.ActorUserId, true, created.Id,
+            new BookingCreateRequest { ClientId = partner.Id.Value, SegmentId = firstSegment }));
+        await SchedulingAssert.Validation(() => w.Bookings.SetStatusOnSegment(w.OrganizationId, w.ActorUserId, true, created.Id, w.Client.Id.Value,
+            new BookingSetStatusRequest { Status = BookingStatus.Cancelled, SegmentId = firstSegment }));
 
         AppointmentDto after = await Reload(w, created.Id);
         Assert.Equal(new[] { SchedulingWorld.Future(9), SchedulingWorld.Future(10) }, after.Segments.Select(s => s.PlannedStart).OrderBy(x => x));
         Assert.Single(after.Bookings);
         Assert.All(await w.LoadParticipations(created.Id, w.Client), p => Assert.Equal(ParticipationStatus.Confirmed, p.Status));
-    }
-
-    [Fact]
-    public async Task LegacyUpdate_OnASingleSegmentAppointment_StillWorks()
-    {
-        await using SchedulingWorld w = await SchedulingWorld.Create(nameof(LegacyUpdate_OnASingleSegmentAppointment_StillWorks));
-        AppointmentDto created = await w.CreateAppointment(SchedulingWorld.Future(10));
-
-        AppointmentDto updated = await w.Appointments.Update(
-            w.OrganizationId, w.ActorUserId, true, created.Id, w.UpdateRequest(created, r => r.StartsAt = SchedulingWorld.Future(12)));
-
-        Assert.Equal(SchedulingWorld.Future(12), Assert.Single(updated.Segments).PlannedStart);
     }
 
     #endregion

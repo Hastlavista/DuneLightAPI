@@ -51,7 +51,7 @@ public class GroupAttendanceService : IGroupAttendanceService
     {
         await LoadGroupAppointmentOrThrow(organizationId, appointmentId);
 
-        await _bookingService.SetStatus(organizationId, userId, hasFullScope, appointmentId, request.ClientId, new BookingSetStatusRequest
+        await _bookingService.SetStatusOnSegment(organizationId, userId, hasFullScope, appointmentId, request.ClientId, new BookingSetStatusRequest
         {
             Status = request.Attended ? BookingStatus.Completed : BookingStatus.NoShow,
             ClientPackageId = request.ClientPackageId,
@@ -83,7 +83,6 @@ public class GroupAttendanceService : IGroupAttendanceService
     /// za segment koji još nije počeo; član koji je odabrao samo drugi predložak se tu nikad ne pojavljuje. Počet/prošli
     /// segment: sudjelovanja su jedina istina (današnje članstvo ne prepisuje povijest).</item>
     /// </list>
-    /// Razina occurrencea (kompatibilnost): Recorded po Bookingu (kao prije), Expected = unija očekivanih po segmentima.
     /// </summary>
     private static GroupAttendanceListDto BuildListDto(Appointment appointment, Group group)
     {
@@ -153,41 +152,7 @@ public class GroupAttendanceService : IGroupAttendanceService
             })
             .ToList();
 
-        List<GroupAttendanceEntryDto> recordedBookings = appointment.Bookings
-            .Select(b =>
-            {
-                // Phase M0: unos prisutnosti je Booking read-model — izvedeni sažeci sudjelovanja (za jedno sudjelovanje
-                // identično dosadašnjem; Mixed status nije "prisutan/odsutan" → null).
-                BookingCommercialSummary commercial = BookingCommercialSummary.Of(b);
-                PackageCoverageView coverage = PackageConsumptions.CoverageOfBooking(b, AppointmentForm.Group);
-                return new GroupAttendanceEntryDto
-                {
-                    ClientId = b.ClientId,
-                    ClientName = b.Client != null ? $"{b.Client.FirstName} {b.Client.LastName}" : null,
-                    Attended = ToAttended(BookingSummary.StatusOf(b)),
-                    CoverageType = coverage.CoverageType,
-                    ClientPackageId = coverage.ClientPackageId,
-                    PackageCoverageApplied = coverage.PackageCoverageApplied,
-                    PackageCoverageReturned = coverage.PackageCoverageReturned,
-                    Amount = commercial.FinalPrice,
-                    SuggestedAmount = commercial.SuggestedPrice,
-                    PaidAmount = commercial.MonetarySettled,
-                    OutstandingAmount = commercial.Outstanding,
-                    IsPaid = commercial.FullySettled,
-                    Note = b.Note,
-                    IsMember = activeMembers.Any(m => m.ClientId == b.ClientId)
-                };
-            })
-            .ToList();
-
-        List<GroupAttendanceEntryDto> expectedUnion = segments
-            .SelectMany(s => s.Expected)
-            .GroupBy(e => e.ClientId)
-            .Select(g => g.First())
-            .Where(e => appointment.Bookings.All(b => b.ClientId != e.ClientId))
-            .ToList();
-
-        return new GroupAttendanceListDto { Expected = expectedUnion, Recorded = recordedBookings, Segments = segments };
+        return new GroupAttendanceListDto { Segments = segments };
     }
 
     /// <summary>Confirmed (još nije čekiran) mapira se na null (isto kao staro Attended=null prije prvog

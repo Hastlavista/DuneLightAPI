@@ -9,18 +9,18 @@ namespace BlueDragon.DuneLight.UnitTests.Scheduling;
 /// <summary>
 /// Test-only read convenience for SINGLE-segment characterization tests: the legacy Appointment frame properties no
 /// longer exist (and since M1B neither does the production frame), so these read the values of the appointment's only
-/// segment through the PRODUCTION compatibility resolver (<see cref="LegacySingleSegment.Resolve"/>, which rejects
-/// any other segment count). Read-only and in-memory only. Multi-segment tests address segments directly.
+/// segment (M1H: test-local resolution — production has no single-segment resolver; any other segment count fails the
+/// test). Read-only and in-memory only. Multi-segment tests address segments directly.
 /// </summary>
 public static class SingleSegmentTestExtensions
 {
     extension(Appointment appointment)
     {
-        private AppointmentSegment OnlySegment => LegacySingleSegment.Resolve(appointment);
+        private AppointmentSegment OnlySegment => Assert.Single(appointment.Segments);
         public DateTimeOffset StartsAt => appointment.OnlySegment.PlannedStart;
         public int DurationMinutes => AppointmentSegments.DurationMinutes(appointment.OnlySegment);
         public Guid ServiceId => appointment.OnlySegment.ServiceId;
-        public Guid? EmployeeId => LegacySingleEmployee.Of(appointment.OnlySegment);
+        public Guid? EmployeeId => appointment.OnlySegment.Employees.Count == 0 ? null : Assert.Single(appointment.OnlySegment.Employees).EmployeeId;
         public Guid? RoomId => appointment.OnlySegment.RoomId;
     }
 
@@ -47,11 +47,10 @@ public static class SingleSegmentTestExtensions
     }
 
     /// <summary>D3B1/M0: single-participation characterization tests read the lifecycle/price of a Booking's ONLY
-    /// participation through the PRODUCTION compatibility resolver (<see cref="BookingParticipations.GetSingleParticipation"/>,
-    /// which rejects more than one). Read-only, in-memory only. Multi-participation tests address participations directly.</summary>
+    /// participation (M1H: test-local resolution — any other participation count fails the test). Read-only, in-memory only. Multi-participation tests address participations directly.</summary>
     extension(Booking booking)
     {
-        private BookingSegmentParticipation SingleParticipation => BookingParticipations.GetSingleParticipation(booking);
+        private BookingSegmentParticipation SingleParticipation => Assert.Single(booking.Participations);
         public BookingStatus Status => BookingParticipations.ToBookingStatus(booking.SingleParticipation.Status);
         public int StatusVersion => booking.SingleParticipation.StatusVersion;
         public string CancellationReason => booking.SingleParticipation.CancellationReason;

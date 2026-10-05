@@ -43,26 +43,17 @@ public interface IAppointmentService
     /// poviješću se ne briše (REFERENCED_CANNOT_DELETE) — koristi se otkazivanje.</summary>
     Task<AppointmentDto> RemoveParticipation(Guid organizationId, Guid userId, bool hasFullScope, Guid participationId);
 
-    /// <summary>PRIVREMENA KOMPATIBILNOST — plosnati jednosegmentni zahtjev (POST /schedule), mapira se na ciljni ugovor.</summary>
-    Task<AppointmentDto> Create(Guid organizationId, Guid userId, bool hasFullScope, AppointmentSingleSegmentRequest request);
+    /// <summary>Phase M1H — "upiši odrađeno": atomično stvara termin s JEDNIM eksplicitnim segmentom i odrađuje (uz
+    /// namirenje po klijentu) sva njegova sudjelovanja u jednoj transakciji.</summary>
+    Task<AppointmentDto> CompleteNow(Guid organizationId, Guid userId, bool hasFullScope, AppointmentCompleteNowRequest request);
 
-    /// <summary>"Upiši odrađeno" — novi termin odmah u statusu Completed, naplata odmah.</summary>
-    Task<AppointmentDto> CompleteNew(Guid organizationId, Guid userId, bool hasFullScope, AppointmentCompleteRequest request);
-
-    /// <summary>Prijelaz postojećeg (obično Scheduled) termina u Completed, naplata odmah. Samo Form=Individual
-    /// — za Form=Group koristi CompleteGroupAppointment.</summary>
-    Task<AppointmentDto> CompleteExisting(Guid organizationId, Guid userId, bool hasFullScope, Guid id, AppointmentCompleteRequest request);
+    /// <summary>Phase M1H — samo napomena termina (metapodatak agregata).</summary>
+    Task<AppointmentDto> ChangeNote(Guid organizationId, Guid userId, bool hasFullScope, Guid id, AppointmentNoteChangeRequest request);
 
     /// <summary>Appointment-razina "odrađeno" za GRUPNI termin — samo prijelaz Scheduled → Completed, ne dira
-    /// Booking retke (svaki se razrješava neovisno kroz BookingService.SetStatus/GroupAttendanceService).
+    /// Booking retke (svako sudjelovanje se razrješava neovisno — prisutnost po segmentu / ParticipationId).
     /// Upozorava (ne blokira) ako neki Booking ostane Confirmed u trenutku zatvaranja.</summary>
     Task<AppointmentDto> CompleteGroupAppointment(Guid organizationId, Guid userId, bool hasFullScope, Guid id);
-
-    /// <summary>Izmjena vremena/usluge/trenera/tvrtke/klijenata/napomene/iznosa. Ne dira plaćanje/paket.</summary>
-    Task<AppointmentDto> Update(Guid organizationId, Guid userId, bool hasFullScope, Guid id, AppointmentUpdateRequest request);
-
-    /// <summary>Brzo pomicanje (drag-and-drop) — samo StartsAt/trener/tvrtka, bez diranja ostalih polja.</summary>
-    Task<AppointmentDto> Move(Guid organizationId, Guid userId, bool hasFullScope, Guid id, AppointmentMoveRequest request);
 
     Task<AppointmentDto> Cancel(Guid organizationId, Guid userId, bool hasFullScope, Guid id, AppointmentCancelRequest request);
 

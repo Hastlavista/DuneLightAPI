@@ -371,12 +371,20 @@ public sealed class SchedulingWorld : IAsyncDisposable
     {
         Core.DTOs.Checkouts.CheckoutDto checkout = await Checkouts.Create(
             OrganizationId, ActorUserId, new Core.DTOs.Checkouts.CheckoutCreateRequest { ClientId = client.Id.Value, CompanyId = Company.Id.Value });
-        await Checkouts.AddBookingItem(OrganizationId, ActorUserId, checkout.Id, new Core.DTOs.Checkouts.CheckoutAddBookingItemRequest { BookingId = bookingId });
+        await Checkouts.AddBookingItem(OrganizationId, ActorUserId, checkout.Id, new Core.DTOs.Checkouts.CheckoutAddBookingItemRequest { ParticipationId = await SingleParticipationOfBooking(bookingId) });
         await Checkouts.RecordPayment(OrganizationId, ActorUserId, checkout.Id,
             new Core.DTOs.Checkouts.CheckoutPaymentCreateRequest { Amount = amount, Method = method });
         if (complete)
             await Checkouts.Complete(OrganizationId, ActorUserId, checkout.Id);
         return checkout.Id;
+    }
+
+    /// <summary>The ONLY participation of a booking (one-segment fixtures).</summary>
+    public async Task<Guid> SingleParticipationOfBooking(Guid bookingId)
+    {
+        await using DatabaseContext db = NewDb();
+        return Assert.Single(await db.BookingSegmentParticipations.AsNoTracking()
+            .Where(p => p.BookingId == bookingId).Select(p => p.Id).ToListAsync()).Value;
     }
 
     /// <summary>Employee → Service capability (an Employee can be authorized for several Services).</summary>
@@ -748,7 +756,8 @@ public sealed class SchedulingWorld : IAsyncDisposable
 
     #region Request builders
 
-    public AppointmentSingleSegmentRequest CreateRequest(
+    /// <summary>M1H: test-only one-segment spec (<see cref="TestAppointmentSpec"/>) — produces the target create request.</summary>
+    public TestAppointmentSpec CreateRequest(
         DateTimeOffset startsAt, Client client = null, Employee employee = null, ServiceEntity service = null,
         Company company = null, Room room = null, decimal? amount = null, bool overrideAvailability = false, string note = null,
         params Client[] extraClients)
@@ -756,7 +765,7 @@ public sealed class SchedulingWorld : IAsyncDisposable
         List<Guid> clientIds = new() { (client ?? Client).Id.Value };
         clientIds.AddRange(extraClients.Select(c => c.Id.Value));
 
-        return new AppointmentSingleSegmentRequest
+        return new TestAppointmentSpec
         {
             StartsAt = startsAt,
             ServiceId = (service ?? Service).Id.Value,
@@ -770,23 +779,23 @@ public sealed class SchedulingWorld : IAsyncDisposable
         };
     }
 
-    public Task<AppointmentDto> CreateAppointment(AppointmentSingleSegmentRequest request, bool hasFullScope = true) =>
-        Appointments.Create(OrganizationId, ActorUserId, hasFullScope, request);
+    public Task<AppointmentDto> CreateAppointment(TestAppointmentSpec request, bool hasFullScope = true) =>
+        Appointments.Create(OrganizationId, ActorUserId, hasFullScope, request.ToTarget());
 
     /// <summary>Convenience: individual appointment for the default Service/Employee/Company through the real Create flow.</summary>
     public Task<AppointmentDto> CreateAppointment(
         DateTimeOffset startsAt, Client client = null, Employee employee = null, Room room = null, params Client[] extraClients) =>
         CreateAppointment(CreateRequest(startsAt, client, employee, room: room, extraClients: extraClients));
 
-    /// <summary>"Complete" request (POST /complete, PATCH /{id}/complete): the create request plus one settlement per client.</summary>
-    public AppointmentCompleteRequest CompleteRequest(
+    /// <summary>"Complete now" spec (POST /complete): the one-segment spec plus one settlement per client.</summary>
+    public TestCompletionSpec CompleteRequest(
         DateTimeOffset startsAt, Client client = null, Employee employee = null, ServiceEntity service = null,
         Company company = null, Room room = null, decimal? amount = null, bool overrideAvailability = false,
         PaymentMethod? paymentMethod = null, bool isPaid = true, Guid? clientPackageId = null, decimal? settlementAmount = null,
-        params AppointmentClientSettlement[] settlements)
+        params AppointmentCompletedClientRequest[] settlements)
     {
-        AppointmentSingleSegmentRequest create = CreateRequest(startsAt, client, employee, service, company, room, amount, overrideAvailability);
-        return new AppointmentCompleteRequest
+        TestAppointmentSpec create = CreateRequest(startsAt, client, employee, service, company, room, amount, overrideAvailability);
+        return new TestCompletionSpec
         {
             StartsAt = create.StartsAt,
             ServiceId = create.ServiceId,
@@ -798,7 +807,7 @@ public sealed class SchedulingWorld : IAsyncDisposable
             OverrideAvailability = overrideAvailability,
             Settlements = settlements is { Length: > 0 }
                 ? settlements.ToList()
-                : new List<AppointmentClientSettlement>
+                : new List<AppointmentCompletedClientRequest>
                 {
                     new()
                     {
@@ -806,32 +815,81 @@ public sealed class SchedulingWorld : IAsyncDisposable
                         PaymentMethod = paymentMethod,
                         IsPaid = isPaid,
                         ClientPackageId = clientPackageId,
-                        Amount = settlementAmount
+                        Amount = settlementAmount ?? amount
                     }
                 }
         };
     }
 
-    public Task<AppointmentDto> CompleteNew(AppointmentCompleteRequest request, bool hasFullScope = true) =>
-        Appointments.CompleteNew(OrganizationId, ActorUserId, hasFullScope, request);
+    public Task<AppointmentDto> CompleteNew(TestCompletionSpec request, bool hasFullScope = true) =>
+        Appointments.CompleteNow(OrganizationId, ActorUserId, hasFullScope, request.ToCompleteNow());
 
-    public Task<AppointmentDto> CompleteExisting(Guid appointmentId, AppointmentCompleteRequest request, bool hasFullScope = true) =>
-        Appointments.CompleteExisting(OrganizationId, ActorUserId, hasFullScope, appointmentId, request);
-
-    public AppointmentUpdateRequest UpdateRequest(AppointmentDto current, Action<AppointmentUpdateRequest> mutate = null)
+    /// <summary>
+    /// M1H: completes an EXISTING one-segment individual appointment through the target participation API — for every
+    /// settlement, the client's participation on the only segment is (optionally re-priced via
+    /// <c>PATCH /participations/{id}/price</c> and then) moved to Completed with that settlement
+    /// (<c>PATCH /participations/{id}/status</c>). Returns the refreshed appointment.
+    /// </summary>
+    public async Task<AppointmentDto> CompleteParticipations(Guid appointmentId, TestCompletionSpec request, bool hasFullScope = true)
     {
-        AppointmentUpdateRequest request = new()
+        foreach (AppointmentCompletedClientRequest settlement in request.Settlements)
         {
-            StartsAt = current.StartsAt,
-            ServiceId = current.ServiceId.Value,
-            EmployeeId = current.EmployeeId.Value,
-            CompanyId = current.CompanyId,
-            RoomId = current.RoomId,
-            ClientIds = current.Bookings.Select(b => b.ClientId).ToList(),
-            Note = current.Note
-        };
-        mutate?.Invoke(request);
-        return request;
+            Guid participationId = await ParticipationIdOnOnlySegment(appointmentId, settlement.ClientId);
+            if (settlement.Amount.HasValue)
+                await Bookings.SetParticipationPrice(OrganizationId, ActorUserId, hasFullScope, participationId,
+                    new ParticipationPriceChangeRequest { Amount = settlement.Amount });
+            await Bookings.SetParticipationStatus(OrganizationId, ActorUserId, hasFullScope, participationId, new BookingSetStatusRequest
+            {
+                Status = BookingStatus.Completed,
+                ClientPackageId = settlement.ClientPackageId,
+                PaymentMethod = settlement.ClientPackageId.HasValue ? null : settlement.PaymentMethod,
+                IsPaid = settlement.IsPaid
+            });
+        }
+        return await Appointments.GetById(OrganizationId, appointmentId);
+    }
+
+    /// <summary>M1H: moves the ONLY segment of an appointment to a new start, keeping its duration (target
+    /// <c>PATCH /segments/{id}/time</c>).</summary>
+    public async Task<AppointmentDto> MoveOnlySegment(Guid appointmentId, DateTimeOffset plannedStart, bool hasFullScope = true, Guid? userId = null)
+    {
+        Appointment appointment = await LoadAppointment(appointmentId);
+        return await Appointments.ChangeSegmentTime(OrganizationId, userId ?? ActorUserId, hasFullScope,
+            Assert.Single(appointment.Segments).Id.Value, new AppointmentSegmentTimeChangeRequest { PlannedStart = plannedStart });
+    }
+
+    /// <summary>M1H: adds a client to the ONLY segment of an individual appointment (target <c>POST /{id}/clients</c>).</summary>
+    public async Task<AppointmentDto> AddClientToOnlySegment(Guid appointmentId, Client client, decimal? amount = null, bool hasFullScope = true)
+    {
+        Appointment appointment = await LoadAppointment(appointmentId);
+        return await Appointments.AddClient(OrganizationId, ActorUserId, hasFullScope, appointmentId, new AppointmentClientAddRequest
+        {
+            ClientId = client.Id.Value,
+            Participations = new List<AppointmentClientParticipationRequest>
+            {
+                new() { SegmentId = Assert.Single(appointment.Segments).Id.Value, Amount = amount }
+            }
+        });
+    }
+
+    /// <summary>M1H: manual final price of the client's participation on the only segment (target
+    /// <c>PATCH /participations/{id}/price</c>; null = back to the suggested price).</summary>
+    public async Task<BookingDto> SetParticipationPrice(Guid appointmentId, Client client, decimal? amount, bool hasFullScope = true, Guid? userId = null) =>
+        await Bookings.SetParticipationPrice(OrganizationId, userId ?? ActorUserId, hasFullScope,
+            await ParticipationIdOnOnlySegment(appointmentId, client.Id.Value), new ParticipationPriceChangeRequest { Amount = amount });
+
+    /// <summary>M1H: removes the client's participation on the only segment (target <c>DELETE /participations/{id}</c>).</summary>
+    public async Task<AppointmentDto> RemoveClientFromOnlySegment(Guid appointmentId, Client client, bool hasFullScope = true) =>
+        await Appointments.RemoveParticipation(OrganizationId, ActorUserId, hasFullScope, await ParticipationIdOnOnlySegment(appointmentId, client.Id.Value));
+
+    /// <summary>The client's participation on the appointment's ONLY segment (asserts one segment).</summary>
+    public async Task<Guid> ParticipationIdOnOnlySegment(Guid appointmentId, Guid clientId)
+    {
+        await using DatabaseContext db = NewDb();
+        Guid segmentId = Assert.Single(await db.AppointmentSegments.AsNoTracking()
+            .Where(s => s.AppointmentId == appointmentId).Select(s => s.Id).ToListAsync()).Value;
+        return (await db.BookingSegmentParticipations.AsNoTracking()
+            .SingleAsync(p => p.AppointmentSegmentId == segmentId && p.Booking.ClientId == clientId)).Id.Value;
     }
 
     #endregion
@@ -846,7 +904,9 @@ public sealed class SchedulingWorld : IAsyncDisposable
         return service;
     }
 
-    /// <summary>Creates a Group with one weekly slot on <see cref="FutureDay"/>'s weekday (10:00 unless overridden).</summary>
+    /// <summary>Creates a Group with ONE segment template (the service, its default duration, <paramref name="capacity"/>,
+    /// the trainer as the template's only employee unless <paramref name="withTrainer"/> is false) and one weekly slot on
+    /// <see cref="FutureDay"/>'s weekday (10:00 unless overridden).</summary>
     public Task<GroupDto> CreateGroup(
         ServiceEntity groupService, int capacity, Employee trainer = null, bool withTrainer = true, Room room = null,
         params (DayOfWeek Day, TimeSpan Start)[] slots)
@@ -854,19 +914,52 @@ public sealed class SchedulingWorld : IAsyncDisposable
         GroupCreateRequest request = new()
         {
             Name = $"Group-{Guid.NewGuid():N}",
-            ServiceId = groupService.Id.Value,
             CompanyId = Company.Id.Value,
-            Capacity = capacity,
-            DefaultTrainerId = withTrainer ? (trainer ?? Employee).Id : null,
-            DefaultRoomId = room?.Id,
+            SegmentTemplates = new List<GroupSegmentTemplateRequest>
+            {
+                new()
+                {
+                    ServiceId = groupService.Id.Value,
+                    StartOffsetMinutes = 0,
+                    RoomId = room?.Id,
+                    Capacity = capacity,
+                    EmployeeIds = withTrainer ? new List<Guid> { (trainer ?? Employee).Id.Value } : new List<Guid>()
+                }
+            },
             Slots = (slots is { Length: > 0 } ? slots : new (DayOfWeek Day, TimeSpan Start)[] { (FutureDay.DayOfWeek, TimeSpan.FromHours(10)) })
                 .Select(x => new GroupSlotCreateRequest { DayOfWeek = x.Day, StartTime = x.Start }).ToList()
         };
         return Groups.Create(OrganizationId, ActorUserId, request);
     }
 
+    /// <summary>M1H: full-replacement edit of the group's ONLY segment template (target
+    /// <c>PUT /groups/{id}/segment-templates/{templateId}</c>), starting from its current definition.</summary>
+    public Task<GroupDto> UpdateOnlyTemplate(GroupDto group, Action<GroupSegmentTemplateRequest> mutate)
+    {
+        GroupSegmentTemplateDto current = Assert.Single(group.SegmentTemplates);
+        GroupSegmentTemplateRequest request = new()
+        {
+            ServiceId = current.ServiceId,
+            StartOffsetMinutes = current.StartOffsetMinutes,
+            DurationMinutes = current.DurationMinutes,
+            RoomId = current.RoomId,
+            Capacity = current.Capacity,
+            Resources = current.Resources.Select(r => new GroupSegmentTemplateResourceRequest { ResourceId = r.ResourceId, QuantityRequired = r.QuantityRequired }).ToList(),
+            EmployeeIds = current.Employees.Select(e => e.EmployeeId).ToList(),
+            PricingMode = current.Employees.Count > 1 ? current.PricingMode : null,
+            PricingEmployeeId = current.Employees.Count > 1 ? current.PricingEmployeeId : null
+        };
+        mutate(request);
+        return Groups.UpdateSegmentTemplate(OrganizationId, ActorUserId, group.Id, current.Id, request);
+    }
+
+    /// <summary>M1H: membership with an EXPLICIT selection of every template of the group (never inferred).</summary>
     public Task<GroupDto> AddGroupMember(GroupDto group, Client client) =>
-        Groups.AddMember(OrganizationId, ActorUserId, group.Id, new GroupMemberAddRequest { ClientId = client.Id.Value });
+        Groups.AddMember(OrganizationId, ActorUserId, group.Id, new GroupMemberAddRequest
+        {
+            ClientId = client.Id.Value,
+            SegmentTemplateIds = group.SegmentTemplates.Select(t => t.Id).ToList()
+        });
 
     public Task<GenerateGroupAppointmentsResult> GenerateOccurrences(
         GroupDto group, DateTimeOffset from, DateTimeOffset? to = null, bool overrideAvailability = false) =>
@@ -886,7 +979,8 @@ public sealed class SchedulingWorld : IAsyncDisposable
     }
 
     public async Task<Core.DTOs.Appointments.BookingDto> AddGuest(Appointment occurrence, Client client) =>
-        await Bookings.AddBooking(OrganizationId, ActorUserId, true, occurrence.Id.Value, new BookingCreateRequest { ClientId = client.Id.Value });
+        await Bookings.AddGroupGuest(OrganizationId, ActorUserId, true, occurrence.Id.Value,
+            new BookingCreateRequest { ClientId = client.Id.Value, SegmentId = Assert.Single(occurrence.Segments).Id });
 
     /// <summary>M1F: gives a user exactly these raw grants through a real GrantGroup (grant resolution is not mocked).</summary>
     public async Task GrantUser(Guid userId, params string[] grants)
@@ -992,13 +1086,17 @@ public sealed class SchedulingWorld : IAsyncDisposable
 
     #endregion
 
-    #region Booking status helpers (the real IBookingService.SetStatus)
+    #region Booking status helpers (the real IBookingService target commands)
 
-    public Task<BookingDto> SetBookingStatus(
+    /// <summary>M1H: one-segment status helper — a GROUP occurrence goes through the (appointment, client, explicit segment)
+    /// attendance path; an INDIVIDUAL appointment addresses the client's participation on its only segment.</summary>
+    public async Task<BookingDto> SetBookingStatus(
         Guid appointmentId, Client client, BookingStatus status, string cancellationReason = null, bool returnPackageEntry = false,
         Guid? clientPackageId = null, PaymentMethod? paymentMethod = null, decimal? amount = null, bool isPaid = true,
-        bool hasFullScope = true, Guid? userId = null) =>
-        Bookings.SetStatus(OrganizationId, userId ?? ActorUserId, hasFullScope, appointmentId, client.Id.Value, new BookingSetStatusRequest
+        bool hasFullScope = true, Guid? userId = null)
+    {
+        Appointment appointment = await LoadAppointment(appointmentId);
+        BookingSetStatusRequest request = new()
         {
             Status = status,
             CancellationReason = cancellationReason,
@@ -1007,7 +1105,15 @@ public sealed class SchedulingWorld : IAsyncDisposable
             PaymentMethod = paymentMethod,
             Amount = amount,
             IsPaid = isPaid
-        });
+        };
+        if (appointment.Form == AppointmentForm.Group)
+        {
+            request.SegmentId = Assert.Single(appointment.Segments).Id;
+            return await Bookings.SetStatusOnSegment(OrganizationId, userId ?? ActorUserId, hasFullScope, appointmentId, client.Id.Value, request);
+        }
+        Guid participationId = await ParticipationIdOnOnlySegment(appointmentId, client.Id.Value);
+        return await Bookings.SetParticipationStatus(OrganizationId, userId ?? ActorUserId, hasFullScope, participationId, request);
+    }
 
     /// <summary>
     /// Puts a Booking into "package coverage applied" state and decrements the package counter, exactly as a completion
@@ -1020,7 +1126,7 @@ public sealed class SchedulingWorld : IAsyncDisposable
         await using DatabaseContext db = NewDb();
         // D3B3A: "coverage applied" is an ACTIVE PackageConsumption on the booking's participation (+ the counter).
         Booking tracked = await db.Bookings.Include(b => b.Participations).ThenInclude(p => p.Segment).SingleAsync(b => b.Id == booking.Id);
-        BookingSegmentParticipation participation = BookingParticipations.GetSingleParticipation(tracked);
+        BookingSegmentParticipation participation = Assert.Single(tracked.Participations);
         ClientPackageServiceEntry entry = await db.ClientPackageServiceEntries.SingleAsync(e => e.ClientPackageId == package.Id);
         if (entry.RemainingEntries.HasValue) entry.RemainingEntries -= 1;
         db.PackageConsumptions.Add(new PackageConsumption

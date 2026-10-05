@@ -59,8 +59,8 @@ public class Payment
     public string Note { get; set; }
 
     /// <summary>True kad je Payment (i njegov jednostavačni Checkout) automatski stvoren tijekom check-ina/
-    /// completiona (BookingService.ResolveCoverage, AppointmentService.CompleteNew/CompleteExisting preko
-    /// PaymentMethod na Settlement/BookingSetStatusRequest), false kad je stvoren eksplicitnim pozivom na
+    /// completiona (prijelaz sudjelovanja u BookingService, uklj. AppointmentService.CompleteNow, preko
+    /// PaymentMethod na AppointmentCompletedClientRequest/BookingSetStatusRequest), false kad je stvoren eksplicitnim pozivom na
     /// Checkout Payment API (ICheckoutService.RecordPayment). Jedina svrha: kad se poništava POGREŠAN check-in
     /// (Completed -&gt; natrag), voidati SAMO Payment koji je TAJ check-in stvorio, nikad ručno dodane Paymente
     /// (vidi IPaymentLedgerService.VoidCheckInGeneratedPayments) — stanje-mašina jamči najviše jedan aktivan

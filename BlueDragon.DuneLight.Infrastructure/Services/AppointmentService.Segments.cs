@@ -441,7 +441,7 @@ public partial class AppointmentService
         return (appointment, appointment.Segments.Single(s => s.Id == segmentId));
     }
 
-    /// <summary>Izvršni podaci eksplicitno otkazanog termina se ne mijenjaju (isto kao legacy Move).</summary>
+    /// <summary>Izvršni podaci eksplicitno otkazanog termina se ne mijenjaju (otkazan termin je zaključan).</summary>
     private static void EnsureExecutionEditable(Appointment appointment)
     {
         if (appointment.IsExplicitlyCancelled)

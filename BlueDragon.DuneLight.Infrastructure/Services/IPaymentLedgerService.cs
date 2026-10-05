@@ -27,7 +27,7 @@ public interface IPaymentLedgerService
     /// companyId je mjesto transakcije (Appointment.CompanyId u pozivatelja) — postaje Checkout.CompanyId.
     /// isCheckInGenerated=true označava Payment kao automatski stvoren tijekom check-ina/completiona (vidi
     /// Payment.IsCheckInGenerated i VoidCheckInGeneratedPayments) — pozivatelji IZ check-in/completion tokova
-    /// (BookingService.ResolveCoverage, AppointmentService.CompleteNew/CompleteExisting) prosljeđuju true.
+    /// (prijelaz sudjelovanja u BookingService, uklj. AppointmentService.CompleteNow) prosljeđuju true.
     /// Phase D3B3B: namirenje je na sudjelovanju (zaključanom) — check-in plaćanje naplaćuje najviše PREOSTALI dug
     /// sudjelovanja i vraća null kad ništa ne preostaje; iznos iznad preostalog duga se inače odbija.
     /// Phase M0: CILJ je eksplicitno <paramref name="participation"/> (mora pripadati <paramref name="booking"/>, koji je samo

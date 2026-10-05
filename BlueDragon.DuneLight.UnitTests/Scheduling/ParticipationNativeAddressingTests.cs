@@ -183,21 +183,6 @@ public class ParticipationNativeAddressingTests
     }
 
     [Fact]
-    public async Task BookingIdCompatibilityCommand_RejectsABookingWithMoreThanOneParticipation()
-    {
-        (SchedulingWorld w, AppointmentDto created, Guid first, Guid second) = await TwoParticipations(nameof(BookingIdCompatibilityCommand_RejectsABookingWithMoreThanOneParticipation));
-        await using SchedulingWorld _ = w;
-
-        await SchedulingAssert.BusinessRule(ErrorCodes.BookingParticipationAmbiguous,
-            () => w.SetBookingStatus(created.Id, w.Client, BookingStatus.NoShow));
-        await SchedulingAssert.BusinessRule(ErrorCodes.BookingParticipationAmbiguous,
-            () => w.SetBookingStatus(created.Id, w.Client, BookingStatus.Confirmed));
-
-        Assert.All(await w.LoadParticipations(created.Id, w.Client), p => Assert.Equal((ParticipationStatus.Confirmed, 0), (p.Status, p.StatusVersion)));
-        Assert.Empty(await w.LoadOutbox());
-    }
-
-    [Fact]
     public async Task BookingWideCancel_CancelsEveryActiveParticipation_EachWithItsOwnVersionAuditAndOccurrence()
     {
         (SchedulingWorld w, AppointmentDto created, Guid first, Guid second) = await TwoParticipations(nameof(BookingWideCancel_CancelsEveryActiveParticipation_EachWithItsOwnVersionAuditAndOccurrence));
@@ -349,17 +334,12 @@ public class ParticipationNativeAddressingTests
         CheckoutDto checkout = await w.Checkouts.Create(w.OrganizationId, w.ActorUserId,
             new CheckoutCreateRequest { ClientId = w.Client.Id.Value, CompanyId = w.Company.Id.Value });
 
-        // BookingId alone is ambiguous for a multi-participation Booking; a mismatching pair is rejected.
-        await SchedulingAssert.BusinessRule(ErrorCodes.BookingParticipationAmbiguous,
-            () => w.Checkouts.AddBookingItem(w.OrganizationId, w.ActorUserId, checkout.Id, new CheckoutAddBookingItemRequest { BookingId = bookingId }));
-        await SchedulingAssert.BusinessRule(ErrorCodes.ParticipationBookingMismatch,
-            () => w.Checkouts.AddBookingItem(w.OrganizationId, w.ActorUserId, checkout.Id,
-                new CheckoutAddBookingItemRequest { ParticipationId = second, BookingId = Guid.NewGuid() }));
+        // M1H: a checkout item addresses exactly one participation — the ParticipationId is required (no BookingId path).
         await SchedulingAssert.Validation(
             () => w.Checkouts.AddBookingItem(w.OrganizationId, w.ActorUserId, checkout.Id, new CheckoutAddBookingItemRequest()));
 
         CheckoutDto withItem = await w.Checkouts.AddBookingItem(w.OrganizationId, w.ActorUserId, checkout.Id,
-            new CheckoutAddBookingItemRequest { ParticipationId = second, BookingId = bookingId });
+            new CheckoutAddBookingItemRequest { ParticipationId = second });
         CheckoutItemDto item = Assert.Single(withItem.Items);
         Assert.Equal((second, bookingId, SecondAmount), (item.ParticipationId.Value, item.BookingId.Value, item.RetailAmount));
 
@@ -436,7 +416,7 @@ public class ParticipationNativeAddressingTests
         await using SchedulingWorld w = await SchedulingWorld.Create(nameof(IndividualCompletion_CommissionSourceIsTheParticipation_WithItsOwnVersion));
         await w.AddCommissionRule(w.Employee, w.Service, CommissionCalculationType.Percentage, 10m);
         AppointmentDto created = await w.CreateAppointment(SchedulingWorld.Future(10));
-        await w.CompleteExisting(created.Id, w.CompleteRequest(SchedulingWorld.Future(10)));
+        await w.CompleteParticipations(created.Id, w.CompleteRequest(SchedulingWorld.Future(10)));
 
         Booking booking = await w.LoadBooking(created.Id, w.Client);
         BookingSegmentParticipation participation = booking.Participations.Single();

@@ -41,8 +41,10 @@ public class BookingSettlementCharacterizationTests
         w.Checkouts.Create(w.OrganizationId, w.ActorUserId,
             new CheckoutCreateRequest { ClientId = (client ?? w.Client).Id.Value, CompanyId = w.Company.Id.Value });
 
-    private static Task<CheckoutDto> AddItem(SchedulingWorld w, Guid checkoutId, Guid bookingId) =>
-        w.Checkouts.AddBookingItem(w.OrganizationId, w.ActorUserId, checkoutId, new CheckoutAddBookingItemRequest { BookingId = bookingId });
+    /// <summary>M1H: checkout items address the booking's (only) participation — BookingId is no longer accepted.</summary>
+    private static async Task<CheckoutDto> AddItem(SchedulingWorld w, Guid checkoutId, Guid bookingId) =>
+        await w.Checkouts.AddBookingItem(w.OrganizationId, w.ActorUserId, checkoutId,
+            new CheckoutAddBookingItemRequest { ParticipationId = await w.SingleParticipationOfBooking(bookingId) });
 
     private static Task<CheckoutDto> Pay(SchedulingWorld w, Guid checkoutId, decimal amount, List<CheckoutPaymentAllocationRequest> allocations = null) =>
         w.Checkouts.RecordPayment(w.OrganizationId, w.ActorUserId, checkoutId,
@@ -347,8 +349,8 @@ public class BookingSettlementCharacterizationTests
         await AddItem(w, checkout.Id, bookingId);
         await Pay(w, checkout.Id, 20m);
 
-        // A full Update re-prices the still-Confirmed booking to 30 ...
-        await w.Appointments.Update(w.OrganizationId, w.ActorUserId, true, created.Id, w.UpdateRequest(created, r => r.Amount = 30m));
+        // A manual participation price change re-prices the still-Confirmed booking to 30 ...
+        await w.SetParticipationPrice(created.Id, w.Client, 30m);
 
         // ... but the CheckoutItem snapshot (UnitPrice/Amount) stays 50. D3B3B (changed): the item's outstanding is capped by
         // the PARTICIPATION's remaining debt (one settlement boundary), so booking and checkout now agree on 10. Before: the

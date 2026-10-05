@@ -15,31 +15,26 @@ public interface IBookingService
 {
     Task<List<BookingDto>> GetForAppointment(Guid organizationId, Guid appointmentId);
 
-    /// <summary>Ad-hoc dodavanje Bookinga (Status=Confirmed) na postojeći, još ne-terminalni termin — npr. gost
-    /// na grupnom terminu izvan popisa članova. Klijent mora biti aktivan, ne-anoniman, isti tenant.</summary>
-    Task<BookingDto> AddBooking(Guid organizationId, Guid userId, bool hasFullScope, Guid appointmentId, BookingCreateRequest request);
+    /// <summary>Gost na GRUPNOM occurrenceu (izvan popisa članova): novo Confirmed sudjelovanje na EKSPLICITNOM segmentu
+    /// (postojeći Booking klijenta se ponovno koristi). Klijent mora biti aktivan, ne-anoniman, isti tenant. Individualni termin
+    /// dodaje klijente kroz IAppointmentService.AddClient.</summary>
+    Task<BookingDto> AddGroupGuest(Guid organizationId, Guid userId, bool hasFullScope, Guid appointmentId, BookingCreateRequest request);
 
-    /// <summary>Prijelaz statusa jednog Bookinga. Vlasništvo: trener smije samo na terminima gdje je on
-    /// Appointment.EmployeeId (isto pravilo kao IAppointmentService), osim uz hasFullScope. Za Form=Individual
-    /// dopušteni ciljni statusi su Cancelled/NoShow (Completed ide isključivo kroz
-    /// IAppointmentService.CompleteNew/CompleteExisting, koji naplatu razrješavaju po klijentu preko
-    /// AppointmentCompleteRequest.Settlements — mješovito plaćanje na istom terminu je podržano) i Confirmed KAO
-    /// USKA administrativna korekcija IZ Completed (poništenje pogrešnog check-ina, vidi
-    /// BookingService.ApplyIndividualCompletionCorrection) ILI IZ NoShow (poništenje pogrešno evidentiranog
-    /// izostanka, vidi BookingService.ApplyIndividualNoShowCorrection) — Cancelled nema povratnu putanju za
-    /// Individual — za Form=Group dopušteni su svi prijelazi uklj. povratak na Confirmed s bilo kojeg terminalnog
-    /// statusa (poništenje check-ina/otkazivanja).</summary>
-    /// <remarks>Phase M0: PRIVREMENA kompatibilnost — (termin, klijent) adresira Booking, koji smije imati TOČNO JEDNO
-    /// sudjelovanje (inače BOOKING_PARTICIPATION_AMBIGUOUS); delegira na <see cref="SetParticipationStatus"/>. Novi kod
-    /// adresira sudjelovanje.</remarks>
-    Task<BookingDto> SetStatus(Guid organizationId, Guid userId, bool hasFullScope, Guid appointmentId, Guid clientId, BookingSetStatusRequest request);
+    /// <summary>Phase M1H — GRUPNI occurrence, adresa (termin, klijent, EKSPLICITNI segment): prijelaz postojećeg sudjelovanja
+    /// na tom segmentu, ili check-in gosta bez sudjelovanja (novo sudjelovanje). Put prisutnosti grupe
+    /// (GroupAttendanceService). Individualni termin adresira sudjelovanje (<see cref="SetParticipationStatus"/>).</summary>
+    Task<BookingDto> SetStatusOnSegment(Guid organizationId, Guid userId, bool hasFullScope, Guid appointmentId, Guid clientId, BookingSetStatusRequest request);
 
     /// <summary>Phase M0 — participation-native prijelaz (check-in/Completed, Cancelled, NoShow, korekcija na Confirmed,
     /// paket i check-in plaćanje kroz BookingSetStatusRequest) JEDNOG sudjelovanja; ostala sudjelovanja istog Bookinga
-    /// se ne diraju. Ista pravila prijelaza i vlasništva kao <see cref="SetStatus"/>.</summary>
+    /// se ne diraju. Vlasništvo slijedi segment sudjelovanja.</summary>
     Task<BookingDto> SetParticipationStatus(Guid organizationId, Guid userId, bool hasFullScope, Guid participationId, BookingSetStatusRequest request);
 
     /// <summary>Phase M0 — Booking-wide otkazivanje: svako AKTIVNO (Confirmed) sudjelovanje Bookinga prelazi u Cancelled
     /// (zasebno: StatusVersion, audit, Outbox pojava po sudjelovanju), terminalna ostaju netaknuta. Booking nema status.</summary>
     Task<BookingDto> CancelBooking(Guid organizationId, Guid userId, bool hasFullScope, Guid appointmentId, Guid clientId, BookingCancelRequest request);
+
+    /// <summary>Phase M1H — ručni konačni iznos JEDNOG sudjelovanja (samo Confirmed; null = predložena cijena). Snapshot
+    /// razrješavanja cjenika se ne mijenja; namirenje se izvodi iz novog iznosa (iznos ispod već naplaćenog se odbija).</summary>
+    Task<BookingDto> SetParticipationPrice(Guid organizationId, Guid userId, bool hasFullScope, Guid participationId, ParticipationPriceChangeRequest request);
 }

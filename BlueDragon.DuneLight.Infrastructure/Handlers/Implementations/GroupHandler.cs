@@ -123,13 +123,6 @@ public class GroupHandler : IGroupHandler
             m.GroupId == groupId && m.Id == memberId && m.Group.OrganizationId == organizationId);
     }
 
-    public async Task<GroupSegmentTemplate> GetTemplateById(Guid organizationId, Guid groupId, Guid templateId)
-    {
-        await using DatabaseContext context = DatabaseContext.GenerateContext(_databaseSettings.ConnectionString);
-        return await context.GroupSegmentTemplates.Include(t => t.Resources).Include(t => t.Employees)
-            .SingleOrDefaultAsync(t => t.Id == templateId && t.GroupId == groupId && t.Group.OrganizationId == organizationId);
-    }
-
     public async Task<int> CountActiveMembersSelecting(IUnitOfWork uow, Guid templateId)
     {
         // Isto pravilo "aktivnog mjesta" kao CountActiveMembers: aktivno članstvo aktivnog, neanonimiziranog klijenta.

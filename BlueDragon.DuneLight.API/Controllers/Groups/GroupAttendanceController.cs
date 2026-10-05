@@ -21,8 +21,8 @@ public class GroupAttendanceController : ControllerBase
         _attendanceService = attendanceService;
     }
 
-    /// <summary>Expected = aktivni članovi grupe bez zabilježene prisutnosti (kandidati). Recorded = već
-    /// zabilježeni retci (uklj. goste izvan popisa članova).</summary>
+    /// <summary>Prisutnost PO SEGMENTU occurrencea (Phase M1H: nema sažetka po occurrenceu): Expected = članovi koji su
+    /// odabrali predložak segmenta, a nemaju sudjelovanje; Recorded = sudjelovanja na segmentu (uklj. goste).</summary>
     [HttpGet]
     [RequireGrant(Grants.GroupsAttendanceView)]
     public async Task<ActionResult<GroupAttendanceListDto>> GetAttendance(Guid appointmentId)
@@ -30,8 +30,9 @@ public class GroupAttendanceController : ControllerBase
         return Ok(await _attendanceService.GetAttendance(this.CurrentOrganizationId(), appointmentId));
     }
 
-    /// <summary>Čekira/poništava prisutnost jednog klijenta (član ili gost izvan popisa). Member smije samo na
-    /// svom terminu. Poništenje SessionPackage prisutnosti automatski vraća skinuti ulazak.</summary>
+    /// <summary>Čekira/poništava prisutnost jednog klijenta (član ili gost izvan popisa) na EKSPLICITNOM segmentu
+    /// (SegmentId obavezan). Member smije samo na svom terminu. Poništenje SessionPackage prisutnosti automatski vraća
+    /// skinuti ulazak.</summary>
     [HttpPost]
     [RequireGrant(Grants.GroupsAttendanceOwn, Grants.GroupsAttendanceAll)]
     public async Task<ActionResult<GroupAttendanceListDto>> SetAttendance(Guid appointmentId, [FromBody] SetGroupAttendanceRequest request)

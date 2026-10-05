@@ -96,23 +96,6 @@ public class AppointmentDto
     /// resursi).</summary>
     public List<AppointmentSegmentDto> Segments { get; set; } = new();
 
-    /// <summary>PRIVREMENA KOMPATIBILNOST: = PlannedStart.</summary>
-    public DateTimeOffset StartsAt { get; set; }
-
-    /// <summary>PRIVREMENA KOMPATIBILNOST: raspon termina u minutama (PlannedEnd − PlannedStart, uključuje razmake između
-    /// segmenata) — NIJE zbroj trajanja segmenata.</summary>
-    public int DurationMinutes { get; set; }
-
-    /// <summary>PRIVREMENA KOMPATIBILNOST (Phase M1B, nije autoritativno): jednosegmentna projekcija za postojeće klijente
-    /// API-ja — popunjeno samo kad termin ima TOČNO jedan segment, inače null. Izvor istine su Segments.</summary>
-    public Guid? ServiceId { get; set; }
-    public string ServiceName { get; set; }
-    public string ServiceCategoryColorHex { get; set; }
-    public Guid? EmployeeId { get; set; }
-    public string EmployeeName { get; set; }
-    public Guid? RoomId { get; set; }
-    public string RoomName { get; set; }
-
     public Guid CompanyId { get; set; }
     public string CompanyName { get; set; }
     public AppointmentStatus Status { get; set; }
@@ -162,20 +145,6 @@ public class ClientAppointmentHistoryDto
     public DateTimeOffset PlannedEnd { get; set; }
     public List<AppointmentSegmentDto> Segments { get; set; } = new();
 
-    /// <summary>PRIVREMENA KOMPATIBILNOST: = PlannedStart.</summary>
-    public DateTimeOffset StartsAt { get; set; }
-
-    /// <summary>PRIVREMENA KOMPATIBILNOST: raspon u minutama (uključuje razmake), ne zbroj segmenata.</summary>
-    public int DurationMinutes { get; set; }
-
-    /// <summary>PRIVREMENA KOMPATIBILNOST (Phase M1B, nije autoritativno): jednosegmentna projekcija — popunjeno samo kad
-    /// termin ima TOČNO jedan segment, inače null. Izvor istine su Segments.</summary>
-    public Guid? ServiceId { get; set; }
-    public string ServiceName { get; set; }
-    public string ServiceCategoryColorHex { get; set; }
-    public Guid? EmployeeId { get; set; }
-    public string EmployeeName { get; set; }
-
     public Guid CompanyId { get; set; }
     public string CompanyName { get; set; }
 
@@ -218,22 +187,6 @@ public class AppointmentScheduleCellDto
     public DateTimeOffset PlannedStart { get; set; }
     public DateTimeOffset PlannedEnd { get; set; }
     public List<AppointmentSegmentDto> Segments { get; set; } = new();
-
-    /// <summary>PRIVREMENA KOMPATIBILNOST: = PlannedStart.</summary>
-    public DateTimeOffset StartsAt { get; set; }
-
-    /// <summary>PRIVREMENA KOMPATIBILNOST: raspon termina u minutama (uključuje razmake), ne zbroj segmenata.</summary>
-    public int DurationMinutes { get; set; }
-
-    /// <summary>PRIVREMENA KOMPATIBILNOST (Phase M1B, nije autoritativno): jednosegmentna projekcija za postojeće klijente
-    /// API-ja — popunjeno samo kad termin ima TOČNO jedan segment, inače null. Izvor istine su Segments.</summary>
-    public Guid? ServiceId { get; set; }
-    public string ServiceName { get; set; }
-    public string ServiceCategoryColorHex { get; set; }
-    public Guid? EmployeeId { get; set; }
-    public string EmployeeName { get; set; }
-    public Guid? RoomId { get; set; }
-    public string RoomName { get; set; }
 
     public Guid CompanyId { get; set; }
     public string CompanyName { get; set; }
@@ -279,16 +232,15 @@ public class AppointmentScheduleQuery
     public AppointmentStatus? Status { get; set; }
 }
 
-/// <summary>Naplata JEDNOG klijenta na terminu kod complete/complete-existing — zamjenjuje staru
-/// AppointmentClientPackageSelection (koja je pokrivala samo paket-granu, uz jedan zajednički
-/// AppointmentCompleteRequest.PaymentMethod za sve). Sada svaki klijent na terminu ima vlastiti
-/// PaymentMethod/Amount/paket, čime je moguće mješovito plaćanje (npr. duo: jedan paket, drugi kartica).
+/// <summary>Phase M1H — JEDAN klijent "odmah odrađenog" termina (<see cref="AppointmentCompleteNowRequest"/>): klijent dobiva
+/// jedan Booking i jedno sudjelovanje na segmentu naredbe, opcionalni ručni konačni iznos i vlastito namirenje (paket ILI
+/// novac) — mješovito namirenje po klijentu (npr. duo: jedan paket, drugi kartica).
 ///
 /// Paket-pokriće (ClientPackageId popunjen) i novčano plaćanje (PaymentMethod popunjen) se međusobno
 /// isključuju — kad je ClientPackageId popunjen, PaymentMethod se IGNORIRA (paket namiruje obvezu bez
 /// stvaranja Payment retka, vidi Payment.cs/spec section 3/40). Kad ni jedno ni drugo nije popunjeno (i
 /// Amount &gt; 0), booking ostaje evidentiran ali financijski neplaćen (naplata naknadno).</summary>
-public class AppointmentClientSettlement
+public class AppointmentCompletedClientRequest
 {
     [Required]
     public Guid ClientId { get; set; }
@@ -312,76 +264,45 @@ public class AppointmentClientSettlement
     public bool IsPaid { get; set; } = true;
 }
 
-/// <summary>"Zakaži" — PRIVREMENI KOMPATIBILNI (jednosegmentni, plosnati) ugovor: kreira termin s jednim segmentom u
-/// statusu Scheduled, bez naplate. Phase M1B: interno se prevodi u ciljni <see cref="AppointmentCreateRequest"/> (jedan
-/// segment); osnova je i za Complete/Update kompatibilne operacije. Novi kod koristi ciljni ugovor.</summary>
-public class AppointmentSingleSegmentRequest
+/// <summary>
+/// Phase M1H — "upiši odrađeno" (POS): ATOMIČNO stvara termin s JEDNIM eksplicitnim segmentom (izvedena usluga, sada ili u
+/// prošlosti), po jedan Booking i sudjelovanje za svakog klijenta, odrađuje ta sudjelovanja kroz isti životni ciklus
+/// sudjelovanja (cijena, paket/novac, provizija po zaposleniku, audit) i sve se commita zajedno ili ništa. Jedan segment je
+/// DOSEG ove poslovne naredbe (jedna odrađena usluga), ne pretpostavka modela; segment koristi puni ciljni model osoblja
+/// (EmployeeIds + izvor cijene).
+/// </summary>
+public class AppointmentCompleteNowRequest
 {
-    [Required]
-    public DateTimeOffset StartsAt { get; set; }
-
-    [Required]
-    public Guid ServiceId { get; set; }
-
-    [Required]
-    public Guid EmployeeId { get; set; }
-
     [Required]
     public Guid CompanyId { get; set; }
 
-    /// <summary>Opcionalno — mora pripadati istoj CompanyId.</summary>
-    public Guid? RoomId { get; set; }
-
-    [Required]
-    [MinLength(1, ErrorMessage = "Termin mora imati barem jednog klijenta.")]
-    public List<Guid> ClientIds { get; set; } = new();
-
-    /// <summary>Ručni override predložene cijene. Null = koristi se predložena cijena iz cjenika.</summary>
-    [Range(0, double.MaxValue, ErrorMessage = "Iznos ne smije biti negativan.")]
-    public decimal? Amount { get; set; }
-
     public string Note { get; set; }
 
-    /// <summary>Zaobilazi MEKE radne-snage blokade (izvan radnog vremena, odsutnost, praznik poslovnice,
-    /// pauza trenera) — NIKAD strukturne (neaktivan/nevaljan Company/Service/Employee/Room, sudar). Ignorira
-    /// se (tretira kao false) ako pozivatelj nema appointments.write.all — vidi AppointmentEligibilityHelper.</summary>
+    /// <summary>Vidi AppointmentCreateRequest.OverrideAvailability (samo uz appointments.write.all; provjera radne snage
+    /// vrijedi samo za budući početak).</summary>
     public bool OverrideAvailability { get; set; }
-}
 
-/// <summary>"Upiši odrađeno" — kreira/prevodi termin u Completed, naplata odmah. Mora sadržavati točno jedan
-/// AppointmentClientSettlement po svakom ClientIds — omogućuje mješovito plaćanje (npr. duo: jedan paket,
-/// drugi kartica). Naslijeđeni Amount (iz AppointmentSingleSegmentRequest) se ovdje IGNORIRA — svaki klijent ima
-/// vlastiti Settlements[].Amount.</summary>
-public class AppointmentCompleteRequest : AppointmentSingleSegmentRequest
-{
     [Required]
-    [MinLength(1)]
-    public List<AppointmentClientSettlement> Settlements { get; set; } = new();
-}
+    public AppointmentSegmentDefinitionRequest Segment { get; set; }
 
-/// <summary>Izmjena vremena/usluge/trenera/tvrtke/klijenata/napomene/iznosa. Ne dira plaćanje/paket — za to postoje complete/cancel/no-show.</summary>
-public class AppointmentUpdateRequest : AppointmentSingleSegmentRequest
-{
-}
-
-/// <summary>Brzo pomicanje termina (drag-and-drop) — mijenja samo StartsAt i po potrebi trenera/tvrtku.
-/// Ne dira uslugu/klijente/iznos/napomenu/plaćanje/paket.</summary>
-public class AppointmentMoveRequest
-{
+    /// <summary>Klijenti izvedene usluge (barem jedan, svaki jednom) s vlastitim iznosom i namirenjem.</summary>
     [Required]
-    public DateTimeOffset StartsAt { get; set; }
+    [MinLength(1, ErrorMessage = "Potreban je barem jedan klijent.")]
+    public List<AppointmentCompletedClientRequest> Clients { get; set; } = new();
+}
 
-    /// <summary>Null = trener se ne mijenja.</summary>
-    public Guid? EmployeeId { get; set; }
+/// <summary>Phase M1H — napomena termina (metapodatak agregata; ne dira segmente, cijene, raspored ni životni ciklus).</summary>
+public class AppointmentNoteChangeRequest
+{
+    public string Note { get; set; }
+}
 
-    /// <summary>Null = tvrtka se ne mijenja.</summary>
-    public Guid? CompanyId { get; set; }
-
-    /// <summary>Null = prostorija se ne mijenja. Za uklanjanje dodijeljene prostorije koristiti Update.</summary>
-    public Guid? RoomId { get; set; }
-
-    /// <summary>Vidi AppointmentSingleSegmentRequest.OverrideAvailability.</summary>
-    public bool OverrideAvailability { get; set; }
+/// <summary>Phase M1H — ručni konačni iznos JEDNOG sudjelovanja (samo Confirmed). Null = povratak na predloženu cijenu
+/// (SuggestedAmount; snapshot razrješavanja cjenika se ne mijenja).</summary>
+public class ParticipationPriceChangeRequest
+{
+    [Range(0, double.MaxValue, ErrorMessage = "Iznos ne smije biti negativan.")]
+    public decimal? Amount { get; set; }
 }
 
 public class AppointmentCancelRequest
@@ -425,7 +346,7 @@ public class RecurringAppointmentCreateRequest
 
     public string Note { get; set; }
 
-    /// <summary>Vidi AppointmentSingleSegmentRequest.OverrideAvailability — primjenjuje se po occurrenceu.</summary>
+    /// <summary>Vidi AppointmentCreateRequest.OverrideAvailability — primjenjuje se po occurrenceu.</summary>
     public bool OverrideAvailability { get; set; }
 }
 
@@ -481,22 +402,23 @@ public class ClientAppointmentStatsDto
 }
 
 /// <summary>Ad-hoc dodavanje Bookinga na postojeći termin bez pune izmjene (npr. gost/zamjena na grupnom
-/// terminu izvan popisa članova) — vidi IBookingService.AddBooking.</summary>
+/// terminu izvan popisa članova) — vidi IBookingService.AddGroupGuest.</summary>
 public class BookingCreateRequest
 {
     [Required]
     public Guid ClientId { get; set; }
 
-    /// <summary>Phase M1F — grupni occurrence: segment u koji se dodaje gost (postojeći Booking klijenta se ponovno koristi).
-    /// Obavezan za višesegmentni occurrence (SEGMENT_SELECTION_REQUIRED).</summary>
+    /// <summary>Segment grupnog occurrencea u koji se dodaje gost (postojeći Booking klijenta se ponovno koristi). Phase M1H:
+    /// uvijek obavezan — segment se nikad ne zaključuje.</summary>
+    [Required]
     public Guid? SegmentId { get; set; }
 
     /// <summary>Phase M1F — eksplicitno prekoračenje mekog kapaciteta segmenta grupe; zahtijeva groups.capacity.override.</summary>
     public bool OverrideCapacity { get; set; }
 }
 
-/// <summary>Otkazivanje/no-show JEDNOG Bookinga (npr. jedan od dvoje na duo terminu) — vidi
-/// AppointmentsController.CancelBooking/MarkBookingNoShow. Isto oblik kao AppointmentCancelRequest, samo
+/// <summary>Otkazivanje JEDNOG Bookinga (svih njegovih aktivnih sudjelovanja; npr. jedan od dvoje na duo terminu) ili
+/// jednog sudjelovanja — vidi AppointmentsController.CancelBooking i ParticipationsController. Isto oblik kao AppointmentCancelRequest, samo
 /// bez ReturnEntryForClientIds liste (uvijek točno jedan klijent, poznat iz rute).</summary>
 public class BookingCancelRequest
 {
@@ -509,7 +431,7 @@ public class BookingCancelRequest
 }
 
 /// <summary>Prijelaz statusa jednog Bookinga (Confirmed→Completed/Cancelled/NoShow, ili poništenje
-/// check-ina natrag na Confirmed) — vidi IBookingService.SetStatus.</summary>
+/// check-ina natrag na Confirmed) — vidi IBookingService.SetParticipationStatus.</summary>
 public class BookingSetStatusRequest
 {
     [Required]
@@ -531,7 +453,7 @@ public class BookingSetStatusRequest
     [Range(0, double.MaxValue, ErrorMessage = "Iznos ne smije biti negativan.")]
     public decimal? Amount { get; set; }
 
-    /// <summary>Zadano true — vidi AppointmentClientSettlement.IsPaid za istu semantiku.</summary>
+    /// <summary>Zadano true — vidi AppointmentCompletedClientRequest.IsPaid za istu semantiku.</summary>
     public bool IsPaid { get; set; } = true;
 
     public string Note { get; set; }
@@ -542,8 +464,8 @@ public class BookingSetStatusRequest
     /// domensku napomenu na BookingService.</summary>
     public bool ReturnPackageEntry { get; set; }
 
-    /// <summary>Phase M1F — grupni occurrence, (termin, klijent) adresiranje: segment na koji se odnosi prijelaz/check-in
-    /// gosta. Obavezan za višesegmentni occurrence kad ga nije moguće jednoznačno odrediti (SEGMENT_SELECTION_REQUIRED).</summary>
+    /// <summary>Grupni occurrence, (termin, klijent, segment) adresiranje (prisutnost/check-in gosta): segment prijelaza —
+    /// Phase M1H: obavezan na tom putu. Participation-native naredba (ParticipationId) ga ne koristi.</summary>
     public Guid? SegmentId { get; set; }
 
     /// <summary>Phase M1F — eksplicitno prekoračenje mekog kapaciteta segmenta grupe pri novom/ponovno aktiviranom
@@ -610,7 +532,9 @@ public class AppointmentCreateRequest
 
     public string Note { get; set; }
 
-    /// <summary>Vidi AppointmentSingleSegmentRequest.OverrideAvailability.</summary>
+    /// <summary>Zaobilazi MEKE radne-snage blokade (izvan radnog vremena, odsutnost, praznik poslovnice, pauza zaposlenika) —
+    /// NIKAD strukturne (neaktivan/nevaljan Company/Service/Employee/Room, sudar). Ignorira se (tretira kao false) ako
+    /// pozivatelj nema appointments.write.all — vidi AppointmentEligibilityHelper.</summary>
     public bool OverrideAvailability { get; set; }
 
     [Required]
@@ -618,7 +542,9 @@ public class AppointmentCreateRequest
     public List<AppointmentSegmentCreateRequest> Segments { get; set; } = new();
 }
 
-public class AppointmentSegmentCreateRequest
+/// <summary>Phase M1H — izvršna definicija JEDNOG segmenta (bez sudionika): usluga, vrijeme, zaposlenici + izvor cijene,
+/// prostorija, resursi.</summary>
+public class AppointmentSegmentDefinitionRequest
 {
     [Required]
     public Guid ServiceId { get; set; }
@@ -643,6 +569,11 @@ public class AppointmentSegmentCreateRequest
 
     /// <summary>Resursi segmenta (Phase M1D: omogućeni, količina &gt; 0, svaki resurs jednom).</summary>
     public List<AppointmentSegmentResourceRequest> Resources { get; set; } = new();
+}
+
+/// <summary>Segment ciljnog kreiranja/dodavanja: definicija segmenta + sudionici.</summary>
+public class AppointmentSegmentCreateRequest : AppointmentSegmentDefinitionRequest
+{
 
     /// <summary>Kreiranje termina: barem jedan sudionik po segmentu (domensko pravilo u AppointmentService — ne atribut, jer
     /// isti ugovor koristi i dodavanje segmenta postojećem terminu, gdje je segment bez sudionika dopušten; Phase M1E.1).</summary>
@@ -673,7 +604,7 @@ public class AppointmentParticipantCreateRequest
 /// samo novo sudjelovanje.</summary>
 public class AppointmentSegmentAddRequest : AppointmentSegmentCreateRequest
 {
-    /// <summary>Vidi AppointmentSingleSegmentRequest.OverrideAvailability (samo uz appointments.write.all).</summary>
+    /// <summary>Vidi AppointmentCreateRequest.OverrideAvailability (samo uz appointments.write.all).</summary>
     public bool OverrideAvailability { get; set; }
 }
 

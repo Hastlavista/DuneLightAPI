@@ -26,7 +26,7 @@ namespace BlueDragon.DuneLight.Infrastructure.Services;
 ///
 /// GENERACIJSKA ODLUKA (Group Service): commission izvor je CIJELI odrađeni grupni termin
 /// (Appointment.Status=Completed, vidi AppointmentService.CompleteGroupAppointment), NE pojedina odrađena
-/// Booking prisutnost (Booking.Status=Completed po sudioniku, vidi BookingService.SetStatus). Razlog: trener
+/// Booking prisutnost (Booking.Status=Completed po sudioniku, vidi BookingService.SetStatusOnSegment). Razlog: trener
 /// grupne nastave je tipično plaćen za ODRŽAVANJE termina, ne po broju sudionika — množenje Fixed iznosa brojem
 /// prisutnih bi zahtijevalo eksplicitnu poslovnu potvrdu koju ovaj kodbaza ne izražava nigdje (Group nema
 /// per-occurrence revenue/attendance-fee koncept, vidi Group.cs/Appointment.cs), a Percentage bi zahtijevao
@@ -520,7 +520,7 @@ public class CommissionService : ICommissionRuleService, ICommissionService, ICo
     /// nedosljedno stanje suprotno spec section 28 (commission zapis mora biti atomaran s prijelazom koji ga
     /// zarađuje — ako zapis ne uspije, ni prijelaz se ne smije committati). Unique indeksi na CommissionEntry
     /// (vidi migraciju) su zadnja linija obrane za stvarnu konkurenciju — u praksi je nedostižna jer pozivatelji
-    /// (AppointmentService.CompleteExisting/CompleteGroupAppointment, CheckoutService.Complete) već zaključavaju
+    /// (prijelaz sudjelovanja u BookingService, AppointmentService.CompleteGroupAppointment, CheckoutService.Complete) već zaključavaju
     /// izvorni redak (FOR UPDATE) i provjeravaju status PRIJE nego što dođu do ove metode, pa dva konkurentna
     /// zahtjeva nad ISTIM izvorom nikad ne trče ovaj kod istovremeno (drugi vidi već-Completed/Not-Open i baca
     /// prije ikakvog commission poziva). Ako indeks ipak nekad opali, cijela transakcija (uklj. izvorni

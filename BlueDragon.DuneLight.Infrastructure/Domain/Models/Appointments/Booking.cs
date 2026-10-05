@@ -25,7 +25,7 @@ namespace BlueDragon.DuneLight.Infrastructure.Domain.Models.Appointments;
 /// Za Form=Group, Booking se generira odmah za sve aktivne GroupMembere kad se termin generira (vidi
 /// GroupService.GenerateAppointments) — GroupMember je "tko normalno dolazi" (trajno članstvo), Booking
 /// je "stvarna rezervacija/sudjelovanje na OVOM terminu" (po-terminska evidencija). Gost izvan popisa
-/// članova dobiva ad-hoc Booking (BookingService.AddBooking) tek kad se pojavi/čekira. SuggestedAmount se
+/// članova dobiva ad-hoc Booking (BookingService.AddGroupGuest) tek kad se pojavi/čekira. SuggestedAmount se
 /// snapshotta odmah kod generiranja/dodavanja (isti IPricingService poziv kao za Individual), no naplata
 /// ostaje neriješena do stvarnog check-ina (BookingService.ResolveCoverage).
 ///
@@ -33,7 +33,7 @@ namespace BlueDragon.DuneLight.Infrastructure.Domain.Models.Appointments;
 /// IsAmountManuallyOverridden) više NISU na Bookingu — autoritativno ih nosi njegovo jedino sudjelovanje
 /// (BookingSegmentParticipation; pisanje ParticipationPrice/ParticipationLifecycle). Phase M0: Booking nema status,
 /// cijenu, namirenje ni verziju — Booking read-model polja su IZVEDENI sažeci (Utils.BookingSummary/
-/// BookingCommercialSummary); naredbe adresiraju sudjelovanje (BookingId samo kao privremena kompatibilnost).
+/// BookingCommercialSummary); naredbe adresiraju sudjelovanje (ParticipationId) ili segment.
 /// "Amount" u tekstu iznad znači tu cijenu sudjelovanja. Phase D3B3A: ni potrošnja paketa nije na Bookingu — nosi
 /// je povijest PackageConsumption sudjelovanja (Utils.PackageConsumptions). Phase D3B3B: ni namirenje. Booking je
 /// samo identitet (termin + klijent) i spremnik sudjelovanja tog klijenta.

@@ -20,10 +20,6 @@ public static class WarningCodes
     // Groups
     public const string GroupCapacityExceeded = "GROUP_CAPACITY_EXCEEDED";
     public const string GroupAppointmentUnresolvedBookings = "GROUP_APPOINTMENT_UNRESOLVED_BOOKINGS";
-    /// <summary>UMIROVLJENO (Phase M1G — više se ne emitira): close-out višesegmentnog occurrencea sada računa grupnu
-    /// proviziju po SEGMENTU i zaposleniku. Vrijednost ostaje rezervirana (stabilan ugovor prema frontendu).</summary>
-    public const string GroupCommissionNotSupportedForMultiSegment = "GROUP_COMMISSION_NOT_SUPPORTED_FOR_MULTI_SEGMENT";
-
     /// <summary>Phase M1G — close-out grupne sesije: zaposlenik segmenta ima aktivno pravilo provizije koje grupna sesija ne
     /// podržava (Percentage — za grupnu sesiju ne postoji osnovica; ne izmišlja se). Unos se NE stvara; details:
     /// WarningGroupCommissionRuleDetails.</summary>

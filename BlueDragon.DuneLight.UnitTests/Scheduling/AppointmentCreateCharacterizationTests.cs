@@ -263,7 +263,7 @@ public class AppointmentCreateCharacterizationTests
     public async Task Create_UnknownClient_IsNotFound()
     {
         await using SchedulingWorld w = await SchedulingWorld.Create(nameof(Create_UnknownClient_IsNotFound));
-        AppointmentSingleSegmentRequest request = w.CreateRequest(SchedulingWorld.Future(10));
+        TestAppointmentSpec request = w.CreateRequest(SchedulingWorld.Future(10));
         request.ClientIds = new() { Guid.NewGuid() };
 
         await SchedulingAssert.NotFound(() => w.CreateAppointment(request));
@@ -287,7 +287,7 @@ public class AppointmentCreateCharacterizationTests
     public async Task Create_UnknownService_IsNotFound()
     {
         await using SchedulingWorld w = await SchedulingWorld.Create(nameof(Create_UnknownService_IsNotFound));
-        AppointmentSingleSegmentRequest request = w.CreateRequest(SchedulingWorld.Future(10));
+        TestAppointmentSpec request = w.CreateRequest(SchedulingWorld.Future(10));
         request.ServiceId = Guid.NewGuid();
 
         await SchedulingAssert.NotFound(() => w.CreateAppointment(request));
@@ -358,7 +358,7 @@ public class AppointmentCreateCharacterizationTests
     public async Task Create_UnknownEmployee_IsNotFound()
     {
         await using SchedulingWorld w = await SchedulingWorld.Create(nameof(Create_UnknownEmployee_IsNotFound));
-        AppointmentSingleSegmentRequest request = w.CreateRequest(SchedulingWorld.Future(10));
+        TestAppointmentSpec request = w.CreateRequest(SchedulingWorld.Future(10));
         request.EmployeeId = Guid.NewGuid();
 
         // Full-scope callers skip the ownership lookup, so the first failure is the missing Employee.
@@ -369,7 +369,7 @@ public class AppointmentCreateCharacterizationTests
     public async Task Create_UnknownRoom_IsNotFound()
     {
         await using SchedulingWorld w = await SchedulingWorld.Create(nameof(Create_UnknownRoom_IsNotFound));
-        AppointmentSingleSegmentRequest request = w.CreateRequest(SchedulingWorld.Future(10));
+        TestAppointmentSpec request = w.CreateRequest(SchedulingWorld.Future(10));
         request.RoomId = Guid.NewGuid();
 
         await SchedulingAssert.NotFound(() => w.CreateAppointment(request));
@@ -440,7 +440,7 @@ public class AppointmentCreateCharacterizationTests
         await using SchedulingWorld w = await SchedulingWorld.Create(nameof(Create_OwnScopeCaller_CanCreateForTheirOwnEmployeeRecord));
 
         AppointmentDto dto = await w.Appointments.Create(
-            w.OrganizationId, w.Employee.UserId, hasFullScope: false, w.CreateRequest(SchedulingWorld.Future(10)));
+            w.OrganizationId, w.Employee.UserId, hasFullScope: false, w.CreateRequest(SchedulingWorld.Future(10)).ToTarget());
 
         Assert.Equal(w.Employee.Id, dto.EmployeeId);
     }
@@ -453,7 +453,7 @@ public class AppointmentCreateCharacterizationTests
 
         await SchedulingAssert.BusinessRule(ErrorCodes.NotOwner,
             () => w.Appointments.Create(
-                w.OrganizationId, w.Employee.UserId, hasFullScope: false, w.CreateRequest(SchedulingWorld.Future(10), employee: other)));
+                w.OrganizationId, w.Employee.UserId, hasFullScope: false, w.CreateRequest(SchedulingWorld.Future(10), employee: other).ToTarget()));
 
         Assert.Equal(0, await w.CountAppointments());
     }
@@ -465,7 +465,7 @@ public class AppointmentCreateCharacterizationTests
 
         await SchedulingAssert.BusinessRule(ErrorCodes.NotOwner,
             () => w.Appointments.Create(
-                w.OrganizationId, w.ActorUserId, hasFullScope: false, w.CreateRequest(SchedulingWorld.Future(10))));
+                w.OrganizationId, w.ActorUserId, hasFullScope: false, w.CreateRequest(SchedulingWorld.Future(10)).ToTarget()));
     }
 
     [Fact]
@@ -477,7 +477,7 @@ public class AppointmentCreateCharacterizationTests
         await SchedulingAssert.BusinessRule(ErrorCodes.OutsideWorkingHours,
             () => w.Appointments.Create(
                 w.OrganizationId, w.Employee.UserId, hasFullScope: false,
-                w.CreateRequest(SchedulingWorld.Future(22), overrideAvailability: true)));
+                w.CreateRequest(SchedulingWorld.Future(22), overrideAvailability: true).ToTarget()));
     }
 
     #endregion

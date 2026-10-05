@@ -6,7 +6,7 @@ namespace BlueDragon.DuneLight.Infrastructure.Domain.Models.Catalog;
 
 /// <summary>
 /// Prostorija poslovnice (npr. "Masaža", "Vježbanje 1") — dodjeljuje se na segment termina (AppointmentSegment.RoomId) i/ili
-/// Group.DefaultRoomId (isti obrazac kao DefaultTrainerId, snapshotira se na generirani termin).
+/// predložak segmenta grupe (GroupSegmentTemplate.RoomId, snapshotira se na generirani segment).
 /// </summary>
 [Table("rooms")]
 public class Room

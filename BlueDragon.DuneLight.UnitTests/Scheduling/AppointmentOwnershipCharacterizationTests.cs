@@ -216,11 +216,13 @@ public class AppointmentOwnershipCharacterizationTests
         Client waiter = await w.AddClient("Waiter", "Client");
 
         BusinessRuleException ex = await SchedulingAssert.BusinessRule(ErrorCodes.NotOwner,
-            () => w.Waitlist.Join(w.OrganizationId, other.UserId, false, occurrence.Id.Value, new WaitlistJoinRequest { ClientId = waiter.Id.Value }));
+            () => w.Waitlist.Join(w.OrganizationId, other.UserId, false, occurrence.Id.Value,
+                new WaitlistJoinRequest { ClientId = waiter.Id.Value, SegmentId = Assert.Single(occurrence.Segments).Id }));
         Assert.Equal("Trener smije upravljati samo listom čekanja na svojim vlastitim terminima.", ex.Message);
 
         WaitlistEntryDto joined = await w.Waitlist.Join(
-            w.OrganizationId, w.Employee.UserId, false, occurrence.Id.Value, new WaitlistJoinRequest { ClientId = waiter.Id.Value });
+            w.OrganizationId, w.Employee.UserId, false, occurrence.Id.Value,
+            new WaitlistJoinRequest { ClientId = waiter.Id.Value, SegmentId = Assert.Single(occurrence.Segments).Id });
         Assert.Equal(waiter.Id.Value, joined.ClientId);
         Assert.Single((await w.LoadWaitlist(occurrence.Id.Value)).Where(e => e.ClientId == waiter.Id));
     }

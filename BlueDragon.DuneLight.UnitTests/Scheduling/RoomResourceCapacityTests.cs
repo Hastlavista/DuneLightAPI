@@ -356,18 +356,18 @@ public class RoomResourceCapacityTests
     }
 
     [Fact]
-    public async Task Room_UpdateAndMove_ExcludeOnlyTheRewrittenSegment()
+    public async Task Room_SegmentTimeChange_ExcludesOnlyTheRewrittenSegment()
     {
-        await using SchedulingWorld w = await SchedulingWorld.Create(nameof(Room_UpdateAndMove_ExcludeOnlyTheRewrittenSegment));
+        await using SchedulingWorld w = await SchedulingWorld.Create(nameof(Room_SegmentTimeChange_ExcludesOnlyTheRewrittenSegment));
         Room room = await w.AddRoom();
         AppointmentDto created = await w.CreateAppointment(SchedulingWorld.Future(10), room: room); // the room is full at 10:00
         await CreateInRoom(w, room, SchedulingWorld.Future(11));
 
         // Moving within its own old range does not count itself twice...
-        await w.Appointments.Move(w.OrganizationId, w.ActorUserId, true, created.Id, new AppointmentMoveRequest { StartsAt = SchedulingWorld.Future(10, 10) });
+        await w.MoveOnlySegment(created.Id, SchedulingWorld.Future(10, 10));
         // ...but onto the other segment it would put four people in a two-person room.
         await SchedulingAssert.BusinessRule(ErrorCodes.RoomCapacityExceeded,
-            () => w.Appointments.Move(w.OrganizationId, w.ActorUserId, true, created.Id, new AppointmentMoveRequest { StartsAt = SchedulingWorld.Future(10, 50) }));
+            () => w.MoveOnlySegment(created.Id, SchedulingWorld.Future(10, 50)));
     }
 
     #endregion
@@ -375,16 +375,16 @@ public class RoomResourceCapacityTests
     #region Dynamic participation
 
     [Fact]
-    public async Task AddBooking_FillsTheLastPersonSlot_TheNextIsRejected()
+    public async Task AddClient_FillsTheLastPersonSlot_TheNextIsRejected()
     {
-        await using SchedulingWorld w = await SchedulingWorld.Create(nameof(AddBooking_FillsTheLastPersonSlot_TheNextIsRejected));
+        await using SchedulingWorld w = await SchedulingWorld.Create(nameof(AddClient_FillsTheLastPersonSlot_TheNextIsRejected));
         Room room = await w.AddRoom(capacity: 3);
         AppointmentDto created = await w.CreateAppointment(SchedulingWorld.Future(10), room: room);
         Client second = await w.AddClient("Second"), third = await w.AddClient("Third");
 
-        await w.Bookings.AddBooking(w.OrganizationId, w.ActorUserId, true, created.Id, new BookingCreateRequest { ClientId = second.Id.Value });
+        await w.AddClientToOnlySegment(created.Id, second);
         BusinessRuleException ex = await SchedulingAssert.BusinessRule(ErrorCodes.RoomCapacityExceeded,
-            () => w.Bookings.AddBooking(w.OrganizationId, w.ActorUserId, true, created.Id, new BookingCreateRequest { ClientId = third.Id.Value }));
+            () => w.AddClientToOnlySegment(created.Id, third));
 
         Assert.Contains("3", ex.Message);
         Assert.Equal(3, await PeopleIn(w, room, SchedulingWorld.Future(10)));
@@ -461,7 +461,8 @@ public class RoomResourceCapacityTests
         await w.AddGroupMember(group, second);
         Appointment occurrence = await w.GenerateSingleOccurrence(group);
         Client waiter = await w.AddClient("Waiter");
-        await w.Waitlist.Join(w.OrganizationId, w.ActorUserId, true, occurrence.Id.Value, new WaitlistJoinRequest { ClientId = waiter.Id.Value });
+        await w.Waitlist.Join(w.OrganizationId, w.ActorUserId, true, occurrence.Id.Value,
+            new WaitlistJoinRequest { ClientId = waiter.Id.Value, SegmentId = Assert.Single(occurrence.Segments).Id });
 
         // The room shrinks to 2 people (catalog edit): after one member cancels, the business seat is free but the room is not.
         await using (DatabaseContext db = w.NewDb())
@@ -568,9 +569,9 @@ public class RoomResourceCapacityTests
         AppointmentDto mover = await CreateWithResources(w, SchedulingWorld.Future(10), (tables, 2));
         await CreateWithResources(w, SchedulingWorld.Future(12), (tables, 1));
 
-        await w.Appointments.Move(w.OrganizationId, w.ActorUserId, true, mover.Id, new AppointmentMoveRequest { StartsAt = SchedulingWorld.Future(10, 15) });
+        await w.MoveOnlySegment(mover.Id, SchedulingWorld.Future(10, 15));
         await SchedulingAssert.BusinessRule(ErrorCodes.ResourceCapacityExceeded,
-            () => w.Appointments.Move(w.OrganizationId, w.ActorUserId, true, mover.Id, new AppointmentMoveRequest { StartsAt = SchedulingWorld.Future(12) }));
+            () => w.MoveOnlySegment(mover.Id, SchedulingWorld.Future(12)));
     }
 
     #endregion
@@ -648,13 +649,18 @@ public class RoomResourceCapacityTests
         Room room = await w.AddRoom(capacity: 3);
         AppointmentDto created = await w.CreateAppointment(SchedulingWorld.Future(10), room: room);
         Client a = await w.AddClient("A"), b = await w.AddClient("B");
+        AppointmentClientAddRequest Join(Client c) => new()
+        {
+            ClientId = c.Id.Value,
+            Participations = new List<AppointmentClientParticipationRequest> { new() { SegmentId = created.Segments[0].Id } }
+        };
 
         await Gate(w, SchedulingLockOrder.RoomKey(room.Id.Value), room.Id, null,
             () => Task.WhenAll(
-                Task.Run(() => InOwnScope(sp => sp.GetRequiredService<IBookingService>().AddBooking(
-                    w.OrganizationId, w.ActorUserId, true, created.Id, new BookingCreateRequest { ClientId = a.Id.Value }))),
-                Task.Run(() => InOwnScope(sp => sp.GetRequiredService<IBookingService>().AddBooking(
-                    w.OrganizationId, w.ActorUserId, true, created.Id, new BookingCreateRequest { ClientId = b.Id.Value })))),
+                Task.Run(() => InOwnScope(sp => sp.GetRequiredService<IAppointmentService>().AddClient(
+                    w.OrganizationId, w.ActorUserId, true, created.Id, Join(a)))),
+                Task.Run(() => InOwnScope(sp => sp.GetRequiredService<IAppointmentService>().AddClient(
+                    w.OrganizationId, w.ActorUserId, true, created.Id, Join(b))))),
             outcomes => ExactlyOneWinner(outcomes, ErrorCodes.RoomCapacityExceeded));
 
         Assert.Equal(3, await PeopleIn(w, room, SchedulingWorld.Future(10)));
@@ -692,8 +698,8 @@ public class RoomResourceCapacityTests
             for (int i = 0; i < 3; i++)
             {
                 (Employee employee, Client client) = await FreshPair(w);
-                AppointmentSingleSegmentRequest roomRequest = w.CreateRequest(start, client: client, employee: employee, room: room);
-                attempts.Add(Task.Run(() => InOwnScope(sp => sp.GetRequiredService<IAppointmentService>().Create(w.OrganizationId, w.ActorUserId, true, roomRequest))));
+                TestAppointmentSpec roomRequest = w.CreateRequest(start, client: client, employee: employee, room: room);
+                attempts.Add(Task.Run(() => InOwnScope(sp => sp.GetRequiredService<IAppointmentService>().Create(w.OrganizationId, w.ActorUserId, true, roomRequest.ToTarget()))));
             }
             for (int i = 0; i < 3; i++)
                 attempts.Add(Task.Run(() => InOwnScope(_ => CreateWithResources(w, start.AddHours(4), (tables, 1)))));

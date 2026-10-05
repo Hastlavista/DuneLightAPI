@@ -273,34 +273,26 @@ public class GroupCapacityCharacterizationTests
         Client guest = await w.AddClient("Guest", "Client");
         Client guest2 = await w.AddClient("Guest2", "Client");
 
-        // FINDING: the occurrence has no capacity of its own; Group.Capacity is consulted at booking time.
-        await w.Groups.Update(w.OrganizationId, w.ActorUserId, group.Id, new GroupUpdateRequest
-        {
-            Name = group.Name, ServiceId = group.ServiceId, CompanyId = group.CompanyId, Capacity = 1,
-            DefaultTrainerId = group.DefaultTrainerId, DefaultRoomId = group.DefaultRoomId
-        });
+        // FINDING: the occurrence has no capacity of its own; the template's capacity is consulted at booking time.
+        await w.UpdateOnlyTemplate(group, r => r.Capacity = 1);
         await SchedulingAssert.BusinessRule(ErrorCodes.GroupCapacityReached, () => w.AddGuest(occurrence, guest));
 
-        await w.Groups.Update(w.OrganizationId, w.ActorUserId, group.Id, new GroupUpdateRequest
-        {
-            Name = group.Name, ServiceId = group.ServiceId, CompanyId = group.CompanyId, Capacity = 5,
-            DefaultTrainerId = group.DefaultTrainerId, DefaultRoomId = group.DefaultRoomId
-        });
+        await w.UpdateOnlyTemplate(group, r => r.Capacity = 5);
         BookingDto dto = await w.AddGuest(occurrence, guest2);
         Assert.Equal(BookingStatusSummary.Confirmed, dto.Status);
     }
 
     [Fact]
-    public async Task AddBooking_OnAnIndividualAppointment_HasNoCapacityLimit()
+    public async Task AddClient_OnAnIndividualAppointment_HasNoGroupCapacityLimit()
     {
-        await using SchedulingWorld w = await SchedulingWorld.Create(nameof(AddBooking_OnAnIndividualAppointment_HasNoCapacityLimit));
+        await using SchedulingWorld w = await SchedulingWorld.Create(nameof(AddClient_OnAnIndividualAppointment_HasNoGroupCapacityLimit));
         AppointmentDto created = await w.CreateAppointment(SchedulingWorld.Future(10));
         List<Client> extra = new();
         for (int i = 0; i < 4; i++)
             extra.Add(await w.AddClient($"Extra{i}", "Client"));
 
         foreach (Client c in extra)
-            await w.Bookings.AddBooking(w.OrganizationId, w.ActorUserId, true, created.Id, new BookingCreateRequest { ClientId = c.Id.Value });
+            await w.AddClientToOnlySegment(created.Id, c);
 
         Assert.Equal(5, (await w.LoadAppointment(created.Id)).Bookings.Count);
     }
@@ -355,7 +347,8 @@ public class GroupCapacityCharacterizationTests
             try
             {
                 await scope.ServiceProvider.GetRequiredService<IBookingService>()
-                    .AddBooking(w.OrganizationId, w.ActorUserId, true, occurrence.Id.Value, new BookingCreateRequest { ClientId = c.Id.Value });
+                    .AddGroupGuest(w.OrganizationId, w.ActorUserId, true, occurrence.Id.Value,
+                        new BookingCreateRequest { ClientId = c.Id.Value, SegmentId = Assert.Single(occurrence.Segments).Id });
                 return (true, (string)null);
             }
             catch (BusinessRuleException ex)

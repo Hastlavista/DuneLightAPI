@@ -129,10 +129,9 @@ public class MultiEmployeeHttpContractTests : IClassFixture<MultiSegmentHttpCont
         AssertError(HttpStatusCode.BadRequest, ErrorCodes.InvalidPricingSource,
             await Send(HttpMethod.Patch, $"/api/segments/{segmentId}/pricing-source", writeAll, new { pricingMode = "Standard" }));
 
-        // Legacy flat Move on a multi-employee segment is a business error, never a silent collapse.
-        await Send(HttpMethod.Patch, $"/api/segments/{segmentId}/employees", writeAll, new { employeeIds = new[] { marko.Id, ivana.Id }, pricingMode = "Standard" });
-        AssertError(HttpStatusCode.Conflict, ErrorCodes.EmployeeSetCommandRequired,
-            await Send(HttpMethod.Patch, $"/api/appointments/{appointmentId}/move", writeAll, new { startsAt = SchedulingWorld.Future(15) }));
+        // M1H: the flat single-employee Move is gone — the route no longer maps; time changes go through the segment.
+        Assert.Contains((await Send(HttpMethod.Patch, $"/api/appointments/{appointmentId}/move", writeAll, new { startsAt = SchedulingWorld.Future(15) })).Status,
+            new[] { HttpStatusCode.NotFound, HttpStatusCode.MethodNotAllowed });
     }
 
     [Fact]

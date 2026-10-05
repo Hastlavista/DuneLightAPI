@@ -8,9 +8,8 @@ using BlueDragon.DuneLight.Infrastructure.Domain.Models.Employees;
 namespace BlueDragon.DuneLight.Infrastructure.Domain.Models.Groups;
 
 /// <summary>
-/// Definicija grupe (npr. "Yoga pon-sri 19h"). Traje neograničeno (nema datuma kraja). Trener NIJE
-/// dio identiteta grupe — DefaultTrainerId je samo prijedlog koji se snapshotira na generirani
-/// termin i može se mijenjati po pojedinom terminu (zamjene) bez diranja grupe. Bez pravog brisanja
+/// Definicija grupe (npr. "Yoga pon-sri 19h"). Traje neograničeno (nema datuma kraja). Osoblje je po predlošku segmenta
+/// (Phase M1G) i snapshotira se na generirani segment, gdje se smije mijenjati (zamjene) bez diranja grupe. Bez pravog brisanja
 /// — samo deaktivacija (IsActive); deaktivacija ne dira već generirane termine, zaustavlja samo
 /// buduće generiranje.
 ///

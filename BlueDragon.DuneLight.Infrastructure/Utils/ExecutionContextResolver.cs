@@ -10,8 +10,8 @@ namespace BlueDragon.DuneLight.Infrastructure.Utils;
 /// više usluga/zaposlenika/početaka), pa "kontekst termina" više ne postoji.
 ///
 /// Čisto preslikavanje nad VEĆ učitanim entitetima, bez upita u bazu: pozivatelji rade unutar vlastite transakcije i
-/// ponekad nad segmentom koji su upravo izmijenili (npr. CompleteExisting mijenja segment pa tek onda zarađuje proviziju)
-/// — kontekst odražava točno te vrijednosti. Pozivatelji moraju učitati segment (+ Employees).
+/// ponekad nad segmentom koji su upravo stvorili (npr. CompleteNow stvara segment pa u istoj transakciji zarađuje
+/// proviziju) — kontekst odražava točno te vrijednosti. Pozivatelji moraju učitati segment (+ Employees).
 /// </summary>
 public static class ExecutionContextResolver
 {

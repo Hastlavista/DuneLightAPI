@@ -48,14 +48,16 @@ Dodatno: **Organization Branding** (logo/boje/favicon per-tenant) i **Onboarding
 - **`ClientPackage`** — kupljena instanca paketa, snapshot cijene/pravila u trenutku kupnje, `RemainingSharedEntries`, **`Status`** (`Active/Expired/Depleted/Cancelled`), `Version` (xmin optimistic concurrency) → **`ClientPackageServiceEntry`** (per-service brojači, isti concurrency pattern).
 - **`ClientTag`** + **`ClientTagAssignment`** (M:N).
 
-### 2.6 Termini
-- **`Appointment`** — centralni entitet, samo okvir/resurs (bez naplate). `Form` (`Individual/Group`), `StartsAt, DurationMinutes` (snapshot), `ServiceId, EmployeeId` (nullable za grupne), `CompanyId, RoomId`, **`Status`** (`Scheduled/Completed/Cancelled`), `CancellationReason`, `RecurrenceGroupId`.
-- **`Booking`** — Klijent↔Appointment (zamjenjuje stare `AppointmentClient`/`AppointmentAttendance`), po klijentu: `Amount, SuggestedAmount, IsAmountManuallyOverridden` (komercijalna obveza), `ClientPackageId` s praćenjem povrata unosa, `CoverageType` (`MonthlyPackage/SessionPackage/SinglePaid`, prvenstveno za Group). `PaidAmount/OutstandingAmount/IsPaid` su izvedeni (ne persistirani) iz Payment ledgera — vidi `Payment` ispod.
-- **`Payment`** — monetarni ledger nad Bookingom (od 2026-09-16, zamjenjuje stari `Booking.PaymentMethod/IsPaid`): `Amount, Method` (`Cash/Card/BankTransfer/Other`), `Status` (`Completed/Voided`), `VoidedAt/VoidedBy/VoidReason`. Više Paymenta po Bookingu (partial/split), zbroj aktivnih ≤ `Booking.Amount`. Paket-pokriće (`ClientPackageId`) NIKAD ne stvara Payment — entitlement nije novac.
+### 2.6 Termini (ciljni model, Phase M1H)
+- **`Appointment`** — agregat: `CompanyId`, `Form` (`Individual/Group`), `Note`, eksplicitne činjenice otkazivanja (`CancelledAt`) i zatvaranja grupne sesije (`ClosedOutAt`), `RecurrenceGroupId`, te **izvedeni** `Status` (`Scheduled/Closed/Cancelled`, iz sudjelovanja). Termin NEMA vlastitu uslugu, zaposlenika, sobu ni vrijeme — `PlannedStart/PlannedEnd` se izvode iz segmenata. Tvrtka termina se ne mijenja (nema ciljne naredbe za premještanje u drugu poslovnicu).
+- **`AppointmentSegment`** — izvršna jedinica: usluga, `PlannedStart/PlannedEnd`, 0..N ravnopravnih zaposlenika, izvor cijene (`Standard` ili `Employee` + zaposlenik izvora), soba, resursi; grupni segment je vezan na `GroupSegmentTemplate`.
+- **`Booking`** — jedan klijent unutar jednog termina (identitet + pogled na paket); nema vlastiti status ni cijenu.
+- **`BookingSegmentParticipation`** — sudjelovanje Bookinga u jednom segmentu: životni ciklus (`Confirmed/Completed/Cancelled/NoShow`, `StatusVersion`), cijena (iznos, predložena cijena, snapshot razrješavanja, oznaka ručnog iznosa), namirenje (stavke checkouta → alokacije → `Payment`) i potrošnja paketa (`PackageConsumption`). Sve naredbe po klijentu adresiraju sudjelovanje (ParticipationId).
+- **`Payment`** — monetarni ledger (`Amount, Method, Status Completed/Voided`); paket NIKAD ne stvara Payment (entitlement nije novac), paket i novac se isključuju po sudjelovanju.
 - **`AppointmentAuditLog`**, **`ScheduleBreak`** (pauza trenera, bez naplate).
 
 ### 2.7 Grupe
-- **`Group`** (recurring class definicija, bez datuma isteka) → **`GroupSlot`** (tjedna ponavljanja: `DayOfWeek, StartTime`), **`GroupMember`** ("tko obično dolazi", partial unique index dok aktivan).
+- **`Group`** (naziv, poslovnica, napomena) → **`GroupSlot`** (tjedna ponavljanja) i **`GroupSegmentTemplate`** (≥1: usluga, pomak, trajanje, MEKI kapacitet, soba, resursi, osoblje, izvor cijene). **`GroupMember`** eksplicitno bira predloške u kojima sudjeluje (nikad se ne zaključuje). Generiranje kopira predloške u segmente occurrencea.
 - **`GroupAuditLog`**.
 
 ### 2.8 Roster
@@ -132,9 +134,9 @@ Sustav ima **tri odvojena, lako pobrkljiva koncepta**:
 ### 4.4 Termini
 - **Tvrdo blokirano** (`APPOINTMENT_OVERLAP`, 409) — uvijek: trener već ima termin u tom prozoru (isključujući Cancelled/NoShow), soba zauzeta (osim ako `Room.AllowConcurrentBookings`), bilo koji od klijenata već rezerviran drugdje (`AppointmentService.EnsureNoHardOverlapCollectWarnings`).
 - Pauza trenera (`ScheduleBreak`) u istom terminu — samo **upozorenje**, ne blokira ("zaposlenik je tehnički dostupan").
-- Radno vrijeme — samo **upozorenje** za individualne termine (osim što se potpuno preskače za "Complete" akcije koje bilježe već odrađen rad).
-- Plaćanje paketom: svaki klijent na terminu mora imati točno jedan odabran paket (bez duplikata/praznina) → `ValidationAppException`; paket mora biti u eligible listi tog klijenta → `PACKAGE_NOT_ELIGIBLE` (`ValidatePackageSelections`).
-- Status-ovisna pravila: `Complete` na već `Completed` terminu → `ALREADY_COMPLETED`; `Move` na `Cancelled`/`NoShow` terminu → `APPOINTMENT_NOT_MOVABLE`; hard-delete dopušten **samo istog dana kad je kreiran** → `SAME_DAY_ONLY` (inače: otkazati).
+- Radna snaga (radno vrijeme, odsutnost, pauza, praznik) — tvrda blokada osim uz `OverrideAvailability` (puni opseg), tada upozorenje; ne provjerava se za `CompleteNow` s početkom u prošlosti ni za odrađivanje postojećeg sudjelovanja.
+- Plaćanje paketom: paket se bira eksplicitno po sudjelovanju (`ClientPackageId`) pri odrađivanju; mora biti valjan za klijenta, uslugu i datum izvođenja → `PACKAGE_NOT_ELIGIBLE`; sudjelovanje s aktivnom novčanom uplatom ne troši paket → `BOOKING_ALREADY_HAS_MONETARY_PAYMENT`.
+- Status-ovisna pravila: odrađivanje je po sudjelovanju i idempotentno; terminalno sudjelovanje nema put u `Completed`, a ručni iznos se mijenja samo za `Confirmed` sudjelovanje (`ALREADY_COMPLETED`); izvršni podaci otkazanog termina se ne mijenjaju (`APPOINTMENT_NOT_MOVABLE`); hard-delete dopušten **samo istog dana kad je kreiran** → `SAME_DAY_ONLY` (inače: otkazati).
 - Ponavljajući termini: pravi sukobi (trener/soba/traženi klijent) blokiraju **cijeli batch** prije spremanja → `RECURRING_CONFLICT` (409) s popisom sukoba; radno vrijeme/praznik/odsutnost/pauza više NE blokiraju batch (promjena iz ranije faze — sada samo upozorenja per-termin).
 - Soba mora pripadati istoj poslovnici kao termin → `ROOM_COMPANY_MISMATCH`.
 
@@ -176,11 +178,11 @@ Sustav ima **tri odvojena, lako pobrkljiva koncepta**:
 
 ## 5. Statusi i tokovi (state machine)
 
-**`AppointmentStatus`**: `Scheduled → Completed` | `Scheduled → Cancelled` | `Scheduled → NoShow`. `Completed` je terminalan (ne može natrag). `Cancelled`/`NoShow` blokiraju `Move`; termin se briše samo istog dana kreiranja, inače mora ići kroz `Cancel`. Trigeri: trener/admin (own/all ovlasti); `Cancel`/`NoShow` opcionalno vraćaju odbijene unose paketa po klijentu.
+**`AppointmentStatus`** (izveden): `Scheduled` dok postoji `Confirmed` sudjelovanje; `Closed` kad nijedno nije `Confirmed`, a ima odrađenog/izostalog rada; `Cancelled` samo uz eksplicitno otkazivanje termina bez izvršenog rada. **Sudjelovanje**: `Confirmed → Completed | Cancelled | NoShow`, korekcija natrag na `Confirmed` (uz povrat paketa/poništenje check-in uplate), svaki stvarni prijelaz povećava `StatusVersion` i bilježi audit. Termin se briše samo istog dana kreiranja i samo bez povijesti sudjelovanja, inače mora ići kroz `Cancel`.
 
 **`ClientPackageStatus`**: `Active ⇄ Depleted` (event-driven, na 0 preostalih unosa; vraća se na `Active` bilo kojim povratom unosa), `Active → Cancelled` (ručna akcija), `Expired` — **nikad perzistira**, računa se dinamički iz `ExpiryDate` u trenutku čitanja.
 
-**`AppointmentAttendance` (grupni termini)**: `Attended: null → true/false`. Prijelaz na `true` troši unos paketa (ako `SessionPackage`); prijelaz natrag na `false` automatski vraća unos. Trigerira trener (own) ili admin (all).
+**Prisutnost grupnog occurrencea** (po EKSPLICITNOM segmentu): `Attended: null → true/false` (= sudjelovanje `Completed`/`NoShow`). Prijelaz na `true` troši unos paketa (ako `SessionPackage`); prijelaz natrag na `false` automatski vraća unos. Trigerira trener (own) ili admin (all).
 
 **Roster/LeaveFund**: nema eksplicitnog statusnog enuma, ali implicitan tok: `LeaveFund` se lijeno otvara → `UsedDays` raste alokacijom → briše se/vraća pri update/delete povezanog `RosterEntry`-ja (uvijek potpuni reverse-then-reallocate, bez diffanja).
 

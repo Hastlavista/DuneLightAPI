@@ -6,7 +6,7 @@ namespace BlueDragon.DuneLight.Infrastructure.Domain.Models.Groups;
 
 /// <summary>
 /// Audit log za promjene na grupi i članstvu — tko, kada, prethodna/nova vrijednost. Isti obrazac
-/// kao EmployeeAuditLog/AppointmentAuditLog. ChangeType: "Capacity", "DefaultTrainer", "Active",
+/// kao EmployeeAuditLog/AppointmentAuditLog. ChangeType: "Capacity" (povijesno), "Active", "SegmentTemplateAdded/Changed/Removed",
 /// "MemberAdded", "MemberRemoved".
 /// </summary>
 [Table("group_audit_log")]

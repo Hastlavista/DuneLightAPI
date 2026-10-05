@@ -46,18 +46,7 @@ public class DashboardScheduleOccurrenceDto
     public DateTimeOffset PlannedEnd { get; set; }
     public List<Core.DTOs.Appointments.AppointmentSegmentDto> Segments { get; set; } = new();
 
-    /// <summary>PRIVREMENA KOMPATIBILNOST: = PlannedStart; DurationMinutes = raspon (uključuje razmake).</summary>
-    public DateTimeOffset StartsAt { get; set; }
-    public int DurationMinutes { get; set; }
     public AppointmentStatus Status { get; set; }
-
-    /// <summary>PRIVREMENA KOMPATIBILNOST (nije autoritativno): samo za termin s točno jednim segmentom, inače null.</summary>
-    public Guid? ServiceId { get; set; }
-    public string ServiceName { get; set; }
-    public Guid? EmployeeId { get; set; }
-    public string EmployeeName { get; set; }
-    public Guid? RoomId { get; set; }
-    public string RoomName { get; set; }
 
     public bool IsGroup { get; set; }
     public Guid? GroupId { get; set; }

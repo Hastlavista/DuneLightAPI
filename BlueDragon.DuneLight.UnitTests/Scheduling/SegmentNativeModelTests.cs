@@ -181,12 +181,10 @@ public class SegmentNativeModelTests
         // Derived range spans both segments including the gap.
         Assert.Equal(a.PlannedStart, dto.PlannedStart);
         Assert.Equal(startB.AddMinutes(40), dto.PlannedEnd);
-        Assert.Equal((int)(dto.PlannedEnd - dto.PlannedStart).TotalMinutes, dto.DurationMinutes);
-
-        // No authoritative appointment-level service/employee/room: the compatibility projection is empty.
-        Assert.Null(dto.ServiceId);
-        Assert.Null(dto.EmployeeId);
-        Assert.Null(dto.RoomId);
+        // M1H: no appointment-level service/employee/room projection exists — the segments are the only source.
+        Assert.Null(typeof(AppointmentDto).GetProperty("ServiceId"));
+        Assert.Null(typeof(AppointmentDto).GetProperty("EmployeeId"));
+        Assert.Null(typeof(AppointmentDto).GetProperty("RoomId"));
 
         // One Booking, two participations, each carrying its own SegmentId.
         BookingDto booking = Assert.Single(dto.Bookings);
@@ -212,8 +210,7 @@ public class SegmentNativeModelTests
         Assert.Equal(2, cell.Segments.Count);
         Assert.Equal(SchedulingWorld.Future(10), cell.PlannedStart);
         Assert.Equal(SchedulingWorld.Future(12).AddMinutes(30), cell.PlannedEnd);
-        Assert.Equal(cell.PlannedStart, cell.StartsAt);
-        Assert.Null(cell.ServiceId);
+        Assert.Null(typeof(AppointmentScheduleCellDto).GetProperty("ServiceId")); // M1H: segments only
     }
 
     [Fact]
@@ -476,42 +473,4 @@ public class SegmentNativeModelTests
 
     #endregion
 
-    #region Update / Move: single-segment compatibility boundary
-
-    [Fact]
-    public async Task Move_OnASingleSegmentAppointment_MovesTheSegment_KeepingItsDuration()
-    {
-        await using SchedulingWorld w = await SchedulingWorld.Create(nameof(Move_OnASingleSegmentAppointment_MovesTheSegment_KeepingItsDuration));
-        AppointmentDto created = await w.CreateAppointment(SchedulingWorld.Future(10));
-
-        AppointmentDto moved = await w.Appointments.Move(
-            w.OrganizationId, w.ActorUserId, true, created.Id, new AppointmentMoveRequest { StartsAt = SchedulingWorld.Future(15) });
-
-        AppointmentSegmentDto segment = Assert.Single(moved.Segments);
-        Assert.Equal(SchedulingWorld.Future(15), segment.PlannedStart);
-        Assert.Equal(SchedulingWorld.Future(15).AddMinutes(w.Service.DefaultDurationMinutes), segment.PlannedEnd);
-        Assert.Equal(created.Segments[0].Id, segment.Id);
-        Assert.Equal(segment.PlannedStart, moved.PlannedStart);
-    }
-
-    [Fact]
-    public async Task UpdateAndMove_OnAMultiSegmentAppointment_AreRejected_AndChangeNothing()
-    {
-        await using SchedulingWorld w = await SchedulingWorld.Create(nameof(UpdateAndMove_OnAMultiSegmentAppointment_AreRejected_AndChangeNothing));
-        AppointmentDto created = await w.CreateAppointment(SchedulingWorld.Future(10));
-        await w.AddArtificialSegmentParticipation(created.Id, w.Client, SchedulingWorld.Future(12), 10m);
-
-        // CHANGED in M1E: a business error (SEGMENT_SELECTION_REQUIRED), not an integrity exception / 500.
-        BusinessRuleException move = await Assert.ThrowsAsync<BusinessRuleException>(() => w.Appointments.Move(
-            w.OrganizationId, w.ActorUserId, true, created.Id, new AppointmentMoveRequest { StartsAt = SchedulingWorld.Future(15) }));
-        BusinessRuleException update = await Assert.ThrowsAsync<BusinessRuleException>(() => w.Appointments.Update(
-            w.OrganizationId, w.ActorUserId, true, created.Id, w.UpdateRequest(created, r => r.StartsAt = SchedulingWorld.Future(15))));
-        Assert.Equal(ErrorCodes.SegmentSelectionRequired, move.Code);
-        Assert.Equal(ErrorCodes.SegmentSelectionRequired, update.Code);
-
-        Appointment after = await w.LoadAppointment(created.Id);
-        Assert.Equal(new[] { SchedulingWorld.Future(10), SchedulingWorld.Future(12) }, after.Segments.Select(s => s.PlannedStart).OrderBy(x => x));
-    }
-
-    #endregion
 }

@@ -69,7 +69,7 @@ public readonly record struct ParticipationSettlement(
 
 /// <summary>
 /// Phase D3B3B — JEDINO pravilo međusobne isključivosti paketa i novca za jedno sudjelovanje (prije raspršeno po
-/// ResolveCoverage, CompleteExisting i PaymentService). Trenutno pravilo (sve-ili-ništa pokriće paketom):
+/// ResolveCoverage, completionu i PaymentService). Trenutno pravilo (sve-ili-ništa pokriće paketom):
 /// - sudjelovanje s AKTIVNOM potrošnjom paketa ne smije primiti novčano namirenje;
 /// - sudjelovanje s AKTIVNIM novčanim namirenjem ne smije potrošiti paket dok se to namirenje ne poništi.
 /// </summary>

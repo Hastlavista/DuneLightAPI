@@ -25,9 +25,9 @@ namespace BlueDragon.DuneLight.UnitTests.Scheduling;
 ///
 /// Classification priority (AppointmentEligibilityHelper.Classify): absence &gt; break &gt; (holiday | outside hours).
 ///
-/// The last regions pin how the checks DIFFER per flow — Create/Update/Move always check, CompleteNew checks only for a
-/// future StartsAt, CompleteExisting never checks, CreateRecurring reports hard conflicts as RECURRING_CONFLICT — as
-/// separate tests rather than normalizing them.
+/// The last regions pin how the checks DIFFER per flow — Create and segment time changes always check, CompleteNow checks
+/// only for a future start, completing existing participations never checks (it does not schedule anything),
+/// CreateRecurring reports hard conflicts as RECURRING_CONFLICT — as separate tests rather than normalizing them.
 /// </summary>
 public class AppointmentWorkforceAvailabilityCharacterizationTests
 {
@@ -345,64 +345,34 @@ public class AppointmentWorkforceAvailabilityCharacterizationTests
 
         await SchedulingAssert.BusinessRule(ErrorCodes.EmployeeAbsent,
             () => w.Appointments.Create(w.OrganizationId, w.Employee.UserId, hasFullScope: false,
-                w.CreateRequest(SchedulingWorld.Future(10), overrideAvailability: true)));
+                w.CreateRequest(SchedulingWorld.Future(10), overrideAvailability: true).ToTarget()));
     }
 
     #endregion
 
-    #region Per-flow differences (Update / Move / CompleteNew / CompleteExisting / CreateRecurring)
+    #region Per-flow differences (segment time change / CompleteNow / CreateRecurring)
 
     [Fact]
-    public async Task Update_ChecksWorkforceAvailabilityForTheNewSlot()
+    public async Task SegmentTimeChange_ChecksWorkforceAvailabilityForTheNewSlot()
     {
-        await using SchedulingWorld w = await SchedulingWorld.Create(nameof(Update_ChecksWorkforceAvailabilityForTheNewSlot));
+        await using SchedulingWorld w = await SchedulingWorld.Create(nameof(SegmentTimeChange_ChecksWorkforceAvailabilityForTheNewSlot));
         AppointmentDto created = await w.CreateAppointment(SchedulingWorld.Future(10));
 
         await SchedulingAssert.BusinessRule(ErrorCodes.OutsideWorkingHours,
-            () => w.Appointments.Update(w.OrganizationId, w.ActorUserId, true, created.Id,
-                w.UpdateRequest(created, r => r.StartsAt = SchedulingWorld.Future(22))));
+            () => w.Appointments.ChangeSegmentTime(w.OrganizationId, w.ActorUserId, true, created.Segments[0].Id,
+                new AppointmentSegmentTimeChangeRequest { PlannedStart = SchedulingWorld.Future(22) }));
 
         Assert.Equal(SchedulingWorld.Future(10), (await w.LoadAppointment(created.Id)).StartsAt);
     }
 
     [Fact]
-    public async Task Update_WithFullScopeOverride_MovesToTheViolatingSlotWithAWarning()
+    public async Task SegmentTimeChange_WithFullScopeOverride_MovesToTheViolatingSlotWithAWarning()
     {
-        await using SchedulingWorld w = await SchedulingWorld.Create(nameof(Update_WithFullScopeOverride_MovesToTheViolatingSlotWithAWarning));
+        await using SchedulingWorld w = await SchedulingWorld.Create(nameof(SegmentTimeChange_WithFullScopeOverride_MovesToTheViolatingSlotWithAWarning));
         AppointmentDto created = await w.CreateAppointment(SchedulingWorld.Future(10));
 
-        AppointmentDto updated = await w.Appointments.Update(w.OrganizationId, w.ActorUserId, true, created.Id,
-            w.UpdateRequest(created, r =>
-            {
-                r.StartsAt = SchedulingWorld.Future(22);
-                r.OverrideAvailability = true;
-            }));
-
-        SchedulingAssert.HasWarning(updated, WarningCodes.OutsideWorkingHours);
-        Assert.Equal(SchedulingWorld.Future(22), (await w.LoadAppointment(created.Id)).StartsAt);
-    }
-
-    [Fact]
-    public async Task Move_ChecksWorkforceAvailabilityForTheNewSlot()
-    {
-        await using SchedulingWorld w = await SchedulingWorld.Create(nameof(Move_ChecksWorkforceAvailabilityForTheNewSlot));
-        AppointmentDto created = await w.CreateAppointment(SchedulingWorld.Future(10));
-
-        await SchedulingAssert.BusinessRule(ErrorCodes.OutsideWorkingHours,
-            () => w.Appointments.Move(w.OrganizationId, w.ActorUserId, true, created.Id,
-                new AppointmentMoveRequest { StartsAt = SchedulingWorld.Future(22) }));
-
-        Assert.Equal(SchedulingWorld.Future(10), (await w.LoadAppointment(created.Id)).StartsAt);
-    }
-
-    [Fact]
-    public async Task Move_WithFullScopeOverride_MovesToTheViolatingSlotWithAWarning()
-    {
-        await using SchedulingWorld w = await SchedulingWorld.Create(nameof(Move_WithFullScopeOverride_MovesToTheViolatingSlotWithAWarning));
-        AppointmentDto created = await w.CreateAppointment(SchedulingWorld.Future(10));
-
-        AppointmentDto moved = await w.Appointments.Move(w.OrganizationId, w.ActorUserId, true, created.Id,
-            new AppointmentMoveRequest { StartsAt = SchedulingWorld.Future(22), OverrideAvailability = true });
+        AppointmentDto moved = await w.Appointments.ChangeSegmentTime(w.OrganizationId, w.ActorUserId, true, created.Segments[0].Id,
+            new AppointmentSegmentTimeChangeRequest { PlannedStart = SchedulingWorld.Future(22), OverrideAvailability = true });
 
         SchedulingAssert.HasWarning(moved, WarningCodes.OutsideWorkingHours);
         Assert.Equal(SchedulingWorld.Future(22), (await w.LoadAppointment(created.Id)).StartsAt);
@@ -433,24 +403,24 @@ public class AppointmentWorkforceAvailabilityCharacterizationTests
     }
 
     [Fact]
-    public async Task CompleteExisting_NeverChecksWorkforceAvailability_EvenForAFutureStart()
+    public async Task CompletingExistingParticipations_NeverChecksWorkforceAvailability()
     {
-        await using SchedulingWorld w = await SchedulingWorld.Create(nameof(CompleteExisting_NeverChecksWorkforceAvailability_EvenForAFutureStart));
+        await using SchedulingWorld w = await SchedulingWorld.Create(nameof(CompletingExistingParticipations_NeverChecksWorkforceAvailability));
         AppointmentDto created = await w.CreateAppointment(SchedulingWorld.Future(10));
         await w.AddAbsence(w.Employee, SchedulingWorld.FutureDay);
 
-        // Same request slot that Create/Update/Move would reject (absent AND 22:00 is outside hours).
-        AppointmentDto completed = await w.CompleteExisting(created.Id, w.CompleteRequest(SchedulingWorld.Future(22)));
+        // M1H: completion is a participation lifecycle transition — it schedules nothing, so the (now absent) employee's
+        // availability is not re-checked.
+        AppointmentDto completed = await w.CompleteParticipations(created.Id, w.CompleteRequest(SchedulingWorld.Future(10)));
 
         Assert.Equal(AppointmentStatus.Closed, completed.Status);
-        Assert.Equal(SchedulingWorld.Future(22), (await w.LoadAppointment(created.Id)).StartsAt);
         SchedulingAssert.HasNoWarnings(completed);
     }
 
     [Fact]
-    public async Task CompleteNewAndCompleteExisting_StillEnforceHardOverlap()
+    public async Task CompleteNow_StillEnforcesHardOverlap()
     {
-        await using SchedulingWorld w = await SchedulingWorld.Create(nameof(CompleteNewAndCompleteExisting_StillEnforceHardOverlap));
+        await using SchedulingWorld w = await SchedulingWorld.Create(nameof(CompleteNow_StillEnforcesHardOverlap));
         Client other = await w.AddClient("Other", "Client");
         await w.CreateAppointment(SchedulingWorld.Future(10));
 

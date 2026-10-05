@@ -13,9 +13,7 @@ namespace BlueDragon.DuneLight.API.Controllers.Appointments;
 /// <summary>
 /// Phase M0 — participation-native naredbe: adresa je SUDJELOVANJE (izvršna i komercijalna jedinica), ne Booking.
 /// Svaka naredba djeluje samo na adresirano sudjelovanje; ostala sudjelovanja istog Bookinga se ne diraju. Odgovor je
-/// Booking (spremnik) s izvedenim sažecima i popisom sudjelovanja. Ista pravila prijelaza/vlasništva kao
-/// /api/appointments/{appointmentId}/bookings/{clientId}/... (koji su sada privremena kompatibilnost za Booking s
-/// točno jednim sudjelovanjem).
+/// Booking (spremnik) s izvedenim sažecima i popisom sudjelovanja. Vlasništvo slijedi segment sudjelovanja.
 /// </summary>
 [ApiController]
 [Route("api/participations")]
@@ -41,8 +39,18 @@ public class ParticipationsController : ControllerBase
             this.CurrentOrganizationId(), this.CurrentUserId(), this.HasGrant(Grants.AppointmentsWriteAll), participationId));
     }
 
-    /// <summary>Opći prijelaz sudjelovanja: check-in (Completed, uz paket/naplatu/ručnu cijenu kroz tijelo zahtjeva — samo
-    /// Form=Group), Cancelled, NoShow ili korekcija na Confirmed. Sažetak statusa Bookinga (Mixed) nikad nije cilj.</summary>
+    /// <summary>Phase M1H — ručni konačni iznos sudjelovanja (samo aktivno/Confirmed sudjelovanje individualnog termina;
+    /// null = predložena cijena).</summary>
+    [HttpPatch("{participationId:guid}/price")]
+    [RequireGrant(Grants.AppointmentsWriteOwn, Grants.AppointmentsWriteAll)]
+    public async Task<ActionResult<BookingDto>> SetPrice(Guid participationId, [FromBody] ParticipationPriceChangeRequest request)
+    {
+        return Ok(await _bookingService.SetParticipationPrice(
+            this.CurrentOrganizationId(), this.CurrentUserId(), this.HasGrant(Grants.AppointmentsWriteAll), participationId, request));
+    }
+
+    /// <summary>Opći prijelaz sudjelovanja: check-in/odrađivanje (Completed, uz paket/naplatu/ručnu cijenu kroz tijelo
+    /// zahtjeva), Cancelled, NoShow ili korekcija na Confirmed. Sažetak statusa Bookinga (Mixed) nikad nije cilj.</summary>
     [HttpPatch("{participationId:guid}/status")]
     [RequireGrant(Grants.AppointmentsWriteOwn, Grants.AppointmentsWriteAll)]
     public async Task<ActionResult<BookingDto>> SetStatus(Guid participationId, [FromBody] BookingSetStatusRequest request)

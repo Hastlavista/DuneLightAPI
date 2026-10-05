@@ -21,8 +21,8 @@ namespace BlueDragon.DuneLight.Infrastructure.Utils;
 /// briše radi uređivanja termina, a pokušaj vraća REFERENCED_CANNOT_DELETE umjesto sirove FK greške baze. Cijena (D3B2)
 /// NIJE izvršna povijest.
 ///
-/// Koriste ga sva tri postojeća toka fizičkog brisanja: izostavljeni Confirmed klijent kod Update i CompleteExisting
-/// (AppointmentHandler.UpdateWithBookingsCore) te brisanje termina istog dana (AppointmentHandler.Delete). Brisanje je
+/// Koriste ga tokovi fizičkog brisanja: uklanjanje sudjelovanja (IAppointmentService.RemoveParticipation, uklj. uklanjanje
+/// segmenta) te brisanje termina istog dana (AppointmentHandler.Delete). Brisanje je
 /// UVIJEK eksplicitno (sudjelovanje pa Booking), nikad kaskadom; sudjelovanje s poviješću → REFERENCED_CANNOT_DELETE.
 /// </summary>
 public static class ParticipationHistory

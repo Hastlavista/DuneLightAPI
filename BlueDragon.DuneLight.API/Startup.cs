@@ -236,6 +236,8 @@ public class Startup
 
         services.AddScoped<IAppointmentService, AppointmentService>();
         services.AddScoped<IBookingService, BookingService>();
+        // Phase M1H: ista jezgra prijelaza sudjelovanja za poziv iz tuđe transakcije (CompleteNow).
+        services.AddScoped<IParticipationLifecycleService, BookingService>();
         services.AddScoped<IScheduleBreakService, ScheduleBreakService>();
 
         // Jedan WaitlistService, dva sučelja (IWaitlistService za kontrolere, IWaitlistPromotionService za

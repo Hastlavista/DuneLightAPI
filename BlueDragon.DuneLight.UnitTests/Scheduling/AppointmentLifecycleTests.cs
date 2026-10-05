@@ -134,8 +134,8 @@ public class AppointmentLifecycleTests
         Assert.Empty(await StatusAudit(w, created.Id));
 
         Client late = await w.AddClient("Late", "Client");
-        BookingDto added = await w.Bookings.AddBooking(w.OrganizationId, w.ActorUserId, true, created.Id, new BookingCreateRequest { ClientId = late.Id.Value });
-        Assert.Equal(BookingStatusSummary.Confirmed, added.Status);
+        AppointmentDto withLate = await w.AddClientToOnlySegment(created.Id, late);
+        Assert.Equal(BookingStatusSummary.Confirmed, withLate.Bookings.Single(b => b.ClientId == late.Id).Status);
         Assert.Equal(AppointmentStatus.Scheduled, await StatusOf(w, created.Id));
     }
 
@@ -164,7 +164,7 @@ public class AppointmentLifecycleTests
         AppointmentDto created = await w.CreateAppointment(SchedulingWorld.Future(10), extraClients: partner);
         await w.SetBookingStatus(created.Id, partner, BookingStatus.Cancelled);
         // The cancelled partner is terminal history, so completing only the first client does not remove it.
-        await w.CompleteExisting(created.Id, w.CompleteRequest(SchedulingWorld.Future(10)));
+        await w.CompleteParticipations(created.Id, w.CompleteRequest(SchedulingWorld.Future(10)));
         Assert.Equal(AppointmentStatus.Closed, await StatusOf(w, created.Id)); // Completed + Cancelled
 
         await w.SetBookingStatus(created.Id, w.Client, BookingStatus.Confirmed); // correction
@@ -302,7 +302,8 @@ public class AppointmentLifecycleTests
         Appointment occurrence = await w.GenerateSingleOccurrence(group);
         Guid id = occurrence.Id.Value;
         Client waiter = await w.AddClient("Waiter", "Client");
-        await w.Waitlist.Join(w.OrganizationId, w.ActorUserId, true, id, new WaitlistJoinRequest { ClientId = waiter.Id.Value });
+        await w.Waitlist.Join(w.OrganizationId, w.ActorUserId, true, id,
+            new WaitlistJoinRequest { ClientId = waiter.Id.Value, SegmentId = Assert.Single(occurrence.Segments).Id });
 
         AppointmentDto first = await w.Appointments.CompleteGroupAppointment(w.OrganizationId, w.ActorUserId, true, id); // no rule yet
         Assert.Empty(await w.LoadCommissionEntries());
@@ -354,11 +355,12 @@ public class AppointmentLifecycleTests
         Assert.Equal(AppointmentStatus.Scheduled, await StatusOf(w, id));
 
         Client guest = await w.AddClient("Guest", "Client");
-        await w.AddGuest(await w.LoadAppointment(id), guest);                               // AddBooking still works
+        await w.AddGuest(await w.LoadAppointment(id), guest);                               // AddGroupGuest still works
         Client waiter = await w.AddClient("Waiter", "Client");
-        await SchedulingAssert.BusinessRule(Core.Shared.ErrorCodes.CapacityAvailable,        // the waitlist is judged on
-            () => w.Waitlist.Join(w.OrganizationId, w.ActorUserId, true, id,                 // capacity, not on the
-                new WaitlistJoinRequest { ClientId = waiter.Id.Value }));                    // aggregate status
+        // The waitlist is judged on capacity, not on the aggregate status.
+        await SchedulingAssert.BusinessRule(Core.Shared.ErrorCodes.CapacityAvailable,
+            () => w.Waitlist.Join(w.OrganizationId, w.ActorUserId, true, id,
+                new WaitlistJoinRequest { ClientId = waiter.Id.Value, SegmentId = Assert.Single(occurrence.Segments).Id }));
         Assert.Equal(AppointmentStatus.Scheduled, await StatusOf(w, id));
 
         await w.Appointments.Cancel(w.OrganizationId, w.ActorUserId, true, id, new AppointmentCancelRequest());
@@ -367,7 +369,7 @@ public class AppointmentLifecycleTests
         await SchedulingAssert.BusinessRule(Core.Shared.ErrorCodes.AppointmentNotMovable,
             () => w.AddGuest(occurrence, another));
         await SchedulingAssert.BusinessRule(Core.Shared.ErrorCodes.WaitlistNotAvailable,
-            () => w.Waitlist.Join(w.OrganizationId, w.ActorUserId, true, id, new WaitlistJoinRequest { ClientId = another.Id.Value }));
+            () => w.Waitlist.Join(w.OrganizationId, w.ActorUserId, true, id, new WaitlistJoinRequest { ClientId = another.Id.Value, SegmentId = Assert.Single(occurrence.Segments).Id }));
     }
 
     #endregion
@@ -379,7 +381,7 @@ public class AppointmentLifecycleTests
     {
         await using SchedulingWorld w = await SchedulingWorld.Create(nameof(EmployeeWorked_IsACompletedParticipationOnTheirSegment_NotAClosedAppointment));
         AppointmentDto worked = await w.CreateAppointment(SchedulingWorld.Future(10));
-        await w.CompleteExisting(worked.Id, w.CompleteRequest(SchedulingWorld.Future(10)));
+        await w.CompleteParticipations(worked.Id, w.CompleteRequest(SchedulingWorld.Future(10)));
         Client other = await w.AddClient("Other", "Client");
         AppointmentDto noShow = await w.CreateAppointment(SchedulingWorld.Future(12), client: other);
         await w.SetBookingStatus(noShow.Id, other, BookingStatus.NoShow);
@@ -403,7 +405,7 @@ public class AppointmentLifecycleTests
         ClientPackage package = await w.AddClientPackage(w.Client, w.Service, 5, new DateTimeOffset(2035, 1, 1, 0, 0, 0, TimeSpan.Zero));
         AppointmentDto created = await w.CreateAppointment(SchedulingWorld.Future(10));
 
-        AppointmentDto completed = await w.CompleteExisting(created.Id, w.CompleteRequest(SchedulingWorld.Future(10), clientPackageId: package.Id));
+        AppointmentDto completed = await w.CompleteParticipations(created.Id, w.CompleteRequest(SchedulingWorld.Future(10), clientPackageId: package.Id));
 
         Assert.Equal(AppointmentStatus.Closed, completed.Status);
         Assert.Equal(4, (await w.LoadClientPackage(package.Id.Value)).ServiceEntries.Single().RemainingEntries);
@@ -425,7 +427,7 @@ public class AppointmentLifecycleTests
         await using SchedulingWorld w = await SchedulingWorld.Create(nameof(ClosedDoesNotMeanPaid));
         AppointmentDto created = await w.CreateAppointment(SchedulingWorld.Future(10));
 
-        AppointmentDto completed = await w.CompleteExisting(created.Id, w.CompleteRequest(SchedulingWorld.Future(10))); // no payment
+        AppointmentDto completed = await w.CompleteParticipations(created.Id, w.CompleteRequest(SchedulingWorld.Future(10))); // no payment
 
         Assert.Equal(AppointmentStatus.Closed, completed.Status);
         Assert.Equal((false, SchedulingWorld.DefaultServicePrice), (completed.Bookings.Single().IsPaid, completed.Bookings.Single().OutstandingAmount));

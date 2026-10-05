@@ -45,10 +45,11 @@ public class GroupWaitlistCharacterizationTests
     }
 
     private static Task<WaitlistEntryDto> Join(SchedulingWorld w, Appointment occurrence, Client client) =>
-        w.Waitlist.Join(w.OrganizationId, w.ActorUserId, true, occurrence.Id.Value, new WaitlistJoinRequest { ClientId = client.Id.Value });
+        w.Waitlist.Join(w.OrganizationId, w.ActorUserId, true, occurrence.Id.Value,
+            new WaitlistJoinRequest { ClientId = client.Id.Value, SegmentId = Assert.Single(occurrence.Segments).Id });
 
     private static Task<WaitlistEntryDto> CancelEntry(SchedulingWorld w, Appointment occurrence, Client client) =>
-        w.Waitlist.Cancel(w.OrganizationId, w.ActorUserId, true, occurrence.Id.Value, client.Id.Value);
+        w.Waitlist.Cancel(w.OrganizationId, w.ActorUserId, true, occurrence.Id.Value, client.Id.Value, Assert.Single(occurrence.Segments).Id);
 
     #region Joining
 
@@ -149,7 +150,8 @@ public class GroupWaitlistCharacterizationTests
         Client waiter = await w.AddClient("Waiter", "Client");
 
         await SchedulingAssert.BusinessRule(ErrorCodes.NotOwner,
-            () => w.Waitlist.Join(w.OrganizationId, other.UserId, false, occurrence.Id.Value, new WaitlistJoinRequest { ClientId = waiter.Id.Value }));
+            () => w.Waitlist.Join(w.OrganizationId, other.UserId, false, occurrence.Id.Value,
+                new WaitlistJoinRequest { ClientId = waiter.Id.Value, SegmentId = Assert.Single(occurrence.Segments).Id }));
     }
 
     [Fact]

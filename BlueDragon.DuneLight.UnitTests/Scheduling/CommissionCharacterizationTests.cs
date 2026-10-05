@@ -55,8 +55,8 @@ public class CommissionCharacterizationTests
 
         await w.CompleteNew(w.CompleteRequest(SchedulingWorld.Past(10), settlements: new[]
         {
-            new AppointmentClientSettlement { ClientId = w.Client.Id.Value },
-            new AppointmentClientSettlement { ClientId = partner.Id.Value }
+            new AppointmentCompletedClientRequest { ClientId = w.Client.Id.Value },
+            new AppointmentCompletedClientRequest { ClientId = partner.Id.Value }
         }));
 
         // Two clients on one appointment = two commissionable services (one entry per Booking).
@@ -74,8 +74,11 @@ public class CommissionCharacterizationTests
         await w.AddCommissionRule(w.Employee, w.Service, CommissionCalculationType.Fixed, 5m);
         await w.AddCommissionRule(substitute, w.Service, CommissionCalculationType.Fixed, 9m);
         AppointmentDto created = await w.CreateAppointment(SchedulingWorld.Future(10));
+        // M1H: the substitute is assigned through the segment command, then the participation is completed.
+        await w.Appointments.ChangeSegmentEmployees(w.OrganizationId, w.ActorUserId, true, created.Segments[0].Id,
+            new AppointmentSegmentEmployeesChangeRequest { EmployeeIds = new List<Guid> { substitute.Id.Value } });
 
-        await w.CompleteExisting(created.Id, w.CompleteRequest(SchedulingWorld.Future(10), employee: substitute));
+        await w.CompleteParticipations(created.Id, w.CompleteRequest(SchedulingWorld.Future(10)));
 
         CommissionEntry entry = Assert.Single(await w.LoadCommissionEntries());
         Assert.Equal(substitute.Id, entry.EmployeeId);
@@ -135,12 +138,12 @@ public class CommissionCharacterizationTests
         await using SchedulingWorld w = await SchedulingWorld.Create(nameof(Individual_ACorrectionReversesTheEntry_AndAReCompletionEarnsANewOneAtTheNewVersion));
         await w.AddCommissionRule(w.Employee, w.Service, CommissionCalculationType.Percentage, 10m);
         AppointmentDto created = await w.CreateAppointment(SchedulingWorld.Future(10));
-        await w.CompleteExisting(created.Id, w.CompleteRequest(SchedulingWorld.Future(10)));
+        await w.CompleteParticipations(created.Id, w.CompleteRequest(SchedulingWorld.Future(10)));
 
         await w.SetBookingStatus(created.Id, w.Client, BookingStatus.Confirmed);
         Assert.Equal(CommissionEntryStatus.Reversed, Assert.Single(await w.LoadCommissionEntries()).Status);
 
-        await w.CompleteExisting(created.Id, w.CompleteRequest(SchedulingWorld.Future(10), settlementAmount: 80m));
+        await w.CompleteParticipations(created.Id, w.CompleteRequest(SchedulingWorld.Future(10), settlementAmount: 80m));
 
         List<CommissionEntry> entries = await w.LoadCommissionEntries();
         Assert.Equal(2, entries.Count);
@@ -156,7 +159,7 @@ public class CommissionCharacterizationTests
     {
         await using SchedulingWorld w = await SchedulingWorld.Create(nameof(Individual_ACorrectionWithoutARule_ReversesNothing_AndIsNotAnError));
         AppointmentDto created = await w.CreateAppointment(SchedulingWorld.Future(10));
-        await w.CompleteExisting(created.Id, w.CompleteRequest(SchedulingWorld.Future(10)));
+        await w.CompleteParticipations(created.Id, w.CompleteRequest(SchedulingWorld.Future(10)));
 
         BookingDto dto = await w.SetBookingStatus(created.Id, w.Client, BookingStatus.Confirmed);
 
@@ -171,10 +174,10 @@ public class CommissionCharacterizationTests
         Client partner = await w.AddClient("Partner", "Client");
         await w.AddCommissionRule(w.Employee, w.Service, CommissionCalculationType.Fixed, 5m);
         AppointmentDto created = await w.CreateAppointment(SchedulingWorld.Future(10), extraClients: partner);
-        await w.CompleteExisting(created.Id, w.CompleteRequest(SchedulingWorld.Future(10), settlements: new[]
+        await w.CompleteParticipations(created.Id, w.CompleteRequest(SchedulingWorld.Future(10), settlements: new[]
         {
-            new AppointmentClientSettlement { ClientId = w.Client.Id.Value },
-            new AppointmentClientSettlement { ClientId = partner.Id.Value }
+            new AppointmentCompletedClientRequest { ClientId = w.Client.Id.Value },
+            new AppointmentCompletedClientRequest { ClientId = partner.Id.Value }
         }));
 
         await w.SetBookingStatus(created.Id, w.Client, BookingStatus.Confirmed);
@@ -192,19 +195,19 @@ public class CommissionCharacterizationTests
         Client partner = await w.AddClient("Partner", "Client");
         await w.AddCommissionRule(w.Employee, w.Service, CommissionCalculationType.Fixed, 5m);
         AppointmentDto created = await w.CreateAppointment(SchedulingWorld.Future(10), extraClients: partner);
-        AppointmentCompleteRequest both = w.CompleteRequest(SchedulingWorld.Future(10), settlements: new[]
+        TestCompletionSpec both = w.CompleteRequest(SchedulingWorld.Future(10), settlements: new[]
         {
-            new AppointmentClientSettlement { ClientId = w.Client.Id.Value },
-            new AppointmentClientSettlement { ClientId = partner.Id.Value }
+            new AppointmentCompletedClientRequest { ClientId = w.Client.Id.Value },
+            new AppointmentCompletedClientRequest { ClientId = partner.Id.Value }
         });
-        await w.CompleteExisting(created.Id, both);
+        await w.CompleteParticipations(created.Id, both);
         await w.SetBookingStatus(created.Id, w.Client, BookingStatus.Confirmed);
 
         // The client list is re-sent in full (so the still-Completed sibling is not deleted as "omitted").
-        await w.CompleteExisting(created.Id, w.CompleteRequest(SchedulingWorld.Future(10), settlements: new[]
+        await w.CompleteParticipations(created.Id, w.CompleteRequest(SchedulingWorld.Future(10), settlements: new[]
         {
-            new AppointmentClientSettlement { ClientId = w.Client.Id.Value },
-            new AppointmentClientSettlement { ClientId = partner.Id.Value }
+            new AppointmentCompletedClientRequest { ClientId = w.Client.Id.Value },
+            new AppointmentCompletedClientRequest { ClientId = partner.Id.Value }
         }));
 
         // Only the booking that actually transitioned in this call earns again: 2 (first pass) + 1 (re-completion) = 3.

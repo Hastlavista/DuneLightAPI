@@ -30,8 +30,8 @@ public static class AppointmentOwnership
     }
 
     /// <summary>Own-scope za POSTOJEĆE segmente: pozivatelj mora biti dodijeljen SVAKOM zadanom segmentu (prazan skup
-    /// segmenata u own-opsegu se odbija). Provjerava se samo trenutna dodjela (novi trener kod Update/Move se ovdje ne
-    /// provjerava — pinned F-04).</summary>
+    /// segmenata u own-opsegu se odbija). Provjerava se samo trenutna dodjela (novi zaposlenici segmenta provjeravaju se
+    /// u segmentnoj naredbi, ne ovdje).</summary>
     public static async Task EnsureCallerOwnsSegments(
         IEmployeeHandler employeeHandler, Guid organizationId, Guid userId, bool hasFullScope,
         IEnumerable<AppointmentSegment> segments, string notOwnerMessage)

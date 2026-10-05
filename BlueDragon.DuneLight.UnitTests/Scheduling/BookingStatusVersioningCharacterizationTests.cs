@@ -32,7 +32,7 @@ public class BookingStatusVersioningCharacterizationTests
     {
         Booking booking = SingleSegmentTestExtensions.InMemoryBooking(BookingStatus.Confirmed, 0);
 
-        bool changed = ParticipationLifecycle.TrySetStatus(BookingParticipations.GetSingleParticipation(booking), ParticipationStatus.Completed);
+        bool changed = ParticipationLifecycle.TrySetStatus(Assert.Single(booking.Participations), ParticipationStatus.Completed);
 
         Assert.True(changed);
         Assert.Equal(BookingStatus.Completed, booking.Status);
@@ -48,7 +48,7 @@ public class BookingStatusVersioningCharacterizationTests
     {
         Booking booking = SingleSegmentTestExtensions.InMemoryBooking(status, 7);
 
-        bool changed = ParticipationLifecycle.TrySetStatus(BookingParticipations.GetSingleParticipation(booking), BookingParticipations.ToParticipationStatus(status));
+        bool changed = ParticipationLifecycle.TrySetStatus(Assert.Single(booking.Participations), BookingParticipations.ToParticipationStatus(status));
 
         Assert.False(changed);
         Assert.Equal(status, booking.Status);
@@ -60,11 +60,11 @@ public class BookingStatusVersioningCharacterizationTests
     {
         Booking booking = SingleSegmentTestExtensions.InMemoryBooking(BookingStatus.Confirmed);
 
-        ParticipationLifecycle.TrySetStatus(BookingParticipations.GetSingleParticipation(booking), ParticipationStatus.NoShow);      // 1
-        ParticipationLifecycle.TrySetStatus(BookingParticipations.GetSingleParticipation(booking), ParticipationStatus.NoShow);      // repeat: no change
-        ParticipationLifecycle.TrySetStatus(BookingParticipations.GetSingleParticipation(booking), ParticipationStatus.Confirmed);   // 2
-        ParticipationLifecycle.TrySetStatus(BookingParticipations.GetSingleParticipation(booking), ParticipationStatus.NoShow);      // 3 — a NEW occurrence of NoShow
-        ParticipationLifecycle.TrySetStatus(BookingParticipations.GetSingleParticipation(booking), ParticipationStatus.Cancelled);   // 4
+        ParticipationLifecycle.TrySetStatus(Assert.Single(booking.Participations), ParticipationStatus.NoShow);      // 1
+        ParticipationLifecycle.TrySetStatus(Assert.Single(booking.Participations), ParticipationStatus.NoShow);      // repeat: no change
+        ParticipationLifecycle.TrySetStatus(Assert.Single(booking.Participations), ParticipationStatus.Confirmed);   // 2
+        ParticipationLifecycle.TrySetStatus(Assert.Single(booking.Participations), ParticipationStatus.NoShow);      // 3 — a NEW occurrence of NoShow
+        ParticipationLifecycle.TrySetStatus(Assert.Single(booking.Participations), ParticipationStatus.Cancelled);   // 4
 
         Assert.Equal(4, booking.StatusVersion);
         Assert.Equal(BookingStatus.Cancelled, booking.Status);
@@ -74,14 +74,14 @@ public class BookingStatusVersioningCharacterizationTests
     public void TrySetStatus_DoesNotTouchAnyOtherBookingField()
     {
         Booking booking = SingleSegmentTestExtensions.InMemoryBooking(BookingStatus.Confirmed, cancellationReason: "r");
-        ParticipationPrice.Apply(BookingParticipations.GetSingleParticipation(booking), new BookingPricing(50m, 50m, false)); // D3B2: price lives on the participation
+        ParticipationPrice.Apply(Assert.Single(booking.Participations), new BookingPricing(50m, 50m, false)); // D3B2: price lives on the participation
         booking.Note = "n";
-        BookingParticipations.GetSingleParticipation(booking).PackageConsumptions.Add(new PackageConsumption
+        Assert.Single(booking.Participations).PackageConsumptions.Add(new PackageConsumption
         {
             Id = Guid.NewGuid(), Status = PackageConsumptionStatus.Consumed, Units = 1 // D3B3A: package usage is ledger state
         });
 
-        ParticipationLifecycle.TrySetStatus(BookingParticipations.GetSingleParticipation(booking), ParticipationStatus.Cancelled);
+        ParticipationLifecycle.TrySetStatus(Assert.Single(booking.Participations), ParticipationStatus.Cancelled);
 
         Assert.Equal(50m, booking.Amount);
         Assert.Equal("n", booking.Note);
@@ -116,24 +116,24 @@ public class BookingStatusVersioningCharacterizationTests
         await using SchedulingWorld w = await SchedulingWorld.Create(nameof(Individual_CompleteExisting_MovesTheBookingToVersionOne));
         AppointmentDto created = await w.CreateAppointment(SchedulingWorld.Future(10));
 
-        await w.CompleteExisting(created.Id, w.CompleteRequest(SchedulingWorld.Future(10)));
+        await w.CompleteParticipations(created.Id, w.CompleteRequest(SchedulingWorld.Future(10)));
 
         Assert.Equal(1, (await w.LoadBooking(created.Id, w.Client)).StatusVersion);
     }
 
     [Fact]
-    public async Task Individual_CompleteNew_CreatesTheBookingAlreadyCompleted_AtVersionZero()
+    public async Task Individual_CompleteNow_CompletesThroughOneTransition_AtVersionOne()
     {
-        await using SchedulingWorld w = await SchedulingWorld.Create(nameof(Individual_CompleteNew_CreatesTheBookingAlreadyCompleted_AtVersionZero));
+        await using SchedulingWorld w = await SchedulingWorld.Create(nameof(Individual_CompleteNow_CompletesThroughOneTransition_AtVersionOne));
 
         AppointmentDto completed = await w.CompleteNew(w.CompleteRequest(SchedulingWorld.Past(10)));
 
-        // FINDING: CompleteNew builds the Booking directly in Completed status (no TrySetStatus), so it never went
-        // through a transition: its version stays 0, whereas the same booking completed through Scheduled → CompleteExisting
-        // is version 1. Commission entries and audit rows inherit this difference.
+        // CHANGED in M1H (was FINDING F-07: version 0, the booking was built directly as Completed): CompleteNow creates the
+        // participation Confirmed and runs the same lifecycle transition as completing an existing one — version 1, like
+        // every other completion. Commission entries and audit rows no longer differ by path.
         Booking b = await w.LoadBooking(completed.Id, w.Client);
         Assert.Equal(BookingStatus.Completed, b.Status);
-        Assert.Equal(0, b.StatusVersion);
+        Assert.Equal(1, b.StatusVersion);
     }
 
     [Fact]
@@ -144,13 +144,13 @@ public class BookingStatusVersioningCharacterizationTests
         AppointmentDto created = await w.CreateAppointment(SchedulingWorld.Future(10));
         Guid bookingId = created.Bookings.Single().Id;
 
-        await w.CompleteExisting(created.Id, w.CompleteRequest(SchedulingWorld.Future(10)));                       // Confirmed(0) -> Completed(1)
+        await w.CompleteParticipations(created.Id, w.CompleteRequest(SchedulingWorld.Future(10)));                       // Confirmed(0) -> Completed(1)
         Assert.Equal(1, (await w.LoadBooking(created.Id, w.Client)).StatusVersion);
 
         await w.SetBookingStatus(created.Id, w.Client, BookingStatus.Confirmed);                                    // Completed(1) -> Confirmed(2)
         Assert.Equal(2, (await w.LoadBooking(created.Id, w.Client)).StatusVersion);
 
-        await w.CompleteExisting(created.Id, w.CompleteRequest(SchedulingWorld.Future(10)));                       // Confirmed(2) -> Completed(3)
+        await w.CompleteParticipations(created.Id, w.CompleteRequest(SchedulingWorld.Future(10)));                       // Confirmed(2) -> Completed(3)
         Assert.Equal(3, (await w.LoadBooking(created.Id, w.Client)).StatusVersion);
 
         // Two distinct occurrences of "earned": the first was reversed by the correction, the second is the live one.

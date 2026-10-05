@@ -38,7 +38,7 @@ public class BookingCorrectionCharacterizationTests
     private static async Task<(AppointmentDto Dto, Guid BookingId)> CompleteWithCash(SchedulingWorld w)
     {
         AppointmentDto created = await w.CreateAppointment(SchedulingWorld.Future(10));
-        AppointmentDto completed = await w.CompleteExisting(created.Id, w.CompleteRequest(SchedulingWorld.Future(10), paymentMethod: PaymentMethod.Cash));
+        AppointmentDto completed = await w.CompleteParticipations(created.Id, w.CompleteRequest(SchedulingWorld.Future(10), paymentMethod: PaymentMethod.Cash));
         return (completed, completed.Bookings.Single().Id);
     }
 
@@ -92,7 +92,7 @@ public class BookingCorrectionCharacterizationTests
         await using SchedulingWorld w = await SchedulingWorld.Create(nameof(Individual_CompletedToConfirmed_ReturnsThePackageEntry_ButKeepsTheClientPackageLink));
         ClientPackage package = await w.AddClientPackage(w.Client, w.Service, 5, LongValid);
         AppointmentDto created = await w.CreateAppointment(SchedulingWorld.Future(10));
-        await w.CompleteExisting(created.Id, w.CompleteRequest(SchedulingWorld.Future(10), clientPackageId: package.Id));
+        await w.CompleteParticipations(created.Id, w.CompleteRequest(SchedulingWorld.Future(10), clientPackageId: package.Id));
         Assert.Equal(4, (await w.LoadClientPackage(package.Id.Value)).ServiceEntries.Single().RemainingEntries);
 
         await w.SetBookingStatus(created.Id, w.Client, BookingStatus.Confirmed);
@@ -132,7 +132,7 @@ public class BookingCorrectionCharacterizationTests
         await using SchedulingWorld w = await SchedulingWorld.Create(nameof(Individual_CompletedToConfirmed_IsRefusedWhileAManualPosPaymentExists_AndChangesNothing));
         await w.AddCommissionRule(w.Employee, w.Service, CommissionCalculationType.Percentage, 10m);
         AppointmentDto created = await w.CreateAppointment(SchedulingWorld.Future(10));
-        AppointmentDto completed = await w.CompleteExisting(created.Id, w.CompleteRequest(SchedulingWorld.Future(10))); // unpaid
+        AppointmentDto completed = await w.CompleteParticipations(created.Id, w.CompleteRequest(SchedulingWorld.Future(10))); // unpaid
         Guid bookingId = completed.Bookings.Single().Id;
         await w.PayBookingViaCheckout(bookingId, w.Client, 20m); // a manual POS payment
 
@@ -159,7 +159,7 @@ public class BookingCorrectionCharacterizationTests
         await w.PayBookingViaCheckout(bookingId, w.Client, 20m); // manual POS payment (IsCheckInGenerated = false)
         // D3B3B (changed): the check-in cash settlement pays only the participation's REMAINING 30 — the manual 20 is
         // counted. Before: it charged the full 50 and over-settled the obligation (20 + 50 against 50).
-        AppointmentDto completed = await w.CompleteExisting(created.Id, w.CompleteRequest(SchedulingWorld.Future(10), paymentMethod: PaymentMethod.Cash));
+        AppointmentDto completed = await w.CompleteParticipations(created.Id, w.CompleteRequest(SchedulingWorld.Future(10), paymentMethod: PaymentMethod.Cash));
         List<Payment> before = await w.LoadPayments(bookingId);
         Assert.Equal(2, before.Count);
         Assert.Equal(30m, Assert.Single(before, p => p.IsCheckInGenerated).Amount);
@@ -193,10 +193,10 @@ public class BookingCorrectionCharacterizationTests
         await using SchedulingWorld w = await SchedulingWorld.Create(nameof(Individual_CompletedToConfirmed_PreservesAManualPaymentOnASiblingBooking));
         Client partner = await w.AddClient("Partner", "Client");
         AppointmentDto created = await w.CreateAppointment(SchedulingWorld.Future(10), extraClients: partner);
-        AppointmentDto completed = await w.CompleteExisting(created.Id, w.CompleteRequest(SchedulingWorld.Future(10), settlements: new[]
+        AppointmentDto completed = await w.CompleteParticipations(created.Id, w.CompleteRequest(SchedulingWorld.Future(10), settlements: new[]
         {
-            new AppointmentClientSettlement { ClientId = w.Client.Id.Value, PaymentMethod = PaymentMethod.Cash },
-            new AppointmentClientSettlement { ClientId = partner.Id.Value }
+            new AppointmentCompletedClientRequest { ClientId = w.Client.Id.Value, PaymentMethod = PaymentMethod.Cash },
+            new AppointmentCompletedClientRequest { ClientId = partner.Id.Value }
         }));
         Guid partnerBookingId = completed.Bookings.Single(b => b.ClientId == partner.Id).Id;
         await w.PayBookingViaCheckout(partnerBookingId, partner, 20m);
@@ -214,10 +214,10 @@ public class BookingCorrectionCharacterizationTests
         await using SchedulingWorld w = await SchedulingWorld.Create(nameof(Individual_CorrectionOfOneBooking_ReopensTheAppointment_EvenWhileASiblingStaysCompleted));
         Client partner = await w.AddClient("Partner", "Client");
         AppointmentDto created = await w.CreateAppointment(SchedulingWorld.Future(10), extraClients: partner);
-        await w.CompleteExisting(created.Id, w.CompleteRequest(SchedulingWorld.Future(10), settlements: new[]
+        await w.CompleteParticipations(created.Id, w.CompleteRequest(SchedulingWorld.Future(10), settlements: new[]
         {
-            new AppointmentClientSettlement { ClientId = w.Client.Id.Value },
-            new AppointmentClientSettlement { ClientId = partner.Id.Value }
+            new AppointmentCompletedClientRequest { ClientId = w.Client.Id.Value },
+            new AppointmentCompletedClientRequest { ClientId = partner.Id.Value }
         }));
 
         await w.SetBookingStatus(created.Id, w.Client, BookingStatus.Confirmed);
@@ -282,7 +282,7 @@ public class BookingCorrectionCharacterizationTests
         // Shape produced by real flows: one booking no-showed, then a sibling was completed via CompleteExisting.
         AppointmentDto created = await w.CreateAppointment(SchedulingWorld.Future(10), extraClients: sibling);
         await w.SetBookingStatus(created.Id, w.Client, BookingStatus.NoShow);
-        await w.CompleteExisting(created.Id, w.CompleteRequest(SchedulingWorld.Future(10), client: sibling));
+        await w.CompleteParticipations(created.Id, w.CompleteRequest(SchedulingWorld.Future(10), client: sibling));
         Assert.Equal(AppointmentStatus.Closed, (await w.LoadAppointment(created.Id)).Status);
 
         await w.SetBookingStatus(created.Id, w.Client, BookingStatus.Confirmed);

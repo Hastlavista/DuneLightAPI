@@ -40,7 +40,8 @@ public class ParticipationSettlementTests
             new CheckoutCreateRequest { ClientId = (client ?? w.Client).Id.Value, CompanyId = w.Company.Id.Value });
 
     private static Task<CheckoutDto> AddService(SchedulingWorld w, Guid checkoutId, Guid bookingId) =>
-        w.Checkouts.AddBookingItem(w.OrganizationId, w.ActorUserId, checkoutId, new CheckoutAddBookingItemRequest { BookingId = bookingId });
+        w.SingleParticipationOfBooking(bookingId).ContinueWith(p => w.Checkouts.AddBookingItem(w.OrganizationId, w.ActorUserId, checkoutId,
+            new CheckoutAddBookingItemRequest { ParticipationId = p.Result })).Unwrap();
 
     private static Task<CheckoutDto> Pay(SchedulingWorld w, Guid checkoutId, decimal amount, List<CheckoutPaymentAllocationRequest> allocations = null) =>
         w.Checkouts.RecordPayment(w.OrganizationId, w.ActorUserId, checkoutId,
@@ -172,7 +173,7 @@ public class ParticipationSettlementTests
         await using SchedulingWorld w = await SchedulingWorld.Create(nameof(Completed_WithOutstandingDebt_IsAllowed));
         AppointmentDto created = await w.CreateAppointment(Z(10));
 
-        AppointmentDto completed = await w.CompleteExisting(created.Id, w.CompleteRequest(Z(10), isPaid: false));
+        AppointmentDto completed = await w.CompleteParticipations(created.Id, w.CompleteRequest(Z(10), isPaid: false));
 
         BookingDto booking = Assert.Single(completed.Bookings);
         Assert.Equal((BookingStatusSummary.Completed, 0m, 50m, false), (booking.Status, booking.PaidAmount, booking.OutstandingAmount, booking.IsPaid));
@@ -186,7 +187,7 @@ public class ParticipationSettlementTests
         Guid bookingId = created.Bookings.Single().Id;
         await w.PayBookingViaCheckout(bookingId, w.Client, 50m, complete: true); // fully prepaid
 
-        AppointmentDto completed = await w.CompleteExisting(created.Id, w.CompleteRequest(Z(10), paymentMethod: PaymentMethod.Cash));
+        AppointmentDto completed = await w.CompleteParticipations(created.Id, w.CompleteRequest(Z(10), paymentMethod: PaymentMethod.Cash));
 
         Assert.Single(await w.LoadPayments(bookingId)); // nothing left to settle => no check-in payment
         Assert.Equal((50m, 0m), (Assert.Single(completed.Bookings).PaidAmount, Assert.Single(completed.Bookings).OutstandingAmount));
@@ -233,7 +234,7 @@ public class ParticipationSettlementTests
         ClientPackage package = await w.AddClientPackage(w.Client, w.Service, 5, LongValid);
         AppointmentDto created = await w.CreateAppointment(Z(10));
         Guid bookingId = created.Bookings.Single().Id;
-        await w.CompleteExisting(created.Id, w.CompleteRequest(Z(10), clientPackageId: package.Id));
+        await w.CompleteParticipations(created.Id, w.CompleteRequest(Z(10), clientPackageId: package.Id));
 
         ParticipationSettlement covered = await SettlementOf(w, bookingId);
         Assert.Equal((50m, true, 0m, 0m, 0m), (covered.FinalPrice, covered.EntitlementCovered, covered.MonetaryDue, covered.SettledAmount, covered.OutstandingAmount));
@@ -264,7 +265,7 @@ public class ParticipationSettlementTests
         await w.PayBookingViaCheckout(created.Bookings.Single().Id, w.Client, 20m);
 
         await SchedulingAssert.BusinessRule(ErrorCodes.BookingAlreadyHasMonetaryPayment,
-            () => w.CompleteExisting(created.Id, w.CompleteRequest(Z(10), clientPackageId: package.Id)));
+            () => w.CompleteParticipations(created.Id, w.CompleteRequest(Z(10), clientPackageId: package.Id)));
 
         Assert.Equal(5, (await w.LoadClientPackage(package.Id.Value)).ServiceEntries.Single().RemainingEntries);
     }
@@ -285,20 +286,13 @@ public class ParticipationSettlementTests
         await w.PayBookingViaCheckout(created.Bookings.Single(b => b.ClientId == third.Id).Id, third, 20m); // payment
 
         foreach (Client omitted in new[] { second, third })
-        {
-            AppointmentDto current = await w.Appointments.GetById(w.OrganizationId, created.Id);
-            await SchedulingAssert.BusinessRule(ErrorCodes.ReferencedCannotDelete, () => w.Appointments.Update(
-                w.OrganizationId, w.ActorUserId, true, created.Id,
-                w.UpdateRequest(current, r => r.ClientIds = current.Bookings.Select(b => b.ClientId).Where(c => c != omitted.Id).ToList())));
-        }
+            await SchedulingAssert.BusinessRule(ErrorCodes.ReferencedCannotDelete, () => w.RemoveClientFromOnlySegment(created.Id, omitted));
         await SchedulingAssert.BusinessRule(ErrorCodes.ReferencedCannotDelete,
             () => w.Appointments.Delete(w.OrganizationId, w.ActorUserId, created.Id));
         Assert.Equal(3, (await w.LoadAppointment(created.Id)).Bookings.Count);
 
         // A participation with no lifecycle/package/settlement history is still removable.
-        AppointmentDto now = await w.Appointments.GetById(w.OrganizationId, created.Id);
-        await w.Appointments.Update(w.OrganizationId, w.ActorUserId, true, created.Id,
-            w.UpdateRequest(now, r => r.ClientIds = new List<Guid> { second.Id.Value, third.Id.Value }));
+        await w.RemoveClientFromOnlySegment(created.Id, w.Client);
         Assert.Equal(2, (await w.LoadAppointment(created.Id)).Bookings.Count);
     }
 
@@ -329,8 +323,10 @@ public class ParticipationSettlementTests
                 return false;
             }
         });
-        Task viaCheckIn = Task.Run(() => scopeB.ServiceProvider.GetRequiredService<IAppointmentService>().CompleteExisting(
-            w.OrganizationId, w.ActorUserId, true, created.Id, w.CompleteRequest(Z(10), paymentMethod: PaymentMethod.Cash)));
+        Guid participationId = await w.ParticipationIdOnOnlySegment(created.Id, w.Client.Id.Value);
+        Task viaCheckIn = Task.Run(() => scopeB.ServiceProvider.GetRequiredService<IBookingService>().SetParticipationStatus(
+            w.OrganizationId, w.ActorUserId, true, participationId,
+            new BookingSetStatusRequest { Status = BookingStatus.Completed, PaymentMethod = PaymentMethod.Cash }));
 
         await Task.WhenAll(viaCheckout, viaCheckIn);
 
@@ -352,7 +348,7 @@ public class ParticipationSettlementTests
         AppointmentDto paid = await w.CreateAppointment(Z(10));
         AppointmentDto covered = await w.CreateAppointment(Z(12), client: second);
         await w.PayBookingViaCheckout(paid.Bookings.Single().Id, w.Client, 20m, complete: false);
-        await w.CompleteExisting(covered.Id, w.CompleteRequest(Z(12), client: second, clientPackageId: package.Id));
+        await w.CompleteParticipations(covered.Id, w.CompleteRequest(Z(12), client: second, clientPackageId: package.Id));
         IOperationalDashboardService dashboard = w.Resolve<IOperationalDashboardService>();
 
         DashboardFinancialDto onServiceDay = (await dashboard.GetDashboard(w.OrganizationId, w.Company.Id.Value, Z(10))).Financial;

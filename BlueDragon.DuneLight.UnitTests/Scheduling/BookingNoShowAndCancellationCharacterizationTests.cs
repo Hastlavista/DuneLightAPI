@@ -118,12 +118,12 @@ public class BookingNoShowAndCancellationCharacterizationTests
         Appointment occurrence = await w.GenerateSingleOccurrence(group);
 
         GroupAttendanceListDto list = await w.GroupAttendance.SetAttendance(w.OrganizationId, w.ActorUserId, true, occurrence.Id.Value,
-            new SetGroupAttendanceRequest { ClientId = w.Client.Id.Value, Attended = false });
+            new SetGroupAttendanceRequest { ClientId = w.Client.Id.Value, SegmentId = Assert.Single(occurrence.Segments).Id, Attended = false });
 
         Booking b = await w.LoadBooking(occurrence.Id.Value, w.Client);
         Assert.Equal(BookingStatus.NoShow, b.Status);
         Assert.Equal(1, b.StatusVersion);
-        Assert.False(Assert.Single(list.Recorded).Attended);
+        Assert.False(Assert.Single(Assert.Single(list.Segments).Recorded).Attended);
         Assert.Empty(await w.LoadPayments(b.Id.Value));
         Assert.Single(await w.LoadOutbox(), m => m.Type == OutboxEventTypes.BookingNoShowV1);
     }

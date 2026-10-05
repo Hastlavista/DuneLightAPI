@@ -12,6 +12,7 @@ using BlueDragon.DuneLight.API;
 using BlueDragon.DuneLight.Infrastructure.Outbox;
 using BlueDragon.DuneLight.Infrastructure.Services.Management;
 using BlueDragon.DuneLight.Core.DTOs.Appointments;
+using BlueDragon.DuneLight.Core.Enums;
 using BlueDragon.DuneLight.Core.Shared;
 using BlueDragon.DuneLight.Infrastructure.Domain.Contexts;
 using BlueDragon.DuneLight.Infrastructure.Domain.Models.Catalog;
@@ -386,27 +387,19 @@ public class MultiSegmentHttpContractTests : IClassFixture<MultiSegmentHttpContr
     }
 
     [Fact]
-    public async Task BusinessErrors_MapTo409WithTheErrorEnvelope_LegacyMultiSegmentCallsAreNever500()
+    public async Task BusinessErrors_MapTo409WithTheErrorEnvelope_GroupOnlyCallsOnAnIndividualAppointmentAreNever500()
     {
-        await using Arranged a = await Arrange(nameof(BusinessErrors_MapTo409WithTheErrorEnvelope_LegacyMultiSegmentCallsAreNever500));
+        await using Arranged a = await Arrange(nameof(BusinessErrors_MapTo409WithTheErrorEnvelope_GroupOnlyCallsOnAnIndividualAppointmentAreNever500));
         SchedulingWorld w = a.World;
         Guid id = a.Appointment.Id;
 
-        AssertError(HttpStatusCode.Conflict, ErrorCodes.SegmentSelectionRequired, await Send(HttpMethod.Put, $"/api/appointments/{id}", a.WriteAll, new
-        {
-            startsAt = SchedulingWorld.Future(12), serviceId = a.Massage.Id, employeeId = w.Employee.Id, companyId = w.Company.Id,
-            clientIds = new[] { w.Client.Id }
-        }));
-        AssertError(HttpStatusCode.Conflict, ErrorCodes.SegmentSelectionRequired,
-            await Send(HttpMethod.Patch, $"/api/appointments/{id}/move", a.WriteAll, new { startsAt = SchedulingWorld.Future(12) }));
-        AssertError(HttpStatusCode.Conflict, ErrorCodes.SegmentSelectionRequired, await Send(HttpMethod.Patch, $"/api/appointments/{id}/complete", a.WriteAll, new
-        {
-            startsAt = SchedulingWorld.Future(9), serviceId = a.Massage.Id, employeeId = w.Employee.Id, companyId = w.Company.Id,
-            clientIds = new[] { w.Client.Id }, settlements = new[] { new { clientId = w.Client.Id } }
-        }));
+        // M1H: the group-only guest path needs an explicit segment (400 model validation), and an individual appointment
+        // refuses it with a validation error (clients join through POST /{id}/clients) — never a 500.
         Client partner = await w.AddClient("Partner");
-        AssertError(HttpStatusCode.Conflict, ErrorCodes.SegmentSelectionRequired,
+        AssertError(HttpStatusCode.BadRequest, ErrorCodes.ValidationError,
             await Send(HttpMethod.Post, $"/api/appointments/{id}/bookings", a.WriteAll, new { clientId = partner.Id }));
+        AssertError(HttpStatusCode.BadRequest, ErrorCodes.ValidationError,
+            await Send(HttpMethod.Post, $"/api/appointments/{id}/bookings", a.WriteAll, new { clientId = partner.Id, segmentId = a.SegmentOf(a.Massage) }));
 
         // A segment-native business rule.
         Guid physio = a.SegmentOf(a.Physio);
@@ -462,4 +455,131 @@ public class MultiSegmentHttpContractTests : IClassFixture<MultiSegmentHttpContr
             segments = new[] { new { serviceId = a.Physio.Id, plannedStart = SchedulingWorld.Future(15), employeeIds = new[] { a.B.Id } } }
         }));
     }
+
+    #region Phase M1H — removed compatibility routes and the narrow target commands
+
+    [Fact]
+    public async Task RemovedLegacyRoutes_NoLongerMap_AndChangeNothing()
+    {
+        await using Arranged a = await Arrange(nameof(RemovedLegacyRoutes_NoLongerMap_AndChangeNothing));
+        SchedulingWorld w = a.World;
+        Guid id = a.Appointment.Id;
+        Guid clientId = w.Client.Id.Value;
+        object flat = new
+        {
+            startsAt = SchedulingWorld.Future(12), serviceId = a.Massage.Id, employeeId = w.Employee.Id, companyId = w.Company.Id,
+            clientIds = new[] { clientId }, settlements = new[] { new { clientId } }
+        };
+
+        (HttpMethod Method, string Url)[] removed =
+        {
+            (HttpMethod.Put, $"/api/appointments/{id}"),                              // legacy Update
+            (HttpMethod.Patch, $"/api/appointments/{id}/move"),                       // legacy Move
+            (HttpMethod.Patch, $"/api/appointments/{id}/complete"),                   // legacy CompleteExisting
+            (HttpMethod.Post, "/api/appointments/schedule"),                          // legacy flat single-segment create
+            (HttpMethod.Patch, $"/api/appointments/{id}/bookings/{clientId}/no-show"), // legacy Booking-addressed status
+            (HttpMethod.Patch, $"/api/appointments/{id}/bookings/{clientId}/confirm"),
+            (HttpMethod.Patch, $"/api/appointments/{id}/company"),                    // never added: no company reassignment
+        };
+        foreach ((HttpMethod method, string url) in removed)
+        {
+            HttpStatusCode status = (await Send(method, url, a.WriteAll, flat)).Status;
+            Assert.True(status is HttpStatusCode.NotFound or HttpStatusCode.MethodNotAllowed, $"{method} {url} answered {status}");
+        }
+
+        AppointmentDto after = await w.Appointments.GetById(w.OrganizationId, id);
+        Assert.Equal(a.Appointment.Segments.Select(s => (s.Id, s.PlannedStart)), after.Segments.Select(s => (s.Id, s.PlannedStart)));
+        Assert.All(after.Bookings.SelectMany(b => b.Participations), p => Assert.Equal(BookingStatus.Confirmed, p.Status));
+    }
+
+    [Fact]
+    public async Task NoteAndParticipationPrice_AreNarrowCommands_AndNoRouteChangesTheCompany()
+    {
+        await using Arranged a = await Arrange(nameof(NoteAndParticipationPrice_AreNarrowCommands_AndNoRouteChangesTheCompany));
+        SchedulingWorld w = a.World;
+        Guid id = a.Appointment.Id;
+        Company other = await w.AddCompany("Other");
+
+        // PATCH /{id}/note: only the note — an extra companyId in the body is not part of the contract.
+        var noted = await Send(HttpMethod.Patch, $"/api/appointments/{id}/note", a.WriteAll, new { note = "bring a towel", companyId = other.Id });
+        Assert.Equal(HttpStatusCode.OK, noted.Status);
+        Assert.Equal("bring a towel", noted.Body.GetProperty("note").GetString());
+        Assert.Equal(w.Company.Id.Value, noted.Body.GetProperty("companyId").GetGuid());
+        Assert.Equal(w.Company.Id.Value, (await w.LoadAppointment(id)).CompanyId);
+        AssertError(HttpStatusCode.Forbidden, ErrorCodes.Forbidden, await Send(HttpMethod.Patch, $"/api/appointments/{id}/note", a.ViewOnly, new { note = "x" }));
+        AssertError(HttpStatusCode.NotFound, ErrorCodes.NotFound, await Send(HttpMethod.Patch, $"/api/appointments/{Guid.NewGuid()}/note", a.WriteAll, new { note = "x" }));
+
+        // PATCH /participations/{id}/price: the participation is addressed by its own id.
+        Guid massageParticipation = a.Appointment.Bookings.Single().Participations.Single(p => p.AppointmentSegmentId == a.SegmentOf(a.Massage)).Id;
+        var priced = await Send(HttpMethod.Patch, $"/api/participations/{massageParticipation}/price", a.WriteAll, new { amount = 65m });
+        Assert.Equal(HttpStatusCode.OK, priced.Status);
+        JsonElement participation = priced.Body.GetProperty("participations").EnumerateArray().Single(p => p.GetProperty("id").GetGuid() == massageParticipation);
+        Assert.Equal((65m, 80m, true), (participation.GetProperty("amount").GetDecimal(), participation.GetProperty("suggestedAmount").GetDecimal(),
+            participation.GetProperty("isAmountManuallyOverridden").GetBoolean()));
+        AssertError(HttpStatusCode.BadRequest, ErrorCodes.ValidationError,
+            await Send(HttpMethod.Patch, $"/api/participations/{massageParticipation}/price", a.WriteAll, new { amount = -1m }));
+        AssertError(HttpStatusCode.Forbidden, ErrorCodes.Forbidden,
+            await Send(HttpMethod.Patch, $"/api/participations/{massageParticipation}/price", a.ViewOnly, new { amount = 1m }));
+        AssertError(HttpStatusCode.NotFound, ErrorCodes.NotFound,
+            await Send(HttpMethod.Patch, $"/api/participations/{Guid.NewGuid()}/price", a.WriteAll, new { amount = 1m }));
+
+        // Participation lifecycle by id: completing it with a settlement, then the price is history.
+        var completed = await Send(HttpMethod.Patch, $"/api/participations/{massageParticipation}/status", a.WriteAll,
+            new { status = "Completed", paymentMethod = "Cash" });
+        Assert.Equal(HttpStatusCode.OK, completed.Status);
+        AssertError(HttpStatusCode.Conflict, ErrorCodes.AlreadyCompleted,
+            await Send(HttpMethod.Patch, $"/api/participations/{massageParticipation}/price", a.WriteAll, new { amount = 10m }));
+        Assert.Equal(w.Company.Id.Value, (await w.LoadAppointment(id)).CompanyId);
+    }
+
+    [Fact]
+    public async Task CompleteNow_BindsOneExplicitSegmentAndClients_TheFlatBodyIsRejected()
+    {
+        await using Arranged a = await Arrange(nameof(CompleteNow_BindsOneExplicitSegmentAndClients_TheFlatBodyIsRejected));
+        SchedulingWorld w = a.World;
+        Client second = await w.AddClient("Second");
+
+        var created = await Send(HttpMethod.Post, "/api/appointments/complete", a.WriteAll, new
+        {
+            companyId = w.Company.Id,
+            note = "walk-in",
+            segment = new { serviceId = a.Physio.Id, plannedStart = SchedulingWorld.Past(10), employeeIds = new[] { a.B.Id } },
+            clients = new object[]
+            {
+                new { clientId = w.Client.Id, paymentMethod = "Card" },
+                new { clientId = second.Id, amount = 25m }
+            }
+        });
+        Assert.Equal(HttpStatusCode.Created, created.Status);
+        Assert.Equal("Closed", created.Body.GetProperty("status").GetString());
+        Assert.Equal(1, SegmentCount(created.Body));
+        Assert.Equal(2, created.Body.GetProperty("bookings").GetArrayLength());
+        Assert.All(created.Body.GetProperty("bookings").EnumerateArray(), b =>
+            Assert.Equal("Completed", Assert.Single(b.GetProperty("participations").EnumerateArray()).GetProperty("status").GetString()));
+        foreach (string removed in new[] { "startsAt", "durationMinutes", "serviceId", "employeeId", "roomId", "serviceName", "employeeName" })
+            Assert.False(created.Body.TryGetProperty(removed, out _), removed);
+
+        // The removed flat request shape no longer binds (segment and clients are required).
+        AssertError(HttpStatusCode.BadRequest, ErrorCodes.ValidationError, await Send(HttpMethod.Post, "/api/appointments/complete", a.WriteAll, new
+        {
+            startsAt = SchedulingWorld.Past(12), serviceId = a.Physio.Id, employeeId = a.B.Id, companyId = w.Company.Id,
+            clientIds = new[] { w.Client.Id }, settlements = new[] { new { clientId = w.Client.Id, paymentMethod = "Cash" } }
+        }));
+        // Two employees without a pricing source: domain validation with its own code.
+        AssertError(HttpStatusCode.BadRequest, ErrorCodes.PricingSourceRequired, await Send(HttpMethod.Post, "/api/appointments/complete", a.WriteAll, new
+        {
+            companyId = w.Company.Id,
+            segment = new { serviceId = a.Physio.Id, plannedStart = SchedulingWorld.Past(14), employeeIds = new[] { a.B.Id, w.Employee.Id } },
+            clients = new[] { new { clientId = w.Client.Id } }
+        }));
+        AssertError(HttpStatusCode.Forbidden, ErrorCodes.Forbidden, await Send(HttpMethod.Post, "/api/appointments/complete", a.ViewOnly, new
+        {
+            companyId = w.Company.Id,
+            segment = new { serviceId = a.Physio.Id, plannedStart = SchedulingWorld.Past(16), employeeIds = new[] { a.B.Id } },
+            clients = new[] { new { clientId = w.Client.Id } }
+        }));
+    }
+
+    #endregion
 }
+

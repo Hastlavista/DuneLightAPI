@@ -106,7 +106,6 @@ public class AppointmentsController : ControllerBase
         return Ok(await _appointmentService.GetByEmployee(this.CurrentOrganizationId(), employeeId, request));
     }
 
-    /// <summary>"Zakaži" — status Scheduled, bez naplate.</summary>
     /// <summary>Phase M1B — ciljni segmentni ugovor kreiranja (termin + segmenti + sudionici po segmentu). Phase M1E: više
     /// segmenata je omogućeno (atomično). Phase M1G: segment ima 1..N ravnopravnih zaposlenika; za 2+ zaposlenika izvor cijene
     /// (PricingMode/PricingEmployeeId) je obavezan.</summary>
@@ -119,40 +118,23 @@ public class AppointmentsController : ControllerBase
         return CreatedAtAction(nameof(GetById), new { id = created.Id }, created);
     }
 
-    /// <summary>PRIVREMENA KOMPATIBILNOST — plosnati jednosegmentni zahtjev; interno se mapira na ciljni ugovor.</summary>
-    [HttpPost("schedule")]
-    [RequireGrant(Grants.AppointmentsWriteOwn, Grants.AppointmentsWriteAll)]
-    public async Task<ActionResult<AppointmentDto>> Create([FromBody] AppointmentSingleSegmentRequest request)
-    {
-        AppointmentDto created = await _appointmentService.Create(
-            this.CurrentOrganizationId(), this.CurrentUserId(), this.HasGrant(Grants.AppointmentsWriteAll), request);
-        return CreatedAtAction(nameof(GetById), new { id = created.Id }, created);
-    }
-
-    /// <summary>"Upiši odrađeno" — novi termin odmah u statusu Completed, naplata odmah.</summary>
+    /// <summary>Phase M1H — "upiši odrađeno" (POS): atomično stvara termin s JEDNIM eksplicitnim segmentom, po jedan
+    /// Booking/sudjelovanje za svakog klijenta, odrađuje ih i primjenjuje namirenje (paket ili novac) po klijentu.</summary>
     [HttpPost("complete")]
     [RequireGrant(Grants.AppointmentsWriteOwn, Grants.AppointmentsWriteAll)]
-    public async Task<ActionResult<AppointmentDto>> CompleteNew([FromBody] AppointmentCompleteRequest request)
+    public async Task<ActionResult<AppointmentDto>> CompleteNow([FromBody] AppointmentCompleteNowRequest request)
     {
-        AppointmentDto created = await _appointmentService.CompleteNew(
+        AppointmentDto created = await _appointmentService.CompleteNow(
             this.CurrentOrganizationId(), this.CurrentUserId(), this.HasGrant(Grants.AppointmentsWriteAll), request);
         return CreatedAtAction(nameof(GetById), new { id = created.Id }, created);
     }
 
-    /// <summary>Prijelaz postojećeg (obično Scheduled) termina u Completed, naplata odmah.</summary>
-    [HttpPatch("{id:guid}/complete")]
+    /// <summary>Phase M1H — napomena termina (samo metapodatak agregata).</summary>
+    [HttpPatch("{id:guid}/note")]
     [RequireGrant(Grants.AppointmentsWriteOwn, Grants.AppointmentsWriteAll)]
-    public async Task<ActionResult<AppointmentDto>> CompleteExisting(Guid id, [FromBody] AppointmentCompleteRequest request)
+    public async Task<ActionResult<AppointmentDto>> ChangeNote(Guid id, [FromBody] AppointmentNoteChangeRequest request)
     {
-        return Ok(await _appointmentService.CompleteExisting(
-            this.CurrentOrganizationId(), this.CurrentUserId(), this.HasGrant(Grants.AppointmentsWriteAll), id, request));
-    }
-
-    [HttpPut("{id:guid}")]
-    [RequireGrant(Grants.AppointmentsWriteOwn, Grants.AppointmentsWriteAll)]
-    public async Task<ActionResult<AppointmentDto>> Update(Guid id, [FromBody] AppointmentUpdateRequest request)
-    {
-        return Ok(await _appointmentService.Update(
+        return Ok(await _appointmentService.ChangeNote(
             this.CurrentOrganizationId(), this.CurrentUserId(), this.HasGrant(Grants.AppointmentsWriteAll), id, request));
     }
 
@@ -173,15 +155,6 @@ public class AppointmentsController : ControllerBase
     public async Task<ActionResult<AppointmentDto>> AddClient(Guid id, [FromBody] AppointmentClientAddRequest request)
     {
         return Ok(await _appointmentService.AddClient(
-            this.CurrentOrganizationId(), this.CurrentUserId(), this.HasGrant(Grants.AppointmentsWriteAll), id, request));
-    }
-
-    /// <summary>Brzo pomicanje termina (drag-and-drop na rasporedu) — samo StartsAt/trener/tvrtka, ostalo netaknuto.</summary>
-    [HttpPatch("{id:guid}/move")]
-    [RequireGrant(Grants.AppointmentsWriteOwn, Grants.AppointmentsWriteAll)]
-    public async Task<ActionResult<AppointmentDto>> Move(Guid id, [FromBody] AppointmentMoveRequest request)
-    {
-        return Ok(await _appointmentService.Move(
             this.CurrentOrganizationId(), this.CurrentUserId(), this.HasGrant(Grants.AppointmentsWriteAll), id, request));
     }
 
@@ -228,12 +201,13 @@ public class AppointmentsController : ControllerBase
         return Ok(await _bookingService.GetForAppointment(this.CurrentOrganizationId(), appointmentId));
     }
 
-    /// <summary>Ad-hoc dodavanje Bookinga na postojeći termin (npr. dodatni gost na duo terminu bez pune izmjene).</summary>
+    /// <summary>Gost na GRUPNOM occurrenceu: novo sudjelovanje na eksplicitnom segmentu (SegmentId obavezan). Individualni
+    /// termin dodaje klijente kroz POST {id}/clients.</summary>
     [HttpPost("{appointmentId:guid}/bookings")]
     [RequireGrant(Grants.AppointmentsWriteOwn, Grants.AppointmentsWriteAll)]
-    public async Task<ActionResult<BookingDto>> AddBooking(Guid appointmentId, [FromBody] BookingCreateRequest request)
+    public async Task<ActionResult<BookingDto>> AddGroupGuest(Guid appointmentId, [FromBody] BookingCreateRequest request)
     {
-        return Ok(await _bookingService.AddBooking(
+        return Ok(await _bookingService.AddGroupGuest(
             this.CurrentOrganizationId(), this.CurrentUserId(), this.HasGrant(Grants.AppointmentsWriteAll), appointmentId, request));
     }
 
@@ -247,47 +221,6 @@ public class AppointmentsController : ControllerBase
     {
         return Ok(await _bookingService.CancelBooking(
             this.CurrentOrganizationId(), this.CurrentUserId(), this.HasGrant(Grants.AppointmentsWriteAll), appointmentId, clientId, request));
-    }
-
-    /// <summary>Izostanak SAMO jednog klijenta na terminu (npr. jedan od dvoje na duo terminu) bez da cijeli
-    /// termin postane izostao — za cijeli termin koristiti POST {id}/no-show. Phase M0: PRIVREMENA kompatibilnost —
-    /// Booking mora imati točno jedno sudjelovanje (inače BOOKING_PARTICIPATION_AMBIGUOUS); participation-native:
-    /// /api/participations/{participationId}/no-show.</summary>
-    [HttpPatch("{appointmentId:guid}/bookings/{clientId:guid}/no-show")]
-    [RequireGrant(Grants.AppointmentsWriteOwn, Grants.AppointmentsWriteAll)]
-    public async Task<ActionResult<BookingDto>> MarkBookingNoShow(Guid appointmentId, Guid clientId, [FromBody] BookingCancelRequest request)
-    {
-        return Ok(await _bookingService.SetStatus(
-            this.CurrentOrganizationId(), this.CurrentUserId(), this.HasGrant(Grants.AppointmentsWriteAll), appointmentId, clientId,
-            new BookingSetStatusRequest
-            {
-                Status = BookingStatus.NoShow,
-                ReturnPackageEntry = request.ReturnPackageEntry,
-                CancellationReason = request.CancellationReason
-            }));
-    }
-
-    /// <summary>Poništava check-in/otkazivanje/izostanak JEDNOG Bookinga natrag na Confirmed — administrativna
-    /// korekcija. Za Form=Group dostupno s bilo kojeg terminalnog statusa (Completed/NoShow/Cancelled -&gt;
-    /// Confirmed). Za Form=Individual namjerno UŽE — dostupno iz Completed (poništenje pogrešnog check-ina, uklj.
-    /// void check-in-generated Paymenta, povrat paket-ulaska, reverziju CommissionEntry, vidi
-    /// BookingService.ApplyIndividualCompletionCorrection) ILI iz NoShow (poništenje pogrešno evidentiranog
-    /// izostanka — bez financijskih/paket/provizija nuspojava jer ih NoShow nikad ne stvara za Individual, vidi
-    /// BookingService.ApplyIndividualNoShowCorrection); Cancelled nema povratnu putanju. Oba puta uklj. povratak
-    /// Appointment.Status na Scheduled ako je Appointment u međuvremenu postao Completed preko sestrinskog
-    /// Bookinga na multi-klijent terminu (vidi TryRevertAppointmentCompletion). Storniranje pripadajuće
-    /// Notification pojave rješava isključivo BookingService.SetStatus. Phase M0: PRIVREMENA kompatibilnost (točno jedno
-    /// sudjelovanje); participation-native: /api/participations/{participationId}/confirm.</summary>
-    [HttpPatch("{appointmentId:guid}/bookings/{clientId:guid}/confirm")]
-    [RequireGrant(Grants.AppointmentsWriteOwn, Grants.AppointmentsWriteAll)]
-    public async Task<ActionResult<BookingDto>> ConfirmBooking(Guid appointmentId, Guid clientId)
-    {
-        return Ok(await _bookingService.SetStatus(
-            this.CurrentOrganizationId(), this.CurrentUserId(), this.HasGrant(Grants.AppointmentsWriteAll), appointmentId, clientId,
-            new BookingSetStatusRequest
-            {
-                Status = BookingStatus.Confirmed
-            }));
     }
 
     /// <summary>Povijest Paymenta (monetarnih naplata) jednog Bookinga, uklj. voidane, preko svih njegovih

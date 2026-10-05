@@ -16,7 +16,7 @@ namespace BlueDragon.DuneLight.Infrastructure.Outbox.Handlers;
 
 /// <summary>Pretvara booking.cancelled.v1 u logičan Notification (vidi spec section 41). Isti zaključavanje-pa-
 /// odluči obrazac i isto occurrence-svjesno rasuđivanje kao BookingNoShowNotificationHandler (vidi tamo za punu
-/// napomenu) — serijalizira se s BookingService.SetStatus korekcijom (Cancelled -&gt; Confirmed, vidi spec section
+/// napomenu) — serijalizira se s BookingService.SetParticipationStatus korekcijom (Cancelled -&gt; Confirmed, vidi spec section
 /// 13) preko FOR UPDATE na istom retku SUDJELOVANJA (Phase M0), i razlikuje OVU konkretnu Cancelled pojavu (SourceVersion =
 /// StatusVersion sudjelovanja u trenutku emitiranja) od bilo koje kasnije pojave na istom (grupnom, ciklirajućem)
 /// sudjelovanju.</summary>

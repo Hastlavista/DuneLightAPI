@@ -400,16 +400,8 @@ public class GroupOccurrenceGenerationCharacterizationTests
         GroupDto group = await w.CreateGroup(svc, capacity: 2);
         await w.AddGroupMember(group, w.Client);
         await w.AddGroupMember(group, second);
-        // Lowering the capacity below the current roster is allowed by Group.Update.
-        await w.Groups.Update(w.OrganizationId, w.ActorUserId, group.Id, new GroupUpdateRequest
-        {
-            Name = group.Name,
-            ServiceId = group.ServiceId,
-            CompanyId = group.CompanyId,
-            Capacity = 1,
-            DefaultTrainerId = group.DefaultTrainerId,
-            DefaultRoomId = group.DefaultRoomId
-        });
+        // Lowering the capacity below the current roster is allowed by the template edit.
+        await w.UpdateOnlyTemplate(group, r => r.Capacity = 1);
 
         // CHANGED in M1F: capacity is a SOFT business limit of the segment template. Generation reproduces the existing
         // membership (validly created earlier) instead of refusing — nobody is dropped; only NEW additions above the limit
@@ -436,14 +428,13 @@ public class GroupOccurrenceGenerationCharacterizationTests
         await w.AddGroupMember(group, w.Client);
         Appointment before = await w.GenerateSingleOccurrence(group);
 
-        await w.Groups.Update(w.OrganizationId, w.ActorUserId, group.Id, new GroupUpdateRequest
+        await w.Groups.Update(w.OrganizationId, w.ActorUserId, group.Id,
+            new GroupUpdateRequest { Name = "renamed", CompanyId = group.CompanyId });
+        await w.UpdateOnlyTemplate(group, r =>
         {
-            Name = "renamed",
-            ServiceId = group.ServiceId,
-            CompanyId = group.CompanyId,
-            Capacity = 9,
-            DefaultTrainerId = newTrainer.Id,
-            DefaultRoomId = newRoom.Id
+            r.Capacity = 9;
+            r.EmployeeIds = new List<Guid> { newTrainer.Id.Value };
+            r.RoomId = newRoom.Id;
         });
 
         Appointment after = await w.LoadAppointment(before.Id.Value);
@@ -508,7 +499,8 @@ public class GroupOccurrenceGenerationCharacterizationTests
 
         await SchedulingAssert.Validation(() => w.Groups.Create(w.OrganizationId, w.ActorUserId, new GroupCreateRequest
         {
-            Name = "no slots", ServiceId = svc.Id.Value, CompanyId = w.Company.Id.Value, Capacity = 5
+            Name = "no slots", CompanyId = w.Company.Id.Value,
+            SegmentTemplates = new List<GroupSegmentTemplateRequest> { new() { ServiceId = svc.Id.Value, Capacity = 5 } }
         }));
     }
 

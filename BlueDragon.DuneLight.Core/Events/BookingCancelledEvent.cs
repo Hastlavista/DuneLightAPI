@@ -5,7 +5,7 @@ namespace BlueDragon.DuneLight.Core.Events;
 /// <summary>
 /// Payload za OutboxEventTypes.BookingCancelledV1 — namjerno samo ID-jevi i minimalan neizmjeniv kontekst, bez
 /// PII i bez serijalizirane pune EF entitete (vidi spec section 7). Emitira se za SVAKI Booking koji stvarno
-/// prijeđe Confirmed -&gt; Cancelled, bez obzira na izvor prijelaza (BookingService.SetStatus izravno,
+/// prijeđe Confirmed -&gt; Cancelled, bez obzira na izvor prijelaza (BookingService.SetParticipationStatus izravno,
 /// AppointmentService appointment-wide otkazivanje, ili GroupService.RemoveMember napuštanje grupe — vidi spec
 /// section 32-34), uvijek isti event-tip i isti handler.
 /// </summary>

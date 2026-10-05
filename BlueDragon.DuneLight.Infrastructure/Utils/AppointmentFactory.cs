@@ -36,16 +36,17 @@ public sealed record ParticipantPlan(Guid ClientId, BookingPricing Pricing);
 /// </summary>
 public static class AppointmentFactory
 {
-    /// <summary>Individualni termin (Create, /recurring, CompleteNew). Sudjelovanja nastaju u <paramref name="initialStatus"/>
-    /// (Confirmed; CompleteNew: Completed) — status termina se zatim IZVODI (AppointmentLifecycle).</summary>
+    /// <summary>Individualni termin (Create, /recurring, CompleteNow). Sudjelovanja nastaju Confirmed — "upiši odrađeno"
+    /// (CompleteNow) ih zatim u ISTOJ transakciji prevodi u Completed kroz jezgru prijelaza sudjelovanja; status termina se
+    /// IZVODI (AppointmentLifecycle).</summary>
     public static Appointment CreateIndividual(
         Guid organizationId, Guid companyId, string note, Guid? recurrenceGroupId, Guid createdBy, DateTimeOffset createdAt,
-        IReadOnlyList<SegmentPlan> segments, ParticipationStatus initialStatus)
+        IReadOnlyList<SegmentPlan> segments)
     {
         Appointment appointment = NewAppointment(organizationId, companyId, AppointmentForm.Individual, createdBy, createdAt);
         appointment.Note = note;
         appointment.RecurrenceGroupId = recurrenceGroupId;
-        Populate(appointment, segments, initialStatus, createdAt);
+        Populate(appointment, segments, createdAt);
         return appointment;
     }
 
@@ -64,7 +65,7 @@ public static class AppointmentFactory
         Appointment appointment = NewAppointment(organizationId, companyId, AppointmentForm.Group, createdBy, createdAt);
         appointment.GroupId = groupId;
         appointment.GroupSlotId = groupSlotId;
-        Populate(appointment, segments, ParticipationStatus.Confirmed, createdAt);
+        Populate(appointment, segments, createdAt);
         return appointment;
     }
 
@@ -111,7 +112,7 @@ public static class AppointmentFactory
     }
 
     private static void Populate(
-        Appointment appointment, IReadOnlyList<SegmentPlan> plans, ParticipationStatus initialStatus, DateTimeOffset createdAt)
+        Appointment appointment, IReadOnlyList<SegmentPlan> plans, DateTimeOffset createdAt)
     {
         ArgumentNullException.ThrowIfNull(plans);
         if (plans.Count == 0)
@@ -130,7 +131,7 @@ public static class AppointmentFactory
                     appointment.Bookings.Add(booking);
                 }
 
-                BookingFactory.AddParticipation(booking, segment, initialStatus, participant.Pricing, createdAt);
+                BookingFactory.AddParticipation(booking, segment, ParticipationStatus.Confirmed, participant.Pricing, createdAt);
             }
         }
     }

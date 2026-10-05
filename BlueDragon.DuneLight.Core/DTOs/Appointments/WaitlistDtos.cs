@@ -39,7 +39,7 @@ public class WaitlistJoinRequest
     [Required]
     public Guid ClientId { get; set; }
 
-    /// <summary>Phase M1F — segment occurrencea na koji se čeka. Obavezan za višesegmentni occurrence
-    /// (SEGMENT_SELECTION_REQUIRED); jednosegmentni (legacy) ga smije izostaviti.</summary>
+    /// <summary>Segment grupnog occurrencea na koji se čeka — uvijek obavezan (lista čekanja je po segmentu).</summary>
+    [Required]
     public Guid? SegmentId { get; set; }
 }

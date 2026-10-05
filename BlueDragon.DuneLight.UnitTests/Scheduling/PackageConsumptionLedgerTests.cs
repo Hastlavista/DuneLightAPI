@@ -120,7 +120,7 @@ public class PackageConsumptionLedgerTests
         ClientPackage shortPackage = await w.AddClientPackage(w.Client, w.Service, 5, SchedulingWorld.FutureDay.AddDays(-1));
         AppointmentDto future = await w.CreateAppointment(Z(10));
         await SchedulingAssert.BusinessRule(ErrorCodes.PackageNotEligible,
-            () => w.CompleteExisting(future.Id, w.CompleteRequest(Z(10), clientPackageId: shortPackage.Id)));
+            () => w.CompleteParticipations(future.Id, w.CompleteRequest(Z(10), clientPackageId: shortPackage.Id)));
         Assert.Equal(5, await Remaining(w, shortPackage));
     }
 
@@ -182,12 +182,15 @@ public class PackageConsumptionLedgerTests
         // ledger locks the ClientPackage row FOR UPDATE, so the loser sees the winner's decrement.
         using IServiceScope scopeA = SchedulingTestHost.CreateScope();
         using IServiceScope scopeB = SchedulingTestHost.CreateScope();
-        Task<(bool Ok, string Code)> Attempt(IServiceScope scope, AppointmentDto appointment, DateTimeOffset startsAt) => Task.Run(async () =>
+        Guid participationA = await w.ParticipationIdOnOnlySegment(a.Id, w.Client.Id.Value);
+        Guid participationB = await w.ParticipationIdOnOnlySegment(b.Id, w.Client.Id.Value);
+        Task<(bool Ok, string Code)> Attempt(IServiceScope scope, Guid participationId) => Task.Run(async () =>
         {
             try
             {
-                await scope.ServiceProvider.GetRequiredService<IAppointmentService>().CompleteExisting(
-                    w.OrganizationId, w.ActorUserId, true, appointment.Id, w.CompleteRequest(startsAt, clientPackageId: package.Id));
+                await scope.ServiceProvider.GetRequiredService<IBookingService>().SetParticipationStatus(
+                    w.OrganizationId, w.ActorUserId, true, participationId,
+                    new BookingSetStatusRequest { Status = BookingStatus.Completed, ClientPackageId = package.Id });
                 return (true, (string)null);
             }
             catch (BusinessRuleException ex)
@@ -196,7 +199,7 @@ public class PackageConsumptionLedgerTests
             }
         });
 
-        (bool Ok, string Code)[] results = await Task.WhenAll(Attempt(scopeA, a, Z(9)), Attempt(scopeB, b, Z(14)));
+        (bool Ok, string Code)[] results = await Task.WhenAll(Attempt(scopeA, participationA), Attempt(scopeB, participationB));
 
         Assert.Equal(1, results.Count(r => r.Ok));
         Assert.Contains(results.Single(r => !r.Ok).Code, new[] { ErrorCodes.PackageNotEligible, ErrorCodes.ConcurrencyConflict });
@@ -231,7 +234,7 @@ public class PackageConsumptionLedgerTests
         await using SchedulingWorld w = await SchedulingWorld.Create(nameof(Correction_ReversesTheConsumption_KeepingTheRow_AndAReCompletionConsumesAgain));
         ClientPackage package = await w.AddClientPackage(w.Client, w.Service, 5, LongValid);
         AppointmentDto created = await w.CreateAppointment(Z(10));
-        await w.CompleteExisting(created.Id, w.CompleteRequest(Z(10), clientPackageId: package.Id));
+        await w.CompleteParticipations(created.Id, w.CompleteRequest(Z(10), clientPackageId: package.Id));
 
         await w.SetBookingStatus(created.Id, w.Client, BookingStatus.Confirmed); // correction
 
@@ -244,7 +247,7 @@ public class PackageConsumptionLedgerTests
 
         // D3B3A: a re-completion with the package consumes AGAIN as a new row (before, the stale
         // PackageCoverageApplied flag silently skipped the deduction and left the booking unsettled).
-        AppointmentDto again = await w.CompleteExisting(created.Id, w.CompleteRequest(Z(10), clientPackageId: package.Id));
+        AppointmentDto again = await w.CompleteParticipations(created.Id, w.CompleteRequest(Z(10), clientPackageId: package.Id));
 
         List<PackageConsumption> history = await ConsumptionsOf(w, created.Id, w.Client);
         Assert.Equal(new[] { PackageConsumptionStatus.Reversed, PackageConsumptionStatus.Consumed }, history.Select(c => c.Status));
@@ -350,8 +353,7 @@ public class PackageConsumptionLedgerTests
         AppointmentDto created = await w.CreateAppointment(Z(10), extraClients: second);
         await w.SeedCoverageApplied(await w.LoadBooking(created.Id, second), package); // Confirmed, StatusVersion 0, consumed
 
-        await SchedulingAssert.BusinessRule(ErrorCodes.ReferencedCannotDelete, () => w.Appointments.Update(
-            w.OrganizationId, w.ActorUserId, true, created.Id, w.UpdateRequest(created, r => r.ClientIds = new List<Guid> { w.Client.Id.Value })));
+        await SchedulingAssert.BusinessRule(ErrorCodes.ReferencedCannotDelete, () => w.RemoveClientFromOnlySegment(created.Id, second));
         await SchedulingAssert.BusinessRule(ErrorCodes.ReferencedCannotDelete,
             () => w.Appointments.Delete(w.OrganizationId, w.ActorUserId, created.Id));
 

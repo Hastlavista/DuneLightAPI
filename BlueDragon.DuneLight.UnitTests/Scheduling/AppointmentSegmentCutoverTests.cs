@@ -167,77 +167,6 @@ public class AppointmentSegmentCutoverTests
 
     #endregion
 
-    #region Mutation writes the segment (no second copy)
-
-    [Fact]
-    public async Task Update_RewritesTheSegmentTimeRoomAndDuration_AndKeepsPinnedF01()
-    {
-        await using SchedulingWorld w = await SchedulingWorld.Create(nameof(Update_RewritesTheSegmentTimeRoomAndDuration_AndKeepsPinnedF01));
-        ServiceEntity longer = await w.AddService(45, 80m);
-        Employee other = await w.AddEmployee("Other");
-        await w.AssignEmployeeToService(other, longer);
-        await w.AssignEmployeeToService(w.Employee, longer);
-        Room room = await w.AddRoom();
-        AppointmentDto created = await w.CreateAppointment(Z(10));
-
-        await w.Appointments.Update(w.OrganizationId, w.ActorUserId, true, created.Id, w.UpdateRequest(created, r =>
-        {
-            r.StartsAt = Z(12);
-            r.RoomId = room.Id;
-            r.ServiceId = longer.Id.Value;
-            r.EmployeeId = other.Id.Value;
-        }));
-
-        AppointmentSegment segment = await SegmentOf(w, created.Id);
-        Assert.Equal(Z(12), segment.PlannedStart);
-        Assert.Equal(Z(12).AddMinutes(45), segment.PlannedEnd); // duration follows the requested service
-        Assert.Equal(room.Id, segment.RoomId);
-        Assert.NotNull(segment.UpdatedAt);
-        // F-01 INTENTIONALLY FIXED in M1E (was pinned): the requested service and employee are now really persisted.
-        Assert.Equal(longer.Id, segment.ServiceId);
-        Assert.Equal(other.Id.Value, Assert.Single(segment.Employees).EmployeeId);
-    }
-
-    [Fact]
-    public async Task Move_RewritesTheSegmentTimeEmployeeAndRoom_ReplacingTheSingleAssignment()
-    {
-        await using SchedulingWorld w = await SchedulingWorld.Create(nameof(Move_RewritesTheSegmentTimeEmployeeAndRoom_ReplacingTheSingleAssignment));
-        Employee other = await w.AddEmployee("Other");
-        Room room = await w.AddRoom();
-        AppointmentDto created = await w.CreateAppointment(Z(10));
-
-        await w.Appointments.Move(w.OrganizationId, w.ActorUserId, true, created.Id,
-            new AppointmentMoveRequest { StartsAt = Z(13), EmployeeId = other.Id.Value, RoomId = room.Id });
-
-        AppointmentSegment segment = await SegmentOf(w, created.Id);
-        Assert.Equal(Z(13), segment.PlannedStart);
-        Assert.Equal(Z(13).AddMinutes(SchedulingWorld.DefaultServiceDuration), segment.PlannedEnd);
-        Assert.Equal(room.Id, segment.RoomId);
-        Assert.Equal(other.Id.Value, Assert.Single(segment.Employees).EmployeeId);
-        await using DatabaseContext db = w.NewDb();
-        Assert.False(await db.AppointmentSegmentEmployees.AnyAsync(e => e.EmployeeId == w.Employee.Id && e.AppointmentSegmentId == segment.Id));
-    }
-
-    [Fact]
-    public async Task CompleteExisting_ReplacesTheWholeFrameOnTheSegment()
-    {
-        await using SchedulingWorld w = await SchedulingWorld.Create(nameof(CompleteExisting_ReplacesTheWholeFrameOnTheSegment));
-        ServiceEntity other = await w.AddService(20, 30m);
-        Employee trainer = await w.AddEmployee("Trainer", serviceId: other.Id);
-        AppointmentDto created = await w.CreateAppointment(Z(10));
-
-        AppointmentCompleteRequest request = w.CompleteRequest(Z(11), employee: trainer, service: other);
-        await w.CompleteExisting(created.Id, request);
-
-        AppointmentSegment segment = await SegmentOf(w, created.Id);
-        Assert.Equal(other.Id, segment.ServiceId);
-        Assert.Equal(Z(11), segment.PlannedStart);
-        Assert.Equal(Z(11).AddMinutes(20), segment.PlannedEnd);
-        Assert.Equal(trainer.Id.Value, Assert.Single(segment.Employees).EmployeeId);
-    }
-
-    #endregion
-
     #region Every reader follows the segment
 
     [Fact]
@@ -284,11 +213,12 @@ public class AppointmentSegmentCutoverTests
         Employee other = await w.AddEmployee("Other");
         AppointmentDto created = await w.CreateAppointment(Z(10));
         await ReassignSegmentEmployeeInDb(w, created.Id, other.Id.Value);
-        AppointmentMoveRequest move = new() { StartsAt = Z(11) };
+        Guid segmentId = created.Segments[0].Id;
+        AppointmentSegmentTimeChangeRequest move = new() { PlannedStart = Z(11) };
 
         await SchedulingAssert.BusinessRule(ErrorCodes.NotOwner,
-            () => w.Appointments.Move(w.OrganizationId, w.Employee.UserId, false, created.Id, move));
-        AppointmentDto moved = await w.Appointments.Move(w.OrganizationId, other.UserId, false, created.Id, move);
+            () => w.Appointments.ChangeSegmentTime(w.OrganizationId, w.Employee.UserId, false, segmentId, move));
+        AppointmentDto moved = await w.Appointments.ChangeSegmentTime(w.OrganizationId, other.UserId, false, segmentId, move);
 
         Assert.Equal(Z(11), moved.StartsAt);
         Assert.Equal(other.Id, moved.EmployeeId);
@@ -301,18 +231,17 @@ public class AppointmentSegmentCutoverTests
         ServiceEntity groupService = await w.AddGroupService();
         GroupDto group = await w.CreateGroup(groupService, capacity: 5, withTrainer: false);
         Appointment occurrence = await w.GenerateSingleOccurrence(group);
-        AppointmentMoveRequest move = new() { StartsAt = Z(15) };
+        Guid segmentId = Assert.Single(occurrence.Segments).Id.Value;
+        AppointmentSegmentTimeChangeRequest move = new() { PlannedStart = Z(15) };
 
         await SchedulingAssert.BusinessRule(ErrorCodes.NotOwner,
-            () => w.Appointments.Move(w.OrganizationId, w.Employee.UserId, false, occurrence.Id.Value, move));
-        // Pre-existing (unchanged by D3A): a trainerless Move without a new employee resolves Guid.Empty and is NotFound.
-        await SchedulingAssert.NotFound(() => w.Appointments.Move(w.OrganizationId, w.ActorUserId, true, occurrence.Id.Value, move));
-        AppointmentDto moved = await w.Appointments.Move(w.OrganizationId, w.ActorUserId, true, occurrence.Id.Value,
-            new AppointmentMoveRequest { StartsAt = Z(15), EmployeeId = w.Employee.Id.Value });
+            () => w.Appointments.ChangeSegmentTime(w.OrganizationId, w.Employee.UserId, false, segmentId, move));
+        // M1H: the segment command moves only the time — a trainerless segment stays trainerless (no implicit employee).
+        AppointmentDto moved = await w.Appointments.ChangeSegmentTime(w.OrganizationId, w.ActorUserId, true, segmentId, move);
 
         Assert.Equal(Z(15), moved.StartsAt);
-        Assert.Equal(w.Employee.Id, moved.EmployeeId);
-        Assert.Equal(w.Employee.Id.Value, Assert.Single((await SegmentOf(w, occurrence.Id.Value)).Employees).EmployeeId);
+        Assert.Null(moved.EmployeeId);
+        Assert.Empty((await SegmentOf(w, occurrence.Id.Value)).Employees);
     }
 
     [Fact]
@@ -375,34 +304,6 @@ public class AppointmentSegmentCutoverTests
         }
 
         await Assert.ThrowsAsync<InvalidAppointmentSegmentStateException>(() => w.Appointments.GetById(w.OrganizationId, created.Id));
-        await Assert.ThrowsAsync<InvalidAppointmentSegmentStateException>(() => w.Appointments.Move(
-            w.OrganizationId, w.ActorUserId, true, created.Id, new AppointmentMoveRequest { StartsAt = Z(11) }));
-    }
-
-    [Fact]
-    public async Task AnAppointmentWithTwoSegments_IsRefusedBySingleFrameOperations_AndNothingChanges()
-    {
-        await using SchedulingWorld w = await SchedulingWorld.Create(nameof(AnAppointmentWithTwoSegments_IsRefusedBySingleFrameOperations_AndNothingChanges));
-        AppointmentDto created = await w.CreateAppointment(Z(10));
-        await using (DatabaseContext db = w.NewDb())
-        {
-            db.AppointmentSegments.Add(new AppointmentSegment
-            {
-                Id = Guid.NewGuid(), OrganizationId = w.OrganizationId, AppointmentId = created.Id, ServiceId = w.Service.Id.Value,
-                PlannedStart = Z(10, 30), PlannedEnd = Z(11), CreatedAt = DateTimeOffset.UtcNow
-            });
-            await db.SaveChangesAsync();
-        }
-
-        // CHANGED in M1E: multi-segment is a valid production shape — legacy flat writes answer with a business error.
-        await SchedulingAssert.BusinessRule(ErrorCodes.SegmentSelectionRequired, () => w.Appointments.Move(
-            w.OrganizationId, w.ActorUserId, true, created.Id, new AppointmentMoveRequest { StartsAt = Z(12) }));
-        await SchedulingAssert.BusinessRule(ErrorCodes.SegmentSelectionRequired, () => w.Appointments.Update(
-            w.OrganizationId, w.ActorUserId, true, created.Id, w.UpdateRequest(created, r => r.StartsAt = Z(12))));
-
-        await using DatabaseContext verify = w.NewDb();
-        Assert.Equal(new[] { Z(10), Z(10, 30) },
-            await verify.AppointmentSegments.Where(s => s.AppointmentId == created.Id).OrderBy(s => s.PlannedStart).Select(s => s.PlannedStart).ToArrayAsync());
     }
 
     #endregion

@@ -37,13 +37,12 @@ public class MultiSegmentGroupConsistencyTests
         {
             Name = $"Wellness-{Guid.NewGuid():N}",
             CompanyId = w.Company.Id.Value,
-            DefaultTrainerId = w.Employee.Id,
             Slots = new List<GroupSlotCreateRequest> { new() { DayOfWeek = SchedulingWorld.FutureDay.DayOfWeek, StartTime = TimeSpan.FromHours(9) } },
             SegmentTemplates = new List<GroupSegmentTemplateRequest>
             {
-                new() { ServiceId = yoga.Id.Value, StartOffsetMinutes = 0, Capacity = 10 },
-                new() { ServiceId = massage.Id.Value, StartOffsetMinutes = 60, DurationMinutes = 30, Capacity = 10 },
-                new() { ServiceId = recovery.Id.Value, StartOffsetMinutes = 120, DurationMinutes = 45, Capacity = 10 }
+                new() { ServiceId = yoga.Id.Value, StartOffsetMinutes = 0, Capacity = 10, EmployeeIds = new List<Guid> { w.Employee.Id.Value } },
+                new() { ServiceId = massage.Id.Value, StartOffsetMinutes = 60, DurationMinutes = 30, Capacity = 10, EmployeeIds = new List<Guid> { w.Employee.Id.Value } },
+                new() { ServiceId = recovery.Id.Value, StartOffsetMinutes = 120, DurationMinutes = 45, Capacity = 10, EmployeeIds = new List<Guid> { w.Employee.Id.Value } }
             }
         });
         Guid Of(ServiceEntity s) => group.SegmentTemplates.Single(t => t.ServiceId == s.Id).Id;
@@ -362,7 +361,7 @@ public class MultiSegmentGroupConsistencyTests
                 .Where(p => p.AppointmentSegmentId == SegmentOf(occurrence, g.A).Id && p.Booking.ClientId == marko.Id)
                 .ExecuteDeleteAsync();
         }
-        await w.Bookings.AddBooking(w.OrganizationId, w.ActorUserId, true, occurrence.Id.Value,
+        await w.Bookings.AddGroupGuest(w.OrganizationId, w.ActorUserId, true, occurrence.Id.Value,
             new BookingCreateRequest { ClientId = guest.Id.Value, SegmentId = SegmentOf(occurrence, g.B).Id });
 
         GroupAttendanceListDto list = await w.GroupAttendance.GetAttendance(w.OrganizationId, occurrence.Id.Value);
@@ -379,9 +378,8 @@ public class MultiSegmentGroupConsistencyTests
         Assert.All(b.Recorded, e => Assert.NotNull(e.ParticipationId));
         Assert.Equal(new[] { ana.Id }, c.Recorded.Select(e => (Guid?)e.ClientId));
         Assert.Empty(c.Expected);
-        // Occurrence level: every client has a Booking, so nobody is expected without one.
-        Assert.Empty(list.Expected);
-        Assert.Equal(4, list.Recorded.Count);
+        // M1H: there is no occurrence-level summary any more — attendance is per segment only.
+        Assert.Equal(3, list.Segments.Count);
     }
 
     [Fact]

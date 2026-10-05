@@ -56,6 +56,7 @@ public partial class AppointmentService : IAppointmentService
     private readonly ICheckoutHandler _checkoutHandler;
     private readonly IBookingSegmentParticipationHandler _participationHandler;
     private readonly ICommissionLedgerService _commissionLedgerService;
+    private readonly IParticipationLifecycleService _participationLifecycleService;
     private readonly IOutboxWriter _outboxWriter;
     private readonly IUnitOfWorkFactory _unitOfWorkFactory;
 
@@ -87,6 +88,7 @@ public partial class AppointmentService : IAppointmentService
         ICheckoutHandler checkoutHandler,
         IBookingSegmentParticipationHandler participationHandler,
         ICommissionLedgerService commissionLedgerService,
+        IParticipationLifecycleService participationLifecycleService,
         IOutboxWriter outboxWriter,
         IUnitOfWorkFactory unitOfWorkFactory,
         IOrganizationCalendarService organizationCalendarService,
@@ -117,6 +119,7 @@ public partial class AppointmentService : IAppointmentService
         _checkoutHandler = checkoutHandler;
         _participationHandler = participationHandler;
         _commissionLedgerService = commissionLedgerService;
+        _participationLifecycleService = participationLifecycleService;
         _outboxWriter = outboxWriter;
         _unitOfWorkFactory = unitOfWorkFactory;
     }
@@ -128,35 +131,6 @@ public partial class AppointmentService : IAppointmentService
     {
         return CreateInternal(organizationId, userId, hasFullScope, request, recurrenceGroupId: null);
     }
-
-    /// <summary>PRIVREMENA KOMPATIBILNOST: plosnati (jednosegmentni) ugovor se na granici prevodi u ciljni ugovor.</summary>
-    public Task<AppointmentDto> Create(Guid organizationId, Guid userId, bool hasFullScope, AppointmentSingleSegmentRequest request)
-    {
-        return CreateInternal(organizationId, userId, hasFullScope, ToTargetRequest(request), recurrenceGroupId: null);
-    }
-
-    /// <summary>Plosnati ugovor → ciljni: jedan segment (usluga, početak, jedan zaposlenik, prostorija), svaki klijent je
-    /// sudionik tog segmenta s istim ručnim iznosom (ako je zadan). Kraj = zadano trajanje usluge.</summary>
-    private static AppointmentCreateRequest ToTargetRequest(AppointmentSingleSegmentRequest request) => new()
-    {
-        CompanyId = request.CompanyId,
-        Note = request.Note,
-        OverrideAvailability = request.OverrideAvailability,
-        Segments = new List<AppointmentSegmentCreateRequest>
-        {
-            new()
-            {
-                ServiceId = request.ServiceId,
-                PlannedStart = request.StartsAt,
-                PlannedEnd = null,
-                EmployeeIds = new List<Guid> { request.EmployeeId },
-                RoomId = request.RoomId,
-                Participants = request.ClientIds.Distinct()
-                    .Select(clientId => new AppointmentParticipantCreateRequest { ClientId = clientId, Amount = request.Amount })
-                    .ToList()
-            }
-        }
-    };
 
     /// <summary>Validiran segment ciljnog zahtjeva: plan za konstrukcijsku jezgru + ono što trebaju provjere zauzetosti.</summary>
     private sealed record ValidatedSegment(SegmentPlan Plan, ServiceEntity Service, Room Room, List<Client> Clients);
@@ -251,119 +225,82 @@ public partial class AppointmentService : IAppointmentService
         SuggestedOnly
     }
 
-    /// <summary>"Upiši odrađeno" — PRIVREMENA KOMPATIBILNOST (plosnati jednosegmentni ugovor + Settlements po klijentu).
-    /// Phase M1B: termin se gradi kroz ciljnu konstrukcijsku jezgru (jedan segment, sudjelovanja odmah Completed); segment
-    /// se razrješava na ovoj granici i dalje adresira eksplicitno.</summary>
-    public async Task<AppointmentDto> CompleteNew(Guid organizationId, Guid userId, bool hasFullScope, AppointmentCompleteRequest request)
+    /// <summary>
+    /// Phase M1H — "upiši odrađeno" (vidi <see cref="AppointmentCompleteNowRequest"/>): JEDAN eksplicitni segment (doseg
+    /// naredbe), validiran istom ciljnom validacijom kao kreiranje (struktura, podobnost i radna snaga svih zaposlenika,
+    /// izvor cijene, preklapanja, kapacitet prostorije/resursa); sudjelovanja nastaju Confirmed i zatim se ODRAĐUJU kroz
+    /// jedinu jezgru prijelaza sudjelovanja (IParticipationLifecycleService — StatusVersion, cijena, paket ILI novac,
+    /// provizija po zaposleniku, audit, izvođenje statusa termina) — sve u JEDNOJ transakciji (sve ili ništa).
+    /// Prošlost je dopuštena (evidentiranje stvarnosti): radna snaga se provjerava samo za budući početak, tvrde invarijante uvijek.
+    /// </summary>
+    public async Task<AppointmentDto> CompleteNow(Guid organizationId, Guid userId, bool hasFullScope, AppointmentCompleteNowRequest request)
     {
-        AppointmentCreateRequest target = ToTargetRequest(request);
-        EnsureCurrentProductLimits(target);
-        await AppointmentOwnership.EnsureCallerIsEmployee(_employeeHandler, organizationId, userId, hasFullScope,
-            target.Segments.SelectMany(x => x.EmployeeIds), NotOwnerMessage);
-        bool overrideAvailability = request.OverrideAvailability && hasFullScope;
+        if (request?.Segment == null)
+            throw new ValidationAppException("Segment je obavezan.");
+        List<AppointmentCompletedClientRequest> clientRequests = request.Clients ?? new List<AppointmentCompletedClientRequest>();
+        if (clientRequests.Count == 0)
+            throw new ValidationAppException("Potreban je barem jedan klijent.");
+        if (clientRequests.Select(c => c.ClientId).Distinct().Count() != clientRequests.Count)
+            throw new ValidationAppException("Klijent se smije navesti samo jednom.");
 
-        AppointmentSegmentCreateRequest segmentRequest = target.Segments[0];
-        ValidatedSegment validated = await ValidateSegment(organizationId, request.CompanyId, segmentRequest, PricingMode.WithManualOverride);
-        List<Client> clients = validated.Clients;
-        Room room = validated.Room;
-        ResolvePriceResponse resolvedPrice = await ResolveServicePrice(organizationId, request.ServiceId, request.CompanyId, request.EmployeeId, request.StartsAt);
-
-        Dictionary<Guid, AppointmentClientSettlement> settlementByClient = await ValidateSettlements(
-            organizationId, clients.Select(c => c.Id.GetValueOrDefault()).ToList(), request.ServiceId, request.CompanyId, request.StartsAt, request.Settlements);
-
-        // Cijena svakog sudionika dolazi iz NJEGOVOG settlementa (ne iz plosnatog Amount).
-        SegmentPlan plan = validated.Plan with
+        AppointmentSegmentCreateRequest segmentRequest = new()
         {
-            Participants = validated.Plan.Participants
-                .Select(p => new ParticipantPlan(p.ClientId, BookingPricing.FromResolution(resolvedPrice, settlementByClient[p.ClientId].Amount)))
+            ServiceId = request.Segment.ServiceId,
+            PlannedStart = request.Segment.PlannedStart,
+            PlannedEnd = request.Segment.PlannedEnd,
+            EmployeeIds = request.Segment.EmployeeIds,
+            PricingMode = request.Segment.PricingMode,
+            PricingEmployeeId = request.Segment.PricingEmployeeId,
+            RoomId = request.Segment.RoomId,
+            Resources = request.Segment.Resources,
+            Participants = clientRequests
+                .Select(c => new AppointmentParticipantCreateRequest { ClientId = c.ClientId, Amount = c.Amount })
                 .ToList()
         };
+        EnsureSegmentProductLimits(segmentRequest, requireParticipants: true);
+        await AppointmentOwnership.EnsureCallerIsEmployee(_employeeHandler, organizationId, userId, hasFullScope,
+            segmentRequest.EmployeeIds, NotOwnerMessage);
+        bool overrideAvailability = request.OverrideAvailability && hasFullScope;
 
-        Appointment appointment = AppointmentFactory.CreateIndividual(
-            organizationId, request.CompanyId, request.Note, recurrenceGroupId: null, userId, DateTimeOffset.UtcNow,
-            new[] { plan }, ParticipationStatus.Completed);
-        Guid appointmentId = appointment.Id.GetValueOrDefault();
-        AppointmentSegment executionSegment = LegacySingleSegment.Resolve(appointment);
+        ValidatedSegment validated = await ValidateSegment(organizationId, request.CompanyId, segmentRequest, PricingMode.WithManualOverride);
+        SegmentPlan plan = validated.Plan;
 
-        Dictionary<Guid, Guid> packageByClient = new Dictionary<Guid, Guid>();
-        List<(Booking Booking, BookingSegmentParticipation Participation, PaymentMethod Method, decimal Amount)> pendingPayments =
-            new List<(Booking, BookingSegmentParticipation, PaymentMethod, decimal)>();
-
-        foreach (Booking booking in appointment.Bookings)
-        {
-            AppointmentClientSettlement settlement = settlementByClient[booking.ClientId];
-            BookingSegmentParticipation participation = BookingParticipations.OnSegment(booking, executionSegment);
-            bool hasPackage = settlement.ClientPackageId.HasValue;
-
-            if (hasPackage)
-                packageByClient[booking.ClientId] = settlement.ClientPackageId.GetValueOrDefault();
-
-            // Paket namiruje obvezu bez Paymenta (vidi Payment.cs/spec section 3/40) — monetarni Payment se
-            // stvara samo bez paketa, uz zatraženu metodu, IsPaid=true i stvaran pozitivan iznos.
-            if (!hasPackage && settlement.PaymentMethod.HasValue && settlement.IsPaid && participation.Amount > 0m)
-                pendingPayments.Add((booking, participation, settlement.PaymentMethod.Value, participation.Amount));
-        }
-
-        // Phase M1A: termin nastaje kao Scheduled, a početni status mu se IZVODI iz upravo stvorenih (Completed) sudjelovanja
-        // → Closed. Nema "Completed" termina; status nikad nije zasebna odluka.
-        appointment.Status = AppointmentLifecycle.Derive(appointment);
-
-        // CompleteNew loguje odrađeno — provjera radne-snage dostupnosti vrijedi samo ako je početak u budućnosti
-        // (zakazuje se i odmah naplaćuje); za prošlost je ovo evidentiranje stvarnosti, ne planiranje (vidi FAZA 2).
         List<WarningDto> warnings = new List<WarningDto>();
         if (plan.PlannedStart > DateTimeOffset.UtcNow)
             warnings.AddRange(await EnsureWorkforceAvailability(
                 organizationId, plan.EmployeeIds, request.CompanyId, plan.PlannedStart, plan.PlannedEnd, overrideAvailability));
 
+        Appointment appointment = AppointmentFactory.CreateIndividual(
+            organizationId, request.CompanyId, request.Note, recurrenceGroupId: null, userId, DateTimeOffset.UtcNow,
+            new[] { plan });
+        Guid appointmentId = appointment.Id.GetValueOrDefault();
+        AppointmentSegment segment = appointment.Segments.Single();
+
         try
         {
             await using IUnitOfWork uow = await _unitOfWorkFactory.Begin();
 
-            // Phase M1C: tvrde invarijante pod zaključanim subjektima, PRVO u transakciji.
+            // Tvrde invarijante pod zaključanim subjektima (zaposlenici, klijenti, prostorija, resursi) — PRVO u transakciji.
             await EnsureNoHardOverlap(uow, organizationId, new[]
             {
-                new HardOverlapTarget(null, plan.PlannedStart, plan.PlannedEnd, plan.EmployeeIds, clients, room, ResourcesOf(plan))
+                new HardOverlapTarget(null, plan.PlannedStart, plan.PlannedEnd, plan.EmployeeIds, validated.Clients, validated.Room, ResourcesOf(plan))
             });
 
             await _appointmentHandler.Add(uow, appointment);
 
-            foreach (KeyValuePair<Guid, Guid> kvp in packageByClient)
+            // Odrađivanje kroz jedinu jezgru prijelaza sudjelovanja, stabilnim redoslijedom (po klijentu).
+            foreach (AppointmentCompletedClientRequest client in clientRequests.OrderBy(c => c.ClientId))
             {
-                Booking packageBooking = appointment.Bookings.First(b => b.ClientId == kvp.Key);
-                BookingSegmentParticipation packageParticipation = BookingParticipations.OnSegment(packageBooking, executionSegment);
-                ParticipationExecutionContext packageExecution = ExecutionContextResolver.ForParticipation(appointment, packageBooking, packageParticipation);
-
-                // Phase D3B3A: potrošnja paketa = PackageConsumption na sudjelovanju (ledger), valjanost na datum usluge.
-                await _packageConsumptionLedgerService.Consume(
-                    uow, organizationId, userId, packageParticipation, packageExecution, kvp.Value, BookingStatus.Completed);
-
-                await _auditLogHandler.Add(uow, new AppointmentAuditLog
-                {
-                    Id = Guid.NewGuid(),
-                    AppointmentId = appointmentId,
-                    BookingId = packageBooking.Id,
-                    BookingSegmentParticipationId = packageParticipation.Id,
-                    ChangeType = "BookingPackageCoverageApplied",
-                    OldValue = null,
-                    NewValue = kvp.Value.ToString(),
-                    ChangedAt = DateTimeOffset.UtcNow,
-                    ChangedBy = userId
-                });
-            }
-
-            // Payment ide TEK nakon _appointmentHandler.Add (FK payments.booking_id) — Booking.Id je već
-            // poznat (dodijeljen prije Add), pa je isti in-memory objekt (sad persistiran) siguran za referencu.
-            foreach ((Booking booking, BookingSegmentParticipation participation, PaymentMethod method, decimal amount) in pendingPayments)
-                await _paymentLedgerService.RecordPayment(
-                    uow, organizationId, userId, appointment.CompanyId, booking, participation, method, amount, note: null, isCheckInGenerated: true);
-
-            // Provizija se zarađuje ISTOM transakcijom kao completion — svaki upravo odrađen Booking je jedan
-            // izvor (vidi ICommissionLedgerService, spec section 27/28).
-            foreach (Booking booking in appointment.Bookings)
-            {
-                BookingSegmentParticipation participation = BookingParticipations.OnSegment(booking, executionSegment);
-                await _commissionLedgerService.GenerateForIndividualServiceCompletion(
-                    uow, organizationId, ExecutionContextResolver.ForParticipation(appointment, booking, participation), participation);
+                Booking booking = appointment.Bookings.Single(b => b.ClientId == client.ClientId);
+                BookingSegmentParticipation participation = BookingParticipations.OnSegment(booking, segment);
+                await _participationLifecycleService.ApplyTransitionInTransaction(uow, organizationId, userId, appointment, booking, participation,
+                    new BookingSetStatusRequest
+                    {
+                        Status = BookingStatus.Completed,
+                        ClientPackageId = client.ClientPackageId,
+                        PaymentMethod = client.ClientPackageId.HasValue ? null : client.PaymentMethod,
+                        IsPaid = client.IsPaid
+                    });
             }
 
             await uow.CommitAsync();
@@ -379,184 +316,23 @@ public partial class AppointmentService : IAppointmentService
         return dto;
     }
 
-    public async Task<AppointmentDto> CompleteExisting(Guid organizationId, Guid userId, bool hasFullScope, Guid id, AppointmentCompleteRequest request)
+    /// <summary>Phase M1H — napomena termina (metapodatak agregata): ne dira segmente, cijene, raspored ni životni ciklus.
+    /// Vlasništvo kao i ostale izmjene termina: own-opseg mora biti dodijeljen SVAKOM segmentu termina.</summary>
+    public async Task<AppointmentDto> ChangeNote(Guid organizationId, Guid userId, bool hasFullScope, Guid id, AppointmentNoteChangeRequest request)
     {
-        Appointment appointment = await _appointmentHandler.GetByIdLight(organizationId, id);
-        if (appointment == null)
-            throw new NotFoundAppException("Appointment", id);
+        Appointment appointment = await _appointmentHandler.GetByIdLight(organizationId, id)
+            ?? throw new NotFoundAppException("Appointment", id);
+        await AppointmentOwnership.EnsureCallerOwnsSegments(_employeeHandler, organizationId, userId, hasFullScope, appointment.Segments, NotOwnerMessage);
 
-        // Ovaj put (ClientIds/Settlements popis koji reconcilea Booking retke preko UpdateWithBookings — hard-delete
-        // izbačenih, ali SAMO ako su još Confirmed bez povijesti, vidi tamo) pretpostavlja Form=Individual — za
-        // Form=Group to bi netočno restrukturiralo Bookinge koji već postoje po GroupMemberima (vidi
-        // GroupService.GenerateAppointments/AddMember). Grupni termin se zatvara kroz
-        // IAppointmentService.CompleteGroupAppointment, koji ne dira Booking retke.
-        if (appointment.Form != AppointmentForm.Individual)
-            throw new ValidationAppException(
-                "Grupni termin se odrađuje kroz complete-group, ne kroz complete-existing (naplata je po klijentu/Bookingu, ne po popisu klijenata termina).");
-
-        // Phase M1A: "već odrađen" = termin je Closed (nijedno sudjelovanje nije Confirmed, a nije sve otkazano). Ponovni
-        // completion ide tek nakon korekcije sudjelovanja (koja termin automatski vraća u Scheduled).
-        if (appointment.Status == AppointmentStatus.Closed)
-            throw new BusinessRuleException(ErrorCodes.AlreadyCompleted, "Termin je već označen kao odrađen.");
-
-        // LEGACY (Phase M1E): plosnati ugovor completiona adresira termin — samo za jednosegmentni termin (višesegmentni:
-        // SEGMENT_SELECTION_REQUIRED, ciljni put je ParticipationId); vlasništvo slijedi taj segment.
-        AppointmentSegment legacySegment = LegacySingleSegment.Resolve(appointment);
-        await AppointmentOwnership.EnsureCallerOwnsSegments(_employeeHandler, organizationId, userId, hasFullScope, new[] { legacySegment }, NotOwnerMessage);
-        // Phase M1G: plosnati completion nosi JEDNOG zaposlenika — segment s više zaposlenika se ne sažima.
-        LegacySingleEmployee.Of(legacySegment);
-
-        ServiceEntity service = await LoadServiceOrThrow(organizationId, request.ServiceId);
-        await EnsureStructuralEligibility(organizationId, service, request.CompanyId, request.EmployeeId);
-        Room room = await EnsureRoomExists(organizationId, request.CompanyId, request.RoomId);
-        List<Client> clients = await EnsureClientsExist(organizationId, request.ClientIds);
-
-        ResolvePriceResponse resolvedPrice = await ResolveServicePrice(organizationId, request.ServiceId, request.CompanyId, request.EmployeeId, request.StartsAt);
-
-        Dictionary<Guid, AppointmentClientSettlement> settlementByClient = await ValidateSettlements(
-            organizationId, clients.Select(c => c.Id.GetValueOrDefault()).ToList(), request.ServiceId, request.CompanyId, request.StartsAt, request.Settlements);
-
-        DateTimeOffset plannedEnd = request.StartsAt.AddMinutes(service.DefaultDurationMinutes);
-        List<Guid> employeeIds = new List<Guid> { request.EmployeeId };
-        Guid? completedSegmentId = legacySegment.Id;
-        SegmentSnapshot.State validatedSegment = SegmentSnapshot.Capture(
-            appointment, legacySegment, await _schedulingOccupancyHandler.GetSegmentResources(legacySegment.Id.GetValueOrDefault()));
-
-        try
+        await using (IUnitOfWork uow = await _unitOfWorkFactory.Begin())
         {
-            await using IUnitOfWork uow = await _unitOfWorkFactory.Begin();
-
-            // Phase M1C: prepisuje se (jedini) segment — isključuje se SAMO on; subjekti se zaključavaju PRIJE Appointment locka.
-            await EnsureNoHardOverlap(uow, organizationId, new[]
-            {
-                new HardOverlapTarget(completedSegmentId, request.StartsAt, plannedEnd, employeeIds, clients, room,
-                    await _schedulingOccupancyHandler.GetSegmentResources(uow, completedSegmentId.GetValueOrDefault()))
-            });
-            // Phase M1E: segment je prepisan iz zahtjeva; iz PROČITANOG stanja potječu samo resursi — pod Appointment lockom
-            // se potvrđuje da ih segmentna naredba u međuvremenu nije promijenila.
-            await SegmentSnapshot.VerifyUnderLock(_appointmentHandler, uow, organizationId, id, new[] { validatedSegment }, includeParticipants: false);
-
-            // Zaključava Appointment redak (FOR UPDATE) i ponovno čita Status prije mutacije — sprječava utrku s
-            // konkurentnim drugim completion/cancel zahtjevom na ISTOM terminu (drugi zahtjev čeka na lock pa vidi
-            // svježe stanje nakon commita prvog, vidi spec section 8-11). Zamjenjuje pred-transakcijski appointment
-            // (GetByIdLight iznad, koji je poslužio samo za brzu Form/ownership/AlreadyCompleted provjeru).
-            appointment = await _appointmentHandler.GetForUpdate(uow, organizationId, id);
-            if (appointment == null)
-                throw new NotFoundAppException("Appointment", id);
-            if (appointment.Status == AppointmentStatus.Closed)
-                throw new BusinessRuleException(ErrorCodes.AlreadyCompleted, "Termin je već označen kao odrađen.");
-
-            // Segment se razrješava na granici ovog kompatibilnog ugovora i mijenja eksplicitnim segmentnim operacijama.
-            AppointmentSegment executionSegment = LegacySingleSegment.Resolve(appointment);
-            LegacySingleEmployee.Of(executionSegment);
-            DateTimeOffset now = DateTimeOffset.UtcNow;
-            SegmentMutator.ChangeService(executionSegment, request.ServiceId, now);
-            SegmentMutator.ChangeTime(executionSegment, request.StartsAt, plannedEnd, now);
-            SegmentMutator.ChangeRoom(executionSegment, request.RoomId, now);
-            LegacySingleEmployee.Assign(executionSegment, request.EmployeeId, now);
-            appointment.CompanyId = request.CompanyId;
-            appointment.Note = request.Note;
-            appointment.UpdatedAt = DateTimeOffset.UtcNow;
-            appointment.UpdatedBy = userId;
-
-            // Novi/preživjeli retci dobivaju privremeno BookingPricing.Zero (isto kao prije: 0/0/false) — stvarna cijena
-            // svakog zatraženog klijenta se postavlja niže, po njegovom settlementu.
-            await _appointmentHandler.UpdateWithBookings(uow, appointment, executionSegment, request.ClientIds.Distinct().ToList(), BookingPricing.Zero);
-
-            List<Booking> bookingRows = await _appointmentHandler.GetBookings(uow, organizationId, id, request.ClientIds.Distinct().ToList());
-
-            // Phase M0: completion adresira sudjelovanje svakog Bookinga NA IZVRŠNOM SEGMENTU (razriješenom na granici gore)
-            // — ne "jedino sudjelovanje Bookinga". Sudjelovanja se zaključavaju nakon termina, stabilnim redoslijedom
-            // (statusi su svježi: svaki prijelaz statusa prvo zaključava ovaj termin).
-            List<(Booking Booking, BookingSegmentParticipation Participation)> rows = bookingRows
-                .Select(b => (b, BookingParticipations.OnSegment(b, executionSegment)))
-                .ToList();
-            await _participationHandler.LockForUpdate(uow, organizationId, rows.Select(r => r.Participation.Id.GetValueOrDefault()));
-
-            foreach ((Booking bookingRow, BookingSegmentParticipation participation) in rows)
-            {
-                // appointment je gore već postavljen na zatraženu uslugu/trenera/vrijeme — kontekst čita te vrijednosti.
-                ParticipationExecutionContext execution = ExecutionContextResolver.ForParticipation(appointment, bookingRow, participation);
-                AppointmentClientSettlement settlement = settlementByClient[bookingRow.ClientId];
-                bool hasPackage = settlement.ClientPackageId.HasValue;
-                BookingPricing pricing = BookingPricing.FromResolution(resolvedPrice, settlement.Amount);
-                decimal bookingAmount = pricing.Amount;
-                decimal currentAmount = participation.Amount;
-
-                if (currentAmount != bookingAmount)
-                    await LogAmountChangeInTransaction(uow, id, bookingRow.Id, currentAmount, bookingAmount, userId);
-
-                ParticipationStatus bookingOldStatus = participation.Status;
-                bool bookingStatusChanged = ParticipationLifecycle.TrySetStatus(participation, ParticipationStatus.Completed);
-                if (bookingStatusChanged)
-                {
-                    // Isti "BookingStatus" audit obrazac kao BookingService.SetStatus — bez ovoga bi individualni
-                    // Confirmed -> Completed prijelaz kroz complete-existing bio jedini status prijelaz koji ne
-                    // ostavlja trag tko/kada ga je proveo (vidi audit-cleanup spec section 22-24).
-                    await _auditLogHandler.Add(uow, new AppointmentAuditLog
-                    {
-                        Id = Guid.NewGuid(),
-                        AppointmentId = id,
-                        BookingId = bookingRow.Id,
-                        BookingSegmentParticipationId = participation.Id,
-                        ChangeType = "BookingStatus",
-                        OldValue = bookingOldStatus.ToString(),
-                        NewValue = participation.Status.ToString(),
-                        StatusVersion = participation.StatusVersion,
-                        ChangedAt = DateTimeOffset.UtcNow,
-                        ChangedBy = userId
-                    });
-                }
-                ParticipationPrice.Apply(participation, pricing);
-
-                // Phase D3B3A: "već pokriveno" = AKTIVNA potrošnja paketa (poništena potrošnja nakon korekcije više ne
-                // sprječava ponovno pokriće — prije je zaostala zastavica PackageCoverageApplied tiho preskakala skidanje).
-                if (hasPackage && PackageConsumptions.ActiveOf(participation) == null)
-                {
-                    // Paket-namirenje i novčano namirenje su međusobno isključivi (bookingRow je POSTOJEĆI redak, mogao je
-                    // već primiti uplatu preko POS Checkouta) — Phase D3B3B: provjeru provodi ledger potrošnje kroz
-                    // jedino pravilo SettlementExclusivityPolicy, na granici sudjelovanja.
-                    await _packageConsumptionLedgerService.Consume(
-                        uow, organizationId, userId, participation, execution, settlement.ClientPackageId.GetValueOrDefault(), BookingStatus.Completed);
-                }
-
-                await _appointmentHandler.UpdateBooking(uow, bookingRow);
-
-                // Payment/provizija se generiraju SAMO za booking koji je OVIM pozivom STVARNO tek prešao u
-                // Completed (bookingStatusChanged) — bez ovog uvjeta bi ponovni CompleteExisting poziv koji u
-                // request.ClientIds ponovno šalje VEĆ Completed sestrinski Booking (npr. nekorigirani klijent B
-                // na multi-klijent terminu, dok se korigirani klijent A re-completa nakon P1 korekcije — vidi
-                // BookingService.ApplyIndividualCompletionCorrection) pokušao stvoriti DRUGI Payment za B i pao
-                // na ux_commission_entries_booking_id_source_version (B.StatusVersion se ovdje ne mijenja jer
-                // TrySetStatus no-opira, pa bi SourceVersion bio identičan već postojećem Earned zapisu, vidi
-                // CommissionEntry.cs). Prije P1 korekcije ovaj put je bio nedostižan — appointment.Status==Completed
-                // je uvijek blokirao ponovni ulaz na vrhu ove metode (ALREADY_COMPLETED) dok god je bilo koji
-                // Booking na terminu ostajao Completed, pa je ovaj uvjet čisto zatvaranje NOVO dosegnute putanje,
-                // bez promjene ponašanja za prvi/jedini completion (gdje je bookingStatusChanged uvijek true za
-                // svaki redak u bookingRows).
-                if (bookingStatusChanged)
-                {
-                    // Booking je već persistiran (postojeći redak, samo ažuriran) — Payment sigurno može odmah nakon.
-                    if (!hasPackage && settlement.PaymentMethod.HasValue && settlement.IsPaid && bookingAmount > 0m)
-                        await _paymentLedgerService.RecordPayment(
-                            uow, organizationId, userId, appointment.CompanyId, bookingRow, participation, settlement.PaymentMethod.Value, bookingAmount,
-                            note: null, isCheckInGenerated: true);
-
-                    // Provizija se zarađuje ISTOM transakcijom kao completion — vidi CompleteNew.
-                    await _commissionLedgerService.GenerateForIndividualServiceCompletion(uow, organizationId, execution, participation);
-                }
-            }
-
-            // Phase M1A: status termina se IZVODI iz svih sudjelovanja (zatraženi klijenti su sad Completed; sestrinsko
-            // sudjelovanje koje je još Confirmed drži termin Scheduled — prije je termin bezuvjetno postajao Completed).
-            await AppointmentLifecycle.Refresh(_appointmentHandler, _auditLogHandler, uow, organizationId, id, userId);
-
+            Appointment locked = await _appointmentHandler.GetForUpdate(uow, organizationId, id)
+                ?? throw new NotFoundAppException("Appointment", id);
+            locked.Note = request?.Note;
+            locked.UpdatedAt = DateTimeOffset.UtcNow;
+            locked.UpdatedBy = userId;
+            await _appointmentHandler.UpdateScalar(uow, locked);
             await uow.CommitAsync();
-        }
-        catch (DbUpdateConcurrencyException)
-        {
-            throw new BusinessRuleException(
-                ErrorCodes.ConcurrencyConflict, "Podaci su upravo promijenjeni od strane drugog zahtjeva — pokušajte ponovno.");
         }
 
         return await GetByIdInternal(organizationId, id);
@@ -585,7 +361,7 @@ public partial class AppointmentService : IAppointmentService
 
             if (appointment.Form != AppointmentForm.Group)
                 throw new ValidationAppException(
-                    "Individualni termin se odrađuje kroz complete/complete-existing, ne kroz complete-group.");
+                    "Individualni termin se odrađuje po sudjelovanju (participations/{id}/status) ili kroz complete, ne kroz complete-group.");
 
             if (appointment.Status == AppointmentStatus.Cancelled)
                 throw new BusinessRuleException(ErrorCodes.AppointmentNotMovable, "Otkazan termin se ne može označiti kao odrađen.");
@@ -649,186 +425,9 @@ public partial class AppointmentService : IAppointmentService
         return dto;
     }
 
-    /// <summary>Statusi koji ZAKLJUČUJU komercijalnu evidenciju bookinga — Update ih nikad ne repricinga
-    /// (historijski Amount se ne smije mijenjati naknadno, vidi spec section 18/20).</summary>
-    private static bool IsTerminal(ParticipationStatus status) => status != ParticipationStatus.Confirmed;
-
-    public async Task<AppointmentDto> Update(Guid organizationId, Guid userId, bool hasFullScope, Guid id, AppointmentUpdateRequest request)
-    {
-        Appointment appointment = await _appointmentHandler.GetWithBookingsForMutation(organizationId, id);
-        if (appointment == null)
-            throw new NotFoundAppException("Appointment", id);
-
-        // LEGACY (Phase M1E): plosnati Update adresira termin — samo jednosegmentni termin (višesegmentni:
-        // SEGMENT_SELECTION_REQUIRED; nikad "prvi" segment ni "svi"); mijenja taj segment eksplicitnim segmentnim operacijama.
-        AppointmentSegment executionSegment = LegacySingleSegment.Resolve(appointment);
-        await AppointmentOwnership.EnsureCallerOwnsSegments(_employeeHandler, organizationId, userId, hasFullScope, new[] { executionSegment }, NotOwnerMessage);
-
-        ServiceEntity service = await LoadServiceOrThrow(organizationId, request.ServiceId);
-        bool overrideAvailability = request.OverrideAvailability && hasFullScope;
-        await EnsureStructuralEligibility(organizationId, service, request.CompanyId, request.EmployeeId);
-        Room room = await EnsureRoomExists(organizationId, request.CompanyId, request.RoomId);
-        List<Client> clients = await EnsureClientsExist(organizationId, request.ClientIds);
-
-        BookingPricing pricing = BookingPricing.FromResolution(
-            await ResolveServicePrice(organizationId, request.ServiceId, request.CompanyId, request.EmployeeId, request.StartsAt), request.Amount);
-        decimal amount = pricing.Amount;
-
-        // Re-cijenjenje (persistira ga AppointmentHandler.UpdateWithBookings niže) se primjenjuje samo na
-        // Bookinge koji NISU terminalni — historijski Amount na već odrađenom/otkazanom/izostalom Bookingu
-        // se ne dira (vidi IsTerminal). Ovdje samo audit-logiramo promjenu za te retke. Phase M0: cijena se mijenja na
-        // sudjelovanju Bookinga NA IZVRŠNOM SEGMENTU termina (segmentno adresiranje, vidi AppointmentHandler.UpdateWithBookings).
-        List<Guid> requestedClientIds = request.ClientIds.Distinct().ToList();
-        // Phase M1D: osobe u prostoriji nakon Update-a = zatraženi klijenti + klijenti izvan popisa čije sudjelovanje na
-        // segmentu ostaje odrađeno (Completed — UpdateWithBookings ga ne uklanja).
-        List<Client> retainedCompletedClients = appointment.Bookings
-            .Where(b => !requestedClientIds.Contains(b.ClientId) && b.Client != null &&
-                        b.Participations.Any(p => p.AppointmentSegmentId == executionSegment.Id && p.Status == ParticipationStatus.Completed))
-            .Select(b => b.Client)
-            .ToList();
-        foreach (Booking booking in appointment.Bookings.Where(b => requestedClientIds.Contains(b.ClientId)))
-        {
-            BookingSegmentParticipation participation = BookingParticipations.OnSegment(booking, executionSegment);
-            if (!IsTerminal(participation.Status) && amount != participation.Amount)
-                await LogAmountChange(id, booking.Id, participation.Amount, amount, userId);
-        }
-
-        Guid? currentEmployeeId = LegacySingleEmployee.Of(executionSegment);
-        if (currentEmployeeId != request.EmployeeId)
-            await LogEmployeeChange(id, currentEmployeeId, request.EmployeeId, userId);
-
-        SegmentSnapshot.State validatedSegment = SegmentSnapshot.Capture(
-            appointment, executionSegment, await _schedulingOccupancyHandler.GetSegmentResources(executionSegment.Id.GetValueOrDefault()));
-
-        // F-01 ISPRAVLJEN (Phase M1E, namjerno): Update je validirao i auditao NOVU uslugu/trenera i iz nove usluge izveo
-        // trajanje i cijenu, ali ih nije spremao (zastarjeli upis). Sada se zatraženo ciljno stanje segmenta stvarno sprema —
-        // usluga, zaposlenik, vrijeme/trajanje i prostorija — istim segmentnim operacijama kao segmentne naredbe.
-        DateTimeOffset plannedEnd = request.StartsAt.AddMinutes(service.DefaultDurationMinutes);
-        DateTimeOffset now = DateTimeOffset.UtcNow;
-        SegmentMutator.ChangeService(executionSegment, request.ServiceId, now);
-        LegacySingleEmployee.Assign(executionSegment, request.EmployeeId, now);
-        SegmentMutator.ChangeTime(executionSegment, request.StartsAt, plannedEnd, now);
-        SegmentMutator.ChangeRoom(executionSegment, request.RoomId, now);
-        appointment.CompanyId = request.CompanyId;
-        appointment.Note = request.Note;
-        appointment.UpdatedAt = DateTimeOffset.UtcNow;
-        appointment.UpdatedBy = userId;
-
-        List<WarningDto> warnings = new List<WarningDto>();
-        List<Guid> requestedEmployeeIds = new List<Guid> { request.EmployeeId };
-        warnings.AddRange(await EnsureWorkforceAvailability(
-            organizationId, requestedEmployeeIds, request.CompanyId, request.StartsAt, plannedEnd, overrideAvailability));
-
-        // Phase M1A: Update može dodati Confirmed sudjelovanja (novi klijenti) ili ukloniti netaknuta — status termina se
-        // zatim IZVODI u istoj transakciji (npr. dodan klijent na Closed termin → Scheduled).
-        await using (IUnitOfWork uow = await _unitOfWorkFactory.Begin())
-        {
-            // Phase M1C: isključuje se SAMO segment koji se mijenja — sestrinski segmenti istog termina ostaju vidljivi.
-            await EnsureNoHardOverlap(uow, organizationId, new[]
-            {
-                new HardOverlapTarget(executionSegment.Id, request.StartsAt, plannedEnd, requestedEmployeeIds,
-                    clients.Concat(retainedCompletedClients).ToList(), room,
-                    await _schedulingOccupancyHandler.GetSegmentResources(uow, executionSegment.Id.GetValueOrDefault()))
-            });
-            // Phase M1E: validirano je PROČITANO stanje segmenta (sudionici, resursi) — pod Appointment lockom se potvrđuje da ga
-            // segmentna/sudionička naredba u međuvremenu nije promijenila (inače CONCURRENCY_CONFLICT).
-            await SegmentSnapshot.VerifyUnderLock(_appointmentHandler, uow, organizationId, id, new[] { validatedSegment });
-            await _appointmentHandler.UpdateWithBookings(uow, appointment, executionSegment, requestedClientIds, pricing);
-            await AppointmentLifecycle.Refresh(_appointmentHandler, _auditLogHandler, uow, organizationId, id, userId);
-            await uow.CommitAsync();
-        }
-
-        AppointmentDto dto = await GetByIdInternal(organizationId, id);
-        dto.Warnings = warnings;
-        return dto;
-    }
-
-    public async Task<AppointmentDto> Move(Guid organizationId, Guid userId, bool hasFullScope, Guid id, AppointmentMoveRequest request)
-    {
-        Appointment appointment = await _appointmentHandler.GetByIdLight(organizationId, id);
-        if (appointment == null)
-            throw new NotFoundAppException("Appointment", id);
-
-        if (appointment.Status == AppointmentStatus.Cancelled)
-            throw new BusinessRuleException(ErrorCodes.AppointmentNotMovable, "Otkazan termin se ne može pomicati.");
-
-        // LEGACY (Phase M1E): Move pomiče segment jednosegmentnog termina (višesegmentni: SEGMENT_SELECTION_REQUIRED —
-        // ciljni put je ChangeSegmentTime).
-        AppointmentSegment movedSegment = LegacySingleSegment.Resolve(appointment);
-        await AppointmentOwnership.EnsureCallerOwnsSegments(_employeeHandler, organizationId, userId, hasFullScope, new[] { movedSegment }, NotOwnerMessage);
-
-        bool overrideAvailability = request.OverrideAvailability && hasFullScope;
-
-        if (request.EmployeeId.HasValue)
-            await EnsureEmployeeExists(organizationId, request.EmployeeId.Value);
-
-        if (request.CompanyId.HasValue)
-            await EnsureCompanyExists(organizationId, request.CompanyId.Value);
-
-        Guid? currentEmployeeId = LegacySingleEmployee.Of(movedSegment);
-        Guid effectiveEmployeeId = request.EmployeeId ?? currentEmployeeId.GetValueOrDefault();
-        Guid effectiveCompanyId = request.CompanyId ?? appointment.CompanyId;
-
-        Appointment full = await _appointmentHandler.GetById(organizationId, id);
-        // Phase M0: klijenti čije sudjelovanje NA SEGMENTU koji se pomiče zauzima raspored — centralno pravilo.
-        List<Client> clients = full.Bookings
-            .Where(b => b.Participations.Any(p => p.AppointmentSegmentId == movedSegment.Id && ParticipationOccupancy.Occupies(p.Status)))
-            .Select(b => b.Client).ToList();
-
-        ServiceEntity service = await LoadServiceOrThrow(organizationId, movedSegment.ServiceId);
-        await EnsureStructuralEligibility(organizationId, service, effectiveCompanyId, effectiveEmployeeId);
-
-        // Djelomična izmjena: null u zahtjevu = "bez promjene" (pinned F-03 — prostorija se ne može očistiti),
-        // trajanje se ne mijenja.
-        if (request.EmployeeId.HasValue && request.EmployeeId.Value != currentEmployeeId)
-            await LogEmployeeChange(id, currentEmployeeId, request.EmployeeId.Value, userId);
-
-        SegmentSnapshot.State validatedSegment = SegmentSnapshot.Capture(
-            full, movedSegment, await _schedulingOccupancyHandler.GetSegmentResources(movedSegment.Id.GetValueOrDefault()));
-
-        DateTimeOffset now = DateTimeOffset.UtcNow;
-        TimeSpan duration = movedSegment.PlannedEnd - movedSegment.PlannedStart;
-        SegmentMutator.ChangeTime(movedSegment, request.StartsAt, request.StartsAt + duration, now);
-        if (request.EmployeeId.HasValue)
-            LegacySingleEmployee.Assign(movedSegment, request.EmployeeId.Value, now);
-        if (request.RoomId.HasValue)
-            SegmentMutator.ChangeRoom(movedSegment, request.RoomId, now);
-        if (request.CompanyId.HasValue)
-            appointment.CompanyId = request.CompanyId.Value;
-        appointment.UpdatedAt = DateTimeOffset.UtcNow;
-        appointment.UpdatedBy = userId;
-
-        // Efektivna prostorija se revalidira i kad nije eksplicitno poslana u zahtjevu — pomicanje termina u drugu
-        // poslovnicu bez zadanog RoomId inače bi ostavilo prostoriju iz stare poslovnice na terminu nove.
-        Room room = await EnsureRoomExists(organizationId, appointment.CompanyId, movedSegment.RoomId);
-
-        List<Guid> effectiveEmployeeIds = new List<Guid> { effectiveEmployeeId };
-        List<WarningDto> warnings = new List<WarningDto>();
-        warnings.AddRange(await EnsureWorkforceAvailability(
-            organizationId, effectiveEmployeeIds, appointment.CompanyId, movedSegment.PlannedStart, movedSegment.PlannedEnd, overrideAvailability));
-
-        await using (IUnitOfWork uow = await _unitOfWorkFactory.Begin())
-        {
-            // Phase M1C: isključuje se SAMO pomaknuti segment — sestrinski segmenti istog termina ostaju vidljivi.
-            await EnsureNoHardOverlap(uow, organizationId, new[]
-            {
-                new HardOverlapTarget(movedSegment.Id, movedSegment.PlannedStart, movedSegment.PlannedEnd, effectiveEmployeeIds, clients, room,
-                    await _schedulingOccupancyHandler.GetSegmentResources(uow, movedSegment.Id.GetValueOrDefault()))
-            });
-            // Phase M1E: pod Appointment lockom — pročitani segment (trajanje, sudionici, resursi) se nije promijenio.
-            await SegmentSnapshot.VerifyUnderLock(_appointmentHandler, uow, organizationId, id, new[] { validatedSegment });
-            await _appointmentHandler.UpdateScalar(uow, appointment);
-            await uow.CommitAsync();
-        }
-
-        AppointmentDto dto = await GetByIdInternal(organizationId, id);
-        dto.Warnings = warnings;
-        return dto;
-    }
-
     /// <summary>Otkazuje CIJELI termin — svi aktivni (Confirmed) Bookinzi prelaze u Cancelled zajedno s
     /// Appointment.Status. Za otkazivanje SAMO jednog klijenta (npr. duo/grupa) koristi se
-    /// IBookingService.SetStatus umjesto ovoga (vidi Booking.cs section 44).</summary>
+    /// IBookingService.SetParticipationStatus umjesto ovoga (vidi Booking.cs section 44).</summary>
     public Task<AppointmentDto> Cancel(Guid organizationId, Guid userId, bool hasFullScope, Guid id, AppointmentCancelRequest request)
     {
         return ChangeToTerminalStatus(organizationId, userId, hasFullScope, id, request, BookingStatus.Cancelled);
@@ -836,7 +435,7 @@ public partial class AppointmentService : IAppointmentService
 
     /// <summary>Bulk no-show — svi aktivni Bookinzi prelaze u NoShow, Appointment.Status ipak završava na
     /// Cancelled (termin kao okvir NIKAD nije NoShow — vidi AppointmentStatus.cs). Za pojedinačni no-show na
-    /// terminu s više klijenata koristi se IBookingService.SetStatus.</summary>
+    /// terminu s više klijenata koristi se IBookingService.SetParticipationStatus.</summary>
     public Task<AppointmentDto> MarkNoShow(Guid organizationId, Guid userId, bool hasFullScope, Guid id, AppointmentCancelRequest request)
     {
         return ChangeToTerminalStatus(organizationId, userId, hasFullScope, id, request, BookingStatus.NoShow);
@@ -903,7 +502,7 @@ public partial class AppointmentService : IAppointmentService
                 clients.Select(c => new ParticipantPlan(c.Id.GetValueOrDefault(), BookingPricing.AtSuggested(resolvedPrice))).ToList());
             Appointment appointment = AppointmentFactory.CreateIndividual(
                 organizationId, request.CompanyId, request.Note, recurrenceGroupId, userId, DateTimeOffset.UtcNow,
-                new[] { plan }, ParticipationStatus.Confirmed);
+                new[] { plan });
 
             toCreate.Add(appointment);
         }
@@ -1215,7 +814,7 @@ public partial class AppointmentService : IAppointmentService
 
         Appointment appointment = AppointmentFactory.CreateIndividual(
             organizationId, request.CompanyId, request.Note, recurrenceGroupId, userId, DateTimeOffset.UtcNow,
-            segments.Select(s => s.Plan).ToList(), ParticipationStatus.Confirmed);
+            segments.Select(s => s.Plan).ToList());
         Guid appointmentId = appointment.Id.GetValueOrDefault();
 
         List<WarningDto> warnings = new List<WarningDto>();
@@ -1256,7 +855,7 @@ public partial class AppointmentService : IAppointmentService
             await using IUnitOfWork uow = await _unitOfWorkFactory.Begin();
 
             // Zaključava Appointment redak (FOR UPDATE) i čita Status/EmployeeId pod lockom PRIJE bilo kakve
-            // provjere/mutacije — sprječava utrku s konkurentnim CompleteExisting/CompleteGroupAppointment na
+            // provjere/mutacije — sprječava utrku s konkurentnim prijelazom sudjelovanja/CompleteGroupAppointment na
             // ISTOM terminu (drugi zahtjev čeka na lock pa vidi svježe stanje nakon commita prvog, vidi spec
             // section 8-11). Ownership se namjerno provjerava OVDJE (ne pred-transakcijski) — jeftina provjera,
             // nema razloga za dodatan round-trip prije zaključavanja.
@@ -1406,20 +1005,6 @@ public partial class AppointmentService : IAppointmentService
         return service;
     }
 
-    private async Task EnsureEmployeeExists(Guid organizationId, Guid employeeId)
-    {
-        Employee employee = await _employeeHandler.GetById(organizationId, employeeId);
-        if (employee == null)
-            throw new NotFoundAppException("Employee", employeeId);
-    }
-
-    private async Task EnsureCompanyExists(Guid organizationId, Guid companyId)
-    {
-        Company company = await _companyHandler.GetById(organizationId, companyId);
-        if (company == null)
-            throw new NotFoundAppException("Company", companyId);
-    }
-
     /// <summary>Puni strukturni lanac podobnosti (FAZA 3): Company/Service aktivni, Service stvarno ponuđen u
     /// toj Company (ServiceCompany), Employee aktivan i eksplicitno dodijeljen i toj Company i toj usluzi. Tvrda
     /// blokada BEZ override-a — override smije zaobići samo MEKE radne-snage provjere (vidi EnsureWorkforceAvailability),
@@ -1528,44 +1113,6 @@ public partial class AppointmentService : IAppointmentService
         });
     }
 
-    /// <summary>Kad je ClientPackageId popunjen, svaki klijent na terminu mora imati odabran svoj vlastiti
-    /// valjani paket (npr. duo/par usluga: svaki klijent skida ulazak iz svog profila, neovisno o ostalima).
-    /// Validira da Settlements pokriva SVAKI klijent termina TOČNO JEDNOM (mješovito plaćanje po klijentu —
-    /// vidi spec section 10/12). Zamjenjuje staru ValidatePackageSelections (koja je pokrivala samo
-    /// paket-granu uz jedan zajednički PaymentMethod za sve — mješovito plaćanje strukturno nije bilo moguće).</summary>
-    private async Task<Dictionary<Guid, AppointmentClientSettlement>> ValidateSettlements(
-        Guid organizationId, List<Guid> clientIds, Guid serviceId, Guid companyId, DateTimeOffset date, List<AppointmentClientSettlement> settlements)
-    {
-        settlements ??= new List<AppointmentClientSettlement>();
-        List<Guid> settledClientIds = settlements.Select(s => s.ClientId).ToList();
-
-        bool coversAllClientsExactlyOnce =
-            settlements.Count == clientIds.Count &&
-            settledClientIds.Distinct().Count() == settledClientIds.Count &&
-            clientIds.All(id => settledClientIds.Contains(id));
-
-        if (!coversAllClientsExactlyOnce)
-            throw new ValidationAppException("Potrebno je odabrati točno jedno plaćanje (Settlements) za svakog klijenta na terminu.");
-
-        Dictionary<Guid, AppointmentClientSettlement> result = new Dictionary<Guid, AppointmentClientSettlement>();
-
-        foreach (AppointmentClientSettlement settlement in settlements)
-        {
-            if (settlement.ClientPackageId.HasValue)
-            {
-                List<ClientPackageDto> eligible = await _clientPackageService.GetEligibleForService(
-                    organizationId, settlement.ClientId, serviceId, date, companyId);
-
-                if (eligible.All(p => p.Id != settlement.ClientPackageId.Value))
-                    throw new BusinessRuleException(ErrorCodes.PackageNotEligible, "Odabrani paket nije valjan za klijenta ili ne pokriva ovu uslugu.");
-            }
-
-            result[settlement.ClientId] = settlement;
-        }
-
-        return result;
-    }
-
     /// <summary>Ciljno stanje jednog segmenta za tvrdu provjeru: <paramref name="SegmentId"/> = postojeći segment koji se
     /// prepisuje (isključuje se SAMO on; zahtjev je njegovo CIJELO ciljno stanje) ili null za novi. Osobe u prostoriji = svi
     /// zaposlenici + svi klijenti koji će segment zauzimati; resursi = sve dodjele segmenta.</summary>
@@ -1573,7 +1120,7 @@ public partial class AppointmentService : IAppointmentService
         Guid? SegmentId, DateTimeOffset PlannedStart, DateTimeOffset PlannedEnd, IReadOnlyList<Guid> EmployeeIds, IReadOnlyList<Client> Clients,
         Room Room, IReadOnlyList<ResourceClaim> Resources = null);
 
-    /// <summary>Koriste svi write endpointi (Create/CompleteNew/CompleteExisting/Update/Move/recurring) — tvrde invarijante
+    /// <summary>Koriste svi upisi rasporeda (Create, CompleteNow, segmentne naredbe, recurring) — tvrde invarijante
     /// (zaposlenik, klijent: APPOINTMENT_OVERLAP; prostorija: ROOM_CAPACITY_EXCEEDED; resurs: RESOURCE_CAPACITY_EXCEEDED) se
     /// NIKAD ne mogu zaobići s OverrideAvailability.</summary>
     /// <remarks>Phase M1C/M1D: segmentno i konkurentno sigurno — poziva se UNUTAR transakcije upisa kao PRVI korak (zaključava
@@ -1610,9 +1157,9 @@ public partial class AppointmentService : IAppointmentService
     /// <summary>Zamjenjuje staro BuildWorkingHoursWarning — sada TVRDA blokada (throw) za sve četiri "meke"
     /// radne-snage kategorije (odsutnost/pauza/praznik/izvan-radnog-vremena) OSIM kad je overrideAvailability=true
     /// (već provjereno kod pozivatelja da ima appointments.write.all), kad se umjesto bacanja vraća WarningDto
-    /// lista (vidljivost bez blokade — isto ponašanje kao prije ovog zahvata). Koriste svi write endpointi osim
-    /// CompleteExisting (retroaktivno evidentiranje odrađenog, ne planiranje unaprijed) i CompleteNew za StartsAt
-    /// u prošlosti (isti razlog, provjereno kod pozivatelja).</summary>
+    /// lista (vidljivost bez blokade — isto ponašanje kao prije ovog zahvata). Koriste svi upisi rasporeda osim
+    /// CompleteNow za početak u prošlosti (retroaktivno evidentiranje odrađenog, ne planiranje unaprijed; provjereno kod
+    /// pozivatelja). Prijelaz sudjelovanja u Completed ništa ne raspoređuje pa ne provjerava radnu snagu.</summary>
     /// <remarks>Phase M1B: po SEGMENTU (njegov raspon) i za svakog zaposlenika segmenta.</remarks>
     private async Task<List<WarningDto>> EnsureWorkforceAvailability(
         Guid organizationId, IReadOnlyList<Guid> employeeIds, Guid companyId, DateTimeOffset plannedStart, DateTimeOffset plannedEnd,
@@ -1723,53 +1270,6 @@ public partial class AppointmentService : IAppointmentService
         return remainder == 0 ? value : TimeSpan.FromTicks(value.Ticks + (step.Ticks - remainder));
     }
 
-    private async Task LogAmountChange(Guid appointmentId, Guid? bookingId, decimal oldAmount, decimal newAmount, Guid userId)
-    {
-        await _auditLogHandler.Add(new AppointmentAuditLog
-        {
-            Id = Guid.NewGuid(),
-            AppointmentId = appointmentId,
-            BookingId = bookingId,
-            ChangeType = "Amount",
-            OldValue = oldAmount.ToString(CultureInfo.InvariantCulture),
-            NewValue = newAmount.ToString(CultureInfo.InvariantCulture),
-            ChangedAt = DateTimeOffset.UtcNow,
-            ChangedBy = userId
-        });
-    }
-
-    private async Task LogAmountChangeInTransaction(
-        IUnitOfWork uow, Guid appointmentId, Guid? bookingId, decimal oldAmount, decimal newAmount, Guid userId)
-    {
-        await _auditLogHandler.Add(uow, new AppointmentAuditLog
-        {
-            Id = Guid.NewGuid(),
-            AppointmentId = appointmentId,
-            BookingId = bookingId,
-            ChangeType = "Amount",
-            OldValue = oldAmount.ToString(CultureInfo.InvariantCulture),
-            NewValue = newAmount.ToString(CultureInfo.InvariantCulture),
-            ChangedAt = DateTimeOffset.UtcNow,
-            ChangedBy = userId
-        });
-    }
-
-    /// <summary>Bilježi zamjenu trenera na terminu (npr. netko drugi uskoči na grupu umjesto zadanog/planiranog
-    /// trenera) — bez ovoga bi se EmployeeId tiho prepisao i izgubio bi se trag tko je prije bio raspoređen.</summary>
-    private async Task LogEmployeeChange(Guid appointmentId, Guid? oldEmployeeId, Guid? newEmployeeId, Guid userId)
-    {
-        await _auditLogHandler.Add(new AppointmentAuditLog
-        {
-            Id = Guid.NewGuid(),
-            AppointmentId = appointmentId,
-            ChangeType = "EmployeeId",
-            OldValue = oldEmployeeId?.ToString(),
-            NewValue = newEmployeeId?.ToString(),
-            ChangedAt = DateTimeOffset.UtcNow,
-            ChangedBy = userId
-        });
-    }
-
     private async Task<AppointmentDto> GetByIdInternal(Guid organizationId, Guid id)
     {
         Appointment appointment = await _appointmentHandler.GetById(organizationId, id);
@@ -1784,25 +1284,14 @@ public partial class AppointmentService : IAppointmentService
         bool isGroup = a.Form == AppointmentForm.Group;
         List<Client> clients = a.Bookings.Where(b => b.Client != null).Select(b => b.Client).ToList();
         AppointmentRange range = AppointmentRange.Of(a);
-        SingleSegmentProjection compat = SingleSegmentProjection.Of(a);
-
         return new AppointmentScheduleCellDto
         {
             Id = a.Id.GetValueOrDefault(),
             PlannedStart = range.PlannedStart,
             PlannedEnd = range.PlannedEnd,
             Segments = AppointmentSegmentReadModel.ToDtos(a),
-            StartsAt = range.PlannedStart,
-            DurationMinutes = range.SpanMinutes,
-            ServiceId = compat.ServiceId,
-            ServiceName = compat.ServiceName,
-            ServiceCategoryColorHex = compat.ServiceColorHex,
-            EmployeeId = compat.EmployeeId,
-            EmployeeName = compat.EmployeeName,
             CompanyId = a.CompanyId,
             CompanyName = a.Company?.Name,
-            RoomId = compat.RoomId,
-            RoomName = compat.RoomName,
             ClientNames = clients.Select(c => $"{c.FirstName} {c.LastName}").ToList(),
             ClientIds = clients.Select(c => c.Id.GetValueOrDefault()).ToList(),
             Status = a.Status,
@@ -1825,7 +1314,6 @@ public partial class AppointmentService : IAppointmentService
         Booking booking = a.Bookings.First(b => b.ClientId == clientId);
         BookingCommercialSummary commercial = BookingCommercialSummary.Of(booking);
         AppointmentRange range = AppointmentRange.Of(a);
-        SingleSegmentProjection compat = SingleSegmentProjection.Of(a);
         PackageCoverageView coverage = PackageConsumptions.CoverageOfBooking(booking, a.Form);
 
         return new ClientAppointmentHistoryDto
@@ -1835,13 +1323,6 @@ public partial class AppointmentService : IAppointmentService
             PlannedStart = range.PlannedStart,
             PlannedEnd = range.PlannedEnd,
             Segments = AppointmentSegmentReadModel.ToDtos(a),
-            StartsAt = range.PlannedStart,
-            DurationMinutes = range.SpanMinutes,
-            ServiceId = compat.ServiceId,
-            ServiceName = compat.ServiceName,
-            ServiceCategoryColorHex = compat.ServiceColorHex,
-            EmployeeId = compat.EmployeeId,
-            EmployeeName = compat.EmployeeName,
             CompanyId = a.CompanyId,
             CompanyName = a.Company?.Name,
             Status = a.Status,
@@ -1866,7 +1347,6 @@ public partial class AppointmentService : IAppointmentService
     {
         // Phase M1B: termin = izvedeni raspon + segmenti + Bookinzi; plosnata polja su privremena jednosegmentna projekcija.
         AppointmentRange range = AppointmentRange.Of(a);
-        SingleSegmentProjection compat = SingleSegmentProjection.Of(a);
         return new AppointmentDto
         {
             Id = a.Id.GetValueOrDefault(),
@@ -1874,17 +1354,8 @@ public partial class AppointmentService : IAppointmentService
             PlannedStart = range.PlannedStart,
             PlannedEnd = range.PlannedEnd,
             Segments = AppointmentSegmentReadModel.ToDtos(a),
-            StartsAt = range.PlannedStart,
-            DurationMinutes = range.SpanMinutes,
-            ServiceId = compat.ServiceId,
-            ServiceName = compat.ServiceName,
-            ServiceCategoryColorHex = compat.ServiceColorHex,
-            EmployeeId = compat.EmployeeId,
-            EmployeeName = compat.EmployeeName,
             CompanyId = a.CompanyId,
             CompanyName = a.Company?.Name,
-            RoomId = compat.RoomId,
-            RoomName = compat.RoomName,
             Status = a.Status,
             Note = a.Note,
             CancellationReason = a.CancellationReason,

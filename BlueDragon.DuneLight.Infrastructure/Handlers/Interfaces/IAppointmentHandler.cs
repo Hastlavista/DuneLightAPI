@@ -30,11 +30,8 @@ public interface IAppointmentHandler
     /// <summary>Bare Booking redak za pripremu mutacije, ili null ako ne postoji.</summary>
     Task<Booking> GetBooking(Guid organizationId, Guid appointmentId, Guid clientId);
 
-    /// <summary>Booking po vlastitom Id-u (ne appointmentId+clientId) s uključenim Appointment.Service — koristi
-    /// ICheckoutService.AddBookingItem koje adresira Booking izravno (CheckoutAddBookingItemRequest.BookingId).</summary>
-    Task<Booking> GetBookingById(Guid organizationId, Guid id);
-
-    /// <summary>Kao <see cref="GetBookingById(Guid, Guid)"/>, ali unutar zajedničke transakcije — vidi IUnitOfWork.</summary>
+    /// <summary>Booking po vlastitom Id-u unutar zajedničke transakcije, s terminom i segmentima (usluga, zaposlenici) —
+    /// ICheckoutService.AddBookingItem ga čita za Booking kojem pripada adresirano sudjelovanje (ParticipationId).</summary>
     Task<Booking> GetBookingById(IUnitOfWork uow, Guid organizationId, Guid id);
 
     /// <summary>Kao <see cref="GetBooking(Guid, Guid, Guid)"/>, ali unutar zajedničke transakcije — vidi IUnitOfWork.</summary>
@@ -55,23 +52,6 @@ public interface IAppointmentHandler
 
     /// <summary>Kao <see cref="UpdateScalar(Appointment)"/>, ali unutar zajedničke transakcije — vidi IUnitOfWork.</summary>
     Task UpdateScalar(IUnitOfWork uow, Appointment appointment);
-
-    /// <summary>Puna izmjena uklj. popis klijenata (samo Form=Individual) — spaja postojeće Booking retke, uklanja
-    /// izbačene, dodaje nove kao Confirmed. Fizičko brisanje (hard delete) izostavljenog retka pogađa ISKLJUČIVO
-    /// Booking čiji je status Confirmed (buduća, još neodržana rezervacija bez ikakve poslovne povijesti) —
-    /// terminalan redak (Completed/Cancelled/NoShow, uz svoj Payment/CommissionEntry/package-pokriće preko FK-a)
-    /// izostavljen iz `clientIds` NIKAD se ne briše, ostaje netaknut na terminu bez obzira spominje li ga pozivatelj
-    /// (kritično za CompleteExisting koji zna reconcilirati samo PODSKUP klijenata nakon P1 korekcije, vidi
-    /// BookingService.ApplyIndividualCompletionCorrection — pozivatelj koji šalje samo klijente koje trenutno
-    /// uređuje/odrađuje ne izražava "obriši sve ostale"). `pricing` se primjenjuje (Phase D3B2: na sudjelovanje, kroz
-    /// ParticipationPrice/BookingFactory) na SVE preživjele Booking retke (postojeće I nove) čiji status NIJE terminalan
-    /// (Completed/Cancelled/NoShow) — re-cijenjenje termina prije naplate (vidi spec section 18/20); već
-    /// naplaćeni/otkazani/izostali retci se ne diraju. BookingPricing.Zero kad pozivatelj svejedno odmah nakon
-    /// prepisuje sve retke (CompleteExisting). Phase M1B: PRIVREMENA KOMPATIBILNOST plosnatih Update/CompleteExisting —
-    /// rekoncilijacija i re-cijenjenje adresiraju EKSPLICITNO zadani <paramref name="segment"/> (razriješen na granici
-    /// pozivatelja); novi klijenti dobivaju Booking s jednim sudjelovanjem na tom segmentu. Radi unutar zajedničke
-    /// transakcije — vidi IUnitOfWork.</summary>
-    Task UpdateWithBookings(IUnitOfWork uow, Appointment appointment, AppointmentSegment segment, List<Guid> clientIds, BookingPricing pricing);
 
     Task Delete(Appointment appointment);
 
@@ -114,8 +94,8 @@ public interface IAppointmentHandler
     Task<Appointment> GetForUpdateWithGroup(IUnitOfWork uow, Guid organizationId, Guid appointmentId);
 
     /// <summary>Zaključava Appointment redak (SELECT ... FOR UPDATE) unutar zajedničke transakcije, bare redak bez
-    /// ikakvih navigacija — najuži lock za prijelaze koji ne trebaju čitati Bookings (npr. CompleteExisting/
-    /// CompleteGroupAppointment status re-check prije mutacije, vidi AppointmentService). Isti obrazac kao
+    /// ikakvih navigacija — najuži lock za prijelaze koji ne trebaju čitati Bookings (npr. ChangeNote/
+    /// CompleteGroupAppointment re-check prije mutacije, vidi AppointmentService). Isti obrazac kao
     /// ICheckoutHandler.GetForUpdate. Null ako termin ne postoji.</summary>
     Task<Appointment> GetForUpdate(IUnitOfWork uow, Guid organizationId, Guid appointmentId);
 
@@ -148,7 +128,6 @@ public interface IAppointmentHandler
     /// <summary>Agregirane brojke dolazaka jednog klijenta za Povijest klijenta — jedan upit nad Booking (nakon
     /// uvođenja Bookinga individualni i grupni termini dijele istu tablicu, za razliku od stare podjele
     /// AppointmentClient/AppointmentAttendance). activeGroupIds ulazi u izračun NextVisitAt jer budući grupni
-    /// termini (već generirani) sad IMAJU Confirmed Booking odmah po generiranju (vidi GroupService.GenerateAppointments),
-    /// ali parametar je zadržan radi kompatibilnosti poziva/testiranja buduće grupne logike.</summary>
+    /// termini (već generirani) sad IMAJU Confirmed Booking odmah po generiranju (vidi GroupService.GenerateAppointments).</summary>
     Task<ClientAppointmentStatsDto> GetStatsForClient(Guid organizationId, Guid clientId, List<Guid> activeGroupIds);
 }

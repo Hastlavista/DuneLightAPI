@@ -41,13 +41,12 @@ public class MultiSegmentGroupTests
         {
             Name = $"Wellness-{Guid.NewGuid():N}",
             CompanyId = w.Company.Id.Value,
-            DefaultTrainerId = withTrainer ? w.Employee.Id : null,
             Slots = new List<GroupSlotCreateRequest> { new() { DayOfWeek = SchedulingWorld.FutureDay.DayOfWeek, StartTime = slot ?? TimeSpan.FromHours(9) } },
             SegmentTemplates = new List<GroupSegmentTemplateRequest>
             {
-                new() { ServiceId = yoga.Id.Value, StartOffsetMinutes = 0, Capacity = capA, RoomId = roomA?.Id },
-                new() { ServiceId = massage.Id.Value, StartOffsetMinutes = 60, DurationMinutes = 30, Capacity = capB },
-                new() { ServiceId = recovery.Id.Value, StartOffsetMinutes = 120, DurationMinutes = 45, Capacity = capC }
+                new() { ServiceId = yoga.Id.Value, StartOffsetMinutes = 0, Capacity = capA, RoomId = roomA?.Id, EmployeeIds = withTrainer ? new List<Guid> { w.Employee.Id.Value } : new List<Guid>() },
+                new() { ServiceId = massage.Id.Value, StartOffsetMinutes = 60, DurationMinutes = 30, Capacity = capB, EmployeeIds = withTrainer ? new List<Guid> { w.Employee.Id.Value } : new List<Guid>() },
+                new() { ServiceId = recovery.Id.Value, StartOffsetMinutes = 120, DurationMinutes = 45, Capacity = capC, EmployeeIds = withTrainer ? new List<Guid> { w.Employee.Id.Value } : new List<Guid>() }
             }
         });
         Guid Of(ServiceEntity s) => group.SegmentTemplates.Single(t => t.ServiceId == s.Id).Id;
@@ -59,7 +58,7 @@ public class MultiSegmentGroupTests
         w.Groups.AddMember(w.OrganizationId, userId ?? w.ActorUserId, group.Id, new GroupMemberAddRequest
         {
             ClientId = client.Id.Value,
-            SegmentTemplateIds = templates.Length == 0 ? null : templates.ToList(),
+            SegmentTemplateIds = templates.ToList(),
             OverrideCapacity = overrideCapacity
         });
 
@@ -201,12 +200,11 @@ public class MultiSegmentGroupTests
         {
             Name = $"Parallel-{Guid.NewGuid():N}",
             CompanyId = w.Company.Id.Value,
-            DefaultTrainerId = withTrainer ? w.Employee.Id : null,
             Slots = new List<GroupSlotCreateRequest> { new() { DayOfWeek = SchedulingWorld.FutureDay.DayOfWeek, StartTime = TimeSpan.FromHours(9) } },
             SegmentTemplates = new List<GroupSegmentTemplateRequest>
             {
-                new() { ServiceId = yoga.Id.Value, StartOffsetMinutes = 0, Capacity = 5 },
-                new() { ServiceId = pilates.Id.Value, StartOffsetMinutes = 30, Capacity = 5 }
+                new() { ServiceId = yoga.Id.Value, StartOffsetMinutes = 0, Capacity = 5, EmployeeIds = withTrainer ? new List<Guid> { w.Employee.Id.Value } : new List<Guid>() },
+                new() { ServiceId = pilates.Id.Value, StartOffsetMinutes = 30, Capacity = 5, EmployeeIds = withTrainer ? new List<Guid> { w.Employee.Id.Value } : new List<Guid>() }
             }
         };
 
@@ -294,7 +292,7 @@ public class MultiSegmentGroupTests
         // A guest with the override is refused by the room too.
         Client guest = await w.AddClient("Guest");
         await w.GrantUser(w.ActorUserId, Grants.GroupsCapacityOverride);
-        await SchedulingAssert.BusinessRule(ErrorCodes.RoomCapacityExceeded, () => w.Bookings.AddBooking(w.OrganizationId, w.ActorUserId, true,
+        await SchedulingAssert.BusinessRule(ErrorCodes.RoomCapacityExceeded, () => w.Bookings.AddGroupGuest(w.OrganizationId, w.ActorUserId, true,
             occurrence.Id.Value, new BookingCreateRequest { ClientId = guest.Id.Value, SegmentId = SegmentOf(occurrence, g.A).Id, OverrideCapacity = true }));
 
         Assert.Equal(2, (await w.LoadAppointment(occurrence.Id.Value)).Bookings.Count);
@@ -411,15 +409,18 @@ public class MultiSegmentGroupTests
     }
 
     [Fact]
-    public async Task LegacyMembershipWithoutSelection_OnAMultiTemplateGroup_IsRefused_NeverAllTemplates()
+    public async Task MembershipWithoutSelection_IsRefused_NeverAllTemplates()
     {
-        await using SchedulingWorld w = await SchedulingWorld.Create(nameof(LegacyMembershipWithoutSelection_OnAMultiTemplateGroup_IsRefused_NeverAllTemplates));
+        await using SchedulingWorld w = await SchedulingWorld.Create(nameof(MembershipWithoutSelection_IsRefused_NeverAllTemplates));
         Wellness g = await CreateWellness(w);
 
-        await SchedulingAssert.BusinessRule(ErrorCodes.SegmentSelectionRequired, () => Join(w, g.Group, w.Client));
-        await SchedulingAssert.BusinessRule(ErrorCodes.SegmentSelectionRequired, () => w.Groups.Update(w.OrganizationId, w.ActorUserId, g.Group.Id,
-            new GroupUpdateRequest { Name = "x", CompanyId = w.Company.Id.Value, ServiceId = g.Yoga.Id.Value, Capacity = 3 }));
+        // M1H: the selection is required for every group (also a one-template group) — never inferred.
+        await SchedulingAssert.Validation(() => Join(w, g.Group, w.Client));
+        GroupDto single = await w.CreateGroup(g.Yoga, 5, slots: (DayOfWeek.Sunday, TimeSpan.FromHours(18)));
+        await SchedulingAssert.Validation(() => w.Groups.AddMember(w.OrganizationId, w.ActorUserId, single.Id,
+            new GroupMemberAddRequest { ClientId = w.Client.Id.Value }));
         Assert.Empty((await w.Groups.GetById(w.OrganizationId, g.Group.Id)).Members);
+        Assert.Empty((await w.Groups.GetById(w.OrganizationId, single.Id)).Members);
     }
 
     #endregion
@@ -438,7 +439,7 @@ public class MultiSegmentGroupTests
         Appointment occurrence = await w.GenerateSingleOccurrence(g.Group);
         Guid segA = SegmentOf(occurrence, g.A).Id.Value;
 
-        await SchedulingAssert.BusinessRule(ErrorCodes.SegmentSelectionRequired, () => w.Waitlist.Join(w.OrganizationId, w.ActorUserId, true,
+        await SchedulingAssert.Validation(() => w.Waitlist.Join(w.OrganizationId, w.ActorUserId, true,
             occurrence.Id.Value, new WaitlistJoinRequest { ClientId = waiter.Id.Value }));
         WaitlistEntryDto entry = await w.Waitlist.Join(w.OrganizationId, w.ActorUserId, true, occurrence.Id.Value,
             new WaitlistJoinRequest { ClientId = waiter.Id.Value, SegmentId = segA });
@@ -470,16 +471,17 @@ public class MultiSegmentGroupTests
         Appointment occurrence = await w.GenerateSingleOccurrence(g.Group);
         Guid segB = SegmentOf(occurrence, g.B).Id.Value;
 
-        await SchedulingAssert.BusinessRule(ErrorCodes.SegmentSelectionRequired, () => w.Bookings.AddBooking(w.OrganizationId, w.ActorUserId, true,
+        // M1H: the segment is required — never inferred.
+        await SchedulingAssert.Validation(() => w.Bookings.AddGroupGuest(w.OrganizationId, w.ActorUserId, true,
             occurrence.Id.Value, new BookingCreateRequest { ClientId = guest.Id.Value }));
 
-        BookingDto guestBooking = await w.Bookings.AddBooking(w.OrganizationId, w.ActorUserId, true, occurrence.Id.Value,
+        BookingDto guestBooking = await w.Bookings.AddGroupGuest(w.OrganizationId, w.ActorUserId, true, occurrence.Id.Value,
             new BookingCreateRequest { ClientId = guest.Id.Value, SegmentId = segB });
         Assert.Equal(segB, Assert.Single(guestBooking.Participations).AppointmentSegmentId);
 
         // A member's existing Booking is reused for a one-off extra segment (no membership change).
         Guid anaBooking = BookingOf(occurrence, ana).Id.Value;
-        BookingDto anaDto = await w.Bookings.SetStatus(w.OrganizationId, w.ActorUserId, true, occurrence.Id.Value, ana.Id.Value,
+        BookingDto anaDto = await w.Bookings.SetStatusOnSegment(w.OrganizationId, w.ActorUserId, true, occurrence.Id.Value, ana.Id.Value,
             new BookingSetStatusRequest { Status = BookingStatus.Confirmed, SegmentId = segB });
         Assert.Equal(anaBooking, anaDto.Id);
         Assert.Equal(2, anaDto.Participations.Count);
@@ -518,7 +520,7 @@ public class MultiSegmentGroupTests
         AppointmentDto closed = await w.Appointments.CompleteGroupAppointment(w.OrganizationId, w.ActorUserId, true, occurrence.Id.Value);
         Assert.Contains(closed.Warnings, x => x.Code == WarningCodes.GroupAppointmentUnresolvedBookings); // only C (Marko) is unresolved
         // CHANGED in M1G: multi-template close-out computes session commission per segment — no blanket warning.
-        Assert.DoesNotContain(closed.Warnings, x => x.Code == WarningCodes.GroupCommissionNotSupportedForMultiSegment);
+        Assert.DoesNotContain(closed.Warnings, x => x.Code == WarningCodes.GroupCommissionRuleNotSupported);
         Appointment a1 = await w.LoadAppointment(occurrence.Id.Value);
         Assert.NotNull(a1.ClosedOutAt);
         Assert.Equal(AppointmentStatus.Scheduled, a1.Status); // derived: Marko is still Confirmed
@@ -552,8 +554,6 @@ public class MultiSegmentGroupTests
         }));
 
         Wellness g = await CreateWellness(w);
-        Assert.Null(g.Group.ServiceId); // compatibility projection only for one template
-        Assert.Null(g.Group.Capacity);
         Assert.Equal(new[] { 0, 60, 120 }, g.Group.SegmentTemplates.Select(t => t.StartOffsetMinutes));
         Assert.Equal(new[] { 15, 4, 8 }, g.Group.SegmentTemplates.Select(t => t.Capacity));
 

@@ -70,7 +70,7 @@ public static class SchedulingConflictGuard
             throw violation.ToException();
     }
 
-    /// <summary>Novo/ponovno aktivno sudjelovanje klijenta na POSTOJEĆEM segmentu (AddBooking, gost, AddMember, reaktivacija
+    /// <summary>Novo/ponovno aktivno sudjelovanje klijenta na POSTOJEĆEM segmentu (AddClient, gost, AddMember, reaktivacija
     /// prijelazom statusa) — vidi <see cref="SegmentClaim.ForParticipationActivation"/>.</summary>
     public static Task ClaimParticipationActivation(
         ISchedulingOccupancyHandler occupancy, IUnitOfWork uow, Guid organizationId, SegmentClaim activation,

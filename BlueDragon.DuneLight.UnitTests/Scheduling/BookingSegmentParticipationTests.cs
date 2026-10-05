@@ -494,17 +494,15 @@ public class BookingSegmentParticipationTests
     }
 
     [Fact]
-    public async Task RemovingAClientWithParticipationHistory_ThroughUpdate_IsBlocked_AndNothingIsErased()
+    public async Task RemovingAParticipationWithHistory_IsBlocked_AndNothingIsErased()
     {
-        await using SchedulingWorld w = await SchedulingWorld.Create(nameof(RemovingAClientWithParticipationHistory_ThroughUpdate_IsBlocked_AndNothingIsErased));
+        await using SchedulingWorld w = await SchedulingWorld.Create(nameof(RemovingAParticipationWithHistory_IsBlocked_AndNothingIsErased));
         Client second = await w.AddClient("Second", "Client");
         Setup s = await AppointmentWithSegments(w, 10, 1, second);
         Booking secondBooking = s.Bookings.Single(b => b.ClientId == second.Id);
         await GiveHistory(w, secondBooking.Id.Value); // D3B1: history (not mere existence) blocks the removal
-        AppointmentDto current = await w.Appointments.GetById(w.OrganizationId, s.AppointmentId);
 
-        await SchedulingAssert.BusinessRule(ErrorCodes.ReferencedCannotDelete, () => w.Appointments.Update(
-            w.OrganizationId, w.ActorUserId, true, s.AppointmentId, w.UpdateRequest(current, r => r.ClientIds = new List<Guid> { w.Client.Id.Value })));
+        await SchedulingAssert.BusinessRule(ErrorCodes.ReferencedCannotDelete, () => w.RemoveClientFromOnlySegment(s.AppointmentId, second));
 
         Appointment after = await w.LoadAppointment(s.AppointmentId);
         Assert.Equal(2, after.Bookings.Count);
@@ -513,16 +511,14 @@ public class BookingSegmentParticipationTests
     }
 
     [Fact]
-    public async Task RemovingAClientWithAnUntouchedParticipation_ThroughUpdate_StillHardDeletesTheConfirmedBooking()
+    public async Task RemovingAnUntouchedParticipation_HardDeletesItAndItsNowEmptyBooking()
     {
-        await using SchedulingWorld w = await SchedulingWorld.Create(nameof(RemovingAClientWithAnUntouchedParticipation_ThroughUpdate_StillHardDeletesTheConfirmedBooking));
+        await using SchedulingWorld w = await SchedulingWorld.Create(nameof(RemovingAnUntouchedParticipation_HardDeletesItAndItsNowEmptyBooking));
         Client second = await w.AddClient("Second", "Client");
         Setup s = await AppointmentWithSegments(w, 10, 1, second);
         await GiveHistory(w, s.Bookings.Single(b => b.ClientId == w.Client.Id).Id.Value); // the KEPT client's history is irrelevant
-        AppointmentDto current = await w.Appointments.GetById(w.OrganizationId, s.AppointmentId);
 
-        await w.Appointments.Update(w.OrganizationId, w.ActorUserId, true, s.AppointmentId,
-            w.UpdateRequest(current, r => r.ClientIds = new List<Guid> { w.Client.Id.Value }));
+        await w.RemoveClientFromOnlySegment(s.AppointmentId, second);
 
         Appointment after = await w.LoadAppointment(s.AppointmentId);
         Assert.Equal(new[] { w.Client.Id.Value }, after.Bookings.Select(b => b.ClientId).ToArray());
@@ -580,7 +576,7 @@ public class BookingSegmentParticipationTests
     {
         await using SchedulingWorld w = await SchedulingWorld.Create(nameof(ProductionFlows_CreateExactlyOneParticipationPerBooking_OnTheAppointmentsSegment));
 
-        // Individual: create, recurring, AddBooking, SetStatus, Complete (existing and new).
+        // Individual: create, recurring, participation status, completion (of existing participations and CompleteNow).
         AppointmentDto single = await w.CreateAppointment(Z(8));
         await w.Appointments.CreateRecurring(w.OrganizationId, w.ActorUserId, true, new RecurringAppointmentCreateRequest
         {
@@ -590,17 +586,18 @@ public class BookingSegmentParticipationTests
         });
         AppointmentDto toCancel = await w.CreateAppointment(Z(11));
         await w.SetBookingStatus(toCancel.Id, w.Client, BookingStatus.Cancelled, "changed plans");
-        await w.CompleteExisting(single.Id, w.CompleteRequest(Z(8)));
+        await w.CompleteParticipations(single.Id, w.CompleteRequest(Z(8)));
         await w.CompleteNew(w.CompleteRequest(Z(13)));
 
-        // Group: generation, AddMember, AddBooking (guest), waitlist promotion, attendance via SetStatus.
+        // Group: generation, AddMember, AddGroupGuest, waitlist promotion, attendance via SetStatusOnSegment.
         ServiceEntity groupService = await w.AddGroupService();
         GroupDto group = await w.CreateGroup(groupService, capacity: 1);
         Client member = await w.AddClient("Member", "Client");
         await w.AddGroupMember(group, member);
         Appointment occurrence = await w.GenerateSingleOccurrence(group);
         Client waiter = await w.AddClient("Waiter", "Client");
-        await w.Waitlist.Join(w.OrganizationId, w.ActorUserId, true, occurrence.Id.Value, new WaitlistJoinRequest { ClientId = waiter.Id.Value });
+        await w.Waitlist.Join(w.OrganizationId, w.ActorUserId, true, occurrence.Id.Value,
+            new WaitlistJoinRequest { ClientId = waiter.Id.Value, SegmentId = Assert.Single(occurrence.Segments).Id });
         await w.SetBookingStatus(occurrence.Id.Value, member, BookingStatus.Cancelled, "cannot come"); // promotes the waiter
         await w.SetBookingStatus(occurrence.Id.Value, waiter, BookingStatus.Completed);
         Client guest = await w.AddClient("Guest", "Client");

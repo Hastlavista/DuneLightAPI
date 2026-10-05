@@ -66,14 +66,14 @@ public class SegmentConflictInvariantTests
     }
 
     /// <summary>A fresh client and a create request for the default employee — isolates the EMPLOYEE invariant.</summary>
-    private static async Task<AppointmentSingleSegmentRequest> EmployeeProbe(SchedulingWorld w, DateTimeOffset start)
+    private static async Task<TestAppointmentSpec> EmployeeProbe(SchedulingWorld w, DateTimeOffset start)
     {
         Client fresh = await w.AddClient("Probe", Guid.NewGuid().ToString("N")[..6]);
         return w.CreateRequest(start, client: fresh);
     }
 
     /// <summary>A fresh employee and a create request for the default client — isolates the CLIENT invariant.</summary>
-    private static async Task<AppointmentSingleSegmentRequest> ClientProbe(SchedulingWorld w, DateTimeOffset start)
+    private static async Task<TestAppointmentSpec> ClientProbe(SchedulingWorld w, DateTimeOffset start)
     {
         Employee fresh = await w.AddEmployee("Probe" + Guid.NewGuid().ToString("N")[..6]);
         return w.CreateRequest(start, employee: fresh);
@@ -141,8 +141,7 @@ public class SegmentConflictInvariantTests
             {
                 new SegmentPlan(Guid.NewGuid(), T9, T9.AddMinutes(60), new[] { Guid.NewGuid() }, null, new[] { new ParticipantPlan(client, BookingPricing.Zero) }),
                 new SegmentPlan(Guid.NewGuid(), T9.AddMinutes(30), T9.AddMinutes(90), new[] { Guid.NewGuid() }, null, new[] { new ParticipantPlan(client, BookingPricing.Zero) })
-            },
-            ParticipationStatus.Confirmed);
+            });
         Assert.Equal(2, Assert.Single(proposed.Bookings).Participations.Count); // the shape the core would persist
 
         BusinessRuleException ex = Assert.Throws<BusinessRuleException>(() => SchedulingConflicts.EnsureTargetStateConsistent(
@@ -436,20 +435,20 @@ public class SegmentConflictInvariantTests
     }
 
     [Fact]
-    public async Task Client_AddBooking_IsCheckedAgainstTheConcreteSegment()
+    public async Task Client_AddClient_IsCheckedAgainstTheConcreteSegment()
     {
-        await using SchedulingWorld w = await SchedulingWorld.Create(nameof(Client_AddBooking_IsCheckedAgainstTheConcreteSegment));
+        await using SchedulingWorld w = await SchedulingWorld.Create(nameof(Client_AddClient_IsCheckedAgainstTheConcreteSegment));
         Employee colleague = await w.AddEmployee("Colleague");
         Client partner = await w.AddClient("Partner");
         AppointmentDto mine = await w.CreateAppointment(SchedulingWorld.Future(10));                                      // client busy 10:00
         AppointmentDto theirs = await w.CreateAppointment(w.CreateRequest(SchedulingWorld.Future(10, 15), client: partner, employee: colleague));
 
         await SchedulingAssert.BusinessRule(ErrorCodes.AppointmentOverlap,
-            () => w.Bookings.AddBooking(w.OrganizationId, w.ActorUserId, true, theirs.Id, new BookingCreateRequest { ClientId = w.Client.Id.Value }));
+            () => w.AddClientToOnlySegment(theirs.Id, w.Client));
 
-        // A cancelled participation does not occupy: after cancelling the 10:00 booking the same AddBooking succeeds.
+        // A cancelled participation does not occupy: after cancelling the 10:00 booking the same AddClient succeeds.
         await w.SetBookingStatus(mine.Id, w.Client, BookingStatus.Cancelled, "client");
-        await w.Bookings.AddBooking(w.OrganizationId, w.ActorUserId, true, theirs.Id, new BookingCreateRequest { ClientId = w.Client.Id.Value });
+        await w.AddClientToOnlySegment(theirs.Id, w.Client);
     }
 
     [Fact]
@@ -489,23 +488,22 @@ public class SegmentConflictInvariantTests
 
     #endregion
 
-    #region Self-exclusion through the compatibility Update / Move
+    #region Self-exclusion through the segment time command
 
     [Fact]
-    public async Task UpdateAndMove_ExcludeOnlyTheirOwnSegment()
+    public async Task SegmentTimeChange_ExcludesOnlyItsOwnSegment()
     {
-        await using SchedulingWorld w = await SchedulingWorld.Create(nameof(UpdateAndMove_ExcludeOnlyTheirOwnSegment));
+        await using SchedulingWorld w = await SchedulingWorld.Create(nameof(SegmentTimeChange_ExcludesOnlyItsOwnSegment));
         AppointmentDto created = await w.CreateAppointment(SchedulingWorld.Future(10));
         AppointmentDto blocker = await w.CreateAppointment(await EmployeeProbe(w, SchedulingWorld.Future(11)));
 
         // Overlapping its OWN old range is fine (self-excluded)...
-        await w.Appointments.Move(w.OrganizationId, w.ActorUserId, true, created.Id, new AppointmentMoveRequest { StartsAt = SchedulingWorld.Future(10, 10) });
+        await w.MoveOnlySegment(created.Id, SchedulingWorld.Future(10, 10));
         // ...another segment of the same employee is not.
         await SchedulingAssert.BusinessRule(ErrorCodes.AppointmentOverlap,
-            () => w.Appointments.Move(w.OrganizationId, w.ActorUserId, true, created.Id, new AppointmentMoveRequest { StartsAt = SchedulingWorld.Future(10, 45) }));
-        AppointmentDto current = await w.Appointments.GetById(w.OrganizationId, created.Id);
+            () => w.MoveOnlySegment(created.Id, SchedulingWorld.Future(10, 45)));
         await SchedulingAssert.BusinessRule(ErrorCodes.AppointmentOverlap,
-            () => w.Appointments.Update(w.OrganizationId, w.ActorUserId, true, created.Id, w.UpdateRequest(current, r => r.StartsAt = SchedulingWorld.Future(11, 15))));
+            () => w.MoveOnlySegment(created.Id, SchedulingWorld.Future(11, 15)));
         Assert.Equal(SchedulingWorld.Future(10, 10), (await w.Appointments.GetById(w.OrganizationId, created.Id)).PlannedStart);
         Assert.NotEqual(blocker.Id, created.Id);
     }
@@ -538,12 +536,12 @@ public class SegmentConflictInvariantTests
 
     #region Concurrency (real database, real transactions)
 
-    private static async Task<Exception> CreateInOwnScope(SchedulingWorld w, AppointmentSingleSegmentRequest request)
+    private static async Task<Exception> CreateInOwnScope(SchedulingWorld w, TestAppointmentSpec request)
     {
         using IServiceScope scope = SchedulingTestHost.CreateScope();
         try
         {
-            await scope.ServiceProvider.GetRequiredService<IAppointmentService>().Create(w.OrganizationId, w.ActorUserId, true, request);
+            await scope.ServiceProvider.GetRequiredService<IAppointmentService>().Create(w.OrganizationId, w.ActorUserId, true, request.ToTarget());
             return null;
         }
         catch (Exception ex)
@@ -585,8 +583,8 @@ public class SegmentConflictInvariantTests
     public async Task Race_TwoTransactionsReleasedTogether_ForTheSameEmployee_ExactlyOneCommits()
     {
         await using SchedulingWorld w = await SchedulingWorld.Create(nameof(Race_TwoTransactionsReleasedTogether_ForTheSameEmployee_ExactlyOneCommits));
-        AppointmentSingleSegmentRequest first = await EmployeeProbe(w, SchedulingWorld.Future(10));
-        AppointmentSingleSegmentRequest second = await EmployeeProbe(w, SchedulingWorld.Future(10, 15));
+        TestAppointmentSpec first = await EmployeeProbe(w, SchedulingWorld.Future(10));
+        TestAppointmentSpec second = await EmployeeProbe(w, SchedulingWorld.Future(10, 15));
         long key = SchedulingLockOrder.EmployeeKey(w.Employee.Id.Value);
 
         // Gate: hold the employee's scheduling lock, start both creates (both block at their FIRST lock, i.e. after every
@@ -608,8 +606,8 @@ public class SegmentConflictInvariantTests
     public async Task Race_TwoTransactionsReleasedTogether_ForTheSameClient_ExactlyOneCommits()
     {
         await using SchedulingWorld w = await SchedulingWorld.Create(nameof(Race_TwoTransactionsReleasedTogether_ForTheSameClient_ExactlyOneCommits));
-        AppointmentSingleSegmentRequest first = await ClientProbe(w, SchedulingWorld.Future(10));
-        AppointmentSingleSegmentRequest second = await ClientProbe(w, SchedulingWorld.Future(10, 15));
+        TestAppointmentSpec first = await ClientProbe(w, SchedulingWorld.Future(10));
+        TestAppointmentSpec second = await ClientProbe(w, SchedulingWorld.Future(10, 15));
         long key = SchedulingLockOrder.ClientKey(w.Client.Id.Value);
 
         Task<Exception[]> race;
@@ -635,8 +633,8 @@ public class SegmentConflictInvariantTests
         {
             DateTimeOffset start = SchedulingWorld.Future(8).AddDays(7 * round); // always the seeded Monday working day
             // Alternate the contested subject: even rounds the employee, odd rounds the client.
-            AppointmentSingleSegmentRequest a = round % 2 == 0 ? await EmployeeProbe(w, start) : await ClientProbe(w, start);
-            AppointmentSingleSegmentRequest b = round % 2 == 0 ? await EmployeeProbe(w, start.AddMinutes(10)) : await ClientProbe(w, start.AddMinutes(10));
+            TestAppointmentSpec a = round % 2 == 0 ? await EmployeeProbe(w, start) : await ClientProbe(w, start);
+            TestAppointmentSpec b = round % 2 == 0 ? await EmployeeProbe(w, start.AddMinutes(10)) : await ClientProbe(w, start.AddMinutes(10));
 
             Exception[] outcomes = await Task.WhenAll(
                 Task.Run(() => CreateInOwnScope(w, a)), Task.Run(() => CreateInOwnScope(w, b)), Task.Run(() => CreateInOwnScope(w, a)));

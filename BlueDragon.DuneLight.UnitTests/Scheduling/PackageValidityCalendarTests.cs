@@ -167,9 +167,8 @@ public class PackageValidityCalendarTests
         await using SchedulingWorld w = await SchedulingWorld.Create(nameof(AnUnlimitedPackage_StillRespectsValidUntilDate_AndCancellation));
         ClientPackage expired = await w.AddClientPackage(w.Client, w.Service, entries: null, ValidUntil);
         ClientPackage cancelled = await w.AddClientPackage(w.Client, w.Service, entries: null, new DateOnly(2035, 1, 1), status: ClientPackageStatus.Cancelled);
-        Appointment seeded = await w.SeedAppointment(Utc(3, 3, 10), bookings: (w.Client, BookingStatus.Confirmed, 50m));
-
         Assert.False(await Covers(w, expired, Utc(3, 3, 10)));
+        Appointment seeded = await w.SeedAppointment(Utc(3, 3, 10), bookings: (w.Client, BookingStatus.Confirmed, 50m));
         foreach (ClientPackage package in new[] { expired, cancelled })
             Assert.Equal(ErrorCodes.PackageNotEligible,
                 (await Assert.ThrowsAsync<BusinessRuleException>(() => Consume(w, seeded.Id.Value, w.Client, package))).Code);

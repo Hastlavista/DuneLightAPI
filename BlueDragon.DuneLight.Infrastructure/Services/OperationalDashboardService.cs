@@ -115,22 +115,13 @@ public class OperationalDashboardService : IOperationalDashboardService
     private static DashboardScheduleOccurrenceDto BuildOccurrence(Appointment appointment, List<WaitlistEntry> waiting, DateTimeOffset now)
     {
         AppointmentRange range = AppointmentRange.Of(appointment);
-        SingleSegmentProjection compat = SingleSegmentProjection.Of(appointment);
         DashboardScheduleOccurrenceDto dto = new DashboardScheduleOccurrenceDto
         {
             AppointmentId = appointment.Id.GetValueOrDefault(),
             PlannedStart = range.PlannedStart,
             PlannedEnd = range.PlannedEnd,
             Segments = AppointmentSegmentReadModel.ToDtos(appointment),
-            StartsAt = range.PlannedStart,
-            DurationMinutes = range.SpanMinutes,
             Status = appointment.Status,
-            ServiceId = compat.ServiceId,
-            ServiceName = compat.ServiceName,
-            EmployeeId = compat.EmployeeId,
-            EmployeeName = compat.EmployeeName,
-            RoomId = compat.RoomId,
-            RoomName = compat.RoomName,
             IsGroup = appointment.Form == AppointmentForm.Group,
             GroupId = appointment.GroupId,
             GroupName = appointment.Group?.Name

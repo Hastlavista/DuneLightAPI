@@ -7,7 +7,7 @@ namespace BlueDragon.DuneLight.Infrastructure.Utils;
 /// <summary>
 /// Klasifikacija "meke" radne-snage smetnje (odsutnost/pauza/praznik/izvan-radnog-vremena) za jedan
 /// kandidat termina (pojedinačni ili jedan occurrence u batchu) — dijeli je AppointmentService
-/// (pojedinačni Create/Update/Move i CreateRecurring batch) i GroupService (GenerateAppointments batch),
+/// (Create, CompleteNow, segmentne naredbe i CreateRecurring batch) i GroupService (GenerateAppointments batch),
 /// koji su prije ovoga svaki imali vlastitu, gotovo identičnu if/else logiku za isto pitanje ("zašto
 /// zaposlenik/poslovnica nije dostupna"). Namjerno OSTAJE static utility (isti obrazac kao
 /// WorkingHoursCalculator/ClientPackageEntryMutator u ovom projektu), ne novi DI servis — provjere same

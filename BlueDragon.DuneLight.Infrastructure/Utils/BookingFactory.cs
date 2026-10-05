@@ -15,21 +15,12 @@ namespace BlueDragon.DuneLight.Infrastructure.Utils;
 /// </summary>
 public static class BookingFactory
 {
-    /// <summary>Confirmed booking — Create, /recurring, UpdateWithBookings (novi klijent), AddBooking, gost na check-inu,
-    /// generiranje grupe, AddMember, promocija s liste čekanja.</summary>
+    /// <summary>Confirmed booking na jednom segmentu — gost grupnog occurrencea (AddGroupGuest / check-in gosta) i promocija s
+    /// liste čekanja. (Termin i grupni occurrence slažu Bookinge kroz AppointmentFactory.)</summary>
     public static Booking CreateConfirmed(
         Guid organizationId, AppointmentSegment segment, Guid clientId, BookingPricing pricing, DateTimeOffset createdAt)
     {
         return NewBooking(organizationId, segment, clientId, ParticipationStatus.Confirmed, pricing, createdAt);
-    }
-
-    /// <summary>CompleteNew — booking je odrađen u trenutku upisa (sudjelovanje odmah Completed, StatusVersion 0 — isto
-    /// kao prije na Bookingu, pinned F-07). Phase D3B3A: paket se ovdje NE bilježi — pozivatelj ga troši kroz
-    /// IPackageConsumptionLedgerService (PackageConsumption na sudjelovanju) u istoj transakciji.</summary>
-    public static Booking CreateCompletedAtCreation(
-        Guid organizationId, AppointmentSegment segment, Guid clientId, BookingPricing pricing, DateTimeOffset createdAt)
-    {
-        return NewBooking(organizationId, segment, clientId, ParticipationStatus.Completed, pricing, createdAt);
     }
 
     private static Booking NewBooking(

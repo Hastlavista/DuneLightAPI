@@ -95,7 +95,6 @@ public class MultiEmployeeGroupTests
         GroupSegmentTemplateDto recovery = g.Group.SegmentTemplates.Single(t => t.Id == g.RecoveryT);
         Assert.Equal(Ids(g.Ana, g.Ivana), recovery.Employees.Select(e => e.EmployeeId).OrderBy(x => x));
         Assert.Equal(SegmentPricingMode.Standard, recovery.PricingMode);
-        Assert.Null(g.Group.DefaultTrainerId); // multi-template group: no fake authoritative trainer
     }
 
     [Fact]
@@ -197,7 +196,7 @@ public class MultiEmployeeGroupTests
         AppointmentDto closed = await w.Appointments.CompleteGroupAppointment(w.OrganizationId, w.ActorUserId, true, occurrence.Id.Value);
         await w.Appointments.CompleteGroupAppointment(w.OrganizationId, w.ActorUserId, true, occurrence.Id.Value); // repeat
 
-        Assert.DoesNotContain(closed.Warnings, x => x.Code == WarningCodes.GroupCommissionNotSupportedForMultiSegment);
+        Assert.DoesNotContain(closed.Warnings, x => x.Code == WarningCodes.GroupCommissionRuleNotSupported);
         List<CommissionEntry> entries = (await w.LoadCommissionEntries()).Where(e => e.AppointmentId == occurrence.Id).ToList();
         Guid SegmentFor(ServiceEntity s) => occurrence.Segments.Single(x => x.ServiceId == s.Id).Id.Value;
         Assert.Equal(new[]
@@ -233,31 +232,30 @@ public class MultiEmployeeGroupTests
     }
 
     [Fact]
-    public async Task LegacyDefaultTrainer_MapsToTheOnlyTemplate_IsAProjectionOnly_AndMultiTemplateGroupsRejectIt()
+    public async Task GroupUpdate_ChangesOnlyTheGroupsOwnFields_TemplateStaffIsChangedOnlyThroughTheTemplate()
     {
-        await using SchedulingWorld w = await SchedulingWorld.Create(nameof(LegacyDefaultTrainer_MapsToTheOnlyTemplate_IsAProjectionOnly_AndMultiTemplateGroupsRejectIt));
+        await using SchedulingWorld w = await SchedulingWorld.Create(nameof(GroupUpdate_ChangesOnlyTheGroupsOwnFields_TemplateStaffIsChangedOnlyThroughTheTemplate));
         ServiceEntity yoga = await w.AddGroupService();
 
         GroupDto flat = await w.CreateGroup(yoga, 10);
         GroupSegmentTemplateDto only = flat.SegmentTemplates.Single();
         Assert.Equal(w.Employee.Id, Assert.Single(only.Employees).EmployeeId);
         Assert.Equal((SegmentPricingMode.Employee, w.Employee.Id), (only.PricingMode, only.PricingEmployeeId));
-        Assert.Equal(w.Employee.Id, flat.DefaultTrainerId);
 
-        // Clearing the legacy trainer of a one-template group clears that template's staff.
-        GroupDto cleared = await w.Groups.Update(w.OrganizationId, w.ActorUserId, flat.Id, new GroupUpdateRequest
-        {
-            Name = "Flat", CompanyId = w.Company.Id.Value, DefaultTrainerId = null
-        });
+        // M1H: no flat trainer on the group — Update edits name/company/note only, the staff stays.
+        GroupDto renamed = await w.Groups.Update(w.OrganizationId, w.ActorUserId, flat.Id,
+            new GroupUpdateRequest { Name = "Flat", CompanyId = w.Company.Id.Value, Note = "note" });
+        Assert.Equal(("Flat", "note"), (renamed.Name, renamed.Note));
+        Assert.Equal(w.Employee.Id, Assert.Single(renamed.SegmentTemplates.Single().Employees).EmployeeId);
+
+        // Clearing the staff is an explicit template edit.
+        GroupDto cleared = await w.UpdateOnlyTemplate(renamed, r => r.EmployeeIds = new List<Guid>());
         Assert.Empty(cleared.SegmentTemplates.Single().Employees);
         Assert.Equal(SegmentPricingMode.Standard, cleared.SegmentTemplates.Single().PricingMode);
 
         Wellness g = await SetUp(w);
-        await SchedulingAssert.BusinessRule(ErrorCodes.SegmentSelectionRequired, () => w.Groups.Update(w.OrganizationId, w.ActorUserId, g.Group.Id,
-            new GroupUpdateRequest { Name = "Wellness", CompanyId = w.Company.Id.Value, DefaultTrainerId = g.Ana.Id }));
-        // Sending the projection back (null) is a no-op for a multi-template group.
         GroupDto unchanged = await w.Groups.Update(w.OrganizationId, w.ActorUserId, g.Group.Id,
-            new GroupUpdateRequest { Name = "Wellness 2", CompanyId = w.Company.Id.Value, DefaultTrainerId = null });
+            new GroupUpdateRequest { Name = "Wellness 2", CompanyId = w.Company.Id.Value });
         Assert.Equal(2, unchanged.SegmentTemplates.Single(t => t.Id == g.RecoveryT).Employees.Count);
     }
 

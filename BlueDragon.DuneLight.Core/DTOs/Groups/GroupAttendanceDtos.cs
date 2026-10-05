@@ -47,13 +47,9 @@ public class GroupSegmentAttendanceDto
     public List<GroupAttendanceEntryDto> Recorded { get; set; } = new();
 }
 
-/// <summary>Expected = aktivni članovi bez zabilježene prisutnosti (Phase M1F.1: unija očekivanih po segmentima — po odabiru
-/// predložaka, samo za segmente koji još nisu počeli). Recorded = svi Booking retci occurrencea (uklj. goste) — sažetak po
-/// Bookingu. Segments = ista slika po segmentu (autoritativna za višesegmentni occurrence).</summary>
+/// <summary>Prisutnost grupnog occurrencea — isključivo po segmentu (Phase M1H: nema sažetka "po occurrenceu").</summary>
 public class GroupAttendanceListDto
 {
-    public List<GroupAttendanceEntryDto> Expected { get; set; } = new();
-    public List<GroupAttendanceEntryDto> Recorded { get; set; } = new();
     public List<GroupSegmentAttendanceDto> Segments { get; set; } = new();
 }
 
@@ -81,6 +77,7 @@ public class SetGroupAttendanceRequest
 
     public string Note { get; set; }
 
-    /// <summary>Phase M1F.1 — segment occurrencea (obavezan za višesegmentni occurrence, SEGMENT_SELECTION_REQUIRED).</summary>
+    /// <summary>Segment occurrencea čija se prisutnost bilježi — uvijek obavezan.</summary>
+    [Required]
     public Guid? SegmentId { get; set; }
 }

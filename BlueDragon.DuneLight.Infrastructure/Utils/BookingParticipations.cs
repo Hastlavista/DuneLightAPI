@@ -12,44 +12,13 @@ namespace BlueDragon.DuneLight.Infrastructure.Utils;
 /// Phase M0 — razrješavanje sudjelovanja iz Bookinga. Booking je spremnik sudjelovanja jednog klijenta na terminu i NEMA
 /// vlastiti životni ciklus, cijenu, namirenje ni verziju; svaka izvršna/komercijalna naredba adresira SUDJELOVANJE.
 ///
-/// Dva razrješenja, oba eksplicitna:
-/// - <see cref="OnSegment"/> — sudjelovanje Bookinga na ZADANOM segmentu (segmentno adresiranje; tok koji radi nad
-///   izvršnim segmentom termina, npr. individualni completion, re-cijenjenje kod Update);
-/// - <see cref="GetSingleParticipation"/> — PRIVREMENA kompatibilnost: naredba adresirana BookingId-em (ili parom
-///   termin+klijent) smije djelovati samo ako Booking ima TOČNO JEDNO sudjelovanje; više sudjelovanja se odbija
-///   (BOOKING_PARTICIPATION_AMBIGUOUS, <see cref="Ambiguous"/>) umjesto proizvoljnog izbora. Nula sudjelovanja ili tuđi
-///   segment/termin je integritetna greška (<see cref="InvalidBookingParticipationStateException"/>).
+/// Razrješenja su eksplicitna: <see cref="OnSegment"/> (sudjelovanje Bookinga na ZADANOM segmentu) i ById (adresirano
+/// sudjelovanje). Phase M1H: nema "jedinog sudjelovanja Bookinga" — naredbe adresiraju sudjelovanje. Tuđi segment/termin je
+/// integritetna greška (<see cref="InvalidBookingParticipationStateException"/>).
 /// Booking.Participations se učitava automatski (AutoInclude) kad god se učita Booking.
 /// </summary>
 public static class BookingParticipations
 {
-    /// <summary>Privremena BookingId kompatibilnost — vidi klasnu napomenu. Ne koristiti u novom kodu.</summary>
-    public static BookingSegmentParticipation GetSingleParticipation(Booking booking)
-    {
-        ArgumentNullException.ThrowIfNull(booking);
-
-        if (booking.Participations.Count == 0)
-            throw new InvalidBookingParticipationStateException($"Booking {booking.Id} nema sudjelovanja.");
-        if (booking.Participations.Count > 1)
-            throw Ambiguous(booking.Id.GetValueOrDefault(), booking.Participations.Count);
-
-        BookingSegmentParticipation participation = booking.Participations[0];
-        EnsureBelongs(booking, participation);
-
-        // Kad su segmenti termina / segment sudjelovanja učitani, sudjelovanje mora biti na JEDINOM segmentu ISTOG termina.
-        if (booking.Appointment?.Segments.Count == 1 && participation.AppointmentSegmentId != booking.Appointment.Segments[0].Id)
-            throw new InvalidBookingParticipationStateException($"Sudjelovanje {participation.Id} nije na izvršnom segmentu termina.");
-
-        return participation;
-    }
-
-    /// <summary>Naredba adresirana Bookingom (privremena kompatibilnost) cilja Booking s više sudjelovanja — odbija se umjesto
-    /// da dvosmisleno djeluje na sva ili na proizvoljno sudjelovanje (BOOKING_PARTICIPATION_AMBIGUOUS).</summary>
-    public static BusinessRuleException Ambiguous(Guid bookingId, int participationCount) => new(
-        ErrorCodes.BookingParticipationAmbiguous,
-        $"Booking {bookingId} ima {participationCount} sudjelovanja — naredbu treba adresirati sudjelovanjem (ParticipationId).",
-        new { bookingId, participationCount });
-
     /// <summary>Sudjelovanje Bookinga na zadanom segmentu (najviše jedno — jedinstveni indeks (booking, segment)).
     /// Integritetna greška ako ga nema.</summary>
     public static BookingSegmentParticipation OnSegment(Booking booking, AppointmentSegment segment)
@@ -153,8 +122,8 @@ public static class ParticipationLifecycle
 }
 
 /// <summary>
-/// Phase M0 — JEDINA putanja koja mijenja cijenu postojećeg sudjelovanja (re-cijenjenje kod Update/CompleteExisting/
-/// check-ina, ručni override, poništenje grupnog check-ina). Cijena NIJE izvršna povijest: ne dira Status/StatusVersion
+/// Phase M0 — JEDINA putanja koja mijenja cijenu postojećeg sudjelovanja (re-cijenjenje kod segmentnih naredbi i
+/// check-ina, ručni iznos sudjelovanja, poništenje grupnog check-ina). Cijena NIJE izvršna povijest: ne dira Status/StatusVersion
 /// niti ParticipationHistory. AdjustmentAmount se ne piše — trenutni cjenovni model nema eksplicitnu prilagodbu.
 /// </summary>
 public static class ParticipationPrice

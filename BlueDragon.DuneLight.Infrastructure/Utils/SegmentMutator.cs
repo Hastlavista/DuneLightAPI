@@ -8,8 +8,8 @@ namespace BlueDragon.DuneLight.Infrastructure.Utils;
 /// <summary>
 /// Phase M1B — JEDINO mjesto koje piše izvršne podatke ZADANOG segmenta (zamjenjuje nekadašnji mutator okvira termina: termin više
 /// nema okvir). Eksplicitne segmentne operacije — promjena usluge, vremena, dodjele zaposlenika, prostorije — nad
-/// učitanim entitetom u memoriji: bez čitanja, spremanja, validacije i audita (to ostaje kod pozivatelja). Postojeći
-/// Update/Move su kompatibilni pozivatelji koji ove operacije primjenjuju na segment razriješen na svojoj granici.
+/// učitanim entitetom u memoriji: bez čitanja, spremanja, validacije i audita (to ostaje kod pozivatelja — segmentne
+/// naredbe).
 /// </summary>
 public static class SegmentMutator
 {

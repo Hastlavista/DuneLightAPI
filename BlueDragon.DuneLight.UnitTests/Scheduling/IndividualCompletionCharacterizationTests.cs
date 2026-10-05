@@ -6,6 +6,7 @@ using System.Threading.Tasks;
 using BlueDragon.DuneLight.Core.DTOs.Appointments;
 using BlueDragon.DuneLight.Core.Enums;
 using BlueDragon.DuneLight.Core.Shared;
+using BlueDragon.DuneLight.Core.Shared.Exceptions;
 using BlueDragon.DuneLight.Infrastructure.Domain.Models.Appointments;
 using BlueDragon.DuneLight.Infrastructure.Domain.Models.Catalog;
 using BlueDragon.DuneLight.Infrastructure.Domain.Models.Checkouts;
@@ -17,36 +18,33 @@ using ServiceEntityAlias = BlueDragon.DuneLight.Infrastructure.Domain.Models.Cat
 namespace BlueDragon.DuneLight.UnitTests.Scheduling;
 
 /// <summary>
-/// CHARACTERIZATION (matrix K): completing an INDIVIDUAL appointment. Individual bookings cannot be completed one by one
-/// (SetStatus rejects it); the appointment is completed as a whole with a per-client settlement list, either as
-/// "record work already done" (CompleteNew, POST /complete) or by closing an existing Scheduled appointment
-/// (CompleteExisting, PATCH /{id}/complete). Both run inside ONE transaction that writes Booking status, package
-/// deduction, check-in payment, commission and audit together.
-///
-/// CompleteExisting is also a full replace of the appointment frame (service, employee, company, room, start, duration,
-/// note) and reconciles Bookings against the client list — see the reconciliation tests and the asymmetry region.
+/// CHARACTERIZATION (matrix K): completing INDIVIDUAL work. M1H: there is no appointment-wide "complete existing" command any
+/// more — an existing appointment is completed PER PARTICIPATION (PATCH /participations/{id}/status with the settlement), and
+/// "record work already done" is the atomic POS command CompleteNow (POST /complete: ONE explicit segment + clients). Both
+/// run the same participation lifecycle core inside ONE transaction that writes the status (StatusVersion + audit), package
+/// consumption, check-in payment and commission together. Completion never rewrites the schedule (segment, note, room).
 /// </summary>
 public class IndividualCompletionCharacterizationTests
 {
     private static readonly DateTimeOffset LongValid = new(2035, 1, 1, 0, 0, 0, TimeSpan.Zero);
 
     private static async Task<AppointmentDto> CreateAndComplete(
-        SchedulingWorld w, Action<AppointmentCompleteRequest> mutate = null, PaymentMethod? method = null, Guid? packageId = null,
+        SchedulingWorld w, Action<TestCompletionSpec> mutate = null, PaymentMethod? method = null, Guid? packageId = null,
         decimal? settlementAmount = null, bool isPaid = true)
     {
         AppointmentDto created = await w.CreateAppointment(SchedulingWorld.Future(10));
-        AppointmentCompleteRequest request = w.CompleteRequest(SchedulingWorld.Future(10),
+        TestCompletionSpec request = w.CompleteRequest(SchedulingWorld.Future(10),
             paymentMethod: method, clientPackageId: packageId, settlementAmount: settlementAmount, isPaid: isPaid);
         mutate?.Invoke(request);
-        return await w.CompleteExisting(created.Id, request);
+        return await w.CompleteParticipations(created.Id, request);
     }
 
-    #region CompleteExisting — state, payment, commission, audit
+    #region Completing existing participations — state, payment, commission, audit
 
     [Fact]
-    public async Task CompleteExisting_MovesTheAppointmentAndItsBookingToCompleted_AtBookingVersionOne()
+    public async Task CompletingParticipations_MovesTheAppointmentAndItsBookingToCompleted_AtBookingVersionOne()
     {
-        await using SchedulingWorld w = await SchedulingWorld.Create(nameof(CompleteExisting_MovesTheAppointmentAndItsBookingToCompleted_AtBookingVersionOne));
+        await using SchedulingWorld w = await SchedulingWorld.Create(nameof(CompletingParticipations_MovesTheAppointmentAndItsBookingToCompleted_AtBookingVersionOne));
 
         AppointmentDto dto = await CreateAndComplete(w);
 
@@ -65,9 +63,9 @@ public class IndividualCompletionCharacterizationTests
     }
 
     [Fact]
-    public async Task CompleteExisting_WithACashSettlement_CreatesOneCheckInGeneratedPaymentInAnAutoCheckout()
+    public async Task CompletingParticipations_WithACashSettlement_CreatesOneCheckInGeneratedPaymentInAnAutoCheckout()
     {
-        await using SchedulingWorld w = await SchedulingWorld.Create(nameof(CompleteExisting_WithACashSettlement_CreatesOneCheckInGeneratedPaymentInAnAutoCheckout));
+        await using SchedulingWorld w = await SchedulingWorld.Create(nameof(CompletingParticipations_WithACashSettlement_CreatesOneCheckInGeneratedPaymentInAnAutoCheckout));
 
         AppointmentDto dto = await CreateAndComplete(w, method: PaymentMethod.Cash);
 
@@ -94,9 +92,9 @@ public class IndividualCompletionCharacterizationTests
     }
 
     [Fact]
-    public async Task CompleteExisting_WithoutAPaymentMethod_LeavesTheBookingCompletedButUnpaid()
+    public async Task CompletingParticipations_WithoutAPaymentMethod_LeavesTheBookingCompletedButUnpaid()
     {
-        await using SchedulingWorld w = await SchedulingWorld.Create(nameof(CompleteExisting_WithoutAPaymentMethod_LeavesTheBookingCompletedButUnpaid));
+        await using SchedulingWorld w = await SchedulingWorld.Create(nameof(CompletingParticipations_WithoutAPaymentMethod_LeavesTheBookingCompletedButUnpaid));
 
         AppointmentDto dto = await CreateAndComplete(w);
 
@@ -111,9 +109,9 @@ public class IndividualCompletionCharacterizationTests
     }
 
     [Fact]
-    public async Task CompleteExisting_WithAMethodButIsPaidFalse_RecordsNoPayment()
+    public async Task CompletingParticipations_WithAMethodButIsPaidFalse_RecordsNoPayment()
     {
-        await using SchedulingWorld w = await SchedulingWorld.Create(nameof(CompleteExisting_WithAMethodButIsPaidFalse_RecordsNoPayment));
+        await using SchedulingWorld w = await SchedulingWorld.Create(nameof(CompletingParticipations_WithAMethodButIsPaidFalse_RecordsNoPayment));
 
         AppointmentDto dto = await CreateAndComplete(w, method: PaymentMethod.Card, isPaid: false);
 
@@ -122,9 +120,9 @@ public class IndividualCompletionCharacterizationTests
     }
 
     [Fact]
-    public async Task CompleteExisting_ForAFreeBooking_NeverCreatesAPayment_AndIsSettledByDefinition()
+    public async Task CompletingParticipations_ForAFreeBooking_NeverCreatesAPayment_AndIsSettledByDefinition()
     {
-        await using SchedulingWorld w = await SchedulingWorld.Create(nameof(CompleteExisting_ForAFreeBooking_NeverCreatesAPayment_AndIsSettledByDefinition));
+        await using SchedulingWorld w = await SchedulingWorld.Create(nameof(CompletingParticipations_ForAFreeBooking_NeverCreatesAPayment_AndIsSettledByDefinition));
 
         AppointmentDto dto = await CreateAndComplete(w, method: PaymentMethod.Cash, settlementAmount: 0m);
 
@@ -135,9 +133,9 @@ public class IndividualCompletionCharacterizationTests
     }
 
     [Fact]
-    public async Task CompleteExisting_SettlementAmountOverride_IsStoredAsTheBookingAmount_PaidInFull_AndAudited()
+    public async Task CompletingParticipations_SettlementAmountOverride_IsStoredAsTheBookingAmount_PaidInFull_AndAudited()
     {
-        await using SchedulingWorld w = await SchedulingWorld.Create(nameof(CompleteExisting_SettlementAmountOverride_IsStoredAsTheBookingAmount_PaidInFull_AndAudited));
+        await using SchedulingWorld w = await SchedulingWorld.Create(nameof(CompletingParticipations_SettlementAmountOverride_IsStoredAsTheBookingAmount_PaidInFull_AndAudited));
 
         AppointmentDto dto = await CreateAndComplete(w, method: PaymentMethod.Cash, settlementAmount: 40m);
 
@@ -150,9 +148,9 @@ public class IndividualCompletionCharacterizationTests
     }
 
     [Fact]
-    public async Task CompleteExisting_GeneratesOneEarnedCommissionEntryPerBooking_FromTheBookingAmount()
+    public async Task CompletingParticipations_GeneratesOneEarnedCommissionEntryPerBooking_FromTheBookingAmount()
     {
-        await using SchedulingWorld w = await SchedulingWorld.Create(nameof(CompleteExisting_GeneratesOneEarnedCommissionEntryPerBooking_FromTheBookingAmount));
+        await using SchedulingWorld w = await SchedulingWorld.Create(nameof(CompletingParticipations_GeneratesOneEarnedCommissionEntryPerBooking_FromTheBookingAmount));
         await w.AddCommissionRule(w.Employee, w.Service, CommissionCalculationType.Percentage, 10m);
 
         AppointmentDto dto = await CreateAndComplete(w);
@@ -170,9 +168,9 @@ public class IndividualCompletionCharacterizationTests
     }
 
     [Fact]
-    public async Task CompleteExisting_WithoutACommissionRule_CreatesNoCommissionEntry()
+    public async Task CompletingParticipations_WithoutACommissionRule_CreatesNoCommissionEntry()
     {
-        await using SchedulingWorld w = await SchedulingWorld.Create(nameof(CompleteExisting_WithoutACommissionRule_CreatesNoCommissionEntry));
+        await using SchedulingWorld w = await SchedulingWorld.Create(nameof(CompletingParticipations_WithoutACommissionRule_CreatesNoCommissionEntry));
 
         await CreateAndComplete(w);
 
@@ -180,9 +178,9 @@ public class IndividualCompletionCharacterizationTests
     }
 
     [Fact]
-    public async Task CompleteExisting_DoesNotEmitOutboxEventsOrNotifications()
+    public async Task CompletingParticipations_DoesNotEmitOutboxEventsOrNotifications()
     {
-        await using SchedulingWorld w = await SchedulingWorld.Create(nameof(CompleteExisting_DoesNotEmitOutboxEventsOrNotifications));
+        await using SchedulingWorld w = await SchedulingWorld.Create(nameof(CompletingParticipations_DoesNotEmitOutboxEventsOrNotifications));
 
         await CreateAndComplete(w, method: PaymentMethod.Cash);
 
@@ -191,85 +189,39 @@ public class IndividualCompletionCharacterizationTests
     }
 
     [Fact]
-    public async Task CompleteExisting_ARepeatedCompletion_IsRejected()
+    public async Task CompletingParticipations_ARepeatedCompletion_IsIdempotent()
     {
-        await using SchedulingWorld w = await SchedulingWorld.Create(nameof(CompleteExisting_ARepeatedCompletion_IsRejected));
+        await using SchedulingWorld w = await SchedulingWorld.Create(nameof(CompletingParticipations_ARepeatedCompletion_IsIdempotent));
         AppointmentDto dto = await CreateAndComplete(w, method: PaymentMethod.Cash);
 
-        await SchedulingAssert.BusinessRule(ErrorCodes.AlreadyCompleted,
-            () => w.CompleteExisting(dto.Id, w.CompleteRequest(SchedulingWorld.Future(10), paymentMethod: PaymentMethod.Cash)));
+        // CHANGED in M1H: completion is per participation and idempotent (the removed appointment-wide command answered
+        // ALREADY_COMPLETED) — a repeat changes nothing.
+        await w.CompleteParticipations(dto.Id, w.CompleteRequest(SchedulingWorld.Future(10), paymentMethod: PaymentMethod.Cash));
 
         Assert.Single(await w.LoadPayments(dto.Bookings.Single().Id)); // no second payment
+        Assert.Equal(1, (await w.LoadBooking(dto.Id, w.Client)).StatusVersion);
     }
 
     [Fact]
-    public async Task SetStatusCompleted_OnAnIndividualBooking_IsRejected_TheAppointmentIsCompletedAsAWhole()
+    public async Task GroupAttendancePath_OnAnIndividualAppointment_IsRejected_IndividualWorkIsCompletedPerParticipation()
     {
-        await using SchedulingWorld w = await SchedulingWorld.Create(nameof(SetStatusCompleted_OnAnIndividualBooking_IsRejected_TheAppointmentIsCompletedAsAWhole));
+        await using SchedulingWorld w = await SchedulingWorld.Create(nameof(GroupAttendancePath_OnAnIndividualAppointment_IsRejected_IndividualWorkIsCompletedPerParticipation));
         AppointmentDto created = await w.CreateAppointment(SchedulingWorld.Future(10));
 
-        await SchedulingAssert.Validation(() => w.SetBookingStatus(created.Id, w.Client, BookingStatus.Completed));
+        await SchedulingAssert.Validation(() => w.Bookings.SetStatusOnSegment(w.OrganizationId, w.ActorUserId, true, created.Id, w.Client.Id.Value,
+            new BookingSetStatusRequest { Status = BookingStatus.Completed, SegmentId = created.Segments[0].Id }));
 
         Assert.Equal(BookingStatus.Confirmed, (await w.LoadBooking(created.Id, w.Client)).Status);
     }
 
     #endregion
 
-    #region CompleteExisting — full replace of the frame
+    #region CompleteNow
 
     [Fact]
-    public async Task CompleteExisting_RewritesTheFrameFromTheRequest_IncludingServiceAndEmployee_UnlikeUpdate()
+    public async Task CompleteNow_CreatesACompletedAppointmentAndCompletedBookingsInOneStep()
     {
-        await using SchedulingWorld w = await SchedulingWorld.Create(nameof(CompleteExisting_RewritesTheFrameFromTheRequest_IncludingServiceAndEmployee_UnlikeUpdate));
-        ServiceEntityAlias service2 = await w.AddService(45, 80m);
-        Employee employee2 = await w.AddEmployee("Second", serviceId: service2.Id);
-        await w.AssignEmployeeToService(w.Employee, service2);
-        AppointmentDto created = await w.CreateAppointment(SchedulingWorld.Future(10));
-
-        AppointmentCompleteRequest request = w.CompleteRequest(SchedulingWorld.Future(14), employee: employee2, service: service2);
-        AppointmentDto dto = await w.CompleteExisting(created.Id, request);
-
-        // Contrast: the same change through Update is validated but NOT persisted for Service/Employee.
-        Appointment a = await w.LoadAppointment(dto.Id);
-        Assert.Equal(service2.Id, a.ServiceId);
-        Assert.Equal(employee2.Id, a.EmployeeId);
-        Assert.Equal(SchedulingWorld.Future(14), a.StartsAt);
-        Assert.Equal(45, a.DurationMinutes);
-        Assert.Equal(80m, a.Bookings.Single().Amount);
-        Assert.DoesNotContain(await w.LoadAuditLog(dto.Id), l => l.ChangeType == "EmployeeId"); // and no employee audit row here
-    }
-
-    [Fact]
-    public async Task CompleteExisting_WithoutARoomInTheRequest_ClearsTheAppointmentsRoom()
-    {
-        await using SchedulingWorld w = await SchedulingWorld.Create(nameof(CompleteExisting_WithoutARoomInTheRequest_ClearsTheAppointmentsRoom));
-        Room room = await w.AddRoom();
-        AppointmentDto created = await w.CreateAppointment(SchedulingWorld.Future(10), room: room);
-
-        await w.CompleteExisting(created.Id, w.CompleteRequest(SchedulingWorld.Future(10))); // room omitted
-
-        Assert.Null((await w.LoadAppointment(created.Id)).RoomId);
-    }
-
-    [Fact]
-    public async Task CompleteExisting_ReplacesTheNoteWithTheRequestNote()
-    {
-        await using SchedulingWorld w = await SchedulingWorld.Create(nameof(CompleteExisting_ReplacesTheNoteWithTheRequestNote));
-        AppointmentDto created = await w.CreateAppointment(w.CreateRequest(SchedulingWorld.Future(10), note: "booked note"));
-
-        await w.CompleteExisting(created.Id, w.CompleteRequest(SchedulingWorld.Future(10)));
-
-        Assert.Null((await w.LoadAppointment(created.Id)).Note);
-    }
-
-    #endregion
-
-    #region CompleteNew
-
-    [Fact]
-    public async Task CompleteNew_CreatesACompletedAppointmentAndCompletedBookingsInOneStep()
-    {
-        await using SchedulingWorld w = await SchedulingWorld.Create(nameof(CompleteNew_CreatesACompletedAppointmentAndCompletedBookingsInOneStep));
+        await using SchedulingWorld w = await SchedulingWorld.Create(nameof(CompleteNow_CreatesACompletedAppointmentAndCompletedBookingsInOneStep));
 
         AppointmentDto dto = await w.CompleteNew(w.CompleteRequest(SchedulingWorld.Past(10), paymentMethod: PaymentMethod.Card));
 
@@ -282,28 +234,31 @@ public class IndividualCompletionCharacterizationTests
         Payment payment = Assert.Single(await w.LoadPayments(b.Id.Value));
         Assert.Equal(PaymentMethod.Card, payment.Method);
         Assert.True(payment.IsCheckInGenerated);
-        // No status transition was audited: CompleteNew creates the Booking already Completed, there was no transition.
-        Assert.DoesNotContain(await w.LoadAuditLog(dto.Id), l => l.ChangeType == "BookingStatus");
+        // CHANGED in M1H: CompleteNow runs the participation lifecycle core — one audited Confirmed -> Completed transition
+        // (StatusVersion 1), exactly like completing an existing participation.
+        Assert.Equal(1, b.StatusVersion);
+        AppointmentAuditLog status = Assert.Single(await w.LoadAuditLog(dto.Id), l => l.ChangeType == "BookingStatus");
+        Assert.Equal(("Confirmed", "Completed"), (status.OldValue, status.NewValue));
     }
 
     [Fact]
-    public async Task CompleteNew_GeneratesCommissionAtSourceVersionZero()
+    public async Task CompleteNow_GeneratesCommissionAtSourceVersionOne_ThroughTheParticipationLifecycle()
     {
-        await using SchedulingWorld w = await SchedulingWorld.Create(nameof(CompleteNew_GeneratesCommissionAtSourceVersionZero));
+        await using SchedulingWorld w = await SchedulingWorld.Create(nameof(CompleteNow_GeneratesCommissionAtSourceVersionOne_ThroughTheParticipationLifecycle));
         await w.AddCommissionRule(w.Employee, w.Service, CommissionCalculationType.Fixed, 7m);
 
         await w.CompleteNew(w.CompleteRequest(SchedulingWorld.Past(10)));
 
         CommissionEntry entry = Assert.Single(await w.LoadCommissionEntries());
         Assert.Equal(7m, entry.CommissionAmount);
-        Assert.Equal(0, entry.SourceVersion);
+        Assert.Equal(1, entry.SourceVersion); // CHANGED in M1H (was 0: the participation was created already Completed)
     }
 
     [Fact]
-    public async Task CompleteNew_WithoutAnySettlementForTheClient_IsAValidationError()
+    public async Task CompleteNow_WithoutAnySettlementForTheClient_IsAValidationError()
     {
-        await using SchedulingWorld w = await SchedulingWorld.Create(nameof(CompleteNew_WithoutAnySettlementForTheClient_IsAValidationError));
-        AppointmentCompleteRequest request = w.CompleteRequest(SchedulingWorld.Past(10));
+        await using SchedulingWorld w = await SchedulingWorld.Create(nameof(CompleteNow_WithoutAnySettlementForTheClient_IsAValidationError));
+        TestCompletionSpec request = w.CompleteRequest(SchedulingWorld.Past(10));
         request.Settlements.Clear();
 
         await SchedulingAssert.Validation(() => w.CompleteNew(request));
@@ -312,38 +267,27 @@ public class IndividualCompletionCharacterizationTests
     }
 
     [Fact]
-    public async Task CompleteNew_WithASettlementForAClientNotOnTheAppointment_IsAValidationError()
+    public async Task CompleteNow_WithTwoSettlementsForTheSameClient_IsAValidationError()
     {
-        await using SchedulingWorld w = await SchedulingWorld.Create(nameof(CompleteNew_WithASettlementForAClientNotOnTheAppointment_IsAValidationError));
-        Client stranger = await w.AddClient("Stranger", "Client");
-        AppointmentCompleteRequest request = w.CompleteRequest(SchedulingWorld.Past(10));
-        request.Settlements[0].ClientId = stranger.Id.Value;
+        await using SchedulingWorld w = await SchedulingWorld.Create(nameof(CompleteNow_WithTwoSettlementsForTheSameClient_IsAValidationError));
+        TestCompletionSpec request = w.CompleteRequest(SchedulingWorld.Past(10));
+        request.Settlements.Add(new AppointmentCompletedClientRequest { ClientId = w.Client.Id.Value });
 
         await SchedulingAssert.Validation(() => w.CompleteNew(request));
     }
 
     [Fact]
-    public async Task CompleteNew_WithTwoSettlementsForTheSameClient_IsAValidationError()
+    public async Task CompleteNow_MixedSettlementPerClient_OneOnPackageOneOnCard()
     {
-        await using SchedulingWorld w = await SchedulingWorld.Create(nameof(CompleteNew_WithTwoSettlementsForTheSameClient_IsAValidationError));
-        AppointmentCompleteRequest request = w.CompleteRequest(SchedulingWorld.Past(10));
-        request.Settlements.Add(new AppointmentClientSettlement { ClientId = w.Client.Id.Value });
-
-        await SchedulingAssert.Validation(() => w.CompleteNew(request));
-    }
-
-    [Fact]
-    public async Task CompleteNew_MixedSettlementPerClient_OneOnPackageOneOnCard()
-    {
-        await using SchedulingWorld w = await SchedulingWorld.Create(nameof(CompleteNew_MixedSettlementPerClient_OneOnPackageOneOnCard));
+        await using SchedulingWorld w = await SchedulingWorld.Create(nameof(CompleteNow_MixedSettlementPerClient_OneOnPackageOneOnCard));
         Client payer = await w.AddClient("Payer", "Client");
         ClientPackage package = await w.AddClientPackage(w.Client, w.Service, 5, LongValid);
         await w.AddCommissionRule(w.Employee, w.Service, CommissionCalculationType.Percentage, 10m);
 
         AppointmentDto dto = await w.CompleteNew(w.CompleteRequest(SchedulingWorld.Past(10), settlements: new[]
         {
-            new AppointmentClientSettlement { ClientId = w.Client.Id.Value, ClientPackageId = package.Id },
-            new AppointmentClientSettlement { ClientId = payer.Id.Value, PaymentMethod = PaymentMethod.Card }
+            new AppointmentCompletedClientRequest { ClientId = w.Client.Id.Value, ClientPackageId = package.Id },
+            new AppointmentCompletedClientRequest { ClientId = payer.Id.Value, PaymentMethod = PaymentMethod.Card }
         }));
 
         Appointment a = await w.LoadAppointment(dto.Id);
@@ -363,9 +307,9 @@ public class IndividualCompletionCharacterizationTests
     #region Package settlement
 
     [Fact]
-    public async Task CompleteExisting_WithAnEligiblePackage_AppliesCoverage_DeductsOneEntry_AndCreatesNoPayment()
+    public async Task CompletingParticipations_WithAnEligiblePackage_AppliesCoverage_DeductsOneEntry_AndCreatesNoPayment()
     {
-        await using SchedulingWorld w = await SchedulingWorld.Create(nameof(CompleteExisting_WithAnEligiblePackage_AppliesCoverage_DeductsOneEntry_AndCreatesNoPayment));
+        await using SchedulingWorld w = await SchedulingWorld.Create(nameof(CompletingParticipations_WithAnEligiblePackage_AppliesCoverage_DeductsOneEntry_AndCreatesNoPayment));
         ClientPackage package = await w.AddClientPackage(w.Client, w.Service, 5, LongValid);
 
         // A payment method sent alongside a package is IGNORED (the package settles the obligation).
@@ -383,15 +327,14 @@ public class IndividualCompletionCharacterizationTests
         Assert.Equal(0m, bookingDto.OutstandingAmount);
         Assert.True(bookingDto.IsPaid);
         Assert.Equal(0m, bookingDto.PaidAmount); // paid amount counts money only
-        // FINDING: unlike CompleteNew and the group check-in, CompleteExisting writes NO "BookingPackageCoverageApplied"
-        // audit row — the coverage is only visible through the Booking columns and the package counter.
-        Assert.DoesNotContain(await w.LoadAuditLog(dto.Id), l => l.ChangeType == "BookingPackageCoverageApplied");
+        // The participation lifecycle audits the coverage application (same as CompleteNow and the group check-in).
+        Assert.Single(await w.LoadAuditLog(dto.Id), l => l.ChangeType == "BookingPackageCoverageApplied");
     }
 
     [Fact]
-    public async Task CompleteNew_WithAnEligiblePackage_AuditsTheCoverageApplication()
+    public async Task CompleteNow_WithAnEligiblePackage_AuditsTheCoverageApplication()
     {
-        await using SchedulingWorld w = await SchedulingWorld.Create(nameof(CompleteNew_WithAnEligiblePackage_AuditsTheCoverageApplication));
+        await using SchedulingWorld w = await SchedulingWorld.Create(nameof(CompleteNow_WithAnEligiblePackage_AuditsTheCoverageApplication));
         ClientPackage package = await w.AddClientPackage(w.Client, w.Service, 5, LongValid);
 
         AppointmentDto dto = await w.CompleteNew(w.CompleteRequest(SchedulingWorld.Past(10), clientPackageId: package.Id));
@@ -403,9 +346,9 @@ public class IndividualCompletionCharacterizationTests
     }
 
     [Fact]
-    public async Task CompleteExisting_PackageCoveredBooking_StillEarnsCommissionOnTheRetailAmount()
+    public async Task CompletingParticipations_PackageCoveredBooking_StillEarnsCommissionOnTheRetailAmount()
     {
-        await using SchedulingWorld w = await SchedulingWorld.Create(nameof(CompleteExisting_PackageCoveredBooking_StillEarnsCommissionOnTheRetailAmount));
+        await using SchedulingWorld w = await SchedulingWorld.Create(nameof(CompletingParticipations_PackageCoveredBooking_StillEarnsCommissionOnTheRetailAmount));
         ClientPackage package = await w.AddClientPackage(w.Client, w.Service, 5, LongValid);
         await w.AddCommissionRule(w.Employee, w.Service, CommissionCalculationType.Percentage, 10m);
 
@@ -416,34 +359,7 @@ public class IndividualCompletionCharacterizationTests
 
     #endregion
 
-    #region Reconciliation and the Individual/Group asymmetry (matrix T)
-
-    [Fact]
-    public async Task CompleteExisting_HardDeletesConfirmedBookingsOfClientsOmittedFromTheRequest()
-    {
-        await using SchedulingWorld w = await SchedulingWorld.Create(nameof(CompleteExisting_HardDeletesConfirmedBookingsOfClientsOmittedFromTheRequest));
-        Client omitted = await w.AddClient("Omitted", "Client");
-        AppointmentDto created = await w.CreateAppointment(SchedulingWorld.Future(10), extraClients: omitted);
-
-        // Only the default client is listed: the still-Confirmed booking of the other client is not "left unresolved" —
-        // it is deleted. (Contrast: a GROUP occurrence closes without touching unresolved bookings, see below.)
-        AppointmentDto dto = await w.CompleteExisting(created.Id, w.CompleteRequest(SchedulingWorld.Future(10)));
-
-        Appointment a = await w.LoadAppointment(dto.Id);
-        Assert.Equal(AppointmentStatus.Closed, a.Status);
-        Assert.Equal(w.Client.Id, Assert.Single(a.Bookings).ClientId);
-        Assert.Empty(await w.LoadOutbox()); // and the deletion emits nothing
-    }
-
-    [Fact]
-    public async Task CompleteExisting_ForAGroupOccurrence_IsRejected_GroupsCloseThroughCompleteGroup()
-    {
-        await using SchedulingWorld w = await SchedulingWorld.Create(nameof(CompleteExisting_ForAGroupOccurrence_IsRejected_GroupsCloseThroughCompleteGroup));
-        Appointment occurrence = await w.SeedAppointment(SchedulingWorld.Future(10), form: AppointmentForm.Group, employee: w.Employee,
-            bookings: (w.Client, BookingStatus.Confirmed, 15m));
-
-        await SchedulingAssert.Validation(() => w.CompleteExisting(occurrence.Id.Value, w.CompleteRequest(SchedulingWorld.Future(10))));
-    }
+    #region Individual vs Group completion (matrix T)
 
     [Fact]
     public async Task CompleteGroupAppointment_ForAnIndividualAppointment_IsRejected()
@@ -531,25 +447,24 @@ public class IndividualCompletionCharacterizationTests
     }
 
     [Fact]
-    public async Task CompleteExisting_OnACancelledIndividualAppointment_IsCurrentlyAllowed_AndResurrectsItsCancelledBookings()
+    public async Task CompletingACancelledParticipation_IsRejected_ATerminalStatusHasNoPathToCompleted()
     {
-        await using SchedulingWorld w = await SchedulingWorld.Create(nameof(CompleteExisting_OnACancelledIndividualAppointment_IsCurrentlyAllowed_AndResurrectsItsCancelledBookings));
+        await using SchedulingWorld w = await SchedulingWorld.Create(nameof(CompletingACancelledParticipation_IsRejected_ATerminalStatusHasNoPathToCompleted));
         await w.AddCommissionRule(w.Employee, w.Service, CommissionCalculationType.Percentage, 10m);
         AppointmentDto created = await w.CreateAppointment(SchedulingWorld.Future(10));
         await w.Appointments.Cancel(w.OrganizationId, w.ActorUserId, true, created.Id, new AppointmentCancelRequest { CancellationReason = "cancelled" });
 
-        // FINDING: CompleteExisting only refuses an already-Completed appointment. A Cancelled one is completed:
-        // the Cancelled Booking flips straight to Completed (version 1 -> 2), a payment and a commission are generated.
-        AppointmentDto dto = await w.CompleteExisting(created.Id, w.CompleteRequest(SchedulingWorld.Future(10), paymentMethod: PaymentMethod.Cash));
+        // CHANGED in M1H: the removed appointment-wide completion resurrected Cancelled bookings straight to Completed. The
+        // participation lifecycle has no Cancelled -> Completed path: nothing is paid, earned or reopened.
+        await Assert.ThrowsAsync<BusinessRuleException>(
+            () => w.CompleteParticipations(created.Id, w.CompleteRequest(SchedulingWorld.Future(10), paymentMethod: PaymentMethod.Cash)));
 
         Appointment a = await w.LoadAppointment(created.Id);
-        Assert.Equal(AppointmentStatus.Closed, a.Status);
+        Assert.Equal(AppointmentStatus.Cancelled, a.Status);
         Booking b = a.Bookings.Single();
-        Assert.Equal(BookingStatus.Completed, b.Status);
-        Assert.Equal(2, b.StatusVersion);
-        Assert.Single(await w.LoadPayments(b.Id.Value));
-        Assert.Single(await w.LoadCommissionEntries());
-        Assert.Equal(AppointmentStatus.Closed, dto.Status);
+        Assert.Equal((BookingStatus.Cancelled, 1), (b.Status, b.StatusVersion));
+        Assert.Empty(await w.LoadPayments(b.Id.Value));
+        Assert.Empty(await w.LoadCommissionEntries());
     }
 
     #endregion
@@ -557,14 +472,14 @@ public class IndividualCompletionCharacterizationTests
     #region Authorization
 
     [Fact]
-    public async Task CompleteExisting_OwnScopeCaller_CannotCompleteAnotherEmployeesAppointment()
+    public async Task CompletingAParticipation_OwnScopeCaller_CannotCompleteAnotherEmployeesAppointment()
     {
-        await using SchedulingWorld w = await SchedulingWorld.Create(nameof(CompleteExisting_OwnScopeCaller_CannotCompleteAnotherEmployeesAppointment));
+        await using SchedulingWorld w = await SchedulingWorld.Create(nameof(CompletingAParticipation_OwnScopeCaller_CannotCompleteAnotherEmployeesAppointment));
         Employee other = await w.AddEmployee("Other");
         AppointmentDto created = await w.CreateAppointment(SchedulingWorld.Future(10));
 
         await SchedulingAssert.BusinessRule(ErrorCodes.NotOwner,
-            () => w.Appointments.CompleteExisting(w.OrganizationId, other.UserId, false, created.Id, w.CompleteRequest(SchedulingWorld.Future(10))));
+            () => w.SetBookingStatus(created.Id, w.Client, BookingStatus.Completed, hasFullScope: false, userId: other.UserId));
 
         Assert.Equal(AppointmentStatus.Scheduled, (await w.LoadAppointment(created.Id)).Status);
     }

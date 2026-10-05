@@ -29,10 +29,9 @@ public readonly record struct BookingPricing(
         resolved.EmployeeId.HasValue ? SegmentPricingMode.Employee : SegmentPricingMode.Standard,
         resolved.EmployeeId);
 
-    /// <summary>Booking po predloženoj cijeni, bez ručnog iznosa (grupni termin, gost, lista čekanja, /recurring, AddBooking).</summary>
+    /// <summary>Booking po predloženoj cijeni, bez ručnog iznosa (grupni termin, gost, lista čekanja, /recurring).</summary>
     public static BookingPricing AtSuggested(ResolvePriceResponse resolved) => FromResolution(resolved, null);
 
-    /// <summary>Nulta cijena koja NE dolazi iz razrješavanja cjenika (poništen grupni check-in; privremeno stanje novog
-    /// retka u CompleteExisting prije stvarnog cijenjenja) — bez snapshota razrješavanja.</summary>
+    /// <summary>Nulta cijena koja NE dolazi iz razrješavanja cjenika (poništen grupni check-in) — bez snapshota razrješavanja.</summary>
     public static BookingPricing Zero => new(0m, 0m, false);
 }

@@ -31,7 +31,7 @@ namespace BlueDragon.DuneLight.Infrastructure.Services;
 /// jedan mehanizam (state machine + paket resolucija) — GroupAttendanceService je sada tanki adapter
 /// preko ovoga koji čuva stari /api/groups/appointments/{id}/attendance ugovor (vidi tamo).
 /// </summary>
-public class BookingService : IBookingService
+public class BookingService : IBookingService, IParticipationLifecycleService
 {
     private const string NotOwnerMessage = "Trener smije upravljati samo bookinzima na svojim vlastitim terminima.";
 
@@ -120,7 +120,7 @@ public class BookingService : IBookingService
         return appointment.Bookings.Select(b => ToDto(b, appointment.Form)).ToList();
     }
 
-    public async Task<BookingDto> AddBooking(Guid organizationId, Guid userId, bool hasFullScope, Guid appointmentId, BookingCreateRequest request)
+    public async Task<BookingDto> AddGroupGuest(Guid organizationId, Guid userId, bool hasFullScope, Guid appointmentId, BookingCreateRequest request)
     {
         Appointment appointment = await _appointmentHandler.GetWithBookingsForMutation(organizationId, appointmentId);
         if (appointment == null)
@@ -129,21 +129,15 @@ public class BookingService : IBookingService
         if (appointment.Status == AppointmentStatus.Cancelled)
             throw new BusinessRuleException(ErrorCodes.AppointmentNotMovable, "Otkazan termin se ne može dopunjavati novim rezervacijama.");
 
-        // Grupni occurrence (Phase M1F): gost se dodaje u ODABRANI segment (bez selektora samo jednosegmentni occurrence);
-        // generički termin: LEGACY plosnato dodavanje samo za jednosegmentni termin (ciljni put je AddClient).
-        bool isGroup = appointment.Form == AppointmentForm.Group;
-        AppointmentSegment segment = isGroup
-            ? GroupOccurrenceSegments.Resolve(appointment, request.SegmentId)
-            : LegacySingleSegment.Resolve(appointment);
+        // Gost se dodaje u EKSPLICITNO odabrani segment grupnog occurrencea (individualni termin: IAppointmentService.AddClient).
+        AppointmentSegment segment = GroupOccurrenceSegments.Require(appointment, request.SegmentId);
         await AppointmentOwnership.EnsureCallerOwnsSegments(_employeeHandler, organizationId, userId, hasFullScope, new[] { segment }, NotOwnerMessage);
 
-        // Idempotentno: klijent koji već sudjeluje u tom segmentu (generički: ima Booking) vraća postojeći Booking.
+        // Idempotentno: klijent koji već sudjeluje u tom segmentu vraća postojeći Booking.
         Booking existing = appointment.Bookings.FirstOrDefault(b => b.ClientId == request.ClientId);
-        if (existing != null && (!isGroup || existing.Participations.Any(p => p.AppointmentSegmentId == segment.Id)))
+        if (existing != null && existing.Participations.Any(p => p.AppointmentSegmentId == segment.Id))
             return ToDto(existing, appointment.Form);
 
-        if (request.OverrideCapacity && !isGroup)
-            throw new ValidationAppException("Override kapaciteta postoji samo za grupne termine.");
         await GroupCapacityOverride.EnsureAllowed(_grantResolver, organizationId, userId, request.OverrideCapacity);
 
         Client client = await LoadEligibleClient(organizationId, request.ClientId);
@@ -157,8 +151,7 @@ public class BookingService : IBookingService
             await ClaimActivation(uow, organizationId, appointment, segment, request.ClientId);
 
             // Meki kapacitet TOG segmenta (kapacitet njegovog predloška) — prekoračenje samo eksplicitno.
-            if (isGroup)
-                await GroupCapacityGuard.EnsureAvailable(
+            await GroupCapacityGuard.EnsureAvailable(
                     _appointmentHandler, uow, organizationId, appointmentId, segment.Id.GetValueOrDefault(), request.OverrideCapacity);
 
             DateTimeOffset now = DateTimeOffset.UtcNow;
@@ -184,38 +177,26 @@ public class BookingService : IBookingService
         return ToDto(existing, appointment.Form);
     }
 
-    /// <summary>PRIVREMENA BookingId kompatibilnost (Phase M0): (termin, klijent) adresira Booking; naredba smije djelovati
-    /// samo kad Booking ima TOČNO JEDNO sudjelovanje (inače BOOKING_PARTICIPATION_AMBIGUOUS) i odmah delegira na
-    /// participation-native prijelaz — bez vlastite poslovne logike. Jedina iznimka je nastanak gost-Bookinga na grupnom
-    /// terminu (privremeni jednostruki nastanak: BookingFactory stvara Booking s jednim sudjelovanjem na izvršnom segmentu).</summary>
-    public async Task<BookingDto> SetStatus(
+    /// <summary>Phase M1H — grupni occurrence, adresa (termin, klijent, EKSPLICITNI segment): prijelaz sudjelovanja klijenta na
+    /// tom segmentu, ili — kad ga nema — check-in gosta (novo sudjelovanje; postojeći Booking klijenta se ponovno koristi).
+    /// Vlasništvo slijedi segment (provjera u TransitionParticipation/CheckInNewGuest).</summary>
+    public async Task<BookingDto> SetStatusOnSegment(
         Guid organizationId, Guid userId, bool hasFullScope, Guid appointmentId, Guid clientId, BookingSetStatusRequest request)
     {
         Appointment appointment = await _appointmentHandler.GetWithBookingsForMutation(organizationId, appointmentId);
         if (appointment == null)
             throw new NotFoundAppException("Appointment", appointmentId);
 
-        // Phase M1B: vlasništvo slijedi SEGMENT adresiranog sudjelovanja (provjera u TransitionParticipation/CheckInNewGuest).
+        AppointmentSegment segment = GroupOccurrenceSegments.Require(appointment, request.SegmentId);
         Booking booking = appointment.Bookings.FirstOrDefault(b => b.ClientId == clientId);
-        if (booking != null && request.SegmentId.HasValue)
-        {
-            // Phase M1F: (termin, klijent, segment) adresira sudjelovanje na tom segmentu; ako ga nema, grupni gost dobiva
-            // novo sudjelovanje na postojećem Bookingu (jedan Booking po klijentu u occurrenceu).
-            BookingSegmentParticipation onSegment = booking.Participations.FirstOrDefault(p => p.AppointmentSegmentId == request.SegmentId.Value);
-            if (onSegment != null)
-                return await TransitionParticipation(organizationId, userId, hasFullScope, appointment, onSegment.Id.GetValueOrDefault(), request);
-            return await CheckInNewGuest(organizationId, userId, hasFullScope, appointment, clientId, request, booking);
-        }
-
-        if (booking != null)
-            return await TransitionParticipation(
-                organizationId, userId, hasFullScope, appointment, BookingParticipations.GetSingleParticipation(booking).Id.GetValueOrDefault(), request);
-
-        return await CheckInNewGuest(organizationId, userId, hasFullScope, appointment, clientId, request, existingBooking: null);
+        BookingSegmentParticipation onSegment = booking?.Participations.FirstOrDefault(p => p.AppointmentSegmentId == segment.Id);
+        if (onSegment != null)
+            return await TransitionParticipation(organizationId, userId, hasFullScope, appointment, onSegment.Id.GetValueOrDefault(), request);
+        return await CheckInNewGuest(organizationId, userId, hasFullScope, appointment, clientId, request, booking);
     }
 
     /// <summary>Phase M0 — participation-native prijelaz: naredba adresira JEDNO sudjelovanje i djeluje samo na njega
-    /// (ostala sudjelovanja istog Bookinga se ne diraju). Ista pravila prijelaza kao SetStatus (vidi IBookingService).</summary>
+    /// (ostala sudjelovanja istog Bookinga se ne diraju). Ista pravila prijelaza kao SetStatusOnSegment (vidi IBookingService).</summary>
     public async Task<BookingDto> SetParticipationStatus(
         Guid organizationId, Guid userId, bool hasFullScope, Guid participationId, BookingSetStatusRequest request)
     {
@@ -227,16 +208,14 @@ public class BookingService : IBookingService
         if (appointment == null)
             throw new NotFoundAppException("Appointment", appointmentId.Value);
 
-        return await TransitionParticipation(organizationId, userId, hasFullScope, appointment, participationId, request, participationAddressed: true);
+        return await TransitionParticipation(organizationId, userId, hasFullScope, appointment, participationId, request);
     }
 
     /// <summary>Phase M0 — Booking-wide otkazivanje: Booking nema vlastiti status, pa se naredba izvršava kao kontrolirani
     /// prijelaz Confirmed -&gt; Cancelled SVAKOG aktivnog (Confirmed) sudjelovanja, u jednoj transakciji, sa zaključanim
     /// svim sudjelovanjima Bookinga (redoslijed po Id-u); terminalna sudjelovanja (Completed/NoShow/Cancelled) su povijest i
-    /// ostaju netaknuta. Svako otkazano sudjelovanje dobiva vlastiti StatusVersion inkrement, audit i Outbox pojavu.
-    /// PRIVREMENA kompatibilnost: Booking s točno jednim sudjelovanjem koje NIJE Confirmed delegira na participation-native
-    /// prijelaz (dosadašnje ponašanje: grupno poništenje check-ina + otkazivanje, AlreadyCompleted za individualni,
-    /// idempotentan Cancelled).</summary>
+    /// ostaju netaknuta. Svako otkazano sudjelovanje dobiva vlastiti StatusVersion inkrement, audit i Outbox pojavu. Booking
+    /// bez aktivnih sudjelovanja → ALREADY_COMPLETED (korekcija terminalnog sudjelovanja ide kroz ParticipationId).</summary>
     public async Task<BookingDto> CancelBooking(
         Guid organizationId, Guid userId, bool hasFullScope, Guid appointmentId, Guid clientId, BookingCancelRequest request)
     {
@@ -255,14 +234,14 @@ public class BookingService : IBookingService
             CancellationReason = request.CancellationReason
         };
 
-        if (!booking.Participations.Any(p => p.Status == ParticipationStatus.Confirmed))
-        {
-            if (booking.Participations.Count == 1)
-                return await TransitionParticipation(
-                    organizationId, userId, hasFullScope, appointment, booking.Participations[0].Id.GetValueOrDefault(), cancel);
+        // Booking bez sudjelovanja je narušen integritet (nikad "nema što otkazati").
+        if (booking.Participations.Count == 0)
+            throw new InvalidBookingParticipationStateException($"Booking {booking.Id} nema sudjelovanja.");
 
+        // Phase M1H: Booking-wide naredba otkazuje SAMO aktivna sudjelovanja; terminalna sudjelovanja (odrađena, otkazana,
+        // izostala) se ne diraju — njihova korekcija ide kroz sudjelovanje (ParticipationId).
+        if (!booking.Participations.Any(p => p.Status == ParticipationStatus.Confirmed))
             throw new BusinessRuleException(ErrorCodes.AlreadyCompleted, "Booking nema aktivnih sudjelovanja za otkazivanje.");
-        }
 
         // Phase M1B: own-opseg mora posjedovati SVAKI segment na kojem se otkazuje aktivno sudjelovanje.
         HashSet<Guid> affectedSegmentIds = booking.Participations
@@ -308,19 +287,88 @@ public class BookingService : IBookingService
         return ToDto(refreshed, appointment.Form);
     }
 
+    /// <summary>Phase M1H — ručni konačni iznos JEDNOG sudjelovanja (participation-native, ista semantika kao ručni iznos
+    /// dosadašnje izmjene termina): samo individualni termin i samo AKTIVNO (Confirmed) sudjelovanje — terminalna
+    /// sudjelovanja su povijest (iznos se ne mijenja naknadno); grupno sudjelovanje dobiva cijenu pri check-inu. Predložena
+    /// cijena i snapshot razrješavanja cjenika ostaju netaknuti; null vraća iznos na predloženu cijenu. Iznos manji od već
+    /// naplaćenog novca se odbija (namirenje se izvodi iz konačnog iznosa). Vlasništvo slijedi segment sudjelovanja.</summary>
+    public async Task<BookingDto> SetParticipationPrice(
+        Guid organizationId, Guid userId, bool hasFullScope, Guid participationId, ParticipationPriceChangeRequest request)
+    {
+        Guid appointmentId = await _participationHandler.GetAppointmentIdOf(organizationId, participationId)
+            ?? throw new NotFoundAppException("Participation", participationId);
+        Appointment appointment = await _appointmentHandler.GetWithBookingsForMutation(organizationId, appointmentId)
+            ?? throw new NotFoundAppException("Appointment", appointmentId);
+        if (appointment.Form != AppointmentForm.Individual)
+            throw new ValidationAppException("Ručni iznos grupnog sudjelovanja se postavlja pri check-inu (prisutnost).");
+
+        Booking preloaded = appointment.Bookings.First(b => b.Participations.Any(p => p.Id == participationId));
+        BookingSegmentParticipation addressed = BookingParticipations.ById(preloaded, participationId);
+        await AppointmentOwnership.EnsureCallerOwnsSegments(_employeeHandler, organizationId, userId, hasFullScope,
+            appointment.Segments.Where(seg => seg.Id == addressed.AppointmentSegmentId), NotOwnerMessage);
+
+        try
+        {
+            await using IUnitOfWork uow = await _unitOfWorkFactory.Begin();
+            if (await _appointmentHandler.GetForUpdate(uow, organizationId, appointmentId) == null)
+                throw new NotFoundAppException("Appointment", appointmentId);
+            Booking booking = await _participationHandler.GetBookingWithLockedParticipation(uow, organizationId, participationId)
+                ?? throw new NotFoundAppException("Participation", participationId);
+            BookingSegmentParticipation participation = BookingParticipations.ById(booking, participationId);
+
+            if (participation.Status != ParticipationStatus.Confirmed)
+                throw new BusinessRuleException(ErrorCodes.AlreadyCompleted,
+                    "Iznos se mijenja samo za aktivno (Confirmed) sudjelovanje — terminalno sudjelovanje je povijest.");
+
+            decimal oldAmount = participation.Amount;
+            decimal newAmount = request?.Amount ?? participation.SuggestedAmount;
+            // Namirenje se čita svježe pod lockom sudjelovanja (sve stavke koje ga namiruju, svih checkouta) — praćeni
+            // Booking graf ih namjerno ne učitava.
+            List<CheckoutItem> settlementItems = await _checkoutHandler.GetItemsForParticipation(uow, organizationId, participationId);
+            if (ParticipationSettlement.SettledAmountOf(settlementItems) > newAmount)
+                throw new BusinessRuleException(ErrorCodes.PaymentExceedsOutstandingAmount,
+                    "Iznos ne smije biti manji od već naplaćenog iznosa sudjelovanja.");
+
+            if (newAmount != oldAmount || participation.IsAmountManuallyOverridden != (newAmount != participation.SuggestedAmount))
+            {
+                ParticipationPrice.Apply(participation, new BookingPricing(
+                    newAmount, participation.SuggestedAmount, newAmount != participation.SuggestedAmount,
+                    participation.BaseAmount, participation.BaseAmountSource, participation.PricingMode, participation.PricingEmployeeId));
+                booking.UpdatedAt = DateTimeOffset.UtcNow;
+                booking.UpdatedBy = userId;
+                await _appointmentHandler.UpdateBooking(uow, booking);
+                await _auditLogHandler.Add(uow, new AppointmentAuditLog
+                {
+                    Id = Guid.NewGuid(),
+                    AppointmentId = appointmentId,
+                    BookingId = booking.Id,
+                    BookingSegmentParticipationId = participation.Id,
+                    ChangeType = "Amount",
+                    OldValue = oldAmount.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                    NewValue = newAmount.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                    ChangedAt = DateTimeOffset.UtcNow,
+                    ChangedBy = userId
+                });
+            }
+
+            await uow.CommitAsync();
+        }
+        catch (DbUpdateConcurrencyException)
+        {
+            throw new BusinessRuleException(
+                ErrorCodes.ConcurrencyConflict, "Podaci su upravo promijenjeni od strane drugog zahtjeva — pokušajte ponovno.");
+        }
+
+        Booking refreshed = await _appointmentHandler.GetBooking(organizationId, appointmentId, preloaded.ClientId);
+        return ToDto(refreshed, appointment.Form);
+    }
+
     /// <summary>Pravila prijelaza koja ovise o stanju sudjelovanja PRIJE transakcije (ista kao prije Phase M0, sad nad
     /// adresiranim sudjelovanjem).</summary>
     private static void ValidateTransition(
-        Appointment appointment, BookingSegmentParticipation participation, BookingSetStatusRequest request, bool participationAddressed)
+        Appointment appointment, BookingSegmentParticipation participation, BookingSetStatusRequest request)
     {
         bool isGroup = appointment.Form == AppointmentForm.Group;
-
-        // Phase M1E: individualno sudjelovanje se ODRAĐUJE kroz participation-native naredbu (ciljni put višesegmentnog
-        // termina — svako sudjelovanje zasebno, uz vlastitu cijenu/paket/naplatu). Legacy (termin, klijent) put to i dalje
-        // ne dopušta: tamo completion ide kroz complete/complete-existing.
-        if (!isGroup && request.Status == BookingStatus.Completed && !participationAddressed)
-            throw new ValidationAppException(
-                "Individualni termin se odrađuje kroz complete/complete-existing (naplata je zajednička za cijeli termin), ne po pojedinom bookingu.");
 
         // Individual: Confirmed je dopušten kao korekcija odrađenog check-ina (Completed -> Confirmed, vidi
         // ApplyIndividualCompletionCorrection), korekcija pogrešno evidentiranog izostanka (NoShow -> Confirmed, vidi
@@ -336,8 +384,7 @@ public class BookingService : IBookingService
     /// <summary>Phase M0 — jezgra participation-native prijelaza postojećeg sudjelovanja: Appointment-PA-sudjelovanje
     /// zaključavanje, prijelaz u transakciji, svježi DTO Bookinga.</summary>
     private async Task<BookingDto> TransitionParticipation(
-        Guid organizationId, Guid userId, bool hasFullScope, Appointment appointment, Guid participationId, BookingSetStatusRequest request,
-        bool participationAddressed = false)
+        Guid organizationId, Guid userId, bool hasFullScope, Appointment appointment, Guid participationId, BookingSetStatusRequest request)
     {
         Guid appointmentId = appointment.Id.GetValueOrDefault();
         Booking preloaded = appointment.Bookings.FirstOrDefault(b => b.Participations.Any(p => p.Id == participationId));
@@ -349,7 +396,7 @@ public class BookingService : IBookingService
         await AppointmentOwnership.EnsureCallerOwnsSegments(_employeeHandler, organizationId, userId, hasFullScope,
             appointment.Segments.Where(seg => seg.Id == addressed.AppointmentSegmentId), NotOwnerMessage);
 
-        ValidateTransition(appointment, addressed, request, participationAddressed);
+        ValidateTransition(appointment, addressed, request);
         if (request.OverrideCapacity && appointment.Form != AppointmentForm.Group)
             throw new ValidationAppException("Override kapaciteta postoji samo za grupne termine.");
         await GroupCapacityOverride.EnsureAllowed(_grantResolver, organizationId, userId, request.OverrideCapacity);
@@ -371,7 +418,7 @@ public class BookingService : IBookingService
                 await ClaimActivation(uow, organizationId, appointment, addressedSegment, preloaded.ClientId);
 
             // Appointment-PA-sudjelovanje redoslijed zaključavanja — USKLAĐENO s dominantnim redoslijedom u agregatu
-            // (AppointmentService.CompleteExisting/ChangeToTerminalStatus/CompleteGroupAppointment, GroupService.AddMember,
+            // (AppointmentService.CompleteNow/ChangeToTerminalStatus/CompleteGroupAppointment, GroupService.AddMember,
             // WaitlistPromotionService.PromoteEligibleWaiters SVI zaključavaju Appointment PRIJE bilo kakve mutacije
             // sudjelovanja). Appointment lock čuva INVARIJANTE SPREMNIKA (kapacitet grupe, Appointment.Status kod
             // korekcije completiona) — ne izvršno stanje pojedinog sudjelovanja.
@@ -387,7 +434,7 @@ public class BookingService : IBookingService
                 throw new NotFoundAppException("Participation", participationId);
 
             BookingSegmentParticipation participation = BookingParticipations.ById(booking, participationId);
-            ValidateTransition(appointment, participation, request, participationAddressed);
+            ValidateTransition(appointment, participation, request);
             // Stanje se promijenilo od pred-transakcijskog čitanja tako da je prijelaz POSTAO reaktivacija bez provjere
             // rasporeda — ne nastavlja se naslijepo.
             if (targetOccupies && !claimsSchedule && !ParticipationOccupancy.Occupies(participation.Status))
@@ -408,7 +455,7 @@ public class BookingService : IBookingService
         return ToDto(refreshed, appointment.Form);
     }
 
-    /// <summary>Gost izvan popisa članova koji se čekira izravno kroz SetStatus bez prethodnog AddBooking poziva (isto
+    /// <summary>Gost izvan popisa članova koji se čekira izravno kroz SetStatusOnSegment bez prethodnog AddGroupGuest poziva (isto
     /// ponašanje kao staro GroupAttendanceService.HandleAttended/HandleNotAttended kad existing==null) — dopušteno samo za
     /// Form=Group, individualni Bookinzi uvijek postoje od kreiranja termina. Privremeni jednostruki NASTANAK.</summary>
     private async Task<BookingDto> CheckInNewGuest(
@@ -421,13 +468,12 @@ public class BookingService : IBookingService
         {
             if (request.Status == BookingStatus.Completed)
                 throw new ValidationAppException(
-                    "Individualni termin se odrađuje kroz complete/complete-existing (naplata je zajednička za cijeli termin), ne po pojedinom bookingu.");
+                    "Individualni termin se odrađuje po sudjelovanju (participations/{id}/status), ne kroz grupni put prisutnosti.");
             throw new NotFoundAppException("Booking", clientId);
         }
 
-        // Phase M1F: gost sudjeluje u ODABRANOM segmentu occurrencea (bez selektora samo jednosegmentni occurrence —
-        // višesegmentni: SEGMENT_SELECTION_REQUIRED). Gost NE postaje član grupe.
-        AppointmentSegment segment = GroupOccurrenceSegments.Resolve(appointment, request.SegmentId);
+        // Gost sudjeluje u EKSPLICITNO odabranom segmentu occurrencea. Gost NE postaje član grupe.
+        AppointmentSegment segment = GroupOccurrenceSegments.Require(appointment, request.SegmentId);
         await AppointmentOwnership.EnsureCallerOwnsSegments(_employeeHandler, organizationId, userId, hasFullScope, new[] { segment }, NotOwnerMessage);
         await GroupCapacityOverride.EnsureAllowed(_grantResolver, organizationId, userId, request.OverrideCapacity);
 
@@ -497,6 +543,11 @@ public class BookingService : IBookingService
     /// Appointment i to sudjelovanje). Sve nuspojave (kapacitet, paket, plaćanje, provizija, audit, Outbox, Notification,
     /// lista čekanja) su po SUDJELOVANJU: StatusVersion, audit StatusVersion i identitet pojave su verzija OVOG
     /// sudjelovanja.</summary>
+    public Task ApplyTransitionInTransaction(
+        IUnitOfWork uow, Guid organizationId, Guid userId, Appointment appointment, Booking booking,
+        BookingSegmentParticipation participation, BookingSetStatusRequest request) =>
+        ApplyTransitionInTransaction(uow, organizationId, userId, appointment, booking, participation, isNewGuestBooking: false, request);
+
     private async Task ApplyTransitionInTransaction(
         IUnitOfWork uow, Guid organizationId, Guid userId, Appointment appointment, Booking booking,
         BookingSegmentParticipation participation, bool isNewGuestBooking, BookingSetStatusRequest request)
@@ -552,7 +603,7 @@ public class BookingService : IBookingService
         ParticipationStatus newStatus = participation.Status;
 
         // Phase M1E: individualno sudjelovanje odrađeno participation-native naredbom zarađuje proviziju u ISTOJ transakciji
-        // (isti izvor kao CompleteNew/CompleteExisting — po sudjelovanju; grupna provizija ostaje po sesiji kod close-outa).
+        // (isti put koristi i CompleteNow — po sudjelovanju; grupna provizija ostaje po sesiji kod close-outa).
         if (!isGroup && oldStatus == ParticipationStatus.Confirmed && newStatus == ParticipationStatus.Completed)
             await _commissionLedgerService.GenerateForIndividualServiceCompletion(
                 uow, organizationId, ExecutionContextResolver.ForParticipation(appointment, booking, participation), participation);
@@ -610,7 +661,7 @@ public class BookingService : IBookingService
         await AppointmentLifecycle.Refresh(_appointmentHandler, _auditLogHandler, uow, organizationId, appointmentId, userId);
     }
 
-    /// <summary>Centralizira isti tenant/operational eligibility lanac koji koristi AddBooking i direct guest attendance.
+    /// <summary>Centralizira isti tenant/operational eligibility lanac koji koristi AddGroupGuest i direct guest attendance.
     /// Tenant-strani ID namjerno izgleda kao NotFound, nikad se ne oslanja na globalni clients.id FK.</summary>
     private async Task<Client> LoadEligibleClient(Guid organizationId, Guid clientId)
     {
@@ -710,7 +761,7 @@ public class BookingService : IBookingService
 
     /// <summary>Phase M1E — Form=Individual, Confirmed -&gt; Completed JEDNOG sudjelovanja (ciljni put višesegmentnog termina):
     /// cijena se mijenja samo uz eksplicitni ručni iznos (inače ostaje cijena sudjelovanja), paket se primjenjuje SAMO uz
-    /// eksplicitni ClientPackageId (bez automatskog odabira — isto kao settlement u CompleteExisting; valjanost na datum
+    /// eksplicitni ClientPackageId (bez automatskog odabira — isto kao CompleteNow; valjanost na datum
     /// izvođenja SEGMENTA), inače se uz PaymentMethod + IsPaid stvara Payment za iznos tog sudjelovanja. Paket i novac su
     /// isključivi SAMO unutar ovog sudjelovanja (ledger/SettlementExclusivityPolicy) — druga sudjelovanja istog Bookinga se
     /// namiruju neovisno. Već odrađeno sudjelovanje je idempotentno; drugi terminalni status nema put u Completed.</summary>
@@ -798,7 +849,7 @@ public class BookingService : IBookingService
     }
 
     /// <summary>Form=Individual, Completed -&gt; Confirmed: uska administrativna korekcija pogrešno odrađenog
-    /// check-ina (P1 korekcijski tok, vidi Booking.cs/IBookingService.SetStatus) — pozivatelj (SetStatus) je već
+    /// check-ina (P1 korekcijski tok, vidi Booking.cs/IBookingService.SetParticipationStatus) — pozivatelj (prijelaz sudjelovanja) je već
     /// validirao da je ovo dopušteno (sudjelovanje je Completed, ili već Confirmed za idempotentan retry) prije
     /// poziva. Za razliku od ApplyGroupTransition (ista vrsta korekcije, ali implicitna za "bilo koji prijelaz
     /// DALJE OD Completed" i BEZ komisijske reverzije jer Group nema komisijski izvor po Bookingu), ovo je
@@ -824,8 +875,8 @@ public class BookingService : IBookingService
     ///    (bez inkrementa) ako je booking već Confirmed (idempotentan retry, vidi spec section 15/41).
     /// 7) Phase M1A: termin se NE vraća ovdje — nakon prijelaza ga AppointmentLifecycle.Refresh izvodi iz SVIH
     ///    sudjelovanja (ovo sudjelovanje je opet Confirmed, pa je termin Scheduled bez obzira na sestrinska sudjelovanja).
-    ///    CompleteExisting ostaje idempotentan po retku (Payment/CommissionEntry samo za redak koji STVARNO mijenja status),
-    ///    pa ponovni completion nakon korekcije sigurno preskače već-Completed sestrinski redak.
+    ///    Completion je idempotentan po sudjelovanju (Payment/CommissionEntry samo za sudjelovanje koje STVARNO mijenja
+    ///    status), pa ponovni completion nakon korekcije sigurno preskače već-Completed sestrinsko sudjelovanje.
     ///
     /// Sve gornje pod-operacije su same po sebi idempotentne (guard po postojećem stanju, ne po ulaznom statusu),
     /// pa se ova metoda namjerno poziva BEZOVJETNO i za pravu korekciju (Completed-&gt;Confirmed) i za idempotentan
@@ -876,11 +927,11 @@ public class BookingService : IBookingService
 
     /// <summary>Form=Individual, NoShow -&gt; Confirmed: uska administrativna korekcija pogrešno evidentiranog
     /// izostanka (P1 operativna korekcija, live E2E pokazao da individualni Booking nije imao povratnu putanju s
-    /// NoShow-a — vidi Booking.cs/IBookingService.SetStatus). Namjerno NE dijeli tijelo s
-    /// ApplyIndividualCompletionCorrection iako je pozivatelj (SetStatus) isti ulaz (Status=Confirmed): Confirmed
+    /// NoShow-a — vidi Booking.cs/IBookingService.SetParticipationStatus). Namjerno NE dijeli tijelo s
+    /// ApplyIndividualCompletionCorrection iako je pozivatelj (prijelaz sudjelovanja) isti ulaz (Status=Confirmed): Confirmed
     /// -&gt; NoShow (ApplyIndividualTransition) NIKAD ne stvara Payment/CommissionEntry/paket-pokriće za
-    /// Individual (ta se stanja postavljaju isključivo u completion toku — ResolveCoverage/CompleteNew/
-    /// CompleteExisting, koji je individualni NoShow po definiciji nikad prošao, booking mora biti Confirmed da bi
+    /// Individual (ta se stanja postavljaju isključivo u completion toku — prijelaz u Completed / CompleteNow,
+    /// koji individualni NoShow po definiciji nikad prošao, booking mora biti Confirmed da bi
     /// uopće postao NoShow, vidi ApplyIndividualTransition), pa nema što reverzirati i poziv na
     /// VoidCheckInGeneratedPayments/ReverseForIndividualServiceCorrection/hasNonReversiblePayment-provjeru bio bi
     /// mrtav kod u najboljem slučaju, a u najgorem bi hasNonReversiblePayment-provjera odbila ovu korekciju zbog
@@ -904,7 +955,7 @@ public class BookingService : IBookingService
     /// komercijalno stanje (Amount/SuggestedAmount) — grupni termin prije ovog zahvata nikad nije imao cijenu
     /// (uvijek 0 na Appointment), pa se ovdje prvi put snapshotta stvarna cijena preko istog IPricingService
     /// poziva kao za Individual (vidi ResolveServicePrice). Vraća (Method, Amount) ako treba stvoriti stvaran
-    /// Payment NAKON što pozivatelj persistira Booking redak (FK payments.booking_id — vidi SetStatus), null
+    /// Payment NAKON što pozivatelj persistira Booking redak (FK payments.booking_id — vidi prijelaz sudjelovanja), null
     /// ako se ne naplaćuje sada (paket-pokriveno, gratis, ili bez zatraženog PaymentMethod-a).</summary>
     private async Task<(PaymentMethod Method, decimal Amount)?> ResolveCoverage(
         IUnitOfWork uow, Guid organizationId, Guid userId, Appointment appointment, Booking booking,

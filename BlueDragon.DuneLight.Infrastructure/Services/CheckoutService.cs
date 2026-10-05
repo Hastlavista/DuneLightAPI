@@ -137,39 +137,22 @@ public class CheckoutService : ICheckoutService
 
         Checkout locked = await LockOpenCheckout(uow, organizationId, checkoutId);
 
-        // Phase M0: stavka usluge cilja SUDJELOVANJE. ParticipationId je ugovor; sam BookingId je privremena kompatibilnost
-        // (Booking s točno jednim sudjelovanjem). Jedan zahtjev nikad ne cilja sva sudjelovanja Bookinga.
-        Guid bookingId;
-        if (request.ParticipationId.HasValue)
-        {
-            Guid? owningBookingId = await uow.Context.BookingSegmentParticipations
-                .Where(p => p.OrganizationId == organizationId && p.Id == request.ParticipationId.Value)
-                .Select(p => (Guid?)p.BookingId)
-                .SingleOrDefaultAsync();
-            if (owningBookingId == null)
-                throw new NotFoundAppException("Participation", request.ParticipationId.Value);
-            if (request.BookingId.HasValue && request.BookingId.Value != owningBookingId.Value)
-                throw new BusinessRuleException(ErrorCodes.ParticipationBookingMismatch,
-                    "Sudjelovanje ne pripada zadanom Bookingu.",
-                    new { bookingId = request.BookingId.Value, participationId = request.ParticipationId.Value });
-            bookingId = owningBookingId.Value;
-        }
-        else if (request.BookingId.HasValue)
-        {
-            bookingId = request.BookingId.Value;
-        }
-        else
-        {
-            throw new ValidationAppException("Stavka usluge zahtijeva ParticipationId (ili, privremeno, BookingId).");
-        }
+        // Stavka usluge cilja SUDJELOVANJE (ParticipationId) — nikad "sva" ni "jedino" sudjelovanje Bookinga.
+        if (!request.ParticipationId.HasValue)
+            throw new ValidationAppException("Stavka usluge zahtijeva ParticipationId.");
+        Guid? owningBookingId = await uow.Context.BookingSegmentParticipations
+            .Where(p => p.OrganizationId == organizationId && p.Id == request.ParticipationId.Value)
+            .Select(p => (Guid?)p.BookingId)
+            .SingleOrDefaultAsync();
+        if (owningBookingId == null)
+            throw new NotFoundAppException("Participation", request.ParticipationId.Value);
+        Guid bookingId = owningBookingId.Value;
 
         Booking booking = await _appointmentHandler.GetBookingById(uow, organizationId, bookingId);
         if (booking == null)
             throw new NotFoundAppException("Booking", bookingId);
 
-        BookingSegmentParticipation participation = request.ParticipationId.HasValue
-            ? BookingParticipations.ById(booking, request.ParticipationId.Value)
-            : BookingParticipations.GetSingleParticipation(booking);
+        BookingSegmentParticipation participation = BookingParticipations.ById(booking, request.ParticipationId.Value);
 
         if (booking.ClientId != locked.ClientId)
             throw new BusinessRuleException(ErrorCodes.CheckoutItemClientMismatch, "Booking pripada drugom klijentu.");

@@ -20,7 +20,7 @@ namespace BlueDragon.DuneLight.UnitTests.Scheduling;
 /// cancellation reason, late classification); Booking keeps identity and money. Covers: the creation seam, lifecycle
 /// writes, the single-participation resolver's failure modes, the read model, the dropped booking columns, and the locked
 /// deletion rule — a Booking + Participation may be hard-deleted only while the Participation is UNTOUCHED (Confirmed,
-/// StatusVersion 0, no arrival, no cancellation metadata), for Update / CompleteExisting omission and same-day Delete.
+/// StatusVersion 0, no arrival, no cancellation metadata), for RemoveParticipation and same-day Delete.
 /// </summary>
 public class BookingParticipationLifecycleTests
 {
@@ -49,10 +49,18 @@ public class BookingParticipationLifecycleTests
             await db.BookingSegmentParticipations.CountAsync(p => p.Booking.AppointmentId == appointmentId && p.Booking.ClientId == client.Id));
     }
 
-    private static Task UpdateOmitting(SchedulingWorld w, Guid appointmentId, Client kept) =>
-        w.Appointments.GetById(w.OrganizationId, appointmentId).ContinueWith(t => w.Appointments.Update(
-            w.OrganizationId, w.ActorUserId, true, appointmentId,
-            w.UpdateRequest(t.Result, r => r.ClientIds = new List<Guid> { kept.Id.Value }))).Unwrap();
+    /// <summary>M1H: removes every participation of every client except <paramref name="kept"/> through the target
+    /// participation command (the removed flat Update replaced the client list).</summary>
+    private static async Task RemoveAllParticipationsExcept(SchedulingWorld w, Guid appointmentId, Client kept)
+    {
+        List<Guid> participationIds;
+        await using (DatabaseContext db = w.NewDb())
+            participationIds = await db.BookingSegmentParticipations
+                .Where(p => p.Booking.AppointmentId == appointmentId && p.Booking.ClientId != kept.Id)
+                .Select(p => p.Id.Value).ToListAsync();
+        foreach (Guid participationId in participationIds)
+            await w.Appointments.RemoveParticipation(w.OrganizationId, w.ActorUserId, true, participationId);
+    }
 
     #region Creation seam
 
@@ -75,14 +83,17 @@ public class BookingParticipationLifecycleTests
     }
 
     [Fact]
-    public async Task Update_AddingAClient_CreatesItsBookingAndExactlyOneParticipation()
+    public async Task AddClient_CreatesItsBookingAndExactlyOneParticipation()
     {
-        await using SchedulingWorld w = await SchedulingWorld.Create(nameof(Update_AddingAClient_CreatesItsBookingAndExactlyOneParticipation));
+        await using SchedulingWorld w = await SchedulingWorld.Create(nameof(AddClient_CreatesItsBookingAndExactlyOneParticipation));
         Client second = await w.AddClient("Second", "Client");
         AppointmentDto created = await w.CreateAppointment(Z(10));
 
-        await w.Appointments.Update(w.OrganizationId, w.ActorUserId, true, created.Id,
-            w.UpdateRequest(created, r => r.ClientIds = new List<Guid> { w.Client.Id.Value, second.Id.Value }));
+        await w.Appointments.AddClient(w.OrganizationId, w.ActorUserId, true, created.Id, new AppointmentClientAddRequest
+        {
+            ClientId = second.Id.Value,
+            Participations = new List<AppointmentClientParticipationRequest> { new() { SegmentId = created.Segments[0].Id } }
+        });
 
         Assert.Equal((1, 1), await Rows(w, created.Id, second));
         BookingSegmentParticipation p = await ParticipationOf(w, created.Id, second);
@@ -91,15 +102,15 @@ public class BookingParticipationLifecycleTests
     }
 
     [Fact]
-    public async Task CompleteNew_CreatesTheParticipationAlreadyCompleted()
+    public async Task CompleteNow_CompletesTheParticipationThroughTheLifecycle()
     {
-        await using SchedulingWorld w = await SchedulingWorld.Create(nameof(CompleteNew_CreatesTheParticipationAlreadyCompleted));
+        await using SchedulingWorld w = await SchedulingWorld.Create(nameof(CompleteNow_CompletesTheParticipationThroughTheLifecycle));
 
         AppointmentDto dto = await w.CompleteNew(w.CompleteRequest(SchedulingWorld.Past(10)));
 
         BookingSegmentParticipation p = await ParticipationOf(w, dto.Id, w.Client);
         Assert.Equal(ParticipationStatus.Completed, p.Status);
-        Assert.Equal(0, p.StatusVersion); // creation is not a transition (unchanged semantics)
+        Assert.Equal(1, p.StatusVersion); // CHANGED in M1H: created Confirmed, then ONE lifecycle transition (was 0)
     }
 
     #endregion
@@ -132,7 +143,7 @@ public class BookingParticipationLifecycleTests
     {
         await using SchedulingWorld w = await SchedulingWorld.Create(nameof(Correction_CompletedToConfirmed_AdvancesTheParticipationVersion));
         AppointmentDto created = await w.CreateAppointment(Z(10));
-        await w.CompleteExisting(created.Id, w.CompleteRequest(Z(10), paymentMethod: PaymentMethod.Cash));
+        await w.CompleteParticipations(created.Id, w.CompleteRequest(Z(10), paymentMethod: PaymentMethod.Cash));
 
         await w.SetBookingStatus(created.Id, w.Client, BookingStatus.Confirmed);
 
@@ -158,7 +169,7 @@ public class BookingParticipationLifecycleTests
 
     #endregion
 
-    #region Single-participation resolver
+    #region Integrity: a Booking always has participations
 
     [Fact]
     public async Task ABookingWithoutAParticipation_FailsExplicitly_OnReadAndWrite()
@@ -170,16 +181,16 @@ public class BookingParticipationLifecycleTests
 
         await Assert.ThrowsAsync<InvalidBookingParticipationStateException>(() => w.Appointments.GetById(w.OrganizationId, created.Id));
         await Assert.ThrowsAsync<InvalidBookingParticipationStateException>(
-            () => w.SetBookingStatus(created.Id, w.Client, BookingStatus.Cancelled, "x"));
+            () => w.Bookings.CancelBooking(w.OrganizationId, w.ActorUserId, true, created.Id, w.Client.Id.Value,
+                new BookingCancelRequest { CancellationReason = "x" }));
     }
 
     [Fact]
-    public void Resolver_RejectsZeroSeveralForeignAndCrossAppointmentParticipations()
+    public void Summary_IsDerivedFromTheParticipations_AndNeverInventedForABookingWithoutAny()
     {
         Guid org = Guid.NewGuid();
         Guid appointmentId = Guid.NewGuid();
         AppointmentSegment own = new() { Id = Guid.NewGuid(), OrganizationId = org, AppointmentId = appointmentId };
-        AppointmentSegment foreignSegment = new() { Id = Guid.NewGuid(), OrganizationId = org, AppointmentId = Guid.NewGuid() };
 
         Booking Booking(params Func<Guid, BookingSegmentParticipation>[] participations)
         {
@@ -198,16 +209,6 @@ public class BookingParticipationLifecycleTests
         Booking valid = Booking(id => On(id, own));
         Assert.Equal(BookingStatusSummary.Confirmed, BookingSummary.StatusOf(valid));
 
-        Assert.Throws<InvalidBookingParticipationStateException>(() => BookingParticipations.GetSingleParticipation(Booking()));
-        // M0: more than one participation is no longer an integrity error but an AMBIGUOUS BookingId-addressed command.
-        Assert.Equal(ErrorCodes.BookingParticipationAmbiguous, Assert.Throws<BusinessRuleException>(() => BookingParticipations.GetSingleParticipation(
-            Booking(id => On(id, own), id => On(id, own)))).Code);
-        Assert.Throws<InvalidBookingParticipationStateException>(() => BookingParticipations.GetSingleParticipation(
-            Booking(id => On(id, foreignSegment))));
-        Assert.Throws<InvalidBookingParticipationStateException>(() => BookingParticipations.GetSingleParticipation(
-            Booking(id => On(id, own, Guid.NewGuid()))));
-        Assert.Throws<InvalidBookingParticipationStateException>(() => BookingParticipations.GetSingleParticipation(
-            Booking(_ => On(Guid.NewGuid(), own))));
         // The derived summary never invents a status for a Booking without participations.
         Assert.Throws<InvalidBookingParticipationStateException>(() => BookingSummary.StatusOf(Booking()));
     }
@@ -217,31 +218,18 @@ public class BookingParticipationLifecycleTests
     #region Deletion rule: untouched = deletable
 
     [Fact]
-    public async Task Update_RemovesANewlyCreatedConfirmedParticipation_AndItsBooking()
+    public async Task RemoveParticipation_RemovesANewlyCreatedConfirmedParticipation_AndItsBooking()
     {
-        await using SchedulingWorld w = await SchedulingWorld.Create(nameof(Update_RemovesANewlyCreatedConfirmedParticipation_AndItsBooking));
+        await using SchedulingWorld w = await SchedulingWorld.Create(nameof(RemoveParticipation_RemovesANewlyCreatedConfirmedParticipation_AndItsBooking));
         Client second = await w.AddClient("Second", "Client");
         AppointmentDto created = await w.CreateAppointment(Z(10), extraClients: second);
 
-        await UpdateOmitting(w, created.Id, w.Client);
+        await RemoveAllParticipationsExcept(w, created.Id, w.Client);
 
         Assert.Equal((0, 0), await Rows(w, created.Id, second)); // removed, not cancelled
         Assert.Equal((1, 1), await Rows(w, created.Id, w.Client));
         AppointmentDto read = await w.Appointments.GetById(w.OrganizationId, created.Id);
         Assert.Equal(w.Client.Id, Assert.Single(read.Bookings).ClientId);
-    }
-
-    [Fact]
-    public async Task CompleteExisting_RemovesANewlyCreatedConfirmedParticipation_AndItsBooking()
-    {
-        await using SchedulingWorld w = await SchedulingWorld.Create(nameof(CompleteExisting_RemovesANewlyCreatedConfirmedParticipation_AndItsBooking));
-        Client second = await w.AddClient("Second", "Client");
-        AppointmentDto created = await w.CreateAppointment(Z(10), extraClients: second);
-
-        await w.CompleteExisting(created.Id, w.CompleteRequest(Z(10)));
-
-        Assert.Equal((0, 0), await Rows(w, created.Id, second));
-        Assert.Equal(ParticipationStatus.Completed, (await ParticipationOf(w, created.Id, w.Client)).Status);
     }
 
     [Fact]
@@ -264,15 +252,15 @@ public class BookingParticipationLifecycleTests
     [InlineData(BookingStatus.Completed)]
     [InlineData(BookingStatus.Cancelled)]
     [InlineData(BookingStatus.NoShow)]
-    public async Task TerminalParticipation_IsNotDeletedByOmission_AndBlocksAppointmentDelete(BookingStatus terminal)
+    public async Task TerminalParticipation_CannotBeRemoved_AndBlocksAppointmentDelete(BookingStatus terminal)
     {
-        await using SchedulingWorld w = await SchedulingWorld.Create($"{nameof(TerminalParticipation_IsNotDeletedByOmission_AndBlocksAppointmentDelete)}-{terminal}");
+        await using SchedulingWorld w = await SchedulingWorld.Create($"{nameof(TerminalParticipation_CannotBeRemoved_AndBlocksAppointmentDelete)}-{terminal}");
         Client active = await w.AddClient("Active", "Client");
         Appointment seeded = await w.SeedAppointment(Z(10),
             bookings: new[] { (w.Client, terminal, 50m), (active, BookingStatus.Confirmed, 50m) });
 
-        // Update: the omitted terminal booking is history and is preserved, as before D3B1.
-        await UpdateOmitting(w, seeded.Id.Value, active);
+        // RemoveParticipation: the terminal participation is history and is preserved, as before D3B1.
+        await SchedulingAssert.BusinessRule(ErrorCodes.ReferencedCannotDelete, () => w.RemoveClientFromOnlySegment(seeded.Id.Value, w.Client));
         Assert.Equal((1, 1), await Rows(w, seeded.Id.Value, w.Client));
         Assert.Equal(BookingParticipations.ToParticipationStatus(terminal), (await ParticipationOf(w, seeded.Id.Value, w.Client)).Status);
 
@@ -300,16 +288,14 @@ public class BookingParticipationLifecycleTests
         AppointmentDto created = await w.CreateAppointment(Z(10), extraClients: second);
         await Mutate(w, created.Id, second, history); // still Confirmed
 
-        await SchedulingAssert.BusinessRule(ErrorCodes.ReferencedCannotDelete, () => UpdateOmitting(w, created.Id, w.Client));
-        await SchedulingAssert.BusinessRule(ErrorCodes.ReferencedCannotDelete,
-            () => w.CompleteExisting(created.Id, w.CompleteRequest(Z(10))));
+        await SchedulingAssert.BusinessRule(ErrorCodes.ReferencedCannotDelete, () => RemoveAllParticipationsExcept(w, created.Id, w.Client));
         await SchedulingAssert.BusinessRule(ErrorCodes.ReferencedCannotDelete,
             () => w.Appointments.Delete(w.OrganizationId, w.ActorUserId, created.Id));
 
         Assert.Equal((1, 1), await Rows(w, created.Id, second));
         Assert.Equal((1, 1), await Rows(w, created.Id, w.Client));
         Assert.Equal(ParticipationStatus.Confirmed, (await ParticipationOf(w, created.Id, second)).Status);
-        Assert.Equal(AppointmentStatus.Scheduled, (await w.LoadAppointment(created.Id)).Status); // CompleteExisting rolled back
+        Assert.Equal(AppointmentStatus.Scheduled, (await w.LoadAppointment(created.Id)).Status);
     }
 
     [Fact]
@@ -318,17 +304,17 @@ public class BookingParticipationLifecycleTests
         await using SchedulingWorld w = await SchedulingWorld.Create(nameof(ConfirmedCorrectedBackFromCompleted_BlocksOmissionAndDelete));
         Client second = await w.AddClient("Second", "Client");
         AppointmentDto created = await w.CreateAppointment(Z(10), extraClients: second);
-        await w.CompleteExisting(created.Id, w.CompleteRequest(Z(10), settlements: new[]
+        await w.CompleteParticipations(created.Id, w.CompleteRequest(Z(10), settlements: new[]
         {
-            new AppointmentClientSettlement { ClientId = w.Client.Id.Value, PaymentMethod = PaymentMethod.Cash, IsPaid = true },
-            new AppointmentClientSettlement { ClientId = second.Id.Value, PaymentMethod = PaymentMethod.Cash, IsPaid = true }
+            new AppointmentCompletedClientRequest { ClientId = w.Client.Id.Value, PaymentMethod = PaymentMethod.Cash, IsPaid = true },
+            new AppointmentCompletedClientRequest { ClientId = second.Id.Value, PaymentMethod = PaymentMethod.Cash, IsPaid = true }
         }));
         await w.SetBookingStatus(created.Id, second, BookingStatus.Confirmed); // Confirmed again, but with history
 
         BookingSegmentParticipation corrected = await ParticipationOf(w, created.Id, second);
         Assert.Equal((ParticipationStatus.Confirmed, 2), (corrected.Status, corrected.StatusVersion));
 
-        await SchedulingAssert.BusinessRule(ErrorCodes.ReferencedCannotDelete, () => UpdateOmitting(w, created.Id, w.Client));
+        await SchedulingAssert.BusinessRule(ErrorCodes.ReferencedCannotDelete, () => RemoveAllParticipationsExcept(w, created.Id, w.Client));
         await SchedulingAssert.BusinessRule(ErrorCodes.ReferencedCannotDelete,
             () => w.Appointments.Delete(w.OrganizationId, w.ActorUserId, created.Id));
         Assert.Equal((1, 1), await Rows(w, created.Id, second));

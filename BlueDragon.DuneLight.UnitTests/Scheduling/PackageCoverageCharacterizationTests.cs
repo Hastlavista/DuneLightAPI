@@ -265,7 +265,7 @@ public class PackageCoverageCharacterizationTests
         AppointmentDto created = await w.CreateAppointment(new DateTimeOffset(2040, 3, 5, 10, 0, 0, TimeSpan.Zero));
 
         await SchedulingAssert.BusinessRule(ErrorCodes.PackageNotEligible,
-            () => w.CompleteExisting(created.Id, w.CompleteRequest(new DateTimeOffset(2040, 3, 5, 10, 0, 0, TimeSpan.Zero), clientPackageId: package.Id)));
+            () => w.CompleteParticipations(created.Id, w.CompleteRequest(new DateTimeOffset(2040, 3, 5, 10, 0, 0, TimeSpan.Zero), clientPackageId: package.Id)));
     }
 
     [Fact]
@@ -338,7 +338,7 @@ public class PackageCoverageCharacterizationTests
         await w.PayBookingViaCheckout(bookingId, w.Client, 20m);
 
         BusinessRuleException ex = await SchedulingAssert.BusinessRule(ErrorCodes.BookingAlreadyHasMonetaryPayment,
-            () => w.CompleteExisting(created.Id, w.CompleteRequest(SchedulingWorld.Future(10), clientPackageId: package.Id)));
+            () => w.CompleteParticipations(created.Id, w.CompleteRequest(SchedulingWorld.Future(10), clientPackageId: package.Id)));
 
         Assert.NotNull(ex.Details);
         Booking b = await w.LoadBooking(created.Id, w.Client);
@@ -359,7 +359,7 @@ public class PackageCoverageCharacterizationTests
         Payment payment = Assert.Single(await w.LoadPayments(bookingId));
         await w.Checkouts.VoidPayment(w.OrganizationId, w.ActorUserId, checkoutId, payment.Id.Value, new CheckoutPaymentVoidRequest { Reason = "mistake" });
 
-        AppointmentDto completed = await w.CompleteExisting(created.Id, w.CompleteRequest(SchedulingWorld.Future(10), clientPackageId: package.Id));
+        AppointmentDto completed = await w.CompleteParticipations(created.Id, w.CompleteRequest(SchedulingWorld.Future(10), clientPackageId: package.Id));
 
         Assert.True(Assert.Single(completed.Bookings).PackageCoverageApplied);
     }
@@ -370,13 +370,13 @@ public class PackageCoverageCharacterizationTests
         await using SchedulingWorld w = await SchedulingWorld.Create(nameof(Xor_AfterTheCoverageWasReturned_ACashReCompletionIsAllowed_TheReturnedConsumptionNoLongerBlocksMoney));
         ClientPackage package = await w.AddClientPackage(w.Client, w.Service, 5, LongValid);
         AppointmentDto created = await w.CreateAppointment(SchedulingWorld.Future(10));
-        await w.CompleteExisting(created.Id, w.CompleteRequest(SchedulingWorld.Future(10), clientPackageId: package.Id));
+        await w.CompleteParticipations(created.Id, w.CompleteRequest(SchedulingWorld.Future(10), clientPackageId: package.Id));
         await w.SetBookingStatus(created.Id, w.Client, BookingStatus.Confirmed); // correction: coverage returned, link kept
 
         // F-08 (link half) FIXED (D3B3A): the check-in payment guard asks "is an ACTIVE package consumption settling this
         // participation?". The returned (Reversed) consumption stays as history but no longer blocks a cash re-completion.
         // (Before: the stale Booking.ClientPackageId refused it with PAYMENT_NOT_ALLOWED although nothing settled it.)
-        AppointmentDto dto = await w.CompleteExisting(created.Id, w.CompleteRequest(SchedulingWorld.Future(10), paymentMethod: PaymentMethod.Cash));
+        AppointmentDto dto = await w.CompleteParticipations(created.Id, w.CompleteRequest(SchedulingWorld.Future(10), paymentMethod: PaymentMethod.Cash));
 
         BookingDto b = Assert.Single(dto.Bookings);
         Assert.Equal(BookingStatusSummary.Completed, b.Status);
@@ -396,7 +396,7 @@ public class PackageCoverageCharacterizationTests
         Guid bookingId = completed.Bookings.Single().Id;
         CheckoutDto checkout = await w.Checkouts.Create(w.OrganizationId, w.ActorUserId,
             new CheckoutCreateRequest { ClientId = w.Client.Id.Value, CompanyId = w.Company.Id.Value });
-        CheckoutDto withItem = await w.Checkouts.AddBookingItem(w.OrganizationId, w.ActorUserId, checkout.Id, new CheckoutAddBookingItemRequest { BookingId = bookingId });
+        CheckoutDto withItem = await w.Checkouts.AddBookingItem(w.OrganizationId, w.ActorUserId, checkout.Id, new CheckoutAddBookingItemRequest { ParticipationId = await w.SingleParticipationOfBooking(bookingId) });
         CheckoutItemDto item = Assert.Single(withItem.Items);
         // The item shows the retail price but no monetary due: the package settles it.
         Assert.Equal(50m, item.RetailAmount);
@@ -424,8 +424,8 @@ public class PackageCoverageCharacterizationTests
         AppointmentDto unpaid = await w.CompleteNew(w.CompleteRequest(SchedulingWorld.Past(12))); // Completed, no settlement: 50 outstanding
         CheckoutDto checkout = await w.Checkouts.Create(w.OrganizationId, w.ActorUserId,
             new CheckoutCreateRequest { ClientId = w.Client.Id.Value, CompanyId = w.Company.Id.Value });
-        await w.Checkouts.AddBookingItem(w.OrganizationId, w.ActorUserId, checkout.Id, new CheckoutAddBookingItemRequest { BookingId = covered.Bookings.Single().Id });
-        CheckoutDto both = await w.Checkouts.AddBookingItem(w.OrganizationId, w.ActorUserId, checkout.Id, new CheckoutAddBookingItemRequest { BookingId = unpaid.Bookings.Single().Id });
+        await w.Checkouts.AddBookingItem(w.OrganizationId, w.ActorUserId, checkout.Id, new CheckoutAddBookingItemRequest { ParticipationId = Assert.Single(covered.Bookings.Single().Participations).Id });
+        CheckoutDto both = await w.Checkouts.AddBookingItem(w.OrganizationId, w.ActorUserId, checkout.Id, new CheckoutAddBookingItemRequest { ParticipationId = Assert.Single(unpaid.Bookings.Single().Participations).Id });
         CheckoutItemDto coveredItem = both.Items.Single(i => i.BookingId == covered.Bookings.Single().Id);
 
         // Now the checkout has 50 outstanding, so the amount check passes and the per-item package rule is what refuses it.
@@ -446,8 +446,8 @@ public class PackageCoverageCharacterizationTests
         AppointmentDto unpaid = await w.CompleteNew(w.CompleteRequest(SchedulingWorld.Past(12)));
         CheckoutDto checkout = await w.Checkouts.Create(w.OrganizationId, w.ActorUserId,
             new CheckoutCreateRequest { ClientId = w.Client.Id.Value, CompanyId = w.Company.Id.Value });
-        await w.Checkouts.AddBookingItem(w.OrganizationId, w.ActorUserId, checkout.Id, new CheckoutAddBookingItemRequest { BookingId = covered.Bookings.Single().Id });
-        await w.Checkouts.AddBookingItem(w.OrganizationId, w.ActorUserId, checkout.Id, new CheckoutAddBookingItemRequest { BookingId = unpaid.Bookings.Single().Id });
+        await w.Checkouts.AddBookingItem(w.OrganizationId, w.ActorUserId, checkout.Id, new CheckoutAddBookingItemRequest { ParticipationId = Assert.Single(covered.Bookings.Single().Participations).Id });
+        await w.Checkouts.AddBookingItem(w.OrganizationId, w.ActorUserId, checkout.Id, new CheckoutAddBookingItemRequest { ParticipationId = Assert.Single(unpaid.Bookings.Single().Participations).Id });
 
         CheckoutDto paid = await w.Checkouts.RecordPayment(w.OrganizationId, w.ActorUserId, checkout.Id,
             new CheckoutPaymentCreateRequest { Amount = 50m, Method = PaymentMethod.Cash });

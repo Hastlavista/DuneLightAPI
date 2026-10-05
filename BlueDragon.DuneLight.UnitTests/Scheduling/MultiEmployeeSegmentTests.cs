@@ -134,7 +134,6 @@ public class MultiEmployeeSegmentTests
         Assert.Null(standard.PricingEmployeeId);
         // Both employees remain equal execution participants regardless of the pricing source.
         Assert.Equal(new[] { s.Ana.Id, s.Marko.Id }.OrderBy(x => x), standardDto.Segments.Single().Employees.Select(e => (Guid?)e.EmployeeId).OrderBy(x => x));
-        Assert.Null(standardDto.EmployeeId); // legacy flat projection: never a fake single employee
     }
 
     [Fact]
@@ -479,19 +478,6 @@ public class MultiEmployeeSegmentTests
 
         Assert.Equal(s.Ana.Id, Assert.Single((await w.Appointments.GetById(w.OrganizationId, dto.Id)).Segments.Single().Employees).EmployeeId);
         Assert.Equal(s.Ana.Id, Assert.Single(await EntriesOf(w, participation)).EmployeeId);
-    }
-
-    [Fact]
-    public async Task LegacySingleEmployeeOperations_NeverCollapseAMultiEmployeeSegment()
-    {
-        await using SchedulingWorld w = await SchedulingWorld.Create(nameof(LegacySingleEmployeeOperations_NeverCollapseAMultiEmployeeSegment));
-        Studio s = await SetUp(w);
-        AppointmentDto dto = await Create(w, Seg(s.Duo, SchedulingWorld.Future(10), new[] { s.Ana, s.Marko }, SegmentPricingMode.Standard, clients: w.Client));
-
-        await SchedulingAssert.BusinessRule(ErrorCodes.EmployeeSetCommandRequired, () => w.Appointments.Move(
-            w.OrganizationId, w.ActorUserId, true, dto.Id, new AppointmentMoveRequest { StartsAt = SchedulingWorld.Future(12) }));
-
-        Assert.Equal(2, (await w.Appointments.GetById(w.OrganizationId, dto.Id)).Segments.Single().Employees.Count);
     }
 
     [Fact]

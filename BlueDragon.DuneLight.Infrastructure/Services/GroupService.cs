@@ -29,12 +29,12 @@ using ServiceEntity = BlueDragon.DuneLight.Infrastructure.Domain.Models.Catalog.
 namespace BlueDragon.DuneLight.Infrastructure.Services;
 
 /// <summary>
-/// Phase M1F — grupa = kalendar (slotovi = sidro occurrencea) + poslovnica + trener + članovi + PREDLOŠCI SEGMENATA.
+/// Phase M1F — grupa = kalendar (slotovi = sidro occurrencea) + poslovnica + članovi + PREDLOŠCI SEGMENATA (s osobljem).
 /// Occurrence je JEDAN termin s po jednim segmentom za svaki predložak; član sudjeluje SAMO u segmentima predložaka koje je
 /// eksplicitno odabrao (jedan Booking po klijentu po occurrenceu, jedno sudjelovanje po odabranom segmentu). Kapacitet
 /// predloška je MEKI (poslovni) i smije se prekoračiti samo eksplicitno uz groups.capacity.override; prostorija/resursi/
-/// preklapanja zaposlenika i klijenata ostaju tvrdi. Jednopredloška grupa je kompatibilni slučaj (plosnati ugovori
-/// razrješavaju jedini predložak); višepredloška grupa nikad ne pretpostavlja "sve predloške".
+/// preklapanja zaposlenika i klijenata ostaju tvrdi. Phase M1H: nema plosnatog ("jednopredloškog") ugovora — grupa s jednom
+/// uslugom je grupa s jednim predloškom, a odabir predložaka člana je uvijek eksplicitan.
 /// </summary>
 public class GroupService : IGroupService
 {
@@ -139,16 +139,15 @@ public class GroupService : IGroupService
         foreach (GroupSlotCreateRequest slot in request.Slots)
             ValidateSlotTime(slot.StartTime);
 
-        List<GroupSegmentTemplateRequest> templateRequests = ToTemplateRequests(request);
+        if (request.SegmentTemplates == null || request.SegmentTemplates.Count == 0)
+            throw new ValidationAppException("Grupa mora imati barem jedan predložak segmenta.");
         await EnsureCompany(organizationId, request.CompanyId);
 
         Guid groupId = Guid.NewGuid();
         DateTimeOffset now = DateTimeOffset.UtcNow;
-        // KOMPATIBILNOST: DefaultTrainerId je osoblje predložaka koji ne navode EmployeeIds (ne sprema se na grupu).
-        List<Guid> legacyTrainer = request.DefaultTrainerId.HasValue ? new List<Guid> { request.DefaultTrainerId.Value } : new List<Guid>();
         List<GroupSegmentTemplate> templates = new();
-        foreach (GroupSegmentTemplateRequest templateRequest in templateRequests)
-            templates.Add(await BuildTemplate(organizationId, groupId, request.CompanyId, templateRequest, legacyTrainer, now));
+        foreach (GroupSegmentTemplateRequest templateRequest in request.SegmentTemplates)
+            templates.Add(await BuildTemplate(organizationId, groupId, request.CompanyId, templateRequest, now));
         EnsureAnchorTemplate(templates);
 
         List<WarningDto> warnings = await ComputeWorkingHoursWarnings(
@@ -183,97 +182,25 @@ public class GroupService : IGroupService
         return dto;
     }
 
-    /// <summary>Ciljni ugovor (SegmentTemplates) ili KOMPATIBILNI plosnati (ServiceId + Capacity [+ DefaultRoomId] = jedan
-    /// predložak, pomak 0, trajanje usluge kao prijedlog) — nikad oba.</summary>
-    private static List<GroupSegmentTemplateRequest> ToTemplateRequests(GroupCreateRequest request)
-    {
-        bool hasFlat = request.ServiceId.HasValue || request.Capacity.HasValue || request.DefaultRoomId.HasValue;
-        if (request.SegmentTemplates is { Count: > 0 })
-        {
-            if (hasFlat)
-                throw new ValidationAppException(
-                    "Grupa se definira ILI predlošcima segmenata ILI plosnatim poljima (ServiceId/Capacity/DefaultRoomId), ne oboje.");
-            return request.SegmentTemplates;
-        }
-
-        if (!request.ServiceId.HasValue || !request.Capacity.HasValue)
-            throw new ValidationAppException("Grupa mora imati barem jedan predložak segmenta (ili ServiceId i Capacity).");
-
-        return new List<GroupSegmentTemplateRequest>
-        {
-            new() { ServiceId = request.ServiceId.Value, StartOffsetMinutes = 0, RoomId = request.DefaultRoomId, Capacity = request.Capacity.Value }
-        };
-    }
-
+    /// <summary>Phase M1H — opći podaci grupe (naziv, poslovnica, napomena). Izvršna definicija (usluga, vrijeme, osoblje,
+    /// izvor cijene, prostorija, resursi, kapacitet) se mijenja isključivo po predlošku (/segment-templates). Promjena
+    /// poslovnice zahtijeva da svaki predložak ostane strukturno valjan za novu poslovnicu.</summary>
     public async Task<GroupDto> Update(Guid organizationId, Guid userId, Guid id, GroupUpdateRequest request)
     {
         Group existing = await _groupHandler.GetById(organizationId, id);
         if (existing == null)
             throw new NotFoundAppException("Group", id);
 
-        bool hasFlat = request.ServiceId.HasValue || request.Capacity.HasValue || request.DefaultRoomId.HasValue;
-        GroupSegmentTemplate compatTemplate = null;
-        if (hasFlat)
-        {
-            // KOMPATIBILNOST: plosnata polja mijenjaju JEDINI predložak; višepredloška grupa ih ne prihvaća (nema "pogađanja").
-            if (existing.SegmentTemplates.Count != 1)
-                throw new BusinessRuleException(ErrorCodes.SegmentSelectionRequired,
-                    "Grupa ima više predložaka segmenata — uslugu/kapacitet/prostoriju mijenjajte po predlošku (/segment-templates).");
-            compatTemplate = existing.SegmentTemplates[0];
-        }
-
         await EnsureCompany(organizationId, request.CompanyId);
-
-        // KOMPATIBILNOST (Phase M1G): plosnati trener mijenja osoblje SAMO kad se razlikuje od trenutne projekcije (inače bi
-        // izostavljen/null trener tiho obrisao osoblje predložaka). Višepredloška grupa ga ne prihvaća — osoblje po predlošku.
-        Guid? currentTrainerProjection = LegacyTrainerProjection(existing.SegmentTemplates);
-        GroupSegmentTemplate staffedTemplate = null;
-        if (request.DefaultTrainerId != currentTrainerProjection)
-        {
-            if (existing.SegmentTemplates.Count != 1)
-                throw new BusinessRuleException(ErrorCodes.SegmentSelectionRequired,
-                    "Grupa ima više predložaka segmenata — osoblje mijenjajte po predlošku (/segment-templates).");
-            staffedTemplate = existing.SegmentTemplates[0];
-        }
-
-        DateTimeOffset now = DateTimeOffset.UtcNow;
-        int? oldCapacity = compatTemplate?.Capacity;
-        if (compatTemplate != null)
-        {
-            Guid serviceId = request.ServiceId ?? compatTemplate.ServiceId;
-            ServiceEntity service = await EnsureServiceExists(organizationId, serviceId);
-            // Kao prije: trajanje jedinog predloška slijedi uslugu kad se usluga promijeni.
-            if (serviceId != compatTemplate.ServiceId)
-                compatTemplate.DurationMinutes = service.DefaultDurationMinutes;
-            compatTemplate.ServiceId = serviceId;
-            compatTemplate.Capacity = request.Capacity ?? compatTemplate.Capacity;
-            compatTemplate.RoomId = request.DefaultRoomId;
-            compatTemplate.UpdatedAt = now;
-        }
-
-        List<Guid> newStaff = request.DefaultTrainerId.HasValue ? new List<Guid> { request.DefaultTrainerId.Value } : new List<Guid>();
-        PricingSourceValue newStaffPricing = SegmentPricingSource.Normalize(newStaff, null, null);
-
-        // Svaki predložak mora ostati strukturno valjan za (novu) poslovnicu i svoje (eventualno novo) osoblje.
         foreach (GroupSegmentTemplate template in existing.SegmentTemplates)
-            await ValidateTemplate(organizationId, request.CompanyId,
-                template == staffedTemplate ? newStaff : template.Employees.Select(e => e.EmployeeId).ToList(),
+            await ValidateTemplate(organizationId, request.CompanyId, template.Employees.Select(e => e.EmployeeId).ToList(),
                 template.ServiceId, template.RoomId, template.Resources.Select(r => (r.ResourceId, r.QuantityRequired)).ToList());
-
-        if (staffedTemplate != null)
-        {
-            staffedTemplate.Employees = newStaff.Select(e => new GroupSegmentTemplateEmployee
-            {
-                GroupSegmentTemplateId = staffedTemplate.Id.GetValueOrDefault(), EmployeeId = e
-            }).ToList();
-            staffedTemplate.PricingMode = newStaffPricing.Mode;
-            staffedTemplate.PricingEmployeeId = newStaffPricing.PricingEmployeeId;
-        }
 
         List<WarningDto> warnings = await ComputeWorkingHoursWarnings(
             organizationId, request.CompanyId, existing.SegmentTemplates,
             existing.Slots.Where(s => s.IsActive).Select(s => (s.DayOfWeek, s.StartTime)).ToList());
 
+        DateTimeOffset now = DateTimeOffset.UtcNow;
         existing.Name = request.Name;
         existing.CompanyId = request.CompanyId;
         existing.Note = request.Note;
@@ -283,29 +210,6 @@ public class GroupService : IGroupService
         await using (IUnitOfWork uow = await _unitOfWorkFactory.Begin())
         {
             await _groupHandler.UpdateScalar(uow, Scalar(existing));
-            if (compatTemplate != null || staffedTemplate != null)
-            {
-                uow.Context.GroupSegmentTemplates.Update(TemplateScalar(compatTemplate ?? staffedTemplate));
-                await uow.Context.SaveChangesAsync();
-            }
-
-            if (staffedTemplate != null)
-            {
-                await ReplaceTemplateStaff(uow, staffedTemplate.Id.GetValueOrDefault(), newStaff);
-                await _auditLogHandler.Add(uow, new GroupAuditLog
-                {
-                    Id = Guid.NewGuid(), GroupId = id, ChangeType = "DefaultTrainer", OldValue = currentTrainerProjection?.ToString(),
-                    NewValue = request.DefaultTrainerId?.ToString(), ChangedAt = now, ChangedBy = userId
-                });
-            }
-
-            if (compatTemplate != null && oldCapacity != compatTemplate.Capacity)
-                await _auditLogHandler.Add(uow, new GroupAuditLog
-                {
-                    Id = Guid.NewGuid(), GroupId = id, ChangeType = "Capacity", OldValue = oldCapacity.ToString(),
-                    NewValue = compatTemplate.Capacity.ToString(), ChangedAt = now, ChangedBy = userId
-                });
-
             await uow.CommitAsync();
         }
 
@@ -485,7 +389,7 @@ public class GroupService : IGroupService
         Group group = await _groupHandler.GetById(organizationId, groupId)
             ?? throw new NotFoundAppException("Group", groupId);
         DateTimeOffset now = DateTimeOffset.UtcNow;
-        GroupSegmentTemplate template = await BuildTemplate(organizationId, groupId, group.CompanyId, request, new List<Guid>(), now);
+        GroupSegmentTemplate template = await BuildTemplate(organizationId, groupId, group.CompanyId, request, now);
         EnsureAnchorTemplate(group.SegmentTemplates.Append(template).ToList());
 
         List<WarningDto> warnings = await ComputeWorkingHoursWarnings(
@@ -521,17 +425,8 @@ public class GroupService : IGroupService
             ?? throw new NotFoundAppException("GroupSegmentTemplate", templateId);
 
         DateTimeOffset now = DateTimeOffset.UtcNow;
-        // Phase M1G: izostavljeno osoblje (EmployeeIds = null, bez izvora cijene) = zadržava se postojeće osoblje i izvor.
-        if (request.EmployeeIds == null && request.PricingMode == null && request.PricingEmployeeId == null)
-        {
-            request.EmployeeIds = existing.Employees.Select(e => e.EmployeeId).ToList();
-            if (request.EmployeeIds.Count >= 2)
-            {
-                request.PricingMode = existing.PricingMode;
-                request.PricingEmployeeId = existing.PricingEmployeeId;
-            }
-        }
-        GroupSegmentTemplate updated = await BuildTemplate(organizationId, groupId, group.CompanyId, request, new List<Guid>(), now);
+        // Phase M1H: izmjena predloška je POTPUNA zamjena njegove definicije (uključivo osoblje i izvor cijene).
+        GroupSegmentTemplate updated = await BuildTemplate(organizationId, groupId, group.CompanyId, request, now);
         EnsureAnchorTemplate(group.SegmentTemplates.Where(t => t.Id != templateId).Append(updated).ToList());
 
         await using (IUnitOfWork uow = await _unitOfWorkFactory.Begin())
@@ -605,10 +500,10 @@ public class GroupService : IGroupService
         return await GetDtoById(organizationId, groupId);
     }
 
-    /// <summary>Phase M1G: osoblje predloška = request.EmployeeIds (skup, bez duplikata; prazno = bez trenera) ili, kad je
-    /// izostavljeno, <paramref name="defaultEmployees"/> (KOMPATIBILNI trener grupe). Izvor cijene po istom pravilu kao segment.</summary>
+    /// <summary>Phase M1G: osoblje predloška = request.EmployeeIds (skup, bez duplikata; prazno = bez trenera). Izvor cijene po
+    /// istom pravilu kao segment.</summary>
     private async Task<GroupSegmentTemplate> BuildTemplate(
-        Guid organizationId, Guid groupId, Guid companyId, GroupSegmentTemplateRequest request, List<Guid> defaultEmployees, DateTimeOffset now)
+        Guid organizationId, Guid groupId, Guid companyId, GroupSegmentTemplateRequest request, DateTimeOffset now)
     {
         if (request == null)
             throw new ValidationAppException("Predložak segmenta je obavezan.");
@@ -619,7 +514,7 @@ public class GroupService : IGroupService
 
         List<(Guid ResourceId, int Quantity)> resources = (request.Resources ?? new List<GroupSegmentTemplateResourceRequest>())
             .Select(r => (r.ResourceId, r.QuantityRequired)).ToList();
-        List<Guid> employees = request.EmployeeIds?.ToList() ?? defaultEmployees;
+        List<Guid> employees = request.EmployeeIds?.ToList() ?? new List<Guid>();
         if (employees.Distinct().Count() != employees.Count)
             throw new ValidationAppException("Isti zaposlenik se na predlošku smije navesti samo jednom.");
         PricingSourceValue pricingSource = SegmentPricingSource.Normalize(employees, request.PricingMode, request.PricingEmployeeId);
@@ -661,10 +556,6 @@ public class GroupService : IGroupService
             employeeIds.Select(e => new GroupSegmentTemplateEmployee { GroupSegmentTemplateId = templateId, EmployeeId = e }));
         await uow.Context.SaveChangesAsync();
     }
-
-    /// <summary>KOMPATIBILNA projekcija plosnatog trenera: zaposlenik JEDINOG predloška kad ga ima točno jednog; inače null.</summary>
-    private static Guid? LegacyTrainerProjection(IReadOnlyCollection<GroupSegmentTemplate> templates) =>
-        templates.Count == 1 && templates.Single().Employees.Count == 1 ? templates.Single().Employees[0].EmployeeId : null;
 
     /// <summary>Strukturna valjanost predloška: usluga (grupni način, ponuđena u poslovnici, SVAKI zaposlenik predloška je
     /// aktivan, dodijeljen poslovnici i smije je izvoditi), prostorija i resursi (aktivni, ista poslovnica, količina &gt; 0,
@@ -910,17 +801,12 @@ public class GroupService : IGroupService
         return await GetDtoById(organizationId, groupId);
     }
 
-    /// <summary>Eksplicitan odabir predložaka člana. Bez odabira: dopušteno SAMO za jednopredlošku grupu (kompatibilnost —
-    /// jedini mogući predložak); višepredloška grupa → SEGMENT_SELECTION_REQUIRED (nikad implicitno "svi").</summary>
+    /// <summary>Eksplicitan odabir predložaka člana (barem jedan, bez duplikata, bez međusobnog preklapanja).</summary>
     private static List<GroupSegmentTemplate> ResolveSelection(Group group, List<Guid> templateIds)
     {
+        // Phase M1H: odabir je uvijek eksplicitan (i za grupu s jednim predloškom) — nikad se ne zaključuje.
         if (templateIds == null || templateIds.Count == 0)
-        {
-            if (group.SegmentTemplates.Count == 1)
-                return group.SegmentTemplates.ToList();
-            throw new BusinessRuleException(ErrorCodes.SegmentSelectionRequired,
-                "Grupa ima više predložaka segmenata — odaberite u kojima član sudjeluje (SegmentTemplateIds).");
-        }
+            throw new ValidationAppException("Odaberite predloške segmenata u kojima član sudjeluje (SegmentTemplateIds).");
 
         if (templateIds.Distinct().Count() != templateIds.Count)
             throw new ValidationAppException("Isti predložak se smije odabrati samo jednom.");
@@ -1402,8 +1288,6 @@ public class GroupService : IGroupService
 
             warningsByCandidate.TryGetValue((slot.Id.GetValueOrDefault(), candidate.StartsAt), out List<WarningDto> occurrenceWarnings);
             AppointmentRange range = AppointmentRange.Of(appointment);
-            GroupSegmentTemplate single = group.SegmentTemplates.Count == 1 ? group.SegmentTemplates[0] : null;
-            GroupSegmentTemplateEmployee singleEmployee = single?.Employees.Count == 1 ? single.Employees[0] : null;
 
             createdDtos.Add(new AppointmentScheduleCellDto
             {
@@ -1411,18 +1295,8 @@ public class GroupService : IGroupService
                 PlannedStart = range.PlannedStart,
                 PlannedEnd = range.PlannedEnd,
                 Segments = appointment.Segments.Select(segment => GeneratedSegmentDto(segment, group)).ToList(),
-                StartsAt = range.PlannedStart,
-                DurationMinutes = range.SpanMinutes,
-                // KOMPATIBILNOST: plosnata polja samo za jednopredlošku grupu.
-                ServiceId = single?.ServiceId,
-                ServiceName = single?.Service?.Name,
-                ServiceCategoryColorHex = single?.Service?.ColorHex,
-                EmployeeId = singleEmployee?.EmployeeId,
-                EmployeeName = singleEmployee?.Employee != null ? $"{singleEmployee.Employee.FirstName} {singleEmployee.Employee.LastName}" : null,
                 CompanyId = group.CompanyId,
                 CompanyName = group.Company?.Name,
-                RoomId = single?.RoomId,
-                RoomName = single?.Room?.Name,
                 Status = AppointmentStatus.Scheduled,
                 IsCancelled = false,
                 Form = AppointmentForm.Group,
@@ -1457,7 +1331,7 @@ public class GroupService : IGroupService
         {
             CreatedCount = toCreate.Count,
             SkippedCount = skipped,
-            Created = createdDtos.OrderBy(a => a.StartsAt).ToList()
+            Created = createdDtos.OrderBy(a => a.PlannedStart).ToList()
         };
     }
 
@@ -1492,10 +1366,9 @@ public class GroupService : IGroupService
         {
             GroupId = m.GroupId,
             GroupName = m.Group?.Name,
-            // KOMPATIBILNOST: usluga samo kad grupa ima jedan predložak; inače usluge odabranih predložaka.
-            ServiceName = m.Group == null ? null : string.Join(", ", m.Group.SegmentTemplates
-                .Where(t => m.Group.SegmentTemplates.Count == 1 || m.SegmentTemplates.Any(x => x.GroupSegmentTemplateId == t.Id))
-                .OrderBy(t => t.StartOffsetMinutes).Select(t => t.Service?.Name)),
+            ServiceNames = m.Group == null ? new List<string>() : m.Group.SegmentTemplates
+                .Where(t => m.SegmentTemplates.Any(x => x.GroupSegmentTemplateId == t.Id))
+                .OrderBy(t => t.StartOffsetMinutes).Select(t => t.Service?.Name).ToList(),
             CompanyName = m.Group?.Company?.Name,
             Slots = m.Group?.Slots.Where(s => s.IsActive)
                 .OrderBy(s => s.DayOfWeek).ThenBy(s => s.StartTime)
@@ -1901,22 +1774,11 @@ public class GroupService : IGroupService
     private static void MapGroup(Group group, GroupDto dto)
     {
         List<GroupSegmentTemplate> templates = group.SegmentTemplates.OrderBy(t => t.StartOffsetMinutes).ThenBy(t => t.Id).ToList();
-        // KOMPATIBILNOST (nije autoritativno): plosnata polja samo za jednopredlošku grupu.
-        GroupSegmentTemplate single = templates.Count == 1 ? templates[0] : null;
 
         dto.Id = group.Id.GetValueOrDefault();
         dto.Name = group.Name;
-        dto.ServiceId = single?.ServiceId;
-        dto.ServiceName = single?.Service?.Name;
         dto.CompanyId = group.CompanyId;
         dto.CompanyName = group.Company?.Name;
-        dto.Capacity = single?.Capacity;
-        // KOMPATIBILNOST (Phase M1G): plosnati trener samo za jednopredlošku grupu s točno jednim zaposlenikom.
-        GroupSegmentTemplateEmployee trainer = single?.Employees.Count == 1 ? single.Employees[0] : null;
-        dto.DefaultTrainerId = trainer?.EmployeeId;
-        dto.DefaultTrainerName = trainer?.Employee != null ? $"{trainer.Employee.FirstName} {trainer.Employee.LastName}" : null;
-        dto.DefaultRoomId = single?.RoomId;
-        dto.DefaultRoomName = single?.Room?.Name;
         dto.SegmentTemplates = templates.Select(t => new GroupSegmentTemplateDto
         {
             Id = t.Id.GetValueOrDefault(),
@@ -1988,24 +1850,14 @@ public class GroupService : IGroupService
     private static AppointmentScheduleCellDto ToScheduleCellDto(Appointment a, string groupName, int expectedCount)
     {
         AppointmentRange range = AppointmentRange.Of(a);
-        SingleSegmentProjection compat = SingleSegmentProjection.Of(a);
         return new AppointmentScheduleCellDto
         {
             Id = a.Id.GetValueOrDefault(),
             PlannedStart = range.PlannedStart,
             PlannedEnd = range.PlannedEnd,
             Segments = AppointmentSegmentReadModel.ToDtos(a),
-            StartsAt = range.PlannedStart,
-            DurationMinutes = range.SpanMinutes,
-            ServiceId = compat.ServiceId,
-            ServiceName = compat.ServiceName,
-            ServiceCategoryColorHex = compat.ServiceColorHex,
-            EmployeeId = compat.EmployeeId,
-            EmployeeName = compat.EmployeeName,
             CompanyId = a.CompanyId,
             CompanyName = a.Company?.Name,
-            RoomId = compat.RoomId,
-            RoomName = compat.RoomName,
             Status = a.Status,
             IsCancelled = a.Status == AppointmentStatus.Cancelled,
             Form = AppointmentForm.Group,

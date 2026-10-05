@@ -15,7 +15,7 @@ using Microsoft.EntityFrameworkCore;
 namespace BlueDragon.DuneLight.Infrastructure.Outbox.Handlers;
 
 /// <summary>Pretvara booking.no-show.v1 u logičan Notification (vidi spec section 41). Zaključava redak SUDJELOVANJA
-/// (FOR UPDATE, Phase M0) PRIJE donošenja Notification odluke — serijalizira ovaj handler s BookingService.SetStatus
+/// (FOR UPDATE, Phase M0) PRIJE donošenja Notification odluke — serijalizira ovaj handler s BookingService.SetParticipationStatus
 /// administrativnom korekcijom (NoShow -&gt; Confirmed) na ISTOM retku umjesto nesigurnog read-then-decide (vidi
 /// spec section 2-4/39), tako da PostgreSQL row-lock garantira JEDAN od dva ishoda bez obzira koji konkurent prvi
 /// stigne. Idempotentan preko INotificationHandler.ExistsForSource po (SourceId, SourceVersion) — SourceVersion =

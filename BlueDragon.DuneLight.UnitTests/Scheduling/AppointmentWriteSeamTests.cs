@@ -30,7 +30,7 @@ public class AppointmentWriteSeamTests
             clients.Select(c => new ParticipantPlan(c, Price)).ToList());
 
     private static Appointment Individual(params SegmentPlan[] plans) =>
-        AppointmentFactory.CreateIndividual(Org, Company, null, null, User, CreatedAt, plans, ParticipationStatus.Confirmed);
+        AppointmentFactory.CreateIndividual(Org, Company, null, null, User, CreatedAt, plans);
 
     /// <summary>Bookings are created against a segment of an appointment.</summary>
     private static AppointmentSegment NewSegment() => Individual(Plan()).Segments.Single();
@@ -44,7 +44,7 @@ public class AppointmentWriteSeamTests
         Guid employee = Guid.NewGuid(), room = Guid.NewGuid(), recurrence = Guid.NewGuid();
         SegmentPlan plan = Plan(employee, room);
 
-        Appointment a = AppointmentFactory.CreateIndividual(Org, Company, "note", recurrence, User, CreatedAt, new[] { plan }, ParticipationStatus.Confirmed);
+        Appointment a = AppointmentFactory.CreateIndividual(Org, Company, "note", recurrence, User, CreatedAt, new[] { plan });
 
         Assert.NotNull(a.Id);
         Assert.NotEqual(Guid.Empty, a.Id.Value);
@@ -179,14 +179,16 @@ public class AppointmentWriteSeamTests
     }
 
     [Fact]
-    public void CreationCore_InitialParticipationStatus_IsAppliedToEveryParticipation()
+    public void CreationCore_EveryParticipationStartsConfirmed_AtStatusVersionZero()
     {
+        // M1H: there is no "completed at creation" shape — CompleteNow transitions the Confirmed participations through the
+        // participation lifecycle core in the same transaction.
         Guid client = Guid.NewGuid();
         Appointment a = AppointmentFactory.CreateIndividual(
             Org, Company, null, null, User, CreatedAt,
-            new[] { Plan(clients: client), Plan(start: StartsAt.AddHours(1), clients: client) }, ParticipationStatus.Completed);
+            new[] { Plan(clients: client), Plan(start: StartsAt.AddHours(1), clients: client) });
 
-        Assert.All(Assert.Single(a.Bookings).Participations, p => Assert.Equal(ParticipationStatus.Completed, p.Status));
+        Assert.All(Assert.Single(a.Bookings).Participations, p => Assert.Equal((ParticipationStatus.Confirmed, 0), (p.Status, p.StatusVersion)));
         // The factory never decides the appointment status — the caller derives it.
         Assert.Equal(AppointmentStatus.Scheduled, a.Status);
     }
@@ -298,31 +300,6 @@ public class AppointmentWriteSeamTests
         Assert.Equal(35m, b.Amount);
         Assert.Equal(35m, b.SuggestedAmount);
         Assert.False(b.IsAmountManuallyOverridden);
-    }
-
-    [Fact]
-    public void CreateCompletedAtCreation_IsCompletedAtStatusVersionZero_WithoutAPackage()
-    {
-        // F-07 (pinned): CompleteNew creates the Booking directly as Completed without going through TrySetStatus.
-        Booking b = BookingFactory.CreateCompletedAtCreation(Org, NewSegment(), Guid.NewGuid(), new BookingPricing(50m, 50m, false), CreatedAt);
-
-        Assert.Equal(BookingStatus.Completed, b.Status);
-        Assert.Equal(0, b.StatusVersion);
-        Assert.Null(b.ClientPackageId);
-        Assert.False(b.PackageCoverageApplied);
-        Assert.False(b.PackageCoverageReturned);
-        Assert.Null(b.CoverageType);
-    }
-
-    [Fact]
-    public void CreateCompletedAtCreation_NeverRecordsPackageUsage_TheLedgerDoes()
-    {
-        // D3B3A: the factory only shapes Booking + Participation; package usage is a PackageConsumption written by the
-        // ledger (IPackageConsumptionLedgerService) in CompleteNew's transaction — see PackageConsumptionLedgerTests.
-        Booking b = BookingFactory.CreateCompletedAtCreation(Org, NewSegment(), Guid.NewGuid(), new BookingPricing(50m, 50m, false), CreatedAt);
-
-        Assert.Empty(BookingParticipations.GetSingleParticipation(b).PackageConsumptions);
-        Assert.False(b.PackageCoverageApplied);
     }
 
     #endregion

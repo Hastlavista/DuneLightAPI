@@ -120,9 +120,8 @@ public class WaitlistService : IWaitlistService, IWaitlistPromotionService
         if (appointment.Form != AppointmentForm.Group)
             throw new BusinessRuleException(ErrorCodes.WaitlistNotAvailable, "Lista čekanja nije dostupna za ovaj termin.");
 
-        // Phase M1F: lista čekanja je po KONKRETNOM segmentu occurrencea. Bez selektora samo za jednosegmentni occurrence
-        // (kompatibilnost); višesegmentni → SEGMENT_SELECTION_REQUIRED (nikad "prvi" segment).
-        AppointmentSegment segment = GroupOccurrenceSegments.Resolve(appointment, request.SegmentId);
+        // Lista čekanja je po KONKRETNOM, eksplicitno navedenom segmentu occurrencea.
+        AppointmentSegment segment = GroupOccurrenceSegments.Require(appointment, request.SegmentId);
         await AppointmentOwnership.EnsureCallerOwnsSegments(_employeeHandler, organizationId, userId, hasFullScope, new[] { segment }, NotOwnerMessage);
 
         DateTimeOffset now = DateTimeOffset.UtcNow;
@@ -203,7 +202,7 @@ public class WaitlistService : IWaitlistService, IWaitlistPromotionService
         if (appointment.Form != AppointmentForm.Group)
             throw new BusinessRuleException(ErrorCodes.WaitlistNotAvailable, "Lista čekanja nije dostupna za ovaj termin.");
 
-        AppointmentSegment segment = GroupOccurrenceSegments.Resolve(appointment, segmentId);
+        AppointmentSegment segment = GroupOccurrenceSegments.Require(appointment, segmentId);
         await AppointmentOwnership.EnsureCallerOwnsSegments(_employeeHandler, organizationId, userId, hasFullScope, new[] { segment }, NotOwnerMessage);
 
         WaitlistEntry entry = await _waitlistHandler.GetMostRecentForClient(organizationId, segment.Id.GetValueOrDefault(), clientId);
