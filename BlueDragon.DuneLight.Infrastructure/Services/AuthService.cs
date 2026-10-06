@@ -1,7 +1,6 @@
 using System;
 using System.Threading.Tasks;
 using BlueDragon.DuneLight.Core.DTOs.Auth;
-using BlueDragon.DuneLight.Core.Enums;
 using BlueDragon.DuneLight.Core.Interfaces;
 using BlueDragon.DuneLight.Core.Shared;
 using BlueDragon.DuneLight.Core.Shared.Exceptions;
@@ -55,7 +54,6 @@ public class AuthService : IAuthService
         user.Email = request.Email;
         user.PasswordHash = PasswordHasher.Hash(request.Password);
         user.ApiKey = Guid.NewGuid().ToString("N");
-        user.Role = UserRole.Admin;
         user.IsActive = true;
         user.CreatedAt = DateTimeOffset.UtcNow;
 
@@ -161,14 +159,12 @@ public class AuthService : IAuthService
         string token = _jwtService.GenerateToken(
             user.Id.GetValueOrDefault(),
             user.Email,
-            organization.Id.GetValueOrDefault(),
-            UserRoleClaims.ToClaimValue(user.Role));
+            organization.Id.GetValueOrDefault());
 
         AuthResponse response = new AuthResponse();
         response.UserId = user.Id;
         response.Email = user.Email;
         response.ApiKey = user.ApiKey;
-        response.Role = UserRoleClaims.ToClaimValue(user.Role);
         response.OrganizationId = organization.Id;
         response.OrganizationName = organization.Name;
         response.OrganizationSlug = organization.Slug;

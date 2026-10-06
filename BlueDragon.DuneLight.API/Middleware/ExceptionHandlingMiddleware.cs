@@ -33,7 +33,7 @@ public class ExceptionHandlingMiddleware
             await _next(context);
 
             // UseAuthentication/UseAuthorization postavljaju 401/403 bez tijela (WWW-Authenticate
-            // izazov, nedovoljna uloga na [Authorize(Roles = ...)]) — uskladi ih s istim oblikom.
+            // izazov, nedostaje grant na [RequireGrant]) — uskladi ih s istim oblikom.
             if (!context.Response.HasStarted && context.Response.StatusCode is 401 or 403)
             {
                 (HttpStatusCode status, string code, string message) = context.Response.StatusCode == 401

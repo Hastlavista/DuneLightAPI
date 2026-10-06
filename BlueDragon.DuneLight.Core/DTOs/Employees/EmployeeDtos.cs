@@ -42,7 +42,6 @@ public class EmployeeDto
     public string EngagementTypeName { get; set; }
     public bool IsActive { get; set; }
     public Guid UserId { get; set; }
-    public string Role { get; set; }
 
     /// <summary>Imena (ne ID-evi) GrantGroup/Role dodjela ovog korisnika — bulk-friendly
     /// za listu (vidi EmployeeService.GetPaged), da frontend ne mora dodatni lookup po retku.</summary>
@@ -166,16 +165,10 @@ public class EmployeeUpdateRequest
     public List<Guid> ServiceIds { get; set; } = new();
 }
 
-public class UpdateEmployeeRoleRequest
-{
-    [Required]
-    public Enums.UserRole Role { get; set; }
-}
-
 /// <summary>
 /// Kreiranje zaposlenika ZAJEDNO s korisničkim računom (login), u jednoj transakciji.
 /// Polja preuzeta iz <see cref="EmployeeCreateRequest"/> (bez <c>UserId</c>, jer se korisnik stvara ovdje)
-/// + login polja (<c>Password</c>, <c>Role</c>). <c>Email</c> je obavezan i služi i kao kontakt i kao login e-mail.
+/// + login polja (<c>Password</c>, <c>Pin</c>, <c>GrantGroupIds</c>). <c>Email</c> je obavezan i služi i kao kontakt i kao login e-mail.
 /// </summary>
 public class EmployeeWithLoginCreateRequest
 {
@@ -274,7 +267,6 @@ public class EmployeeMeDto
     public Guid? EmployeeId { get; set; }
     public string FirstName { get; set; }
     public string LastName { get; set; }
-    public string Role { get; set; }
 
     /// <summary>Efektivna, agregirana unija grant-key-eva iz svih GrantGroup dodjela ovog
     /// korisnika — isti izvor kao GrantResolver koristi za autorizaciju (GrantGroupHandler.ResolveEffective),

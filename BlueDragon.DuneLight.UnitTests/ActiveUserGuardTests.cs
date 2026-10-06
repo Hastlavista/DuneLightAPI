@@ -1,6 +1,5 @@
 using System;
 using System.Threading.Tasks;
-using BlueDragon.DuneLight.Core.Enums;
 using BlueDragon.DuneLight.Infrastructure.Domain.Models;
 using BlueDragon.DuneLight.Infrastructure.Handlers.Interfaces;
 using BlueDragon.DuneLight.Infrastructure.Services;
@@ -36,16 +35,15 @@ public class ActiveUserGuardTests
         public Task<User> GetUserByApiKey(string apiKey) => throw new NotImplementedException();
         public Task UpdatePasswordHash(Guid userId, string passwordHash) => throw new NotImplementedException();
         public Task UpdatePinHash(Guid userId, string pinHash) => throw new NotImplementedException();
-        public Task UpdateRole(Guid organizationId, Guid userId, UserRole role) => throw new NotImplementedException();
     }
 
-    private static User NewUser(bool isActive, UserRole role) =>
-        new() { Id = Guid.NewGuid(), OrganizationId = Guid.NewGuid(), Email = "test@test.local", IsActive = isActive, Role = role };
+    private static User NewUser(bool isActive) =>
+        new() { Id = Guid.NewGuid(), OrganizationId = Guid.NewGuid(), Email = "test@test.local", IsActive = isActive };
 
     [Fact]
     public async Task Active_user_with_a_valid_token_context_is_allowed()
     {
-        User user = NewUser(isActive: true, role: UserRole.Member);
+        User user = NewUser(isActive: true);
         IActiveUserGuard guard = new ActiveUserGuard(new FakeAuthHandler(user));
 
         Assert.True(await guard.IsUserActive(user.Id.Value));
@@ -54,7 +52,7 @@ public class ActiveUserGuardTests
     [Fact]
     public async Task Deactivating_the_same_user_rejects_the_same_authorization_context()
     {
-        User user = NewUser(isActive: true, role: UserRole.Member);
+        User user = NewUser(isActive: true);
         FakeAuthHandler handler = new(user);
         IActiveUserGuard guard = new ActiveUserGuard(handler);
         Assert.True(await guard.IsUserActive(user.Id.Value));
@@ -65,20 +63,11 @@ public class ActiveUserGuardTests
     }
 
     [Fact]
-    public async Task Legacy_UserRole_Admin_does_not_bypass_inactive_status()
-    {
-        User user = NewUser(isActive: false, role: UserRole.Admin);
-        IActiveUserGuard guard = new ActiveUserGuard(new FakeAuthHandler(user));
-
-        Assert.False(await guard.IsUserActive(user.Id.Value));
-    }
-
-    [Fact]
     public async Task The_check_is_independent_of_grants_permissions_manage_included_by_construction()
     {
         // IActiveUserGuard never reads UserGrantGroup/grants at all - only User.IsActive - so no grant,
         // including permissions.manage, can special-case its way past deactivation.
-        User user = NewUser(isActive: false, role: UserRole.Admin);
+        User user = NewUser(isActive: false);
         IActiveUserGuard guard = new ActiveUserGuard(new FakeAuthHandler(user));
 
         Assert.False(await guard.IsUserActive(user.Id.Value));
@@ -87,7 +76,7 @@ public class ActiveUserGuardTests
     [Fact]
     public async Task Reactivated_user_is_allowed_again()
     {
-        User user = NewUser(isActive: false, role: UserRole.Member);
+        User user = NewUser(isActive: false);
         FakeAuthHandler handler = new(user);
         IActiveUserGuard guard = new ActiveUserGuard(handler);
         Assert.False(await guard.IsUserActive(user.Id.Value));

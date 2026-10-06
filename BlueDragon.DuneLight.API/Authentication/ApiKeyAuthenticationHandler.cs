@@ -4,7 +4,6 @@ using System.Text.Encodings.Web;
 using System.Threading.Tasks;
 using BlueDragon.DuneLight.Infrastructure.Domain.Models;
 using BlueDragon.DuneLight.Infrastructure.Handlers.Interfaces;
-using BlueDragon.DuneLight.Infrastructure.Utils;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
@@ -41,8 +40,7 @@ public class ApiKeyAuthenticationHandler : AuthenticationHandler<AuthenticationS
         [
             new Claim(JwtRegisteredClaimNames.Sub, user.Id.ToString()),
             new Claim(ClaimTypes.NameIdentifier, user.Id.ToString()),
-            new Claim("organizationId", user.OrganizationId.ToString()),
-            new Claim(ClaimTypes.Role, UserRoleClaims.ToClaimValue(user.Role))
+            new Claim("organizationId", user.OrganizationId.ToString())
         ];
         ClaimsIdentity identity = new ClaimsIdentity(claims, Scheme.Name);
         ClaimsPrincipal principal = new ClaimsPrincipal(identity);

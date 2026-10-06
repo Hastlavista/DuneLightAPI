@@ -24,7 +24,7 @@ public class EmployeeHandler : IEmployeeHandler
     }
 
     public async Task<(List<Employee> Items, int TotalCount)> GetPaged(
-        Guid organizationId, PagedRequest request, Guid? companyId, Guid? engagementTypeId, UserRole? role)
+        Guid organizationId, PagedRequest request, Guid? companyId, Guid? engagementTypeId)
     {
         await using DatabaseContext context = DatabaseContext.GenerateContext(_databaseSettings.ConnectionString);
 
@@ -49,9 +49,6 @@ public class EmployeeHandler : IEmployeeHandler
 
         if (engagementTypeId.HasValue)
             query = query.Where(e => e.EngagementTypeId == engagementTypeId.Value);
-
-        if (role.HasValue)
-            query = query.Where(e => e.User.Role == role.Value);
 
         int totalCount = await query.CountAsync();
 

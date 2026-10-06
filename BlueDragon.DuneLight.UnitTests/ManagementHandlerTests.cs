@@ -3,7 +3,6 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
 using BlueDragon.DuneLight.Core.DTOs.Management;
-using BlueDragon.DuneLight.Core.Enums;
 using BlueDragon.DuneLight.Core.Shared;
 using BlueDragon.DuneLight.Infrastructure.Domain.Contexts;
 using BlueDragon.DuneLight.Infrastructure.Domain.Models;
@@ -62,9 +61,9 @@ public class ManagementHandlerTests
         context.Companies.Add(new Company { Id = Guid.NewGuid(), OrganizationId = seed.Org1Id, Name = "Org1-Company-B", Country = "HR", IsActive = true, CreatedAt = DateTimeOffset.UtcNow });
         context.Companies.Add(new Company { Id = Guid.NewGuid(), OrganizationId = seed.Org2Id, Name = "Org2-Company-A", Country = "HR", IsActive = true, CreatedAt = DateTimeOffset.UtcNow });
 
-        context.Users.Add(new User { Id = seed.Org1User1Id, OrganizationId = seed.Org1Id, Email = $"org1-user1-{marker}@test.local", PasswordHash = "x", ApiKey = Guid.NewGuid().ToString("N"), Role = UserRole.Admin, IsActive = true, CreatedAt = DateTimeOffset.UtcNow });
-        context.Users.Add(new User { Id = seed.Org1User2Id, OrganizationId = seed.Org1Id, Email = $"org1-user2-{marker}@test.local", PasswordHash = "x", ApiKey = Guid.NewGuid().ToString("N"), Role = UserRole.Member, IsActive = false, CreatedAt = DateTimeOffset.UtcNow });
-        context.Users.Add(new User { Id = seed.Org2User1Id, OrganizationId = seed.Org2Id, Email = $"org2-user1-{marker}@test.local", PasswordHash = "x", ApiKey = Guid.NewGuid().ToString("N"), Role = UserRole.Admin, IsActive = true, CreatedAt = DateTimeOffset.UtcNow });
+        context.Users.Add(new User { Id = seed.Org1User1Id, OrganizationId = seed.Org1Id, Email = $"org1-user1-{marker}@test.local", PasswordHash = "x", ApiKey = Guid.NewGuid().ToString("N"), IsActive = true, CreatedAt = DateTimeOffset.UtcNow });
+        context.Users.Add(new User { Id = seed.Org1User2Id, OrganizationId = seed.Org1Id, Email = $"org1-user2-{marker}@test.local", PasswordHash = "x", ApiKey = Guid.NewGuid().ToString("N"), IsActive = false, CreatedAt = DateTimeOffset.UtcNow });
+        context.Users.Add(new User { Id = seed.Org2User1Id, OrganizationId = seed.Org2Id, Email = $"org2-user1-{marker}@test.local", PasswordHash = "x", ApiKey = Guid.NewGuid().ToString("N"), IsActive = true, CreatedAt = DateTimeOffset.UtcNow });
 
         await context.SaveChangesAsync();
         return seed;

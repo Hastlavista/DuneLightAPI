@@ -33,9 +33,9 @@ public class EmployeesController : ControllerBase
 
     [HttpGet]
     [RequireGrant(Grants.EmployeesView)]
-    public async Task<ActionResult<PagedResult<EmployeeDto>>> GetPaged([FromQuery] PagedRequest request, [FromQuery] Guid? companyId, [FromQuery] Guid? engagementTypeId, [FromQuery] UserRole? role)
+    public async Task<ActionResult<PagedResult<EmployeeDto>>> GetPaged([FromQuery] PagedRequest request, [FromQuery] Guid? companyId, [FromQuery] Guid? engagementTypeId)
     {
-        return Ok(await _employeeService.GetPaged(this.CurrentOrganizationId(), request, companyId, engagementTypeId, role));
+        return Ok(await _employeeService.GetPaged(this.CurrentOrganizationId(), request, companyId, engagementTypeId));
     }
 
     /// <summary>Zaposlenik povezan s prijavljenim korisnikom — "tko sam ja" (za "moji termini"/"moji klijenti"/"moje smjene" na frontendu).</summary>
@@ -89,13 +89,6 @@ public class EmployeesController : ControllerBase
     public async Task<ActionResult<EmployeeDto>> Deactivate(Guid id)
     {
         return Ok(await _employeeService.SetActive(this.CurrentOrganizationId(), this.CurrentUserId(), id, false));
-    }
-
-    [HttpPatch("{id:guid}/role")]
-    [RequireGrant(Grants.EmployeesRoleManage)]
-    public async Task<ActionResult<EmployeeDto>> UpdateRole(Guid id, [FromBody] UpdateEmployeeRoleRequest request)
-    {
-        return Ok(await _employeeService.UpdateRole(this.CurrentOrganizationId(), this.CurrentUserId(), id, request.Role));
     }
 
     [HttpDelete("{id:guid}")]

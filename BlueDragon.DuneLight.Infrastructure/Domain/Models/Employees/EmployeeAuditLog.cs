@@ -19,7 +19,7 @@ public class EmployeeAuditLog
     [Column("employee_id")]
     public Guid EmployeeId { get; set; }
 
-    /// <summary>"Role" ili "Status".</summary>
+    /// <summary>"Status". Povijesni zapisi mogu imati i "Role" (legacy UserRole, uklonjen — ADR-0019).</summary>
     [Column("change_type")]
     public string ChangeType { get; set; }
 

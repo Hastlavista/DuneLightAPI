@@ -147,12 +147,6 @@ public class DatabaseContext : DbContext
         modelBuilder.Entity<User>().HasKey(u => new { u.Id });
         modelBuilder.Entity<User>().HasIndex(u => new { u.OrganizationId, u.Email }).IsUnique();
 
-        modelBuilder.Entity<User>()
-            .Property(u => u.Role)
-            .HasConversion(
-                v => v.ToString(),
-                v => Enum.Parse<UserRole>(v));
-
         ConfigureCatalog(modelBuilder);
         ConfigureEmployees(modelBuilder);
         ConfigureClients(modelBuilder);

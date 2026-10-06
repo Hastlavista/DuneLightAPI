@@ -9,7 +9,7 @@ namespace BlueDragon.DuneLight.Core.Interfaces.Employees;
 public interface IEmployeeService
 {
     Task<PagedResult<EmployeeDto>> GetPaged(
-        Guid organizationId, PagedRequest request, Guid? companyId, Guid? engagementTypeId, UserRole? role);
+        Guid organizationId, PagedRequest request, Guid? companyId, Guid? engagementTypeId);
 
     Task<EmployeeDto> GetById(Guid organizationId, Guid id);
     Task<EmployeeDto> Create(Guid organizationId, Guid userId, EmployeeCreateRequest request);
@@ -19,7 +19,6 @@ public interface IEmployeeService
     Task<EmployeeDto> Update(Guid organizationId, Guid userId, Guid id, EmployeeUpdateRequest request);
     Task<EmployeeDto> SetActive(Guid organizationId, Guid userId, Guid id, bool isActive);
     Task Delete(Guid organizationId, Guid id);
-    Task<EmployeeDto> UpdateRole(Guid organizationId, Guid userId, Guid id, UserRole newRole);
 
     /// <summary>Ograničeni pogled za trenere/recepciju — zaseban DTO, ne filtriranje punog EmployeeDto.</summary>
     Task<PagedResult<EmployeeDirectoryDto>> GetDirectory(Guid organizationId, PagedRequest request);

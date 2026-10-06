@@ -88,17 +88,17 @@ public class ResourceAuthorizationTests
         .Select(g => new CapabilityGrantRoleEntry(g.GrantKey, Enum.Parse<CapabilityGrantRole>(g.Role)))
         .ToArray();
 
-    private static TemplateSelectionInput GroupCapacityOverrideSelection() => new(
+    internal static TemplateSelectionInput GroupCapacityOverrideSelection() => new(
         GroupCapacityOverrideCapabilitySeedData.CapabilityId(), GroupCapacityOverrideCapabilitySeedData.CapabilityKey, CapabilityScopeModel.None,
         CapabilitySelectedScope.On,
         GroupCapacityOverrideCapabilitySeedData.Grants
             .Select(g => new CapabilityGrantRoleEntry(g.GrantKey, Enum.Parse<CapabilityGrantRole>(g.Role))).ToArray());
 
-    private static TemplateSelectionInput ResourceSelection(CapabilitySelectedScope scope) => new(
+    internal static TemplateSelectionInput ResourceSelection(CapabilitySelectedScope scope) => new(
         ResourcesCapabilitySeedData.CapabilityId(), ResourcesCapabilitySeedData.CapabilityKey, CapabilityScopeModel.ViewManage, scope, ResourceCapabilityGrants);
 
     /// <summary>Admin v3 selections exactly as SeedAdminTemplateV3 writes them: Admin v2 + organization.permissions.manage = Manage.</summary>
-    private static List<TemplateSelectionInput> AdminV3Selections()
+    internal static List<TemplateSelectionInput> AdminV3Selections()
     {
         Dictionary<string, CapabilityV1SeedData.CapabilitySeed> capsByKey = CapabilityV1SeedData.Capabilities.ToDictionary(c => c.Key);
         List<TemplateSelectionInput> selections = CapabilityV2SeedData.Templates.Single(t => t.Key == "admin").Selections
@@ -117,6 +117,20 @@ public class ResourceAuthorizationTests
         return selections;
     }
 
+    /// <summary>Admin v5 selections exactly as SeedAdminTemplateV5 writes them: v3 + resources (Manage) + groups.capacity.override (On).</summary>
+    internal static List<TemplateSelectionInput> AdminV5Selections()
+    {
+        List<TemplateSelectionInput> v5 = AdminV3Selections();
+        v5.Add(ResourceSelection(CapabilitySelectedScope.Manage));
+        v5.Add(GroupCapacityOverrideSelection());
+        return v5;
+    }
+
+    /// <summary>Admin v6 selections exactly as SeedAdminTemplateV6 writes them: v5 without employees.role.manage (ADR-0019).</summary>
+    internal static List<TemplateSelectionInput> AdminV6Selections() => AdminV5Selections()
+        .Where(s => s.CapabilityKey != EmployeesRoleManageRetirementSeedData.RetiredCapabilityKey)
+        .ToList();
+
     [Fact]
     public void ResourceCapability_ViewGrantsViewOnly_ManageGrantsBoth()
     {
@@ -129,12 +143,9 @@ public class ResourceAuthorizationTests
     [Fact]
     public void AdminLatest_MaterializesTheWholeGrantCatalog()
     {
-        // CHANGED in M1F: the latest Admin template is v5 = v4 + groups.capacity.override (On).
-        List<TemplateSelectionInput> v5 = AdminV3Selections();
-        v5.Add(ResourceSelection(CapabilitySelectedScope.Manage));
-        v5.Add(GroupCapacityOverrideSelection());
-
-        HashSet<string> grants = TestSupport.MaterializeAll(v5);
+        // CHANGED in foundation cleanup (ADR-0019): the latest Admin template is v6 = v5 without employees.role.manage,
+        // which also left Grants.Catalog — so the invariant "latest Admin == whole catalog" still holds.
+        HashSet<string> grants = TestSupport.MaterializeAll(AdminV6Selections());
         grants.UnionWith(CapabilityV2SeedData.Templates.Single(t => t.Key == "admin").CompatibilityExtraGrants);
 
         Assert.Equal(Grants.Catalog.Select(g => g.Key).ToHashSet(), grants);
@@ -179,7 +190,7 @@ public class ResourceAuthorizationTests
     #region Reference data in the database
 
     [Fact]
-    public async Task Database_HasTheCapability_AndAdminV5IsTheLatestAdminTemplate()
+    public async Task Database_HasTheCapability_AndAdminV6IsTheLatestAdminTemplate()
     {
         await using DatabaseContext db = DatabaseContext.GenerateContext(LocalConnectionString);
 
@@ -202,17 +213,19 @@ public class ResourceAuthorizationTests
             .OrderByDescending(t => t.Version)
             .Select(t => new { t.Id, t.Version })
             .FirstAsync();
-        // CHANGED in M1F: v5 (v4 + groups.capacity.override) is the latest Admin template; it still carries the resource capability.
-        Assert.Equal(5, latestAdmin.Version);
-        Assert.Equal(GroupCapacityOverrideCapabilitySeedData.AdminTemplateId(), latestAdmin.Id);
+        // CHANGED in foundation cleanup (ADR-0019): v6 (v5 without employees.role.manage) is the latest Admin template;
+        // it still carries the resource capability.
+        Assert.Equal(EmployeesRoleManageRetirementSeedData.AdminTemplateVersion, latestAdmin.Version);
+        Assert.Equal(EmployeesRoleManageRetirementSeedData.AdminTemplateId(), latestAdmin.Id);
 
-        List<Guid?> v4Caps = await db.DefaultRoleTemplateCapabilities
+        List<Guid?> latestCaps = await db.DefaultRoleTemplateCapabilities
             .Where(c => c.DefaultRoleTemplateId == latestAdmin.Id)
             .Select(c => (Guid?)c.CapabilityDefinitionId)
             .ToListAsync();
-        Assert.Equal(AdminV3Selections().Count + 2, v4Caps.Count);
-        Assert.Contains(capability.Id, v4Caps);
-        Assert.Contains(GroupCapacityOverrideCapabilitySeedData.CapabilityId(), v4Caps);
+        Assert.Equal(AdminV6Selections().Count, latestCaps.Count);
+        Assert.Contains(capability.Id, latestCaps);
+        Assert.Contains(GroupCapacityOverrideCapabilitySeedData.CapabilityId(), latestCaps);
+        Assert.DoesNotContain(EmployeesRoleManageRetirementSeedData.RetiredCapabilityId(), latestCaps);
 
         // Trener/Recepcija templates were not re-published.
         Assert.Equal(2, await db.DefaultRoleTemplates.Where(t => t.Key == "trener").MaxAsync(t => t.Version));

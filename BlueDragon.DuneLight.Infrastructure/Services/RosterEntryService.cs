@@ -262,7 +262,7 @@ public class RosterEntryService : IRosterEntryService
         int daysInMonth = DateTime.DaysInMonth(year, month);
 
         (List<Employee> employees, int _) = await _employeeHandler.GetPaged(
-            organizationId, new PagedRequest { Page = 1, PageSize = 200, IsActive = true }, companyId, null, null);
+            organizationId, new PagedRequest { Page = 1, PageSize = 200, IsActive = true }, companyId, null);
 
         List<Guid> employeeIds = employees.Select(e => e.Id.GetValueOrDefault()).ToList();
         List<RosterEntry> entries = employeeIds.Count == 0

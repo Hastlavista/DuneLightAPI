@@ -12,7 +12,6 @@ public static class Grants
     public const string EmployeesDirectoryView = "employees.directory.view";
     public const string EmployeesView = "employees.view";
     public const string EmployeesManage = "employees.manage";
-    public const string EmployeesRoleManage = "employees.role.manage";
     public const string EmployeesEngagementTypesView = "employees.engagement-types.view";
     public const string EmployeesEngagementTypesManage = "employees.engagement-types.manage";
 
@@ -115,7 +114,6 @@ public static class Grants
         new(EmployeesDirectoryView, "employees", "Kolegijalni pogled na zaposlenike (bez osjetljivih polja)."),
         new(EmployeesView, "employees", "Puni pregled zaposlenika (OIB, plaća, adresa...)."),
         new(EmployeesManage, "employees", "Kreiranje, uređivanje, aktivacija/deaktivacija, brisanje zaposlenika."),
-        new(EmployeesRoleManage, "employees", "Promjena role (grant-grupe) drugog korisnika — eskalacijska ovlast."),
         new(EmployeesEngagementTypesView, "employees", "Pregled šifrarnika vrsta angažmana."),
         new(EmployeesEngagementTypesManage, "employees", "Uređivanje šifrarnika vrsta angažmana."),
 

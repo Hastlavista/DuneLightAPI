@@ -17,7 +17,7 @@ public class JwtService : IJwtService
         _jwtSettings = jwtSettings;
     }
 
-    public string GenerateToken(Guid userId, string email, Guid organizationId, string role)
+    public string GenerateToken(Guid userId, string email, Guid organizationId)
     {
         SymmetricSecurityKey securityKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(_jwtSettings.SecretKey));
         SigningCredentials credentials = new SigningCredentials(securityKey, SecurityAlgorithms.HmacSha256);
@@ -27,8 +27,7 @@ public class JwtService : IJwtService
             new Claim(JwtRegisteredClaimNames.Sub, userId.ToString()),
             new Claim(JwtRegisteredClaimNames.Email, email),
             new Claim(JwtRegisteredClaimNames.Jti, Guid.NewGuid().ToString()),
-            new Claim("organizationId", organizationId.ToString()),
-            new Claim(ClaimTypes.Role, role)
+            new Claim("organizationId", organizationId.ToString())
         ];
 
         JwtSecurityToken token = new JwtSecurityToken(

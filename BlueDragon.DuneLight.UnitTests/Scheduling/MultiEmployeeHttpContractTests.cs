@@ -35,7 +35,7 @@ public class MultiEmployeeHttpContractTests : IClassFixture<MultiSegmentHttpCont
     private static async Task<string> TokenFor(SchedulingWorld w, Guid userId, params string[] grants)
     {
         await w.GrantUser(userId, grants);
-        return new JwtService(MultiSegmentHttpContractTests.Jwt).GenerateToken(userId, $"{userId:N}@http.test", w.OrganizationId, "Member");
+        return new JwtService(MultiSegmentHttpContractTests.Jwt).GenerateToken(userId, $"{userId:N}@http.test", w.OrganizationId);
     }
 
     private static bool IsNullOrAbsent(JsonElement element, string property) =>

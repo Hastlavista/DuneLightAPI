@@ -112,16 +112,4 @@ public class AuthHandler : IAuthHandler
         context.Users.Update(existing);
         await context.SaveChangesAsync();
     }
-
-    public async Task UpdateRole(Guid organizationId, Guid userId, UserRole role)
-    {
-        await using DatabaseContext context = DatabaseContext.GenerateContext(_databaseSettings.ConnectionString);
-        User existing = await context.Users.SingleOrDefaultAsync(u => u.Id == userId && u.OrganizationId == organizationId);
-        if (existing == null)
-            throw new ArgumentException($"User with id {userId} does not exist");
-
-        existing.Role = role;
-        context.Users.Update(existing);
-        await context.SaveChangesAsync();
-    }
 }

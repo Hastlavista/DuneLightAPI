@@ -1,7 +1,6 @@
 using System;
 using System.ComponentModel.DataAnnotations;
 using System.ComponentModel.DataAnnotations.Schema;
-using BlueDragon.DuneLight.Core.Enums;
 
 namespace BlueDragon.DuneLight.Infrastructure.Domain.Models;
 
@@ -24,9 +23,6 @@ public class User
 
     [Column("api_key")]
     public string ApiKey { get; set; }
-
-    [Column("role")]
-    public UserRole Role { get; set; }
 
     [Column("is_active")]
     public bool IsActive { get; set; }
