@@ -228,7 +228,8 @@ Pravila koja se ne krše bez nove odluke (ADR):
 - [x] Ukloniti legacy `UserRole` / `users.role` i `role` claim ([ADR-0019](decisions/0019-uklanjanje-userrole.md)) —
   implementirano 2026-10-06 (migracija `20261023000000`), zajedno s povlačenjem granta `employees.role.manage`
   (admin predložak v6, migracije `20261023000001`/`20261023000002`).
-- [ ] Email klijenta jedinstven unutar organizacije, case-insensitive ([ADR-0020](decisions/0020-jedinstven-email-klijenta.md)).
+- [x] Email klijenta i korisničkog računa jedinstven unutar organizacije, trim + case-insensitive ([ADR-0020](decisions/0020-jedinstven-email-klijenta.md)) —
+  implementirano 2026-10-06 (migracija `20261024000000`).
 - [ ] Dopustiti nula aktivnih poslovnica, ukloniti `LAST_ACTIVE_COMPANY` ([ADR-0021](decisions/0021-nula-aktivnih-poslovnica.md)).
 - [ ] P1 Policy engine ([P1 Decision Record](p1/P1_DECISION_RECORD.md), ADR-0015 – ADR-0018).
 
@@ -311,5 +312,5 @@ pokriva samo backend (Angular frontend se dokumentira u vlastitom repozitoriju);
 | [0017](decisions/0017-p1-posljedice-ledger-i-settlement.md) | P1: Ledger posljedica, Due, paketna kazna, surplus, provizija | Prihvaćeno, nije implementirano |
 | [0018](decisions/0018-p1-korekcije-waiver-i-grupe.md) | P1: Korekcijska matrica, waiver i Group pravila | Prihvaćeno, nije implementirano |
 | [0019](decisions/0019-uklanjanje-userrole.md) | Uklanjanje legacy UserRole (users.role) | Prihvaćeno, implementirano |
-| [0020](decisions/0020-jedinstven-email-klijenta.md) | Email klijenta jedinstven unutar organizacije | Prihvaćeno, nije implementirano |
+| [0020](decisions/0020-jedinstven-email-klijenta.md) | Jedinstven email klijenta i korisničkog računa (trim, case-insensitive) | Prihvaćeno, implementirano |
 | [0021](decisions/0021-nula-aktivnih-poslovnica.md) | Organizacija smije imati nula aktivnih poslovnica | Prihvaćeno, nije implementirano |

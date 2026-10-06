@@ -34,6 +34,10 @@ public interface IClientHandler
     Task Delete(Client client);
 
     Task<bool> IsMemberNumberTaken(Guid organizationId, int memberNumber, Guid? excludeId);
+
+    /// <summary>ADR-0020 — <paramref name="emailComparisonKey"/> je EmailNormalizer.ComparisonKey (trim + lowercase);
+    /// uspoređuje se s lower(email), isto kao unique indeks ux_clients_organization_email.</summary>
+    Task<bool> IsEmailTaken(Guid organizationId, string emailComparisonKey, Guid? excludeId);
     Task<int> GetNextMemberNumber(Guid organizationId);
 
     /// <summary>Lagana projekcija aktivnih klijenata s postavljenim datumom rođenja — za obradu u memoriji.</summary>

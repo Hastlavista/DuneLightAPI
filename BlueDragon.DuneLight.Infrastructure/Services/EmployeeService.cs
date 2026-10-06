@@ -13,6 +13,8 @@ using BlueDragon.DuneLight.Infrastructure.Domain.Models.Catalog;
 using BlueDragon.DuneLight.Infrastructure.Domain.Models.Employees;
 using BlueDragon.DuneLight.Infrastructure.Handlers.Interfaces;
 using BlueDragon.DuneLight.Infrastructure.Utils;
+using Microsoft.EntityFrameworkCore;
+using Npgsql;
 
 namespace BlueDragon.DuneLight.Infrastructure.Services;
 
@@ -129,7 +131,9 @@ public class EmployeeService : IEmployeeService
         await EnsureEngagementTypeIsUsable(organizationId, request.EngagementTypeId, grandfatheredEngagementTypeId: null);
         await EnsureServicesUsable(organizationId, request.ServiceIds, grandfatheredServiceIds: null);
 
-        bool emailExists = await _authHandler.EmailExists(organizationId, request.Email);
+        // ADR-0020 — login email je trimani; jedinstvenost i prijava ne razlikuju velika/mala slova.
+        string email = EmailNormalizer.Normalize(request.Email);
+        bool emailExists = await _authHandler.EmailExists(organizationId, email);
         if (emailExists)
             throw new BusinessRuleException(ErrorCodes.EmailAlreadyInUse, "Korisnik s ovom email adresom već postoji u organizaciji.");
 
@@ -140,7 +144,7 @@ public class EmployeeService : IEmployeeService
         {
             Id = Guid.NewGuid(),
             OrganizationId = organizationId,
-            Email = request.Email,
+            Email = email,
             PasswordHash = PasswordHasher.Hash(request.Password),
             ApiKey = Guid.NewGuid().ToString("N"),
             MustChangeCredentialsOnFirstLogin = request.MustChangeCredentialsOnFirstLogin,
@@ -156,7 +160,7 @@ public class EmployeeService : IEmployeeService
             FirstName = request.FirstName,
             LastName = request.LastName,
             Phone = request.Phone,
-            Email = request.Email,
+            Email = email,
             DateOfBirth = request.DateOfBirth,
             Address = request.Address,
             Oib = request.Oib,
@@ -175,7 +179,15 @@ public class EmployeeService : IEmployeeService
             Services = BuildServices(request.ServiceIds)
         };
 
-        await _employeeHandler.AddWithLogin(user, employee);
+        try
+        {
+            await _employeeHandler.AddWithLogin(user, employee);
+        }
+        catch (DbUpdateException ex) when (ex.InnerException is PostgresException { SqlState: PostgresErrorCodes.UniqueViolation, ConstraintName: "ux_users_organization_email" })
+        {
+            // Utrka dva istovremena kreiranja s istim emailom — provjera iznad je prošla za oba, unique indeks hvata drugi.
+            throw new BusinessRuleException(ErrorCodes.EmailAlreadyInUse, "Korisnik s ovom email adresom već postoji u organizaciji.");
+        }
 
         await _grantGroupHandler.SetUserGrantGroups(organizationId, user.Id.GetValueOrDefault(), request.GrantGroupIds);
         await _roleHandler.SetUserRoles(organizationId, user.Id.GetValueOrDefault(), request.RoleIds ?? new List<Guid>());

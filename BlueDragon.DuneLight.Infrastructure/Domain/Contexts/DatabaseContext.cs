@@ -145,7 +145,8 @@ public class DatabaseContext : DbContext
             .HasConversion(v => v.ToString(), v => Enum.Parse<PackageConsumptionTiming>(v));
 
         modelBuilder.Entity<User>().HasKey(u => new { u.Id });
-        modelBuilder.Entity<User>().HasIndex(u => new { u.OrganizationId, u.Email }).IsUnique();
+        // ADR-0020 — jedinstvenost emaila je u bazi funkcijski indeks ux_users_organization_email (organization_id,
+        // lower(email)), koji EF ne modelira; shema se ionako gradi FluentMigrator migracijama.
 
         ConfigureCatalog(modelBuilder);
         ConfigureEmployees(modelBuilder);

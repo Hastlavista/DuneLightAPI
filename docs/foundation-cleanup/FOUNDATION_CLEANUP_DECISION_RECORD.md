@@ -9,7 +9,7 @@
 | # | Stavka | ADR | Status |
 |---|---|---|---|
 | 1 | Ukloniti legacy `UserRole` / `users.role` / `role` claim | 0019 | Implementirano 2026-10-06 |
-| 2 | Email klijenta jedinstven unutar organizacije (case-insensitive) | 0020 | Nije implementirano |
+| 2 | Email klijenta i korisničkog računa jedinstven unutar organizacije (trim, case-insensitive) | 0020 | Implementirano 2026-10-06 |
 | 3 | Organizacija smije imati nula aktivnih poslovnica | 0021 | Nije implementirano |
 
 ## Zaključana pravila
@@ -50,3 +50,10 @@ Format: datum — pitanje/kontekst — odgovor — posljedica.
 - 2026-10-06 — Lokalna baza je odlutala od koda (migracija `2026-09-26` mijenjana nakon primjene), pa migracije padaju
   na `20261006000001`. Smije li se shema obrisati i izgraditi od nule? — Da. — Shema `dunelight` u bazi `postgres`
   obrisana i ponovno migrirana (ostale sheme u bazi nisu dirane).
+- 2026-10-06 — ADR-0020: trimati email? — Da: trim + usporedba neovisna o velikim/malim slovima; sprema se trimana
+  vrijednost. — Primijenjeno na klijente i korisničke račune.
+- 2026-10-06 — ADR-0020: kod greške za duplikat emaila klijenta? — Novi `CLIENT_EMAIL_ALREADY_IN_USE` (409).
+- 2026-10-06 — ADR-0020: uskladiti i email korisničkog računa (danas case-sensitive)? — Da. — Jedinstvenost i prijava
+  po emailu za `users` postaju case-insensitive (kod ostaje `EMAIL_ALREADY_IN_USE`).
+- 2026-10-06 — ADR-0020: na koju granu? — Stackati na granu foundation cleanupa (ADR-0019). Commitove i PR-ove radi
+  korisnik iz Ridera; Claude ne radi git operacije, samo implementira i dokumentira.

@@ -51,7 +51,7 @@ public class AuthService : IAuthService
         User user = new User();
         user.Id = Guid.NewGuid();
         user.OrganizationId = organization.Id.GetValueOrDefault();
-        user.Email = request.Email;
+        user.Email = EmailNormalizer.Normalize(request.Email);
         user.PasswordHash = PasswordHasher.Hash(request.Password);
         user.ApiKey = Guid.NewGuid().ToString("N");
         user.IsActive = true;

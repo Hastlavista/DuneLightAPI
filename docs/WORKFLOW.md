@@ -19,7 +19,7 @@
    > Ažuriraj ARCHITECTURE.md prema ovoj promjeni. Ako smo donijeli novu
    > arhitektonsku odluku, napiši ADR prema predlošku u docs/decisions/.
 
-5. **Commit** koda i dokumenata zajedno.
+5. **Commit** koda i dokumenata zajedno — radi korisnik iz Ridera (Claude ne commita).
 
 ## Zapis faze (`docs/<faza>/`)
 
@@ -35,7 +35,7 @@ Trajne arhitektonske odluke i dalje dobivaju i ADR u `docs/decisions/`.
 
 ## Build, testovi i PR
 - Build i testove pokreće Claude nakon implementacije i navodi rezultate u završnom izvještaju.
-- PR-ovi idu na granu `development-claude`.
+- PR-ove (na granu `development-claude`) i commitove radi korisnik.
 
 ## Kad koristiti browser chat (claude.ai)
 - Šire razmišljanje prije nego što postoji konkretan zadatak

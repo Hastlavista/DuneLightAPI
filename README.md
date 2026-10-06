@@ -76,7 +76,8 @@ Rezultati ne smiju ovisiti o vremenskoj zoni hosta.
 
 Prijava: `POST /api/public/Auth/Register` (kreira Organizaciju + prvog korisnika s administratorskom grant grupom,
 `409 AUTH_ORGANIZATION_SLUG_TAKEN` ako naziv organizacije već postoji), `POST /api/public/Auth/Login`
-(`401 AUTH_INVALID_CREDENTIALS` ako podaci ne odgovaraju aktivnom korisniku). JWT ili `X-Api-Key` header nose
+(`401 AUTH_INVALID_CREDENTIALS` ako podaci ne odgovaraju aktivnom korisniku). Email se kod prijave i jedinstvenosti
+uspoređuje trimano i bez obzira na velika/mala slova ([ADR-0020](docs/decisions/0020-jedinstven-email-klijenta.md)). JWT ili `X-Api-Key` header nose
 `organizationId` (bez `role` claima — legacy `UserRole` je uklonjen, [ADR-0019](docs/decisions/0019-uklanjanje-userrole.md)); grantovi se NE nalaze u tokenu nego se čitaju iz baze po zahtjevu (kratki cache ~30 s), pa promjena
 dozvola vrijedi gotovo odmah. Frontend dobiva efektivne grantove iz `GET /api/employees/me` (`grants`).
 

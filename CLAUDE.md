@@ -63,7 +63,8 @@ docs/
 - Nakon implementacije pokreni build i testove i navedi rezultate u završnom izvještaju.
 - Svako pitanje postavljeno tijekom implementacije i korisnikov odgovor odmah upiši u dnevnik odluka zapisa faze
   (`docs/<faza>/<FAZA>_DECISION_RECORD.md`, vidi `docs/WORKFLOW.md`).
-- PR-ovi idu na granu `development-claude`. Opseg ovog repozitorija je samo backend.
+- Commitove, push i PR-ove radi korisnik (Rider); Claude ne radi git operacije, nego implementira, zapisuje i dokumentira.
+  PR-ovi idu na granu `development-claude`. Opseg ovog repozitorija je samo backend.
 - Karakterizacijski test koji počne padati = promjena ponašanja. Mijenja se samo ako odluka (ADR) to namjerno mijenja.
 
 ## Na što paziti
