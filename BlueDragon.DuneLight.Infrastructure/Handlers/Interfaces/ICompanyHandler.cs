@@ -6,12 +6,11 @@ using BlueDragon.DuneLight.Infrastructure.Domain.Models.Catalog;
 
 namespace BlueDragon.DuneLight.Infrastructure.Handlers.Interfaces;
 
-/// <summary>Ishod pokušaja deaktivacije — vidi CompanyHandler.Deactivate za objašnjenje atomarnosti.</summary>
+/// <summary>Ishod pokušaja deaktivacije.</summary>
 public enum CompanyDeactivationOutcome
 {
     NotFound,
     AlreadyInactive,
-    Blocked,
     Deactivated
 }
 
@@ -33,9 +32,8 @@ public interface ICompanyHandler
     Task<bool> NameExistsAmongActive(Guid organizationId, string name, Guid? excludeId);
 
     /// <summary>
-    /// Atomarno provjerava i, ako je dopušteno, deaktivira tvrtku unutar jedne transakcije — brave-lockira
-    /// (SELECT ... FOR UPDATE) sve trenutno aktivne tvrtke organizacije prije prebrojavanja kako dva paralelna
-    /// zahtjeva ne bi mogla oba proći provjeru i organizaciju ostaviti bez ijedne aktivne tvrtke.
+    /// Deaktivira tvrtku. Dopuštena je i deaktivacija zadnje aktivne tvrtke — organizacija smije imati
+    /// nula aktivnih poslovnica (ADR-0021).
     /// </summary>
     Task<CompanyDeactivationOutcome> Deactivate(Guid organizationId, Guid id, Guid userId);
 

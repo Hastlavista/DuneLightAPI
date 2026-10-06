@@ -1,154 +1,95 @@
+#nullable disable
 using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
+using BlueDragon.DuneLight.Core.DTOs.Auth;
 using BlueDragon.DuneLight.Core.Shared;
 using BlueDragon.DuneLight.Infrastructure.Domain.Contexts;
-using BlueDragon.DuneLight.Infrastructure.Domain.Models;
-using BlueDragon.DuneLight.Infrastructure.Domain.Settings;
-using BlueDragon.DuneLight.Infrastructure.Handlers.Implementations;
+using BlueDragon.DuneLight.Infrastructure.Domain.Models.Permissions;
+using BlueDragon.DuneLight.Infrastructure.Handlers.Interfaces;
 using BlueDragon.DuneLight.Infrastructure.Services;
 using BlueDragon.DuneLight.Infrastructure.UnitOfWork;
+using BlueDragon.DuneLight.UnitTests.Scheduling;
 using Microsoft.EntityFrameworkCore;
 
 namespace BlueDragon.DuneLight.UnitTests;
 
-/// <summary>DB-backed verification for Grant-only Tenant Authorization Refactor's registration bootstrap
-/// (GrantGroupHandler.EnsureDefaultGrantGroups, the piece AuthService.Register calls) - a new organization gets
-/// EXACTLY ONE automatically-created GrantGroup ("Admin", materialized from the latest active "admin"
-/// DefaultRoleTemplate), never Trener/Recepcija, and that group already carries permissions.manage. Residual
-/// IsOwner Removal - this whole mechanism is now the ONLY way a new organization's creator gets any access at
-/// all; there is no User.IsOwner bypass left to fall back on. Same isolated-organization pattern as the other
-/// DB-backed tests in this project.</summary>
+/// <summary>
+/// ADR-0023 — inicijalizacija organizacije pri registraciji (AuthService.Register), bez ikakvog seeda u bazi: u istoj
+/// transakciji nastaju Organization, prvi User, JEDNA Admin GrantGroup (system_key 'admin') sa SVIM grantovima iz
+/// Grants.Catalog i dodjela prvog Usera toj grupi, plus zadani RosterTypeovi. Bez Owner bypassa ovo je jedini način na
+/// koji osnivač organizacije dobiva ikakav pristup.
+/// </summary>
 public class RegistrationBootstrapTests
 {
-    private const string LocalConnectionString = "Host=localhost;Database=postgres;Password=root1234;Username=postgres";
-
-    private static GrantGroupHandler CreateHandler() => new(
-        new DatabaseSettings { ConnectionString = LocalConnectionString },
-        new DefaultRoleTemplateHandler(new DatabaseSettings { ConnectionString = LocalConnectionString }),
-        new CapabilityMaterializationService());
+    private static AuthService NewAuthService(SchedulingWorld w) => new(
+        w.Resolve<IAuthHandler>(),
+        w.Resolve<IRosterTypeHandler>(),
+        w.Resolve<IGrantGroupHandler>(),
+        new JwtService(MultiSegmentHttpContractTests.Jwt),
+        MultiSegmentHttpContractTests.Jwt,
+        w.Resolve<IUnitOfWorkFactory>());
 
     [Fact]
-    public async Task EnsureDefaultGrantGroups_CreatesExactlyOneAdminGroup_WithPermissionsManage()
+    public async Task Register_CreatesExactlyOneSystemAdminGroup_WithTheWholeGrantCatalog_AndAssignsTheFounder()
     {
-        Guid organizationId = Guid.NewGuid();
-        await using DatabaseContext context = DatabaseContext.GenerateContext(LocalConnectionString);
+        // The world only provides the DI container; registration creates its own organization.
+        await using SchedulingWorld w = await SchedulingWorld.Create(nameof(Register_CreatesExactlyOneSystemAdminGroup_WithTheWholeGrantCatalog_AndAssignsTheFounder));
+        Guid suffix = Guid.NewGuid();
 
-        context.Organizations.Add(new Organization
+        AuthResponse response = await NewAuthService(w).Register(new RegisterRequest
         {
-            Id = organizationId,
-            Name = "RegistrationBootstrapTest",
-            Slug = $"registration-bootstrap-test-{organizationId:N}",
-            CreatedAt = DateTimeOffset.UtcNow
+            OrganizationName = $"Registration bootstrap {suffix:N}",
+            Email = $"founder-{suffix:N}@registration.test",
+            Password = "Founder-Password-1"
         });
-        await context.SaveChangesAsync();
+        Guid organizationId = response.OrganizationId.GetValueOrDefault();
 
         try
         {
-            GrantGroupHandler handler = CreateHandler();
+            await using DatabaseContext db = w.NewDb();
 
-            await using IUnitOfWork uow = await new UnitOfWorkFactory(new DatabaseSettings { ConnectionString = LocalConnectionString }).Begin();
-            Guid? adminGroupId = await handler.EnsureDefaultGrantGroups(uow, organizationId);
-            await uow.CommitAsync();
+            GrantGroup admin = Assert.Single(await db.GrantGroups.Include(g => g.Grants)
+                .Where(g => g.OrganizationId == organizationId).ToListAsync());
+            Assert.Equal(SystemGrantGroups.Admin, admin.SystemKey);
+            Assert.Equal(SystemGrantGroups.AdminDisplayName, admin.Name);
+            Assert.Equal(Grants.Catalog.Select(g => g.Key).ToHashSet(), admin.Grants.Select(g => g.GrantKey).ToHashSet());
 
-            Assert.NotNull(adminGroupId);
+            Assert.True(await db.UserGrantGroups.AnyAsync(u => u.UserId == response.UserId && u.GrantGroupId == admin.Id));
 
-            await using DatabaseContext verifyContext = DatabaseContext.GenerateContext(LocalConnectionString);
+            HashSet<string> effective = await w.Resolve<IGrantGroupHandler>().ResolveEffective(organizationId, response.UserId.GetValueOrDefault());
+            Assert.Contains(Grants.PermissionsManage, effective);
 
-            // Exactly one GrantGroup - never Trener/Recepcija for a new organization.
-            var groups = await verifyContext.GrantGroups
-                .Where(g => g.OrganizationId == organizationId)
-                .Select(g => g.Name)
-                .ToListAsync();
-            Assert.Equal(new[] { "Admin" }, groups);
-
-            HashSet<string> grants = await handler.ResolveEffective(organizationId, Guid.NewGuid());
-            // A brand-new, unassigned user has nothing - sanity check the group itself, not an assignment.
-            Assert.Empty(grants);
-
-            List<string> adminGrants = await verifyContext.GrantGroupGrants
-                .Where(g => g.GrantGroupId == adminGroupId.Value)
-                .Select(g => g.GrantKey)
-                .ToListAsync();
-            Assert.Contains(Grants.PermissionsManage, adminGrants);
-            Assert.Contains(Grants.PermissionsView, adminGrants);
-            Assert.Contains(Grants.PermissionsAssignmentsManage, adminGrants);
+            // Organization initialization also creates the default roster types (application code, not a migration seed).
+            Assert.True(await db.RosterTypes.AnyAsync(t => t.OrganizationId == organizationId));
         }
         finally
         {
-            await using DatabaseContext cleanupContext = DatabaseContext.GenerateContext(LocalConnectionString);
-
-            var groupIds = await cleanupContext.GrantGroups
-                .Where(g => g.OrganizationId == organizationId)
-                .Select(g => g.Id.GetValueOrDefault())
-                .ToListAsync();
-
-            cleanupContext.GrantGroupGrants.RemoveRange(cleanupContext.GrantGroupGrants.Where(g => groupIds.Contains(g.GrantGroupId)));
-            cleanupContext.GrantGroupCapabilitySnapshots.RemoveRange(cleanupContext.GrantGroupCapabilitySnapshots.Where(s => groupIds.Contains(s.GrantGroupId)));
-            cleanupContext.GrantGroupTemplateGrants.RemoveRange(cleanupContext.GrantGroupTemplateGrants.Where(g => groupIds.Contains(g.GrantGroupId)));
-            await cleanupContext.SaveChangesAsync();
-
-            cleanupContext.GrantGroups.RemoveRange(cleanupContext.GrantGroups.Where(g => g.OrganizationId == organizationId));
-            await cleanupContext.SaveChangesAsync();
-
-            cleanupContext.Organizations.RemoveRange(cleanupContext.Organizations.Where(o => o.Id == organizationId));
-            await cleanupContext.SaveChangesAsync();
+            await SchedulingWorld.DeleteOrganization(organizationId);
         }
     }
 
     [Fact]
-    public async Task EnsureDefaultGrantGroups_IsIdempotent_ReturnsSameGroupOnSecondCall()
+    public async Task SystemAdminGroup_IsAnOrdinaryOrganizationGroup_ItCanBeRenamedAndItsGrantsChanged()
     {
-        Guid organizationId = Guid.NewGuid();
-        await using DatabaseContext context = DatabaseContext.GenerateContext(LocalConnectionString);
+        await using SchedulingWorld w = await SchedulingWorld.Create(nameof(SystemAdminGroup_IsAnOrdinaryOrganizationGroup_ItCanBeRenamedAndItsGrantsChanged));
+        IGrantGroupHandler handler = w.Resolve<IGrantGroupHandler>();
 
-        context.Organizations.Add(new Organization
+        Guid adminId;
+        await using (IUnitOfWork uow = await w.Resolve<IUnitOfWorkFactory>().Begin())
         {
-            Id = organizationId,
-            Name = "RegistrationBootstrapIdempotentTest",
-            Slug = $"registration-bootstrap-idempotent-test-{organizationId:N}",
-            CreatedAt = DateTimeOffset.UtcNow
-        });
-        await context.SaveChangesAsync();
-
-        try
-        {
-            GrantGroupHandler handler = CreateHandler();
-
-            await using IUnitOfWork uow1 = await new UnitOfWorkFactory(new DatabaseSettings { ConnectionString = LocalConnectionString }).Begin();
-            Guid? firstCallGroupId = await handler.EnsureDefaultGrantGroups(uow1, organizationId);
-            await uow1.CommitAsync();
-
-            await using IUnitOfWork uow2 = await new UnitOfWorkFactory(new DatabaseSettings { ConnectionString = LocalConnectionString }).Begin();
-            Guid? secondCallGroupId = await handler.EnsureDefaultGrantGroups(uow2, organizationId);
-            await uow2.CommitAsync();
-
-            Assert.Equal(firstCallGroupId, secondCallGroupId);
-
-            await using DatabaseContext verifyContext = DatabaseContext.GenerateContext(LocalConnectionString);
-            int groupCount = await verifyContext.GrantGroups.CountAsync(g => g.OrganizationId == organizationId);
-            Assert.Equal(1, groupCount);
+            adminId = await handler.CreateSystemAdminGroup(uow, w.OrganizationId);
+            await uow.CommitAsync();
         }
-        finally
-        {
-            await using DatabaseContext cleanupContext = DatabaseContext.GenerateContext(LocalConnectionString);
 
-            var groupIds = await cleanupContext.GrantGroups
-                .Where(g => g.OrganizationId == organizationId)
-                .Select(g => g.Id.GetValueOrDefault())
-                .ToListAsync();
+        GrantGroup admin = await handler.GetById(w.OrganizationId, adminId);
+        admin.Name = "Vlasnici";
+        await handler.Update(admin, new List<string> { Grants.PermissionsManage, Grants.PermissionsView });
 
-            cleanupContext.GrantGroupGrants.RemoveRange(cleanupContext.GrantGroupGrants.Where(g => groupIds.Contains(g.GrantGroupId)));
-            cleanupContext.GrantGroupCapabilitySnapshots.RemoveRange(cleanupContext.GrantGroupCapabilitySnapshots.Where(s => groupIds.Contains(s.GrantGroupId)));
-            cleanupContext.GrantGroupTemplateGrants.RemoveRange(cleanupContext.GrantGroupTemplateGrants.Where(g => groupIds.Contains(g.GrantGroupId)));
-            await cleanupContext.SaveChangesAsync();
-
-            cleanupContext.GrantGroups.RemoveRange(cleanupContext.GrantGroups.Where(g => g.OrganizationId == organizationId));
-            await cleanupContext.SaveChangesAsync();
-
-            cleanupContext.Organizations.RemoveRange(cleanupContext.Organizations.Where(o => o.Id == organizationId));
-            await cleanupContext.SaveChangesAsync();
-        }
+        GrantGroup reloaded = await handler.GetById(w.OrganizationId, adminId);
+        Assert.Equal("Vlasnici", reloaded.Name);
+        Assert.Equal(SystemGrantGroups.Admin, reloaded.SystemKey);
+        Assert.Equal(new HashSet<string> { Grants.PermissionsManage, Grants.PermissionsView }, reloaded.Grants.Select(g => g.GrantKey).ToHashSet());
     }
 }

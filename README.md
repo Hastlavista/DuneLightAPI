@@ -58,12 +58,16 @@ Alternativno vlastiti connection string: `-- --d=PostgreSQL --s="Host=...;Databa
 Migracije se izvršavaju redom po `[DeveloperMigration(godina, mjesec, dan, autor, redni_broj)]` atributu
 (`DatabaseMigration/Extensions/DeveloperMigrationAttribute.cs`). Već primijenjena migracija se ne mijenja ni ne
 renumerira — dodaje se nova. Razvojna baza nema produkcijskih podataka i smije se ponovno izgraditi
-([ADR-0003](docs/decisions/0003-politika-razvojne-baze.md)).
+([ADR-0003](docs/decisions/0003-politika-razvojne-baze.md)). Shema se gradi početnom migracijom
+(`Migration_2026_10_25_Baseline*`) i **ne seeda se ništa** — prazna baza nema nijedan redak; registracija organizacije
+kreira Admin grupu sa svim grantovima i zadane tipove rostera ([ADR-0022](docs/decisions/0022-pocetna-migracija-bez-seeda.md),
+[ADR-0023](docs/decisions/0023-katalog-autorizacije-u-kodu.md)). Migracija koja uvodi novi grant mora ga dodati i
+postojećim grupama s `grant_groups.system_key = 'admin'`.
 
 ## Testovi
 
 Testovi su integracijski, nad stvarnim PostgreSQL-om (shema mora biti migrirana, connection string je u
-`BlueDragon.DuneLight.UnitTests/TestSupport.cs`):
+`BlueDragon.DuneLight.UnitTests/Scheduling/SchedulingTestHost.cs`):
 
 ```bash
 dotnet test BlueDragon.DuneLight.sln
@@ -172,5 +176,5 @@ točni endpointi i DTO-ovi u Swaggeru.
 | Proizvodi i skladište | `Products/*` | `/api/products`, `/api/stock` |
 | Dozvole (grantovi, grant grupe, capabilities, workforce uloge) | `Permissions/*` | `/api/grants`, `/api/permissions/...` |
 | Organizacija (postavke, branding) | `Organization/*` | `/api/organization/...` |
-| Onboarding, Dashboard, Notifikacije, Dijagnostika | `Onboarding/*`, `Dashboard/*`, `Notifications/*`, `Diagnostics/*` | `/api/onboarding-status`, `/api/dashboard`, `/api/notifications`, `/api/_internal/diagnostics/grants` |
+| Onboarding, Dashboard, Notifikacije | `Onboarding/*`, `Dashboard/*`, `Notifications/*` | `/api/onboarding-status`, `/api/dashboard`, `/api/notifications` |
 | Platformski Management | `Management/*` | `/api/management/...` |

@@ -2,12 +2,9 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
-using BlueDragon.DuneLight.Core.Enums;
-using BlueDragon.DuneLight.Core.Interfaces.Capabilities;
 using BlueDragon.DuneLight.Core.Shared;
 using BlueDragon.DuneLight.Infrastructure.Domain.Contexts;
 using BlueDragon.DuneLight.Infrastructure.Domain.Models;
-using BlueDragon.DuneLight.Infrastructure.Domain.Models.Capabilities;
 using BlueDragon.DuneLight.Infrastructure.Domain.Models.Permissions;
 using BlueDragon.DuneLight.Infrastructure.Domain.Settings;
 using BlueDragon.DuneLight.Infrastructure.Handlers.Interfaces;
@@ -19,14 +16,10 @@ namespace BlueDragon.DuneLight.Infrastructure.Handlers.Implementations;
 public class GrantGroupHandler : IGrantGroupHandler
 {
     private readonly DatabaseSettings _databaseSettings;
-    private readonly IDefaultRoleTemplateHandler _defaultRoleTemplateHandler;
-    private readonly ICapabilityMaterializationService _capabilityMaterializationService;
 
-    public GrantGroupHandler(DatabaseSettings databaseSettings, IDefaultRoleTemplateHandler defaultRoleTemplateHandler, ICapabilityMaterializationService capabilityMaterializationService)
+    public GrantGroupHandler(DatabaseSettings databaseSettings)
     {
         _databaseSettings = databaseSettings;
-        _defaultRoleTemplateHandler = defaultRoleTemplateHandler;
-        _capabilityMaterializationService = capabilityMaterializationService;
     }
 
     public async Task<List<GrantGroup>> GetAll(Guid organizationId)
@@ -53,304 +46,21 @@ public class GrantGroupHandler : IGrantGroupHandler
             .SingleOrDefaultAsync(g => g.OrganizationId == organizationId && g.Id == id);
     }
 
-    /// <summary>
-    /// Grant-only Tenant Authorization Refactor — nove organizacije dobivaju ISKLJUČIVO Admin starter GrantGroup
-    /// (materijaliziran preko najnovije aktivne "admin" DefaultRoleTemplate verzije, koja od ove faze uključuje i
-    /// permissions.view/manage/assignments.manage). Trener/Recepcija se VIŠE NE kreiraju automatski pri
-    /// registraciji — to su bili razvojni/demo starter podaci, ne dio proizvoda (organizacija sama gradi svoju
-    /// strukturu preko role-editora nakon registracije). Postojeće organizacije koje već imaju Trener/Recepcija
-    /// grupe NISU dirane ovom promjenom (ova metoda se poziva SAMO pri Register, nikad naknadno za postojeći
-    /// tenant). Vraća Id Admin grupe (nova ili već postojeća — idempotentno po Name, isto kao prije) da
-    /// AuthService.Register može odmah dodijeliti organizacijskog osnivača na nju.
-    /// </summary>
-    public async Task<Guid?> EnsureDefaultGrantGroups(IUnitOfWork uow, Guid organizationId)
+    public async Task<Guid> CreateSystemAdminGroup(IUnitOfWork uow, Guid organizationId)
     {
-        ResolvedDefaultRoleTemplate template = await _defaultRoleTemplateHandler.GetLatestActiveByKey("admin");
-        if (template == null)
-            return null;
-
-        GrantGroup existing = await uow.Context.GrantGroups
-            .FirstOrDefaultAsync(g => g.OrganizationId == organizationId && g.Name == template.DisplayNameHr);
-        if (existing != null)
-            return existing.Id;
-
         GrantGroup group = new GrantGroup
         {
             Id = Guid.NewGuid(),
             OrganizationId = organizationId,
-            Name = template.DisplayNameHr,
-            CreatedAt = DateTimeOffset.UtcNow
+            Name = SystemGrantGroups.AdminDisplayName,
+            SystemKey = SystemGrantGroups.Admin,
+            CreatedAt = DateTimeOffset.UtcNow,
+            Grants = Grants.Catalog.Select(g => new GrantGroupGrant { GrantKey = g.Key }).ToList()
         };
 
         uow.Context.GrantGroups.Add(group);
-        // Grupa mora postojati u bazi PRIJE ApplyTemplate upiše djecu preko sirovog FK scalara (ne preko
-        // navigacije) — isto ponašanje unutar iste otvorene transakcije (vidi IUnitOfWork), ne zaseban commit.
         await uow.Context.SaveChangesAsync();
-
-        await ApplyTemplate(uow, group.Id.GetValueOrDefault(), template, appliedBy: null);
-
-        return group.Id;
-    }
-
-    public async Task ApplyTemplate(IUnitOfWork uow, Guid grantGroupId, ResolvedDefaultRoleTemplate template, Guid? appliedBy)
-    {
-        DatabaseContext context = uow.Context;
-
-        // KRITIČNO (vidi FAZA 1 hardening pass) — ManualAdvancedSet MORA biti izveden iz STARE (trenutne)
-        // provenance PRIJE nego što se primijeni novi odabir, ne iz NOVOG predloška. Ako bi se ManualAdvancedSet
-        // računao kao existingKeys minus NOVI capability/template skup, grant koji je v2 predložak NAMJERNO uklonio
-        // bio bi pogrešno protumačen kao "ručno dodan" i zauvijek preživio — vidi primjer u zadatku (v1={A,B},
-        // v2={A}, bez ovoga bi B nepravedno ostao).
-        List<GrantGroupCapabilitySnapshot> oldSnapshots = await context.GrantGroupCapabilitySnapshots
-            .Include(s => s.CapabilityDefinition).ThenInclude(c => c.Grants)
-            .Where(s => s.GrantGroupId == grantGroupId)
-            .ToListAsync();
-
-        List<GrantGroupTemplateGrant> oldProvenance = await context.GrantGroupTemplateGrants
-            .Where(g => g.GrantGroupId == grantGroupId)
-            .ToListAsync();
-
-        HashSet<string> oldCapabilityDerivedSet = new();
-        foreach (GrantGroupCapabilitySnapshot snapshot in oldSnapshots)
-        {
-            List<CapabilityGrantRoleEntry> grantEntries = snapshot.CapabilityDefinition.Grants
-                .Select(g => new CapabilityGrantRoleEntry(g.GrantKey, g.Role))
-                .ToList();
-            oldCapabilityDerivedSet.UnionWith(_capabilityMaterializationService.Materialize(snapshot.CapabilityDefinition.ScopeModel, snapshot.SelectedScope, grantEntries));
-        }
-
-        HashSet<string> oldTemplateCompatibilitySet = oldProvenance.Select(g => g.GrantKey).ToHashSet();
-
-        List<GrantGroupGrant> existingGrants = await context.GrantGroupGrants
-            .Where(g => g.GrantGroupId == grantGroupId)
-            .ToListAsync();
-        HashSet<string> existingKeys = existingGrants.Select(g => g.GrantKey).ToHashSet();
-
-        // ManualAdvancedSet — raw grantovi koje NIJEDAN STARI capability/template izvor ne opravdava, dakle ih je
-        // Owner ranije ručno dodao preko Advanced editora. Ne dira se OVDJE što je NOVI predložak odabrao.
-        HashSet<string> manualAdvancedSet = new(existingKeys);
-        manualAdvancedSet.ExceptWith(oldCapabilityDerivedSet);
-        manualAdvancedSet.ExceptWith(oldTemplateCompatibilitySet);
-
-        await ApplyResolvedSelections(
-            uow,
-            grantGroupId,
-            template.Selections,
-            template.CompatibilityGrants.Select(g => g.GrantKey).ToHashSet(),
-            template.TemplateKey,
-            template.TemplateVersion,
-            manualAdvancedSet,
-            appliedBy);
-    }
-
-    /// <summary>FAZA 3 (v2 template-upgrade) — dijeljena "zamijeni snapshots/provenance/raw-grants" jezgra koju
-    /// koriste i ApplyTemplate (EnsureDefaultGrantGroups za nove organizacije) i novi upgrade-apply put
-    /// (GrantGroupTemplateUpgradeService.Apply, nakon što je TemplateUpgradePlanner već izračunao i validirao
-    /// razrješene selekcije). Izvučeno iz starog ApplyTemplate tijela BEZ promjene ponašanja — pozivatelj je
-    /// odgovoran za izračun manualAdvancedSet iz STARE provenance (vidi ApplyTemplate napomenu zašto to mora biti
-    /// prije, ne poslije). FinalGrantSet = materialize(<paramref name="resolvedSelections"/>) UNION
-    /// <paramref name="resultingTemplateCompatibilityGrantKeys"/> UNION <paramref name="manualAdvancedSet"/>;
-    /// zamjenjuje SVE GrantGroupCapabilitySnapshot i GrantGroupTemplateGrant retke novima, sve unutar
-    /// uow.Context, jedan SaveChangesAsync.</summary>
-    public async Task ApplyResolvedSelections(
-        IUnitOfWork uow,
-        Guid grantGroupId,
-        IReadOnlyList<TemplateCapabilitySelection> resolvedSelections,
-        HashSet<string> resultingTemplateCompatibilityGrantKeys,
-        string targetTemplateKey,
-        int targetTemplateVersion,
-        HashSet<string> manualAdvancedSet,
-        Guid? appliedBy)
-    {
-        DatabaseContext context = uow.Context;
-
-        List<GrantGroupCapabilitySnapshot> oldSnapshots = await context.GrantGroupCapabilitySnapshots
-            .Where(s => s.GrantGroupId == grantGroupId)
-            .ToListAsync();
-
-        List<GrantGroupTemplateGrant> oldProvenance = await context.GrantGroupTemplateGrants
-            .Where(g => g.GrantGroupId == grantGroupId)
-            .ToListAsync();
-
-        List<GrantGroupGrant> existingGrants = await context.GrantGroupGrants
-            .Where(g => g.GrantGroupId == grantGroupId)
-            .ToListAsync();
-        HashSet<string> existingKeys = existingGrants.Select(g => g.GrantKey).ToHashSet();
-
-        HashSet<string> newCapabilityDerivedSet = new();
-        foreach (TemplateCapabilitySelection selection in resolvedSelections)
-            newCapabilityDerivedSet.UnionWith(_capabilityMaterializationService.Materialize(selection.ScopeModel, selection.SelectedScope, selection.Grants));
-
-        HashSet<string> finalGrantSet = new(newCapabilityDerivedSet);
-        finalGrantSet.UnionWith(resultingTemplateCompatibilityGrantKeys);
-        finalGrantSet.UnionWith(manualAdvancedSet);
-
-        foreach (string key in finalGrantSet.Except(existingKeys))
-            context.GrantGroupGrants.Add(new GrantGroupGrant { GrantGroupId = grantGroupId, GrantKey = key });
-
-        foreach (GrantGroupGrant grant in existingGrants)
-            if (!finalGrantSet.Contains(grant.GrantKey))
-                context.GrantGroupGrants.Remove(grant);
-
-        context.GrantGroupCapabilitySnapshots.RemoveRange(oldSnapshots);
-        context.GrantGroupTemplateGrants.RemoveRange(oldProvenance);
-
-        DateTimeOffset now = DateTimeOffset.UtcNow;
-
-        foreach (TemplateCapabilitySelection selection in resolvedSelections)
-        {
-            if (selection.SelectedScope == CapabilitySelectedScope.None)
-                continue;
-
-            context.GrantGroupCapabilitySnapshots.Add(new GrantGroupCapabilitySnapshot
-            {
-                GrantGroupId = grantGroupId,
-                CapabilityDefinitionId = selection.CapabilityDefinitionId,
-                SelectedScope = selection.SelectedScope,
-                SourceTemplateKey = targetTemplateKey,
-                SourceTemplateVersion = targetTemplateVersion,
-                AppliedAt = now,
-                AppliedBy = appliedBy
-            });
-        }
-
-        foreach (string compatGrantKey in resultingTemplateCompatibilityGrantKeys)
-        {
-            context.GrantGroupTemplateGrants.Add(new GrantGroupTemplateGrant
-            {
-                GrantGroupId = grantGroupId,
-                GrantKey = compatGrantKey,
-                SourceTemplateKey = targetTemplateKey,
-                SourceTemplateVersion = targetTemplateVersion,
-                AppliedAt = now,
-                AppliedBy = appliedBy
-            });
-        }
-
-        await context.SaveChangesAsync();
-    }
-
-    public async Task Add(IUnitOfWork uow, GrantGroup grantGroup)
-    {
-        uow.Context.GrantGroups.Add(grantGroup);
-        await uow.Context.SaveChangesAsync();
-    }
-
-    public async Task UpdateMetadata(IUnitOfWork uow, Guid grantGroupId, string name, Guid updatedBy)
-    {
-        GrantGroup tracked = await uow.Context.GrantGroups.SingleAsync(g => g.Id == grantGroupId);
-        tracked.Name = name;
-        tracked.UpdatedAt = DateTimeOffset.UtcNow;
-        tracked.UpdatedBy = updatedBy;
-    }
-
-    public async Task ApplyCapabilitySelections(IUnitOfWork uow, Guid grantGroupId, IReadOnlyList<TemplateCapabilitySelection> selections, HashSet<string> manualGrantKeys, Guid? appliedBy)
-    {
-        DatabaseContext context = uow.Context;
-
-        List<GrantGroupCapabilitySnapshot> oldSnapshots = await context.GrantGroupCapabilitySnapshots
-            .Where(s => s.GrantGroupId == grantGroupId)
-            .ToListAsync();
-
-        // Template compatibility provenance je NAMJERNO netaknuta ovdje — ordinary capability-aware editor save
-        // nema mehanizam za mijenjanje template-vlasničkih compatibility grantova (vidi FAZA 2 Part F i
-        // ApplyCapabilitySelections klasnu napomenu na sučelju). Čita se svježe unutar iste transakcije da uđe u
-        // FinalGrantSet.
-        HashSet<string> templateCompatibilitySet = (await context.GrantGroupTemplateGrants
-                .Where(g => g.GrantGroupId == grantGroupId)
-                .Select(g => g.GrantKey)
-                .ToListAsync())
-            .ToHashSet();
-
-        List<GrantGroupGrant> existingGrants = await context.GrantGroupGrants
-            .Where(g => g.GrantGroupId == grantGroupId)
-            .ToListAsync();
-        HashSet<string> existingKeys = existingGrants.Select(g => g.GrantKey).ToHashSet();
-
-        HashSet<string> newCapabilityDerivedSet = new();
-        foreach (TemplateCapabilitySelection selection in selections)
-            newCapabilityDerivedSet.UnionWith(_capabilityMaterializationService.Materialize(selection.ScopeModel, selection.SelectedScope, selection.Grants));
-
-        HashSet<string> finalGrantSet = new(newCapabilityDerivedSet);
-        finalGrantSet.UnionWith(templateCompatibilitySet);
-        finalGrantSet.UnionWith(manualGrantKeys);
-
-        foreach (string key in finalGrantSet.Except(existingKeys))
-            context.GrantGroupGrants.Add(new GrantGroupGrant { GrantGroupId = grantGroupId, GrantKey = key });
-
-        foreach (GrantGroupGrant grant in existingGrants)
-            if (!finalGrantSet.Contains(grant.GrantKey))
-                context.GrantGroupGrants.Remove(grant);
-
-        context.GrantGroupCapabilitySnapshots.RemoveRange(oldSnapshots);
-
-        DateTimeOffset now = DateTimeOffset.UtcNow;
-
-        foreach (TemplateCapabilitySelection selection in selections)
-        {
-            if (selection.SelectedScope == CapabilitySelectedScope.None)
-                continue;
-
-            // Zadrži SourceTemplateKey/Version SAMO ako je ISTA capability-verzija na ISTOM opsegu već postojala —
-            // inače je ovo nova/promijenjena selekcija, dakle bez template provenance na razini te capability (vidi
-            // FAZA 2 Part F, per-capability provenance umjesto all-or-nothing grupnog flaga).
-            GrantGroupCapabilitySnapshot matchingOld = oldSnapshots.SingleOrDefault(s =>
-                s.CapabilityDefinitionId == selection.CapabilityDefinitionId && s.SelectedScope == selection.SelectedScope);
-
-            context.GrantGroupCapabilitySnapshots.Add(new GrantGroupCapabilitySnapshot
-            {
-                GrantGroupId = grantGroupId,
-                CapabilityDefinitionId = selection.CapabilityDefinitionId,
-                SelectedScope = selection.SelectedScope,
-                SourceTemplateKey = matchingOld?.SourceTemplateKey,
-                SourceTemplateVersion = matchingOld?.SourceTemplateVersion,
-                AppliedAt = now,
-                AppliedBy = appliedBy
-            });
-        }
-
-        await context.SaveChangesAsync();
-    }
-
-    public async Task<List<GrantGroupCapabilitySnapshot>> GetCapabilitySnapshots(Guid organizationId, Guid grantGroupId)
-    {
-        await using DatabaseContext context = DatabaseContext.GenerateContext(_databaseSettings.ConnectionString);
-        return await context.GrantGroupCapabilitySnapshots
-            // ThenInclude(Grants) — potrebno i za FAZA 2 authoring-state DerivedGrantKeys materijalizaciju, ne samo template-match DTO.
-            .Include(s => s.CapabilityDefinition).ThenInclude(c => c.Grants)
-            .Where(s => s.GrantGroupId == grantGroupId && s.GrantGroup.OrganizationId == organizationId)
-            .ToListAsync();
-    }
-
-    public async Task<List<GrantGroupTemplateGrant>> GetTemplateGrantProvenance(Guid organizationId, Guid grantGroupId)
-    {
-        await using DatabaseContext context = DatabaseContext.GenerateContext(_databaseSettings.ConnectionString);
-        return await context.GrantGroupTemplateGrants
-            .Where(g => g.GrantGroupId == grantGroupId && g.GrantGroup.OrganizationId == organizationId)
-            .ToListAsync();
-    }
-
-    public async Task<List<GrantGroupCapabilitySnapshot>> GetAllCapabilitySnapshotsForDiagnostics()
-    {
-        await using DatabaseContext context = DatabaseContext.GenerateContext(_databaseSettings.ConnectionString);
-        return await context.GrantGroupCapabilitySnapshots
-            .Include(s => s.CapabilityDefinition).ThenInclude(c => c.Grants)
-            .ToListAsync();
-    }
-
-    public async Task<List<GrantGroupTemplateGrant>> GetAllTemplateGrantProvenanceForDiagnostics()
-    {
-        await using DatabaseContext context = DatabaseContext.GenerateContext(_databaseSettings.ConnectionString);
-        return await context.GrantGroupTemplateGrants.ToListAsync();
-    }
-
-    public async Task<List<GrantGroup>> GetAllAcrossOrganizationsForDiagnostics()
-    {
-        await using DatabaseContext context = DatabaseContext.GenerateContext(_databaseSettings.ConnectionString);
-        return await context.GrantGroups
-            .Include(g => g.Grants)
-            .OrderBy(g => g.OrganizationId).ThenBy(g => g.Name)
-            .ToListAsync();
+        return group.Id.GetValueOrDefault();
     }
 
     public async Task<bool> NameExists(Guid organizationId, string name, Guid? excludeId)
@@ -480,23 +190,7 @@ public class GrantGroupHandler : IGrantGroupHandler
         List<Guid> overrideUserGrantGroupIds = null)
     {
         await using DatabaseContext context = DatabaseContext.GenerateContext(_databaseSettings.ConnectionString);
-        return await HasActiveUserWithGrant(context, organizationId, grantKey, overrideGrantGroupId, overrideGrantGroupGrants, overrideUserId, overrideUserGrantGroupIds);
-    }
 
-    public async Task<bool> HasActiveUserWithGrantInTransaction(IUnitOfWork uow, Guid organizationId, string grantKey)
-    {
-        return await HasActiveUserWithGrant(uow.Context, organizationId, grantKey, null, null, null, null);
-    }
-
-    private static async Task<bool> HasActiveUserWithGrant(
-        DatabaseContext context,
-        Guid organizationId,
-        string grantKey,
-        Guid? overrideGrantGroupId,
-        HashSet<string> overrideGrantGroupGrants,
-        Guid? overrideUserId,
-        List<Guid> overrideUserGrantGroupIds)
-    {
         List<Guid> activeUserIds = await context.Users
             .Where(u => u.OrganizationId == organizationId && u.IsActive)
             .Select(u => u.Id.GetValueOrDefault())

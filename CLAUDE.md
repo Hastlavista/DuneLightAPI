@@ -76,5 +76,7 @@ docs/
 - Nikad automatski birati jednog od više Employeeja (pricing), ni implicitno izvoditi Group Segment (ADR-0009, ADR-0011).
 - `PricingEmployeeId` ≠ korisnik provizije ≠ "primarni" Employee (nema primarnog Employeeja).
 - Korekcije ne brišu povijest: kompenzacijski zapisi uz `SourceVersion`/`StatusVersion` (ADR-0007).
+- Migracije ne seedaju ništa (ADR-0022). Katalog grantova i capabilityja je u kodu (`Grants.cs`, `CapabilityCatalog.cs`);
+  novi grant = nova migracija koja ga dodaje grupama s `grant_groups.system_key = 'admin'` (ADR-0023).
 - P1 (Cancellation policy engine) je dizajniran, NIJE implementiran (ADR-0015 – ADR-0018).
 - Nema `UserRole` ni `role` claima (uklonjeno, ADR-0019). Nijedna autorizacijska odluka ne smije ovisiti o ulozi; workforce `Role` je samo poslovna oznaka.

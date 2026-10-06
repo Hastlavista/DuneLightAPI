@@ -1,7 +1,6 @@
 using System;
 using System.Collections.Generic;
 using System.Threading.Tasks;
-using BlueDragon.DuneLight.Infrastructure.UnitOfWork;
 
 namespace BlueDragon.DuneLight.Infrastructure.Services;
 
@@ -25,10 +24,4 @@ public interface IPermissionAdministrationSafetyService
         HashSet<string> overrideGrantGroupGrants = null,
         Guid? overrideUserId = null,
         List<Guid> overrideUserGrantGroupIds = null);
-
-    /// <summary>Isto kao <see cref="EnsureRetainsPermissionAdmin"/>, ali za mutacije koje VEĆ pišu novi grant skup
-    /// unutar otvorene transakcije (capability-based Update, template-upgrade Apply) — poziva se ODMAH NAKON tog
-    /// upisa (SaveChangesAsync se već dogodio), a PRIJE <paramref name="uow"/>.CommitAsync(). Bacanje iznimke
-    /// ovdje ostavlja uow nekomitanim (DisposeAsync radi rollback), pa ništa ne biva trajno zapisano.</summary>
-    Task EnsureRetainsPermissionAdminInTransaction(IUnitOfWork uow, Guid organizationId);
 }

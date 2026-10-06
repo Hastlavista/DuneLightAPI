@@ -134,8 +134,6 @@ public class CompanyService : ICompanyService
         {
             case CompanyDeactivationOutcome.NotFound:
                 throw new NotFoundAppException("Company", id);
-            case CompanyDeactivationOutcome.Blocked:
-                throw new BusinessRuleException(ErrorCodes.LastActiveCompany, "Mora postojati barem jedna aktivna tvrtka.");
             case CompanyDeactivationOutcome.AlreadyInactive:
             case CompanyDeactivationOutcome.Deactivated:
                 return await GetById(organizationId, id);

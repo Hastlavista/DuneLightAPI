@@ -10,7 +10,7 @@
 |---|---|---|---|
 | 1 | Ukloniti legacy `UserRole` / `users.role` / `role` claim | 0019 | Implementirano 2026-10-06 |
 | 2 | Email klijenta i korisničkog računa jedinstven unutar organizacije (trim, case-insensitive) | 0020 | Implementirano 2026-10-06 |
-| 3 | Organizacija smije imati nula aktivnih poslovnica | 0021 | Nije implementirano |
+| 3 | Organizacija smije imati nula aktivnih poslovnica | 0021 | Implementirano 2026-10-06 |
 
 ## Zaključana pravila
 - Nijedna autorizacijska odluka ne smije ovisiti o `UserRole` ni o JWT role claimu (stavka 1).
@@ -57,3 +57,5 @@ Format: datum — pitanje/kontekst — odgovor — posljedica.
   po emailu za `users` postaju case-insensitive (kod ostaje `EMAIL_ALREADY_IN_USE`).
 - 2026-10-06 — ADR-0020: na koju granu? — Stackati na granu foundation cleanupa (ADR-0019). Commitove i PR-ove radi
   korisnik iz Ridera; Claude ne radi git operacije, samo implementira i dokumentira.
+- 2026-10-06 — ADR-0021: što onboarding `HasCompany` vraća kad su sve poslovnice deaktivirane? — Ostaje "postoji
+  AKTIVNA poslovnica" (wizard ponovno prikazuje korak poslovnice). — Bez promjene onboarding koda.

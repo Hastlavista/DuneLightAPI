@@ -19,6 +19,12 @@ public class GrantGroup
     [Column("name")]
     public string Name { get; set; }
 
+    /// <summary>Stabilni sistemski identitet grupe koju je aplikacija sama kreirala (npr. SystemGrantGroups.Admin pri
+    /// registraciji), inače NULL. Služi isključivo da buduće migracije novih grantova pronađu inicijalnu Admin grupu —
+    /// nikad za autorizaciju (ADR-0023).</summary>
+    [Column("system_key")]
+    public string SystemKey { get; set; }
+
     [Column("created_at")]
     public DateTimeOffset? CreatedAt { get; set; }
 

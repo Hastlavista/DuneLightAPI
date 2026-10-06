@@ -1,7 +1,7 @@
 # Arhitektura
 
 > Živi dokument. Ažurira se kad se arhitektura promijeni, ne naknadno "kad stignem".
-> Zadnje ažuriranje: 2026-10-06 (odluke nakon početnog popunjavanja: ADR-0019 – ADR-0021, P1 record uveden u `docs/p1/`)
+> Zadnje ažuriranje: 2026-10-06 (odluke nakon početnog popunjavanja: ADR-0019 – ADR-0023, P1 record uveden u `docs/p1/`)
 
 Izvori ovog dokumenta, redom prednosti: **stvarni kod** → ADR-ovi u `docs/decisions/` i zapisi faza (`docs/p1/`) → povijesni izvori izvan repozitorija
 (sažetak dosadašnjeg arhitekta, Decision Log v1, Target Architecture v1, Business Rules vodič starog
@@ -42,8 +42,9 @@ P6 Workforce/catalog integritet.
 
 ### Core (`BlueDragon.DuneLight.Core`)
 - **Odgovornost:** ugovori bez ovisnosti o bazi: DTO-ovi, enumi, servisni interfejsi, outbox događaji (`Events/`),
-  `Shared/Grants.cs` (popis raw grantova), `Shared/ErrorCodes.cs` i `WarningCodes.cs` (jedini izvor istine za kodove),
-  `DefaultGrantGroups`, iznimke (`Shared/Exceptions`), `PagedRequest/PagedResult`, `OrganizationTimeZones`.
+  `Shared/Grants.cs` (katalog raw grantova: ključ, naziv, modul, opis), `Shared/CapabilityCatalog.cs` (capabilityji kao
+  editorska projekcija nad grantovima), `Shared/SystemGrantGroups.cs`, `Shared/ErrorCodes.cs` i `WarningCodes.cs` (jedini
+  izvor istine za kodove), iznimke (`Shared/Exceptions`), `PagedRequest/PagedResult`, `OrganizationTimeZones`.
 - **Lokacija:** `BlueDragon.DuneLight.Core/`
 - **Ovisi o:** ništa unutar rješenja
 - **Koriste je:** API, Infrastructure, testovi
@@ -68,8 +69,9 @@ P6 Workforce/catalog integritet.
   - Komercijala: `PricingService` + `PriceResolutionService` (čisti algoritam), `CheckoutService`, `PaymentService`,
     `ClientPackageService`, `PackageService`, `CommissionService`, `ProductService`, `StockService`.
   - Autorizacija: `GrantResolver` (grantovi iz baze, in-memory cache ~30 s), `GrantGroupService`,
-    `PermissionAdministrationSafetyService` (invarijanta `permissions.manage`), `Capability*` servisi
-    (autorski metapodaci za role-editor, ne runtime autorizacija), `ActiveUserGuard`.
+    `PermissionAdministrationSafetyService` (invarijanta `permissions.manage`), `GrantGroupCapabilityAuthoringService`
+    (capability editor nad `CapabilityCatalog`-om: sprema samo raw grantove, authoring-state izvodi iz njih; ADR-0023),
+    `ActiveUserGuard`.
   - Platforma: `Services/Management/*` (PlatformAccount, zaseban JWT, bootstrap pri startu).
 - **Utils** (`Infrastructure/Utils/`): čista domenska pravila bez I/O, npr. `AppointmentLifecycle`, `ParticipationHistory`,
   `ParticipationSettlement`, `SchedulingConflictGuard`, `IntervalCapacity`, `GroupCapacityGuard`, `EmployeeServiceEligibility`,
@@ -91,7 +93,8 @@ P6 Workforce/catalog integritet.
 ### DatabaseMigration
 - **Odgovornost:** samostalna konzolna aplikacija s FluentMigrator runnerom; jedini način izgradnje sheme.
   Verzija migracije = `[DeveloperMigration(god, mj, dan, Developer, redni_broj)]` → `yyyyMMddAAAAoo`.
-  Stanje na `16b2a59`: 171 migracija, zadnja `20261022000000` (`Migration_2026_10_22_MultiEmployeeSegments`).
+  Početna (baseline) migracija `20261025000000`–`20261025000011` (`Migration_2026_10_25_Baseline00..11_*`, po domenama)
+  gradi trenutnu shemu od nule i **ne seeda ništa** (ADR-0022); svaka iduća promjena je nova migracija.
 - **Lokacija:** `BlueDragon.DuneLight.DatabaseMigration/` (`Migrations/2026/*`, `Configuration/DatabaseConfiguration.cs`)
 - **Ovisi o:** FluentMigrator, Npgsql
 - **Koriste je:** developer (ručno pokretanje), testovi (shema mora postojati)
@@ -182,9 +185,8 @@ Ključni entiteti (detalji u ADR-0005 – ADR-0012):
 | `Checkout` / `CheckoutItem` / `Payment` / `PaymentAllocation` | Naplata. | Settlement = zbroj aktivnih alokacija po Participationu. |
 | `Group` / `GroupSlot` / `GroupSegmentTemplate` / `GroupMember` / `WaitlistEntry` | Ponavljajuće grupe. | `membership_version` za optimistično generiranje; waitlist jedinstven po (Segment, Client) za aktivne (Waiting) unose. |
 | `User` / `Employee` | Identitet vs. workforce profil. | Odvojeni pojmovi; User može postojati bez Employeeja. `User.IsActive` se provjerava centralno. |
-| `GrantGroup` / `GrantGroupGrant` / `UserGrantGroup` | Autorizacija. | Barem jedan aktivni User mora zadržati efektivni `permissions.manage`. |
+| `GrantGroup` / `GrantGroupGrant` / `UserGrantGroup` | Autorizacija. `GrantGroupGrant` je jedini perzistirani autorizacijski izvor istine. | Barem jedan aktivni User mora zadržati efektivni `permissions.manage`. Inicijalna Admin grupa (`system_key = 'admin'`) pri registraciji dobiva sve grantove kataloga; migracija koja uvodi novi grant dodaje ga i postojećim sistemskim Admin grupama (ADR-0023). |
 | `Role` | Poslovna oznaka (npr. "Trener"). | NE utječe na autorizaciju. |
-| `CapabilityDefinition` / `DefaultRoleTemplate` / `GrantGroupCapabilitySnapshot` | Verzionirani autorski metapodaci za role-editor i default grant grupe. | Nikad se ne koriste za runtime autorizaciju. |
 | `PlatformAccount` | Platformski operater. | Strukturno odvojen od tenant `User`/`Organization`. |
 
 Ostali moduli: katalog (`Service`, `ServiceCompany`, `PriceListItem` + povijest, `Package`, `Room`, `Resource`), klijenti
@@ -207,7 +209,8 @@ Ostali moduli: katalog (`Service`, `ServiceCompany`, `PriceListItem` + povijest,
 
 Pravila koja se ne krše bez nove odluke (ADR):
 - Inkrementalna modernizacija postojećeg koda; nikad prepisivanje od nule ni paralelna arhitektura (ADR-0002).
-- Razvojna baza je potrošna: čista ciljna shema, bez compatibility stupaca, dual-writea, backfilla (ADR-0003).
+- Razvojna baza je potrošna: čista ciljna shema, bez compatibility stupaca, dual-writea, backfilla (ADR-0003); isto vrijedi
+  za produkcijsku bazu do go-livea (ADR-0024).
 - Autorizacija isključivo grantovima; bez Owner/Admin bypassa, bez sigurnosti po imenu grupe, ni workforce Roleu (legacy `UserRole` uklonjen, ADR-0019);
   own-scope uvijek `User → Employee` na serveru (ADR-0004).
 - Participation je izvor istine za izvršenje i komercijalu; Booking i Appointment nemaju vlastiti status/cijenu (ADR-0005, ADR-0006).
@@ -230,16 +233,19 @@ Pravila koja se ne krše bez nove odluke (ADR):
   (admin predložak v6, migracije `20261023000001`/`20261023000002`).
 - [x] Email klijenta i korisničkog računa jedinstven unutar organizacije, trim + case-insensitive ([ADR-0020](decisions/0020-jedinstven-email-klijenta.md)) —
   implementirano 2026-10-06 (migracija `20261024000000`).
-- [ ] Dopustiti nula aktivnih poslovnica, ukloniti `LAST_ACTIVE_COMPANY` ([ADR-0021](decisions/0021-nula-aktivnih-poslovnica.md)).
+- [x] Dopustiti nula aktivnih poslovnica, ukloniti `LAST_ACTIVE_COMPANY` ([ADR-0021](decisions/0021-nula-aktivnih-poslovnica.md)) —
+  implementirano 2026-10-06 (bez migracije; onboarding `HasCompany` i dalje znači "postoji aktivna poslovnica").
+- [x] Početna migracija bez seeda ([ADR-0022](decisions/0022-pocetna-migracija-bez-seeda.md)) i katalog grantova/capabilityja u
+  kodu umjesto capability/template sustava u bazi ([ADR-0023](decisions/0023-katalog-autorizacije-u-kodu.md)) — implementirano
+  2026-10-06 ([Baseline reset record](baseline-reset/BASELINE_RESET_DECISION_RECORD.md)).
 - [ ] P1 Policy engine ([P1 Decision Record](p1/P1_DECISION_RECORD.md), ADR-0015 – ADR-0018).
 
 ### 7.2 Razlike između izvornih dokumenata i koda koje još treba provjeriti
 - [ ] **401 bez `{ error }` omotnice (dug L).** Sažetak i `appointment-booking-characterization.md` ga navode kao dug, a
   `ExceptionHandlingMiddleware` (redci ~35–44) već pretvara okvirne 401/403 u standardni oblik. Provjeriti testom i
   zatvoriti ili popraviti.
-- [ ] **Down migracije.** Politika razvojne baze kaže "bez razrađenih Down migracija", a npr.
-  `Migration_2026_10_22_MultiEmployeeSegments` ima punu Down migraciju. Postojeće se ne diraju (ADR-0003); vrijedi li
-  pravilo za nove migracije (prijedlog: da)?
+- [x] **Down migracije.** Zatvoreno početnom migracijom (ADR-0022): stare migracije s Down metodama su obrisane, početna
+  migracija nema Down, nove migracije i dalje bez razrađenih Down metoda (ADR-0003).
 
 Riješeno 2026-10-06: redoslijed slojeva je onakav kakav je u kodu (`Controller → Service → Handler`); waitlist
 parcijalni unique indeks samo za aktivne unose je namjeran (klijent se smije ponovno upisati nakon promocije/isteka);
@@ -274,11 +280,8 @@ P1 record je uveden u `docs/p1/`; README je usklađen s kodom.
 - [ ] Seq URL hardkodiran u `Program.cs`.
 - [x] Lokalna baza je bila odlutala od koda (migracija `2026-09-26` mijenjana nakon lokalne primjene, pa je
   `20261006000001` padala). Riješeno 2026-10-06: shema `dunelight` u lokalnoj bazi `postgres` obrisana i izgrađena od nule.
-- [ ] 6 schema testova (`AppointmentSegmentSchemaTests` ×3, `BookingSegmentParticipationSchemaTests` ×2,
-  `PackageConsumptionLedgerTests.Schema_...`) pada na PostgreSQL 18: PG18 NOT NULL ograničenja bilježi u `pg_constraint`
-  (`*_not_null`), a testovi očekuju samo PK/FK/CHECK. Okolinski uzrok, ne regresija koda.
-- [ ] Cutover-migracijski testovi (`*CutoverMigrationTests`) nasumično padaju u punom suiteu jer paralelne klase pišu isti
-  `sqlscript.sql` (IOException); pojedinačno svi prolaze.
+- [x] Schema testovi na PostgreSQL 18 (NOT NULL ograničenja u `pg_constraint`) — riješeno 2026-10-06: upiti isključuju
+  `contype = 'n'`. Cutover-migracijski testovi (dijeljeni `sqlscript.sql`) obrisani zajedno sa starim migracijama (ADR-0022).
 - [ ] Connection string testova je hardkodiran u 13 testnih datoteka (`Database=postgres`); testovi se ne mogu usmjeriti
   na zasebnu bazu bez izmjene koda.
 - [ ] Nema lintera/analizatora (automatske provjere stila koda); puni build ima ~264 upozorenja (gotovo sva nullable,
@@ -313,4 +316,7 @@ pokriva samo backend (Angular frontend se dokumentira u vlastitom repozitoriju);
 | [0018](decisions/0018-p1-korekcije-waiver-i-grupe.md) | P1: Korekcijska matrica, waiver i Group pravila | Prihvaćeno, nije implementirano |
 | [0019](decisions/0019-uklanjanje-userrole.md) | Uklanjanje legacy UserRole (users.role) | Prihvaćeno, implementirano |
 | [0020](decisions/0020-jedinstven-email-klijenta.md) | Jedinstven email klijenta i korisničkog računa (trim, case-insensitive) | Prihvaćeno, implementirano |
-| [0021](decisions/0021-nula-aktivnih-poslovnica.md) | Organizacija smije imati nula aktivnih poslovnica | Prihvaćeno, nije implementirano |
+| [0021](decisions/0021-nula-aktivnih-poslovnica.md) | Organizacija smije imati nula aktivnih poslovnica | Prihvaćeno, implementirano |
+| [0022](decisions/0022-pocetna-migracija-bez-seeda.md) | Početna (baseline) migracija trenutne sheme, bez seeda | Prihvaćeno, implementirano |
+| [0023](decisions/0023-katalog-autorizacije-u-kodu.md) | Katalog grantova i capabilityja u kodu; Admin grupa pri registraciji bez predložaka | Prihvaćeno, implementirano |
+| [0024](decisions/0024-produkcijska-baza-do-go-livea.md) | Produkcijska baza je potrošna do go-livea | Prihvaćeno |

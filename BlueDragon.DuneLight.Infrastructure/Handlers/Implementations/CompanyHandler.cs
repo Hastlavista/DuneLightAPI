@@ -8,7 +8,6 @@ using BlueDragon.DuneLight.Infrastructure.Domain.Models.Catalog;
 using BlueDragon.DuneLight.Infrastructure.Domain.Settings;
 using BlueDragon.DuneLight.Infrastructure.Handlers.Interfaces;
 using Microsoft.EntityFrameworkCore;
-using Microsoft.EntityFrameworkCore.Storage;
 
 namespace BlueDragon.DuneLight.Infrastructure.Handlers.Implementations;
 
@@ -101,38 +100,20 @@ public class CompanyHandler : ICompanyHandler
     public async Task<CompanyDeactivationOutcome> Deactivate(Guid organizationId, Guid id, Guid userId)
     {
         await using DatabaseContext context = DatabaseContext.GenerateContext(_databaseSettings.ConnectionString);
-        await using IDbContextTransaction transaction = await context.Database.BeginTransactionAsync();
 
-        // SELECT ... FOR UPDATE brave-lockira sve trenutno aktivne tvrtke organizacije. Ako druga usporedna
-        // transakcija istovremeno deaktivira jednu od njih, ova čeka dok se prva ne commit-a/rollback-a i tek
-        // onda broji — sprječava da dva paralelna zahtjeva oba prođu provjeru "ima ih još barem jedna".
-        List<Company> lockedActive = await context.Companies
-            .FromSqlInterpolated($@"
-                SELECT * FROM dunelight.companies
-                WHERE organization_id = {organizationId} AND is_active = true
-                FOR UPDATE")
-            .ToListAsync();
-
-        Company target = lockedActive.SingleOrDefault(c => c.Id == id);
+        // Organizacija smije imati nula aktivnih poslovnica (ADR-0021) — nema prebrojavanja ni lockiranja
+        // ostalih aktivnih tvrtki, deaktivacija dira samo ciljnu tvrtku.
+        Company target = await context.Companies.SingleOrDefaultAsync(c => c.OrganizationId == organizationId && c.Id == id);
         if (target == null)
-        {
-            bool existsButInactive = await context.Companies.AnyAsync(c => c.OrganizationId == organizationId && c.Id == id);
-            await transaction.RollbackAsync();
-            return existsButInactive ? CompanyDeactivationOutcome.AlreadyInactive : CompanyDeactivationOutcome.NotFound;
-        }
-
-        if (lockedActive.Count <= 1)
-        {
-            await transaction.RollbackAsync();
-            return CompanyDeactivationOutcome.Blocked;
-        }
+            return CompanyDeactivationOutcome.NotFound;
+        if (!target.IsActive)
+            return CompanyDeactivationOutcome.AlreadyInactive;
 
         target.IsActive = false;
         target.UpdatedAt = DateTimeOffset.UtcNow;
         target.UpdatedBy = userId;
 
         await context.SaveChangesAsync();
-        await transaction.CommitAsync();
         return CompanyDeactivationOutcome.Deactivated;
     }
 

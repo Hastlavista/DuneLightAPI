@@ -9,7 +9,6 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.IdentityModel.Tokens.Jwt;
 using BlueDragon.DuneLight.API.Authentication;
-using BlueDragon.DuneLight.API.Diagnostics;
 using BlueDragon.DuneLight.API.Middleware;
 using BlueDragon.DuneLight.Core.Interfaces;
 using BlueDragon.DuneLight.Core.Interfaces.Appointments;
@@ -19,7 +18,6 @@ using BlueDragon.DuneLight.Core.Interfaces.Checkouts;
 using BlueDragon.DuneLight.Core.Interfaces.Clients;
 using BlueDragon.DuneLight.Core.Interfaces.Commissions;
 using BlueDragon.DuneLight.Core.Interfaces.Dashboard;
-using BlueDragon.DuneLight.Core.Interfaces.Diagnostics;
 using BlueDragon.DuneLight.Core.Interfaces.Employees;
 using BlueDragon.DuneLight.Core.Interfaces.Groups;
 using BlueDragon.DuneLight.Core.Interfaces.Management;
@@ -287,26 +285,10 @@ public class Startup
         // centralizirana umjesto raspršena po GrantGroup/Employee mutacijama.
         services.AddScoped<IPermissionAdministrationSafetyService, PermissionAdministrationSafetyService>();
 
-        // FAZA 1 Part I/R — autorsko-vrijeme capability/predložak metapodaci, ne runtime autorizacija (ta ostaje
+        // Capability editor nad statičnim CapabilityCatalog-om (ADR-0023) — ne runtime autorizacija (ta ostaje
         // isključivo GrantResolver/GrantGroupHandler.ResolveEffective iznad).
         services.AddSingleton<ICapabilityMaterializationService, CapabilityMaterializationService>();
-        services.AddScoped<ICapabilityReadService, CapabilityReadService>();
-
-        // FAZA 2 — capability-aware GrantGroup autorstvo (create/update/authoring-state); backend materijalizira
-        // raw grantove, frontend nikad ne šalje gotov skup (vidi IGrantGroupCapabilityAuthoringService).
-        // Konkretna klasa je DODATNO registrirana (uz sučelje) da je GrantGroupTemplateUpgradeService (FAZA 3)
-        // može izravno injektirati radi ponovne uporabe internal ComputeIsCustomized/GetAuthoringState — vidi
-        // tamošnju klasnu napomenu zašto nije duplicirano.
-        services.AddScoped<GrantGroupCapabilityAuthoringService>();
-        services.AddScoped<IGrantGroupCapabilityAuthoringService>(sp => sp.GetRequiredService<GrantGroupCapabilityAuthoringService>());
-
-        // FAZA 3 — template-version-upgrade review/apply tok (vidi IGrantGroupTemplateUpgradeService).
-        services.AddScoped<IGrantGroupTemplateUpgradeService, GrantGroupTemplateUpgradeService>();
-
-        // FAZA 1 Part F/G — read-only platform dijagnostika, ne tenant runtime autorizacija (vidi
-        // GrantDiagnosticsController, permissions.manage + Development-only izloženost).
-        services.AddSingleton<IEndpointGrantMetadataProvider, EndpointGrantMetadataProvider>();
-        services.AddScoped<IGrantDiagnosticsService, GrantDiagnosticsService>();
+        services.AddScoped<IGrantGroupCapabilityAuthoringService, GrantGroupCapabilityAuthoringService>();
 
         services.AddScoped<IOnboardingService, OnboardingService>();
 
@@ -405,10 +387,7 @@ public class Startup
         services.AddSingleton<IEmployeeLeaveSettingsHandler, EmployeeLeaveSettingsHandler>();
         services.AddSingleton<ILeaveFundHandler, LeaveFundHandler>();
 
-        services.AddSingleton<ICapabilityDefinitionHandler, CapabilityDefinitionHandler>();
-        services.AddSingleton<IDefaultRoleTemplateHandler, DefaultRoleTemplateHandler>();
         services.AddSingleton<IGrantGroupHandler, GrantGroupHandler>();
-        services.AddSingleton<IGrantGroupTemplateUpgradeAuditLogHandler, GrantGroupTemplateUpgradeAuditLogHandler>();
         services.AddSingleton<IRoleHandler, RoleHandler>();
 
         services.AddSingleton<IOnboardingHandler, OnboardingHandler>();

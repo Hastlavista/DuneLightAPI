@@ -28,7 +28,6 @@ public static class ErrorCodes
     public const string ClientEmailAlreadyInUse = "CLIENT_EMAIL_ALREADY_IN_USE";
     public const string UserAlreadyLinked = "USER_ALREADY_LINKED";
     public const string LastPermissionAdminRequired = "LAST_PERMISSION_ADMIN_REQUIRED";
-    public const string LastActiveCompany = "LAST_ACTIVE_COMPANY";
     public const string LastActiveSlot = "LAST_ACTIVE_SLOT";
     public const string AlreadyMember = "ALREADY_MEMBER";
     public const string AlreadyCompleted = "ALREADY_COMPLETED";
@@ -157,18 +156,10 @@ public static class ErrorCodes
     public const string RecurringConflictReasonMemberConflict = "MEMBER_CONFLICT";
     public const string RecurringConflictReasonDuplicateOccurrence = "DUPLICATE_OCCURRENCE";
 
-    // Capability-aware GrantGroup authoring (FAZA 2 — vidi GrantGroupCapabilityAuthoringService)
+    // Capability-aware GrantGroup authoring (vidi GrantGroupCapabilityAuthoringService, ADR-0023)
     public const string CapabilityUnknown = "CAPABILITY_UNKNOWN";
-    public const string CapabilityVersionNotFound = "CAPABILITY_VERSION_NOT_FOUND";
-    public const string CapabilityVersionNotAvailable = "CAPABILITY_VERSION_NOT_AVAILABLE";
     public const string CapabilityScopeIllegal = "CAPABILITY_SCOPE_ILLEGAL";
     public const string DuplicateCapabilitySelection = "DUPLICATE_CAPABILITY_SELECTION";
     public const string GrantKeyUnknown = "GRANT_KEY_UNKNOWN";
     public const string GrantAlreadyCapabilityDerived = "GRANT_ALREADY_CAPABILITY_DERIVED";
-
-    // Template-version-upgrade tok (FAZA 3 — vidi GrantGroupTemplateUpgradeService)
-    public const string GrantGroupUpgradeStateChanged = "GRANT_GROUP_UPGRADE_STATE_CHANGED"; // 409
-    public const string TargetTemplateVersionNotFound = "TARGET_TEMPLATE_VERSION_NOT_FOUND"; // 404
-    public const string GrantGroupHasNoTemplateProvenance = "GRANT_GROUP_HAS_NO_TEMPLATE_PROVENANCE"; // 409
-    public const string GrantGroupUpgradeConflictResolutionRequired = "GRANT_GROUP_UPGRADE_CONFLICT_RESOLUTION_REQUIRED"; // 409 — Preview/Apply pozvan s nerazriješenim konfliktom; backend to provjerava neovisno o frontend gatingu
 }

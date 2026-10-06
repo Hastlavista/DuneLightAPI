@@ -21,7 +21,7 @@ public class PermissionAdministrationSafetyTests
 {
     private const string LocalConnectionString = "Host=localhost;Database=postgres;Password=root1234;Username=postgres";
 
-    private static GrantGroupHandler CreateHandler() => new(new DatabaseSettings { ConnectionString = LocalConnectionString }, defaultRoleTemplateHandler: null!, capabilityMaterializationService: null!);
+    private static GrantGroupHandler CreateHandler() => new(new DatabaseSettings { ConnectionString = LocalConnectionString });
 
     private static async Task<(Guid OrganizationId, Func<Task> Cleanup)> CreateIsolatedOrganization(string testName)
     {

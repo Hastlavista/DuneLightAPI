@@ -22,6 +22,6 @@ ponašanje i dalje vrijede osim ako se pravilo eksplicitno mijenja.
 - Cutover migracija smije ispustiti stupce i podatke koji više nisu autoritativni.
 - Verzija migracije = `[DeveloperMigration(god, mj, dan, Developer, redni_broj)]`; migracija koja je već primijenjena
   lokalno se ne mijenja ni ne renumerira — dodaje se nova.
-- Neke postojeće migracije imaju pune Down metode (npr. `Migration_2026_10_22_MultiEmployeeSegments`); vidi otvoreno
-  pitanje u ARCHITECTURE.md §7.1.
-- Politika vrijedi dok postoji samo razvojna baza; prvi produkcijski deploy zahtijeva novi ADR.
+- Povijest migracija je 2026-10-06 zamijenjena početnom migracijom bez seeda i bez Down metode ([ADR-0022](0022-pocetna-migracija-bez-seeda.md)).
+- Politika vrijedi i za produkcijsku bazu dok ona sadrži samo testne/demo podatke, do go-livea
+  ([ADR-0024](0024-produkcijska-baza-do-go-livea.md)); go-live zahtijeva novi ADR.

@@ -5,7 +5,8 @@ namespace BlueDragon.DuneLight.Core.Shared;
 /// <summary>
 /// Jedini izvor istine za sve grant-ključeve u sustavu. Grantovi su definirani U KODU (ne u bazi) —
 /// GrantGroup u bazi samo bira podskup ovih ključeva. Ne mijenjati postojeće vrijednosti (GrantGroup
-/// zapisi u bazi ih referenciraju kao stringove), samo dodavati nove.
+/// zapisi u bazi ih referenciraju kao stringove), samo dodavati nove. Novi grant zahtijeva i migraciju koja ga
+/// dodaje inicijalnim Admin grupama (grant_groups.system_key = 'admin', vidi ADR-0023).
 /// </summary>
 public static class Grants
 {
@@ -111,89 +112,90 @@ public static class Grants
     /// <summary>Puni katalog za GET /api/grants — UI koristi za slaganje GrantGroup-a.</summary>
     public static readonly IReadOnlyList<GrantDefinition> Catalog = new List<GrantDefinition>
     {
-        new(EmployeesDirectoryView, "employees", "Kolegijalni pogled na zaposlenike (bez osjetljivih polja)."),
-        new(EmployeesView, "employees", "Puni pregled zaposlenika (OIB, plaća, adresa...)."),
-        new(EmployeesManage, "employees", "Kreiranje, uređivanje, aktivacija/deaktivacija, brisanje zaposlenika."),
-        new(EmployeesEngagementTypesView, "employees", "Pregled šifrarnika vrsta angažmana."),
-        new(EmployeesEngagementTypesManage, "employees", "Uređivanje šifrarnika vrsta angažmana."),
+        new(EmployeesDirectoryView, "Imenik zaposlenika", "employees", "Kolegijalni pogled na zaposlenike (bez osjetljivih polja)."),
+        new(EmployeesView, "Pregled zaposlenika", "employees", "Puni pregled zaposlenika (OIB, plaća, adresa...)."),
+        new(EmployeesManage, "Upravljanje zaposlenicima", "employees", "Kreiranje, uređivanje, aktivacija/deaktivacija, brisanje zaposlenika."),
+        new(EmployeesEngagementTypesView, "Pregled vrsta angažmana", "employees", "Pregled šifrarnika vrsta angažmana."),
+        new(EmployeesEngagementTypesManage, "Upravljanje vrstama angažmana", "employees", "Uređivanje šifrarnika vrsta angažmana."),
 
-        new(CatalogCompaniesView, "catalog", "Pregled tvrtki."),
-        new(CatalogCompaniesManage, "catalog", "Uređivanje tvrtki."),
-        new(CatalogServicesView, "catalog", "Pregled usluga."),
-        new(CatalogServicesManage, "catalog", "Uređivanje usluga."),
-        new(CatalogPackagesView, "catalog", "Pregled paketa."),
-        new(CatalogPackagesManage, "catalog", "Uređivanje paketa."),
-        new(CatalogPriceListView, "catalog", "Pregled cjenika."),
-        new(CatalogPriceListManage, "catalog", "Uređivanje cjenika."),
-        new(CatalogRoomsView, "catalog", "Pregled prostorija po poslovnici."),
-        new(CatalogRoomsManage, "catalog", "Uređivanje prostorija po poslovnici."),
-        new(CatalogResourcesView, "catalog", "Pregled resursa (oprema/mjesta s kapacitetom) po poslovnici."),
-        new(CatalogResourcesManage, "catalog", "Uređivanje resursa (oprema/mjesta s kapacitetom) po poslovnici."),
+        new(CatalogCompaniesView, "Pregled poslovnica", "catalog", "Pregled tvrtki."),
+        new(CatalogCompaniesManage, "Upravljanje poslovnicama", "catalog", "Uređivanje tvrtki."),
+        new(CatalogServicesView, "Pregled usluga", "catalog", "Pregled usluga."),
+        new(CatalogServicesManage, "Upravljanje uslugama", "catalog", "Uređivanje usluga."),
+        new(CatalogPackagesView, "Pregled paketa", "catalog", "Pregled paketa."),
+        new(CatalogPackagesManage, "Upravljanje paketima", "catalog", "Uređivanje paketa."),
+        new(CatalogPriceListView, "Pregled cjenika", "catalog", "Pregled cjenika."),
+        new(CatalogPriceListManage, "Upravljanje cjenikom", "catalog", "Uređivanje cjenika."),
+        new(CatalogRoomsView, "Pregled prostorija", "catalog", "Pregled prostorija po poslovnici."),
+        new(CatalogRoomsManage, "Upravljanje prostorijama", "catalog", "Uređivanje prostorija po poslovnici."),
+        new(CatalogResourcesView, "Pregled resursa", "catalog", "Pregled resursa (oprema/mjesta s kapacitetom) po poslovnici."),
+        new(CatalogResourcesManage, "Upravljanje resursima", "catalog", "Uređivanje resursa (oprema/mjesta s kapacitetom) po poslovnici."),
 
-        new(ClientsView, "clients", "Pregled klijenata (potpuno transparentno, bez own/all podjele)."),
-        new(ClientsManage, "clients", "Kreiranje i uređivanje klijenata."),
-        new(ClientsStatusManage, "clients", "Aktivacija/deaktivacija/brisanje klijenta."),
-        new(ClientsAnonymize, "clients", "GDPR anonimizacija klijenta — nepovratno, najosjetljivije."),
-        new(ClientsTagsView, "clients", "Pregled oznaka klijenata."),
-        new(ClientsTagsManage, "clients", "Uređivanje oznaka klijenata."),
-        new(ClientsPackagesView, "clients", "Pregled paketa klijenta."),
-        new(ClientsPackagesManage, "clients", "Dodjela paketa klijentu."),
+        new(ClientsView, "Pregled klijenata", "clients", "Pregled klijenata (potpuno transparentno, bez own/all podjele)."),
+        new(ClientsManage, "Upravljanje klijentima", "clients", "Kreiranje i uređivanje klijenata."),
+        new(ClientsStatusManage, "Status klijenta", "clients", "Aktivacija/deaktivacija/brisanje klijenta."),
+        new(ClientsAnonymize, "Anonimizacija klijenta", "clients", "GDPR anonimizacija klijenta — nepovratno, najosjetljivije."),
+        new(ClientsTagsView, "Pregled oznaka klijenata", "clients", "Pregled oznaka klijenata."),
+        new(ClientsTagsManage, "Upravljanje oznakama klijenata", "clients", "Uređivanje oznaka klijenata."),
+        new(ClientsPackagesView, "Pregled paketa klijenata", "clients", "Pregled paketa klijenta."),
+        new(ClientsPackagesManage, "Dodjela paketa klijentima", "clients", "Dodjela paketa klijentu."),
 
-        new(AppointmentsView, "appointments", "Pregled rasporeda termina (transparentno)."),
-        new(AppointmentsWriteOwn, "appointments", "Zakazivanje/uređivanje/otkazivanje vlastitih termina."),
-        new(AppointmentsWriteAll, "appointments", "Zakazivanje/uređivanje/otkazivanje bilo čijih termina."),
-        new(AppointmentsDelete, "appointments", "Trajno brisanje termina (isti dan)."),
+        new(AppointmentsView, "Pregled termina", "appointments", "Pregled rasporeda termina (transparentno)."),
+        new(AppointmentsWriteOwn, "Vlastiti termini", "appointments", "Zakazivanje/uređivanje/otkazivanje vlastitih termina."),
+        new(AppointmentsWriteAll, "Svi termini", "appointments", "Zakazivanje/uređivanje/otkazivanje bilo čijih termina."),
+        new(AppointmentsDelete, "Brisanje termina", "appointments", "Trajno brisanje termina (isti dan)."),
 
-        new(ScheduleBreaksView, "schedule-breaks", "Pregled pauza na rasporedu (transparentno, kao raspored termina)."),
-        new(ScheduleBreaksWriteOwn, "schedule-breaks", "Kreiranje/uređivanje/brisanje vlastitih pauza."),
-        new(ScheduleBreaksWriteAll, "schedule-breaks", "Kreiranje/uređivanje/brisanje bilo čijih pauza."),
+        new(ScheduleBreaksView, "Pregled pauza", "schedule-breaks", "Pregled pauza na rasporedu (transparentno, kao raspored termina)."),
+        new(ScheduleBreaksWriteOwn, "Vlastite pauze", "schedule-breaks", "Kreiranje/uređivanje/brisanje vlastitih pauza."),
+        new(ScheduleBreaksWriteAll, "Sve pauze", "schedule-breaks", "Kreiranje/uređivanje/brisanje bilo čijih pauza."),
 
-        new(GroupsView, "groups", "Pregled grupa i članstava (transparentno)."),
-        new(GroupsManage, "groups", "Kreiranje/uređivanje grupa, slotova, članova, generiranje termina."),
-        new(GroupsCapacityOverride, "groups", "Eksplicitno prekoračenje poslovnog kapaciteta segmenta grupe (fizički kapacitet prostorije/resursa i dalje vrijedi)."),
-        new(GroupsAttendanceView, "groups", "Pregled prisutnosti na grupnim terminima."),
-        new(GroupsAttendanceOwn, "groups", "Čekiranje prisutnosti na vlastitim grupnim terminima."),
-        new(GroupsAttendanceAll, "groups", "Čekiranje prisutnosti na bilo čijim grupnim terminima."),
+        new(GroupsView, "Pregled grupa", "groups", "Pregled grupa i članstava (transparentno)."),
+        new(GroupsManage, "Upravljanje grupama", "groups", "Kreiranje/uređivanje grupa, slotova, članova, generiranje termina."),
+        new(GroupsCapacityOverride, "Prekoračenje kapaciteta grupe", "groups", "Eksplicitno prekoračenje poslovnog kapaciteta segmenta grupe (fizički kapacitet prostorije/resursa i dalje vrijedi)."),
+        new(GroupsAttendanceView, "Pregled prisutnosti", "groups", "Pregled prisutnosti na grupnim terminima."),
+        new(GroupsAttendanceOwn, "Prisutnost na vlastitim grupnim terminima", "groups", "Čekiranje prisutnosti na vlastitim grupnim terminima."),
+        new(GroupsAttendanceAll, "Prisutnost na svim grupnim terminima", "groups", "Čekiranje prisutnosti na bilo čijim grupnim terminima."),
 
-        new(RosterTypesView, "roster", "Pregled šifrarnika vrsta rostera."),
-        new(RosterTypesManage, "roster", "Uređivanje šifrarnika vrsta rostera."),
-        new(RosterEntriesView, "roster", "Pregled zapisa rostera (transparentno, svi vide sve)."),
-        new(RosterEntriesWriteOwn, "roster", "Uređivanje vlastitih zapisa rostera."),
-        new(RosterEntriesWriteAll, "roster", "Uređivanje bilo čijih zapisa rostera."),
-        new(RosterReviewsTeamView, "roster", "Timski mjesečni pregled rostera (transparentno)."),
-        new(RosterReviewsPersonalViewOwn, "roster", "Osobni pregled rostera — samo vlastiti."),
-        new(RosterReviewsPersonalViewAll, "roster", "Osobni pregled rostera — bilo čiji."),
-        new(RosterTemplatesView, "roster", "Pregled predložaka radnog vremena (zaposlenik/poslovnica)."),
-        new(RosterTemplatesManage, "roster", "Uređivanje predložaka radnog vremena — generira tvrdu blokadu zakazivanja."),
-        new(RosterLeaveFundSettingsView, "roster", "Pregled postavki fonda godišnjeg odmora po zaposleniku."),
-        new(RosterLeaveFundSettingsManage, "roster", "Uređivanje postavki fonda godišnjeg odmora (broj dana, datum obnove/isteka prijenosa)."),
-        new(RosterLeaveFundViewOwn, "roster", "Pregled fonda godišnjeg odmora — samo vlastiti."),
-        new(RosterLeaveFundViewAll, "roster", "Pregled fonda godišnjeg odmora — bilo čiji."),
-        new(RosterLeaveFundManage, "roster", "Ručno otvaranje/korekcija fonda godišnjeg odmora za određenu godinu."),
+        new(RosterTypesView, "Pregled vrsta rostera", "roster", "Pregled šifrarnika vrsta rostera."),
+        new(RosterTypesManage, "Upravljanje vrstama rostera", "roster", "Uređivanje šifrarnika vrsta rostera."),
+        new(RosterEntriesView, "Pregled rostera", "roster", "Pregled zapisa rostera (transparentno, svi vide sve)."),
+        new(RosterEntriesWriteOwn, "Vlastiti roster", "roster", "Uređivanje vlastitih zapisa rostera."),
+        new(RosterEntriesWriteAll, "Roster svih zaposlenika", "roster", "Uređivanje bilo čijih zapisa rostera."),
+        new(RosterReviewsTeamView, "Timski pregled rostera", "roster", "Timski mjesečni pregled rostera (transparentno)."),
+        new(RosterReviewsPersonalViewOwn, "Osobni pregled rostera (vlastiti)", "roster", "Osobni pregled rostera — samo vlastiti."),
+        new(RosterReviewsPersonalViewAll, "Osobni pregled rostera (svi)", "roster", "Osobni pregled rostera — bilo čiji."),
+        new(RosterTemplatesView, "Pregled predložaka radnog vremena", "roster", "Pregled predložaka radnog vremena (zaposlenik/poslovnica)."),
+        new(RosterTemplatesManage, "Upravljanje predlošcima radnog vremena", "roster", "Uređivanje predložaka radnog vremena — generira tvrdu blokadu zakazivanja."),
+        new(RosterLeaveFundSettingsView, "Pregled postavki fonda godišnjeg odmora", "roster", "Pregled postavki fonda godišnjeg odmora po zaposleniku."),
+        new(RosterLeaveFundSettingsManage, "Postavke fonda godišnjeg odmora", "roster", "Uređivanje postavki fonda godišnjeg odmora (broj dana, datum obnove/isteka prijenosa)."),
+        new(RosterLeaveFundViewOwn, "Vlastiti fond godišnjeg odmora", "roster", "Pregled fonda godišnjeg odmora — samo vlastiti."),
+        new(RosterLeaveFundViewAll, "Fond godišnjeg odmora svih zaposlenika", "roster", "Pregled fonda godišnjeg odmora — bilo čiji."),
+        new(RosterLeaveFundManage, "Korekcija fonda godišnjeg odmora", "roster", "Ručno otvaranje/korekcija fonda godišnjeg odmora za određenu godinu."),
 
-        new(OrganizationBrandingManage, "organization", "Uređivanje vizualnog identiteta organizacije (logo, favicon, boje)."),
-        new(OrganizationSettingsManage, "organization", "Uređivanje poslovnih postavki organizacije (npr. rok za otkazivanje termina)."),
+        new(OrganizationBrandingManage, "Vizualni identitet", "organization", "Uređivanje vizualnog identiteta organizacije (logo, favicon, boje)."),
+        new(OrganizationSettingsManage, "Postavke organizacije", "organization", "Uređivanje poslovnih postavki organizacije (npr. rok za otkazivanje termina)."),
 
-        new(PermissionsView, "organization", "Pregled GrantGroup-a i konfiguracije dozvola."),
-        new(PermissionsManage, "organization", "Kreiranje/uređivanje/brisanje GrantGroup-a, autoriranje uloga preko capability sustava, pregled/primjena template-upgrade odluka."),
-        new(PermissionsAssignmentsManage, "organization", "Dodjela GrantGroup-a korisnicima."),
+        new(PermissionsView, "Pregled dozvola", "organization", "Pregled GrantGroup-a i konfiguracije dozvola."),
+        new(PermissionsManage, "Upravljanje dozvolama", "organization", "Kreiranje/uređivanje/brisanje GrantGroup-a (izravno ili preko capability editora)."),
+        new(PermissionsAssignmentsManage, "Dodjela grupa dozvola", "organization", "Dodjela GrantGroup-a korisnicima."),
 
-        new(CheckoutView, "checkout", "Pregled checkout/POS košarica i njihove povijesti plaćanja."),
-        new(CheckoutManage, "checkout", "Kreiranje/uređivanje checkout košarica, naplata, poništenje plaćanja, dovršetak/otkazivanje."),
+        new(CheckoutView, "Pregled naplate", "checkout", "Pregled checkout/POS košarica i njihove povijesti plaćanja."),
+        new(CheckoutManage, "Naplata", "checkout", "Kreiranje/uređivanje checkout košarica, naplata, poništenje plaćanja, dovršetak/otkazivanje."),
 
-        new(ProductsView, "products", "Pregled kataloga proizvoda."),
-        new(ProductsManage, "products", "Kreiranje, uređivanje, aktivacija/deaktivacija, brisanje proizvoda."),
-        new(StockView, "products", "Pregled zaliha po poslovnici i povijesti kretanja zalihe."),
-        new(StockManage, "products", "Ručna korekcija zalihe i transfer zalihe između poslovnica."),
+        new(ProductsView, "Pregled proizvoda", "products", "Pregled kataloga proizvoda."),
+        new(ProductsManage, "Upravljanje proizvodima", "products", "Kreiranje, uređivanje, aktivacija/deaktivacija, brisanje proizvoda."),
+        new(StockView, "Pregled zaliha", "products", "Pregled zaliha po poslovnici i povijesti kretanja zalihe."),
+        new(StockManage, "Upravljanje zalihama", "products", "Ručna korekcija zalihe i transfer zalihe između poslovnica."),
 
-        new(CommissionsView, "commissions", "Pregled zarađene provizije osoblja (povijest i sažetak)."),
-        new(CommissionsManage, "commissions", "Konfiguracija pravila provizije po zaposleniku/predmetu."),
+        new(CommissionsView, "Pregled provizija", "commissions", "Pregled zarađene provizije osoblja (povijest i sažetak)."),
+        new(CommissionsManage, "Pravila provizija", "commissions", "Konfiguracija pravila provizije po zaposleniku/predmetu."),
 
-        new(DashboardView, "dashboard", "Pregled operativne nadzorne ploče (raspored, osoblje, financije, upozorenja) po poslovnici."),
+        new(DashboardView, "Nadzorna ploča", "dashboard", "Pregled operativne nadzorne ploče (raspored, osoblje, financije, upozorenja) po poslovnici."),
 
-        new(NotificationsView, "notifications", "Pregled povijesti logičkih obavijesti po klijentu (interno/operativno)."),
+        new(NotificationsView, "Pregled obavijesti", "notifications", "Pregled povijesti logičkih obavijesti po klijentu (interno/operativno)."),
     };
 }
 
-/// <summary>Jedna stavka kataloga grantova — izlaže se preko GET /api/grants radi slaganja GrantGroup-a u UI.</summary>
-public record GrantDefinition(string Key, string Module, string Description);
+/// <summary>Jedna stavka kataloga grantova (ključ, naziv za prikaz, modul, opis) — izlaže se preko GET /api/grants radi
+/// slaganja GrantGroup-a u UI.</summary>
+public record GrantDefinition(string Key, string DisplayName, string Module, string Description);

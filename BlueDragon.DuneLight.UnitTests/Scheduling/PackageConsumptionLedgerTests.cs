@@ -380,7 +380,7 @@ public class PackageConsumptionLedgerTests
         await using DatabaseContext db = w.NewDb();
 
         List<string> constraints = await db.Database.SqlQueryRaw<string>(@"
-            SELECT conname AS ""Value"" FROM pg_constraint WHERE conrelid = 'dunelight.package_consumptions'::regclass ORDER BY conname").ToListAsync();
+            SELECT conname AS ""Value"" FROM pg_constraint WHERE conrelid = 'dunelight.package_consumptions'::regclass AND contype <> 'n' ORDER BY conname").ToListAsync();
         Assert.Equal(new[]
         {
             "ck_package_consumptions_reversal", "ck_package_consumptions_reversal_reason", "ck_package_consumptions_status",

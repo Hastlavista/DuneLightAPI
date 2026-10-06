@@ -22,7 +22,7 @@ public class GrantGroupAssignedUserCountTests
 
     private static DatabaseSettings Settings => new() { ConnectionString = LocalConnectionString };
 
-    private static GrantGroupHandler CreateHandler() => new(Settings, defaultRoleTemplateHandler: null!, capabilityMaterializationService: null!);
+    private static GrantGroupHandler CreateHandler() => new(Settings);
 
     /// <summary>Creates an isolated organization for one test, with a cleanup callback that removes every row the
     /// test created (grant groups, grant-group grants, user-grant-groups, users, organization) — never anything

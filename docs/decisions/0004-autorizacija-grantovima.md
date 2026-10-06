@@ -1,6 +1,6 @@
 # ADR-0004: Autorizacija isključivo preko grantova
 
-- **Status:** Prihvaćeno
+- **Status:** Prihvaćeno (katalog/capability dio zamijenjen s [ADR-0023](0023-katalog-autorizacije-u-kodu.md))
 - **Datum:** 2026-10-05 (implementirano u "Grant-only Tenant Authorization Refactor"; ovdje formalizirano)
 
 ## Kontekst
@@ -24,8 +24,9 @@ autorizacije po imenu GrantGroupe, workforce `Role` ni legacy `UserRole` kao sig
 - Kod: `[RequireGrant(Grants.X, ...)]` (OR među navedenima), `ControllerExtensions.HasGrant` za `.all` unutar akcije,
   `GrantResolver` čita grantove iz baze po zahtjevu (cache ~30 s, bez invalidacije — svjesni trade-off). Grantovi nisu u JWT-u.
 - Invarijanta `permissions.manage` se provjerava u `PermissionAdministrationSafetyService` prije svake promjene koja je
-  može narušiti (grupe, dodjele, template upgrade, deaktivacija korisnika).
-- Popis grantova: `Core/Shared/Grants.cs`. Capability definicije i default role templatei su samo autorski metapodaci.
+  može narušiti (grupe, dodjele, deaktivacija korisnika).
+- Popis grantova: `Core/Shared/Grants.cs`; capabilityji su statični `CapabilityCatalog` u kodu, samo editorska projekcija
+  (ADR-0023). Nema default role templatea ni capability tablica u bazi.
 - Deaktivirani User se odbija centralno (`ActiveUserGuard` u JWT `OnTokenValidated` i u ApiKey handleru).
 - `users.role` / `UserRole` (Admin/Member/Reception) i dalje postoji i ide u `role` claim, ali nije sigurnosni mehanizam;
   njegova sudbina je otvoreno pitanje (ARCHITECTURE.md §7.2).

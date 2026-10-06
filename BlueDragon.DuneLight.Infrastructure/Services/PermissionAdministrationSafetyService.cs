@@ -4,7 +4,6 @@ using System.Threading.Tasks;
 using BlueDragon.DuneLight.Core.Shared;
 using BlueDragon.DuneLight.Core.Shared.Exceptions;
 using BlueDragon.DuneLight.Infrastructure.Handlers.Interfaces;
-using BlueDragon.DuneLight.Infrastructure.UnitOfWork;
 
 namespace BlueDragon.DuneLight.Infrastructure.Services;
 
@@ -32,16 +31,6 @@ public class PermissionAdministrationSafetyService : IPermissionAdministrationSa
             overrideGrantGroupGrants,
             overrideUserId,
             overrideUserGrantGroupIds);
-
-        if (!retained)
-            throw new BusinessRuleException(
-                ErrorCodes.LastPermissionAdminRequired,
-                "Organizacija mora imati barem jednog aktivnog korisnika s ovlašću upravljanja dozvolama (permissions.manage) — ova promjena bi to onemogućila.");
-    }
-
-    public async Task EnsureRetainsPermissionAdminInTransaction(IUnitOfWork uow, Guid organizationId)
-    {
-        bool retained = await _grantGroupHandler.HasActiveUserWithGrantInTransaction(uow, organizationId, Grants.PermissionsManage);
 
         if (!retained)
             throw new BusinessRuleException(

@@ -33,7 +33,7 @@ public class BookingSegmentParticipationSchemaTests
     private static async Task<Dictionary<string, string>> ConstraintsOf(string table) =>
         (await Query($@"SELECT c.conname, pg_get_constraintdef(c.oid) FROM pg_constraint c
                         JOIN pg_class t ON t.oid = c.conrelid JOIN pg_namespace n ON n.oid = t.relnamespace
-                        WHERE n.nspname = 'dunelight' AND t.relname = '{table}'"))
+                        WHERE n.nspname = 'dunelight' AND t.relname = '{table}' AND c.contype <> 'n'"))
         .ToDictionary(r => (string)r[0], r => (string)r[1]);
 
     [Fact]

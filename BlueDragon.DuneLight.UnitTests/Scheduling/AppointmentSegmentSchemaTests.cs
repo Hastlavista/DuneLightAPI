@@ -35,11 +35,12 @@ public class AppointmentSegmentSchemaTests
                         WHERE table_schema = 'dunelight' AND table_name = '{table}'"))
         .ToDictionary(r => (string)r[0], r => ((string)r[1], (string)r[2]));
 
-    /// <summary>All constraints of a table as name → definition.</summary>
+    /// <summary>All constraints of a table as name → definition. NOT NULL constraints (contype 'n', listed in pg_constraint
+    /// since PostgreSQL 18) are excluded — nullability is asserted through the column checks.</summary>
     private static async Task<Dictionary<string, string>> Constraints(string table) =>
         (await Query($@"SELECT c.conname, pg_get_constraintdef(c.oid) FROM pg_constraint c
                         JOIN pg_class t ON t.oid = c.conrelid JOIN pg_namespace n ON n.oid = t.relnamespace
-                        WHERE n.nspname = 'dunelight' AND t.relname = '{table}'"))
+                        WHERE n.nspname = 'dunelight' AND t.relname = '{table}' AND c.contype <> 'n'"))
         .ToDictionary(r => (string)r[0], r => (string)r[1]);
 
     private static async Task<Dictionary<string, string>> Indexes(string table) =>

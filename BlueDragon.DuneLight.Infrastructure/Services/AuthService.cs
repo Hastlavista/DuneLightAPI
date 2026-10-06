@@ -65,20 +65,17 @@ public class AuthService : IAuthService
             await _authHandler.AddUser(uow, user);
             await _rosterTypeHandler.SeedDefaultTypes(uow, organization.Id.GetValueOrDefault());
 
-            // Jedini automatski GrantGroup bootstrap je Admin (vidi EnsureDefaultGrantGroups) — organizacijski
-            // osnivač se odmah dodjeljuje na nju, jer to je (nakon uklanjanja Owner bypass-a) JEDINI način na
-            // koji dobiva bilo kakav pristup, uključujući dovršavanje vlastitog Employee profila.
-            Guid? adminGrantGroupId = await _grantGroupHandler.EnsureDefaultGrantGroups(uow, organization.Id.GetValueOrDefault());
-            if (adminGrantGroupId.HasValue)
+            // Inicijalizacija organizacije (ADR-0023): Admin grupa sa SVIM grantovima iz Grants.Catalog, bez
+            // predloška. Osnivač se odmah dodjeljuje na nju — bez Owner bypassa to je JEDINI način na koji dobiva
+            // bilo kakav pristup, uključujući dovršavanje vlastitog Employee profila.
+            Guid adminGrantGroupId = await _grantGroupHandler.CreateSystemAdminGroup(uow, organization.Id.GetValueOrDefault());
+            uow.Context.UserGrantGroups.Add(new UserGrantGroup
             {
-                uow.Context.UserGrantGroups.Add(new UserGrantGroup
-                {
-                    Id = Guid.NewGuid(),
-                    UserId = user.Id.GetValueOrDefault(),
-                    GrantGroupId = adminGrantGroupId.Value
-                });
-                await uow.Context.SaveChangesAsync();
-            }
+                Id = Guid.NewGuid(),
+                UserId = user.Id.GetValueOrDefault(),
+                GrantGroupId = adminGrantGroupId
+            });
+            await uow.Context.SaveChangesAsync();
 
             await uow.CommitAsync();
         }

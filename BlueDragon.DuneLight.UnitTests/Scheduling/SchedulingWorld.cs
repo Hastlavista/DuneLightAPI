@@ -158,15 +158,19 @@ public sealed class SchedulingWorld : IAsyncDisposable
     public async ValueTask DisposeAsync()
     {
         _scope.Dispose();
+        await DeleteOrganization(OrganizationId);
+    }
 
-        // Direct SQL keyed on the world's organization. session_replication_role = replica suspends FK triggers for the
+    /// <summary>Removes every row of one organization (e.g. a world's, or one created through registration).</summary>
+    public static async Task DeleteOrganization(Guid org)
+    {
+        // Direct SQL keyed on the organization. session_replication_role = replica suspends FK triggers for the
         // transaction so deletion order does not matter (the connection user is the database owner, as in every other
         // DB-backed test here). Child tables that carry no organization_id are removed through their parent first.
-        await using DatabaseContext db = NewDb();
+        await using DatabaseContext db = DatabaseContext.GenerateContext(SchedulingTestHost.ConnectionString);
         await using var tx = await db.Database.BeginTransactionAsync();
         await db.Database.ExecuteSqlRawAsync("SET LOCAL session_replication_role = replica");
 
-        Guid org = OrganizationId;
         string[] childDeletes =
         {
             "DELETE FROM dunelight.appointment_audit_log WHERE appointment_id IN (SELECT id FROM dunelight.appointments WHERE organization_id = {0})",

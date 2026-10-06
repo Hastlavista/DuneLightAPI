@@ -1,51 +1,41 @@
 using System.Collections.Generic;
-using System.Threading.Tasks;
+using System.Linq;
 using BlueDragon.DuneLight.API.Authorization;
 using BlueDragon.DuneLight.Core.DTOs.Capabilities;
-using BlueDragon.DuneLight.Core.Interfaces.Capabilities;
 using BlueDragon.DuneLight.Core.Shared;
+using BlueDragon.DuneLight.Core.Shared.Exceptions;
 using Microsoft.AspNetCore.Mvc;
 
 namespace BlueDragon.DuneLight.API.Controllers.Permissions;
 
-/// <summary>FAZA 1 Part R — read-only capability/predložak metapodaci za role-editor UI. Zaštićeno
-/// permissions.view/permissions.manage (bilo koji); NEMA mutacijskih endpointa u ovoj fazi (vidi
-/// CapabilityVersionGuard — autoritativna izmjena capability-ja/predloška je platform-only, ne izlaže se
-/// tenant korisniku).</summary>
+/// <summary>Statični katalog capabilityja (CapabilityCatalog, ADR-0023) za role editor — read-only, isti obrazac kao
+/// GrantsController. Zaštićeno permissions.view/permissions.manage (bilo koji).</summary>
 [ApiController]
 [Route("api/permissions/capabilities")]
 [Produces("application/json")]
 [RequireGrant(Grants.PermissionsView, Grants.PermissionsManage)]
 public class CapabilitiesController : ControllerBase
 {
-    private readonly ICapabilityReadService _capabilityReadService;
-
-    public CapabilitiesController(ICapabilityReadService capabilityReadService)
-    {
-        _capabilityReadService = capabilityReadService;
-    }
-
     [HttpGet]
-    public async Task<ActionResult<List<CapabilityDefinitionDto>>> GetLatestActiveDefinitions()
+    public ActionResult<List<CapabilityDefinitionDto>> GetAll()
     {
-        return Ok(await _capabilityReadService.GetLatestActiveDefinitions());
+        return Ok(CapabilityCatalog.All.Select(ToDto).ToList());
     }
 
     [HttpGet("{key}")]
-    public async Task<ActionResult<CapabilityDefinitionDto>> GetDefinitionDetails(string key, [FromQuery] int? version)
+    public ActionResult<CapabilityDefinitionDto> GetByKey(string key)
     {
-        return Ok(await _capabilityReadService.GetDefinitionDetails(key, version));
+        CapabilityDefinition capability = CapabilityCatalog.Find(key);
+        if (capability == null)
+            throw new NotFoundAppException("Capability", key);
+
+        return Ok(ToDto(capability));
     }
 
-    [HttpGet("~/api/permissions/role-templates")]
-    public async Task<ActionResult<List<DefaultRoleTemplateDto>>> GetLatestActiveTemplates()
-    {
-        return Ok(await _capabilityReadService.GetLatestActiveTemplates());
-    }
-
-    [HttpGet("~/api/permissions/role-templates/{key}")]
-    public async Task<ActionResult<DefaultRoleTemplateDto>> GetTemplateDetails(string key, [FromQuery] int? version)
-    {
-        return Ok(await _capabilityReadService.GetTemplateDetails(key, version));
-    }
+    private static CapabilityDefinitionDto ToDto(CapabilityDefinition capability) => new(
+        capability.Key,
+        capability.CategoryKey,
+        capability.ScopeModel,
+        capability.Sensitivity,
+        capability.Grants.Select(g => new CapabilityDefinitionGrantDto(g.GrantKey, g.Role)).ToList());
 }
