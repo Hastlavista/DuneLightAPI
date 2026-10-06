@@ -25,6 +25,7 @@ public static class ErrorCodes
     public const string DuplicateName = "DUPLICATE_NAME";
     public const string DuplicateMemberNumber = "DUPLICATE_MEMBER_NUMBER";
     public const string EmailAlreadyInUse = "EMAIL_ALREADY_IN_USE";
+    public const string ClientEmailAlreadyInUse = "CLIENT_EMAIL_ALREADY_IN_USE";
     public const string UserAlreadyLinked = "USER_ALREADY_LINKED";
     public const string LastPermissionAdminRequired = "LAST_PERMISSION_ADMIN_REQUIRED";
     public const string LastActiveCompany = "LAST_ACTIVE_COMPANY";

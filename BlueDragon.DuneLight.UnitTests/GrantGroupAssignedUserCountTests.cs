@@ -1,7 +1,6 @@
 using System;
 using System.Linq;
 using System.Threading.Tasks;
-using BlueDragon.DuneLight.Core.Enums;
 using BlueDragon.DuneLight.Infrastructure.Domain.Contexts;
 using BlueDragon.DuneLight.Infrastructure.Domain.Models;
 using BlueDragon.DuneLight.Infrastructure.Domain.Models.Permissions;
@@ -77,7 +76,6 @@ public class GrantGroupAssignedUserCountTests
             Email = $"{emailPrefix}-{userId:N}@assigned-user-count-test.local",
             PasswordHash = "test-hash",
             ApiKey = $"test-api-key-{userId:N}",
-            Role = UserRole.Member,
             IsActive = isActive,
             CreatedAt = DateTimeOffset.UtcNow
         });

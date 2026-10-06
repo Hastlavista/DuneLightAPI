@@ -1,7 +1,6 @@
 using System;
 using System.Collections.Generic;
 using BlueDragon.DuneLight.Core.DTOs.Employees;
-using BlueDragon.DuneLight.Core.Enums;
 using BlueDragon.DuneLight.Infrastructure.Domain.Models;
 using BlueDragon.DuneLight.Infrastructure.Domain.Models.Employees;
 using BlueDragon.DuneLight.Infrastructure.Services;
@@ -26,7 +25,7 @@ public class EmployeeMeContractTests
     [Fact]
     public void Freshly_registered_founder_with_no_Employee_row_gets_HasProfile_false_and_real_grants()
     {
-        User user = new() { Id = Guid.NewGuid(), Role = UserRole.Admin, PinHash = null };
+        User user = new() { Id = Guid.NewGuid(), PinHash = null };
 
         EmployeeMeDto dto = EmployeeService.ToNoProfileMeDto(user, AdminStarterGrants);
 
@@ -44,8 +43,8 @@ public class EmployeeMeContractTests
     [Fact]
     public void No_Employee_row_still_reports_HasPinSet_from_the_User_since_PinHash_lives_on_User_not_Employee()
     {
-        User withPin = new() { Id = Guid.NewGuid(), Role = UserRole.Admin, PinHash = "hashed" };
-        User withoutPin = new() { Id = Guid.NewGuid(), Role = UserRole.Admin, PinHash = null };
+        User withPin = new() { Id = Guid.NewGuid(), PinHash = "hashed" };
+        User withoutPin = new() { Id = Guid.NewGuid(), PinHash = null };
 
         Assert.True(EmployeeService.ToNoProfileMeDto(withPin, AdminStarterGrants).HasPinSet);
         Assert.False(EmployeeService.ToNoProfileMeDto(withoutPin, AdminStarterGrants).HasPinSet);
@@ -57,7 +56,7 @@ public class EmployeeMeContractTests
         // Not an onboarding bypass: a User with no Employee and minimal grants gets exactly those grants -
         // the backend's own [RequireGrant] on catalog/permissions endpoints still rejects them normally,
         // this dto layer never invents extra access.
-        User user = new() { Id = Guid.NewGuid(), Role = UserRole.Member, PinHash = null };
+        User user = new() { Id = Guid.NewGuid(), PinHash = null };
         HashSet<string> minimalGrants = new() { "roster.entries.view" };
 
         EmployeeMeDto dto = EmployeeService.ToNoProfileMeDto(user, minimalGrants);
@@ -83,7 +82,7 @@ public class EmployeeMeContractTests
         // ToNoProfileMeDto never sees GrantGroup names at all - only the already-resolved raw grant
         // keys (GrantGroupHandler.ResolveEffective's output). A GrantGroup named e.g. "Vlasnik" or
         // "Owner" carries no special meaning; only its actual grants would show up here.
-        User user = new() { Id = Guid.NewGuid(), Role = UserRole.Member, PinHash = null };
+        User user = new() { Id = Guid.NewGuid(), PinHash = null };
         HashSet<string> grants = new() { "catalog.companies.manage" };
 
         EmployeeMeDto dto = EmployeeService.ToNoProfileMeDto(user, grants);
@@ -95,7 +94,7 @@ public class EmployeeMeContractTests
     [Fact]
     public void With_an_Employee_profile_normal_existing_behavior_is_preserved()
     {
-        User user = new() { Id = Guid.NewGuid(), Role = UserRole.Member, PinHash = "hashed" };
+        User user = new() { Id = Guid.NewGuid(), PinHash = "hashed" };
         Employee employee = new()
         {
             Id = Guid.NewGuid(),

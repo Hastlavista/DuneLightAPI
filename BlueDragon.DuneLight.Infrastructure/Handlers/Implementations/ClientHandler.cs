@@ -210,6 +210,16 @@ public class ClientHandler : IClientHandler
             (excludeId == null || c.Id != excludeId));
     }
 
+    public async Task<bool> IsEmailTaken(Guid organizationId, string emailComparisonKey, Guid? excludeId)
+    {
+        await using DatabaseContext context = DatabaseContext.GenerateContext(_databaseSettings.ConnectionString);
+        return await context.Clients.AnyAsync(c =>
+            c.OrganizationId == organizationId &&
+            c.Email != null &&
+            c.Email.ToLower() == emailComparisonKey &&
+            (excludeId == null || c.Id != excludeId));
+    }
+
     public async Task<int> GetNextMemberNumber(Guid organizationId)
     {
         await using DatabaseContext context = DatabaseContext.GenerateContext(_databaseSettings.ConnectionString);

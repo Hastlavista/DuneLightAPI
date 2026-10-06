@@ -206,7 +206,7 @@ public class MultiSegmentHttpContractTests : IClassFixture<MultiSegmentHttpContr
         }
 
         groups.Add(groupId);
-        return new JwtService(Jwt).GenerateToken(userId, $"{userId:N}@http.test", w.OrganizationId, "Member");
+        return new JwtService(Jwt).GenerateToken(userId, $"{userId:N}@http.test", w.OrganizationId);
     }
 
     private Task<(HttpStatusCode Status, JsonElement Body)> Send(HttpMethod method, string url, string token, object body = null, string rawBody = null) =>

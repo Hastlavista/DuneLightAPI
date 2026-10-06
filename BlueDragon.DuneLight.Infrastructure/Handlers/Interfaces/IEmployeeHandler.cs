@@ -12,7 +12,7 @@ namespace BlueDragon.DuneLight.Infrastructure.Handlers.Interfaces;
 public interface IEmployeeHandler
 {
     Task<(List<Employee> Items, int TotalCount)> GetPaged(
-        Guid organizationId, PagedRequest request, Guid? companyId, Guid? engagementTypeId, UserRole? role);
+        Guid organizationId, PagedRequest request, Guid? companyId, Guid? engagementTypeId);
 
     /// <summary>Puni graf (EngagementType, User, Companies, Services) — za prikaz/čitanje.</summary>
     Task<Employee> GetById(Guid organizationId, Guid id);

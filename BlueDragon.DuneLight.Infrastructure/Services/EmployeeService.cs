@@ -13,6 +13,8 @@ using BlueDragon.DuneLight.Infrastructure.Domain.Models.Catalog;
 using BlueDragon.DuneLight.Infrastructure.Domain.Models.Employees;
 using BlueDragon.DuneLight.Infrastructure.Handlers.Interfaces;
 using BlueDragon.DuneLight.Infrastructure.Utils;
+using Microsoft.EntityFrameworkCore;
+using Npgsql;
 
 namespace BlueDragon.DuneLight.Infrastructure.Services;
 
@@ -54,9 +56,9 @@ public class EmployeeService : IEmployeeService
     }
 
     public async Task<PagedResult<EmployeeDto>> GetPaged(
-        Guid organizationId, PagedRequest request, Guid? companyId, Guid? engagementTypeId, UserRole? role)
+        Guid organizationId, PagedRequest request, Guid? companyId, Guid? engagementTypeId)
     {
-        (List<Employee> items, int totalCount) = await _employeeHandler.GetPaged(organizationId, request, companyId, engagementTypeId, role);
+        (List<Employee> items, int totalCount) = await _employeeHandler.GetPaged(organizationId, request, companyId, engagementTypeId);
 
         List<Guid> userIds = items.Select(e => e.UserId).Distinct().ToList();
         Dictionary<Guid, List<string>> grantGroupNamesByUserId = await _grantGroupHandler.GetGrantGroupNamesByUserIds(organizationId, userIds);
@@ -129,7 +131,9 @@ public class EmployeeService : IEmployeeService
         await EnsureEngagementTypeIsUsable(organizationId, request.EngagementTypeId, grandfatheredEngagementTypeId: null);
         await EnsureServicesUsable(organizationId, request.ServiceIds, grandfatheredServiceIds: null);
 
-        bool emailExists = await _authHandler.EmailExists(organizationId, request.Email);
+        // ADR-0020 — login email je trimani; jedinstvenost i prijava ne razlikuju velika/mala slova.
+        string email = EmailNormalizer.Normalize(request.Email);
+        bool emailExists = await _authHandler.EmailExists(organizationId, email);
         if (emailExists)
             throw new BusinessRuleException(ErrorCodes.EmailAlreadyInUse, "Korisnik s ovom email adresom već postoji u organizaciji.");
 
@@ -140,12 +144,9 @@ public class EmployeeService : IEmployeeService
         {
             Id = Guid.NewGuid(),
             OrganizationId = organizationId,
-            Email = request.Email,
+            Email = email,
             PasswordHash = PasswordHasher.Hash(request.Password),
             ApiKey = Guid.NewGuid().ToString("N"),
-            // Legacy UserRole stupac se uklanja u sljedećem koraku migracije s grant sustava — do tada je
-            // ovo samo kozmetička/tranzicijska vrijednost, autorizacija ide isključivo kroz GrantGroupIds.
-            Role = UserRole.Member,
             MustChangeCredentialsOnFirstLogin = request.MustChangeCredentialsOnFirstLogin,
             PinHash = string.IsNullOrEmpty(request.Pin) ? null : PasswordHasher.Hash(request.Pin),
             IsActive = true,
@@ -159,7 +160,7 @@ public class EmployeeService : IEmployeeService
             FirstName = request.FirstName,
             LastName = request.LastName,
             Phone = request.Phone,
-            Email = request.Email,
+            Email = email,
             DateOfBirth = request.DateOfBirth,
             Address = request.Address,
             Oib = request.Oib,
@@ -178,7 +179,15 @@ public class EmployeeService : IEmployeeService
             Services = BuildServices(request.ServiceIds)
         };
 
-        await _employeeHandler.AddWithLogin(user, employee);
+        try
+        {
+            await _employeeHandler.AddWithLogin(user, employee);
+        }
+        catch (DbUpdateException ex) when (ex.InnerException is PostgresException { SqlState: PostgresErrorCodes.UniqueViolation, ConstraintName: "ux_users_organization_email" })
+        {
+            // Utrka dva istovremena kreiranja s istim emailom — provjera iznad je prošla za oba, unique indeks hvata drugi.
+            throw new BusinessRuleException(ErrorCodes.EmailAlreadyInUse, "Korisnik s ovom email adresom već postoji u organizaciji.");
+        }
 
         await _grantGroupHandler.SetUserGrantGroups(organizationId, user.Id.GetValueOrDefault(), request.GrantGroupIds);
         await _roleHandler.SetUserRoles(organizationId, user.Id.GetValueOrDefault(), request.RoleIds ?? new List<Guid>());
@@ -270,7 +279,7 @@ public class EmployeeService : IEmployeeService
         if (!isActive)
         {
             // Last-admin lockout zaštita ide preko IPermissionAdministrationSafetyService (effective
-            // permissions.manage, ne legacy UserRole/GrantGroup ime) — vidi Grant-only Tenant Authorization
+            // permissions.manage, ne ime GrantGroup-e) — vidi Grant-only Tenant Authorization
             // Refactor Part F. Deaktivacija se simulira kao "korisnik bez dodjela", ne kroz stvarno brisanje
             // UserGrantGroup redaka (povijest dodjela ostaje netaknuta).
             await _permissionAdministrationSafetyService.EnsureRetainsPermissionAdmin(
@@ -330,36 +339,6 @@ public class EmployeeService : IEmployeeService
         await _employeeHandler.DeleteWithLoginDeactivation(employee);
     }
 
-    public async Task<EmployeeDto> UpdateRole(Guid organizationId, Guid userId, Guid id, UserRole newRole)
-    {
-        Employee employee = await _employeeHandler.GetById(organizationId, id);
-        if (employee == null)
-            throw new NotFoundAppException("Employee", id);
-
-        UserRole oldRole = employee.User.Role;
-        if (oldRole == newRole)
-            return await ToDtoSingle(organizationId, employee);
-
-        // Legacy UserRole više nije autorizacijski model (vidi komentar u CreateWithLogin) — mijenjanje ove
-        // kozmetičke vrijednosti se namjerno više NE štiti "last admin" pravilom. Jedina stvarna zaštita
-        // (zadnji aktivan korisnik s permissions.manage) živi u SetActive, preko
-        // IPermissionAdministrationSafetyService, ne preko ovog stupca.
-        await _authHandler.UpdateRole(organizationId, employee.UserId, newRole);
-
-        await _auditLogHandler.Add(new EmployeeAuditLog
-        {
-            Id = Guid.NewGuid(),
-            EmployeeId = id,
-            ChangeType = "Role",
-            OldValue = UserRoleClaims.ToClaimValue(oldRole),
-            NewValue = UserRoleClaims.ToClaimValue(newRole),
-            ChangedAt = DateTimeOffset.UtcNow,
-            ChangedBy = userId
-        });
-
-        return await GetById(organizationId, id);
-    }
-
     public async Task<PagedResult<EmployeeDirectoryDto>> GetDirectory(Guid organizationId, PagedRequest request)
     {
         (List<EmployeeDirectoryDto> items, int totalCount) = await _employeeHandler.GetDirectoryPaged(organizationId, request);
@@ -399,7 +378,6 @@ public class EmployeeService : IEmployeeService
             EmployeeId = null,
             FirstName = null,
             LastName = null,
-            Role = user != null ? UserRoleClaims.ToClaimValue(user.Role) : null,
             Grants = grants.ToList(),
             HasPinSet = user != null && !string.IsNullOrEmpty(user.PinHash),
             ColorHex = null,
@@ -416,7 +394,6 @@ public class EmployeeService : IEmployeeService
             EmployeeId = full.Id.GetValueOrDefault(),
             FirstName = full.FirstName,
             LastName = full.LastName,
-            Role = full.User != null ? UserRoleClaims.ToClaimValue(full.User.Role) : null,
             Grants = grants.ToList(),
             HasPinSet = full.User != null && !string.IsNullOrEmpty(full.User.PinHash),
             ColorHex = full.ColorHex,
@@ -550,7 +527,6 @@ public class EmployeeService : IEmployeeService
             EngagementTypeName = employee.EngagementType?.Name,
             IsActive = employee.IsActive,
             UserId = employee.UserId,
-            Role = employee.User != null ? UserRoleClaims.ToClaimValue(employee.User.Role) : null,
             GrantGroupNames = grantGroupNames,
             RoleNames = roleNames,
             Companies = employee.Companies.Select(el => new EmployeeCompanyDto

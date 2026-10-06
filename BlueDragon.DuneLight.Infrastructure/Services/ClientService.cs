@@ -11,6 +11,9 @@ using BlueDragon.DuneLight.Infrastructure.Domain.Models.Catalog;
 using BlueDragon.DuneLight.Infrastructure.Domain.Models.Clients;
 using BlueDragon.DuneLight.Infrastructure.Domain.Models.Employees;
 using BlueDragon.DuneLight.Infrastructure.Handlers.Interfaces;
+using BlueDragon.DuneLight.Infrastructure.Utils;
+using Microsoft.EntityFrameworkCore;
+using Npgsql;
 
 namespace BlueDragon.DuneLight.Infrastructure.Services;
 
@@ -90,6 +93,8 @@ public class ClientService : IClientService
         ValidateDateOfBirth(request.DateOfBirth);
         ValidateGdprConsent(request.GdprConsentGiven, request.GdprConsentDate);
         await EnsureMemberNumberIsFree(organizationId, request.MemberNumber, excludeId: null);
+        string email = EmailNormalizer.Normalize(request.Email);
+        await EnsureEmailIsFree(organizationId, email, excludeId: null);
         // Create nema prethodnu vrijednost — svaki zadani HomeCompany/HomeTrainer se tretira kao nova dodjela
         // i mora biti aktivan (za razliku od Update, gdje je nepromijenjena dodjela "grandfathered").
         await EnsureHomeCompanyValid(organizationId, request.HomeCompanyId, previousHomeCompanyId: null);
@@ -106,7 +111,7 @@ public class ClientService : IClientService
             DateOfBirth = request.DateOfBirth,
             Occupation = request.Occupation,
             Phone = request.Phone,
-            Email = request.Email,
+            Email = email,
             Note = request.Note,
             HealthNote = request.HealthNote,
             GdprConsentGiven = request.GdprConsentGiven,
@@ -120,7 +125,15 @@ public class ClientService : IClientService
 
         client.Tags = BuildTags(request.TagIds);
 
-        await _clientHandler.Add(client);
+        try
+        {
+            await _clientHandler.Add(client);
+        }
+        catch (DbUpdateException ex) when (IsEmailUniqueViolation(ex))
+        {
+            throw EmailTaken(email);
+        }
+
         return await GetById(organizationId, client.Id.GetValueOrDefault());
     }
 
@@ -134,6 +147,8 @@ public class ClientService : IClientService
         ValidateDateOfBirth(request.DateOfBirth);
         ValidateGdprConsent(request.GdprConsentGiven, request.GdprConsentDate);
         await EnsureMemberNumberIsFree(organizationId, request.MemberNumber, excludeId: id);
+        string email = EmailNormalizer.Normalize(request.Email);
+        await EnsureEmailIsFree(organizationId, email, excludeId: id);
         // Nepromijenjena dodjela ostaje "grandfathered" i smije upućivati na sad-neaktivnu Company/Employee;
         // tek promjena na drugu (ili novo postavljanje) zahtijeva da meta bude aktivna.
         await EnsureHomeCompanyValid(organizationId, request.HomeCompanyId, existing.HomeCompanyId);
@@ -146,7 +161,7 @@ public class ClientService : IClientService
         existing.DateOfBirth = request.DateOfBirth;
         existing.Occupation = request.Occupation;
         existing.Phone = request.Phone;
-        existing.Email = request.Email;
+        existing.Email = email;
         existing.Note = request.Note;
         existing.HealthNote = request.HealthNote;
         existing.GdprConsentGiven = request.GdprConsentGiven;
@@ -158,7 +173,15 @@ public class ClientService : IClientService
 
         List<ClientTagAssignment> newTags = BuildTags(request.TagIds);
 
-        await _clientHandler.Update(existing, newTags);
+        try
+        {
+            await _clientHandler.Update(existing, newTags);
+        }
+        catch (DbUpdateException ex) when (IsEmailUniqueViolation(ex))
+        {
+            throw EmailTaken(email);
+        }
+
         return await GetById(organizationId, id);
     }
 
@@ -289,6 +312,27 @@ public class ClientService : IClientService
         if (taken)
             throw new BusinessRuleException(ErrorCodes.DuplicateMemberNumber, $"Broj člana {memberNumber} je već zauzet.");
     }
+
+    /// <summary>ADR-0020 — email klijenta je jedinstven unutar organizacije, trimano i bez obzira na velika/mala slova.
+    /// Klijent bez emaila (null) je uvijek dopušten.</summary>
+    private async Task EnsureEmailIsFree(Guid organizationId, string email, Guid? excludeId)
+    {
+        if (email == null)
+            return;
+
+        bool taken = await _clientHandler.IsEmailTaken(organizationId, EmailNormalizer.ComparisonKey(email), excludeId);
+        if (taken)
+            throw EmailTaken(email);
+    }
+
+    private static BusinessRuleException EmailTaken(string email) =>
+        new(ErrorCodes.ClientEmailAlreadyInUse, $"Klijent s email adresom {email} već postoji u organizaciji.");
+
+    /// <summary>Utrka dva istovremena upisa istog emaila — provjera iznad je prošla za oba, unique indeks hvata drugi.</summary>
+    private static bool IsEmailUniqueViolation(DbUpdateException ex) =>
+        ex.InnerException is PostgresException { SqlState: PostgresErrorCodes.UniqueViolation, ConstraintName: ClientEmailUniqueIndex };
+
+    private const string ClientEmailUniqueIndex = "ux_clients_organization_email";
 
     private async Task EnsureHomeCompanyValid(Guid organizationId, Guid? homeCompanyId, Guid? previousHomeCompanyId)
     {

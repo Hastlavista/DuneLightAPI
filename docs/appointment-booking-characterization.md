@@ -349,7 +349,7 @@ Legend — **Test**: the characterization test(s) that pin it. **Later**: whethe
 * **F-14 Concurrency.** The occurrence capacity guard (row lock + count under lock) is safe: two concurrent bookings for the last seat
   → exactly one wins (`ConcurrentGuestBookings_ForTheLastSeat_ExactlyOneWins`).
 
-### Scheduling rules vs the business-rules document (`docs/poslovna-logika-pregled.md`)
+### Scheduling rules vs the business-rules document (old `docs/poslovna-logika-pregled.md`, removed 2026-10-06 as obsolete)
 
 * **F-15 The document is stale in places.** Schedule breaks and working hours are **hard blocks** unless a full-scope caller sets
   `OverrideAvailability` (doc §4.4 says warning); there is no `NoShow` appointment status (doc §"AppointmentStatus"); group

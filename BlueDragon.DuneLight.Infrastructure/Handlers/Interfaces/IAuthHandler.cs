@@ -1,6 +1,5 @@
 using System;
 using System.Threading.Tasks;
-using BlueDragon.DuneLight.Core.Enums;
 using BlueDragon.DuneLight.Infrastructure.Domain.Models;
 using BlueDragon.DuneLight.Infrastructure.UnitOfWork;
 
@@ -30,8 +29,4 @@ public interface IAuthHandler
     Task<User> GetUserById(Guid userId);
     Task UpdatePasswordHash(Guid userId, string passwordHash);
     Task UpdatePinHash(Guid userId, string pinHash);
-
-    /// <summary>Koristi modul Zaposlenici pri promjeni uloge zaposlenika — organizationId je defense-in-depth
-    /// (employee je već org-scoped na pozivnom mjestu, ali upit ovdje ponovno filtrira samostalno).</summary>
-    Task UpdateRole(Guid organizationId, Guid userId, UserRole role);
 }

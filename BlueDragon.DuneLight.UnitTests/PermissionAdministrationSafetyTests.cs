@@ -2,7 +2,6 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
-using BlueDragon.DuneLight.Core.Enums;
 using BlueDragon.DuneLight.Core.Shared;
 using BlueDragon.DuneLight.Infrastructure.Domain.Contexts;
 using BlueDragon.DuneLight.Infrastructure.Domain.Models;
@@ -62,7 +61,7 @@ public class PermissionAdministrationSafetyTests
         return (organizationId, cleanup);
     }
 
-    private static async Task<Guid> AddUser(Guid organizationId, bool isActive, string emailPrefix, UserRole role = UserRole.Member)
+    private static async Task<Guid> AddUser(Guid organizationId, bool isActive, string emailPrefix)
     {
         await using DatabaseContext context = DatabaseContext.GenerateContext(LocalConnectionString);
         Guid userId = Guid.NewGuid();
@@ -73,7 +72,6 @@ public class PermissionAdministrationSafetyTests
             Email = $"{emailPrefix}-{userId:N}@permission-admin-safety-test.local",
             PasswordHash = "test-hash",
             ApiKey = $"test-api-key-{userId:N}",
-            Role = role,
             IsActive = isActive,
             CreatedAt = DateTimeOffset.UtcNow
         });
@@ -147,26 +145,6 @@ public class PermissionAdministrationSafetyTests
             bool retainedIfAExcluded = await handler.HasActiveUserWithGrant(
                 organizationId, Grants.PermissionsManage, overrideUserId: userA, overrideUserGrantGroupIds: new List<Guid>());
             Assert.True(retainedIfAExcluded);
-        }
-        finally
-        {
-            await cleanup();
-        }
-    }
-
-    [Fact]
-    public async Task LegacyUserRoleAdmin_HasNoEffectOnInvariant()
-    {
-        (Guid organizationId, Func<Task> cleanup) = await CreateIsolatedOrganization(nameof(LegacyUserRoleAdmin_HasNoEffectOnInvariant));
-        try
-        {
-            // Legacy UserRole.Admin, but zero GrantGroup assignments at all - must NOT count as a permission admin.
-            await AddUser(organizationId, isActive: true, "legacy-admin", role: UserRole.Admin);
-
-            GrantGroupHandler handler = CreateHandler();
-            bool retained = await handler.HasActiveUserWithGrant(organizationId, Grants.PermissionsManage);
-
-            Assert.False(retained);
         }
         finally
         {

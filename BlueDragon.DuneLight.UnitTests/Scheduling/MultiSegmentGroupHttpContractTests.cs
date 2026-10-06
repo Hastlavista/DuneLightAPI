@@ -40,7 +40,7 @@ public class MultiSegmentGroupHttpContractTests : IClassFixture<MultiSegmentHttp
     private static async Task<string> TokenFor(SchedulingWorld w, Guid userId, params string[] grants)
     {
         await w.GrantUser(userId, grants);
-        return new JwtService(MultiSegmentHttpContractTests.Jwt).GenerateToken(userId, $"{userId:N}@http.test", w.OrganizationId, "Member");
+        return new JwtService(MultiSegmentHttpContractTests.Jwt).GenerateToken(userId, $"{userId:N}@http.test", w.OrganizationId);
     }
 
     private sealed record Arranged(SchedulingWorld World, Guid GroupId, Guid A, Guid B, string Manager, string ManagerWithOverride, string ViewOnly);

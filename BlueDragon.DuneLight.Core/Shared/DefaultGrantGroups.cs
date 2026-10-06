@@ -19,7 +19,7 @@ namespace BlueDragon.DuneLight.Core.Shared;
 /// Admin je namjerno == cijeli Grants.Catalog (dinamički, ne statička kopija) — to je isti obrazac koji su
 /// komentari backfill migracija već najavljivali ("nove organizacije dobivaju grant automatski jer
 /// AuthService.Register čita DefaultGrantGroups.AdminGrants, izveden iz cijelog Grants.Catalog"). Posljedica:
-/// Admin uključuje i visoko-rizične grantove (clients.anonymize, appointments.delete, employees.role.manage) —
+/// Admin uključuje i visoko-rizične grantove (clients.anonymize, appointments.delete) —
 /// to NIJE nagađanje, nego doslovno ponašanje originalne seed migracije (all_grants ARRAY ih je već sadržavao).
 ///
 /// Trener/Recepcija su NAMJERNO ostali kod svog izvornog opsega (own/samoposluživanje za Trenera, recepcijske/

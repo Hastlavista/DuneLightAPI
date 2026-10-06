@@ -143,7 +143,7 @@ public sealed class SchedulingWorld : IAsyncDisposable
         });
         await db.SaveChangesAsync();
 
-        ActorUserId = await AddUser(UserRole.Admin, db);
+        ActorUserId = await AddUser(db);
 
         Company = await AddCompany("Main company");
         Service = await AddService(DefaultServiceDuration, DefaultServicePrice, name: "Main service");
@@ -227,7 +227,7 @@ public sealed class SchedulingWorld : IAsyncDisposable
 
     #region Reference-data seeding
 
-    private async Task<Guid> AddUser(UserRole role, DatabaseContext db)
+    private async Task<Guid> AddUser(DatabaseContext db)
     {
         int n = Interlocked.Increment(ref _sequence);
         Guid id = Guid.NewGuid();
@@ -238,7 +238,6 @@ public sealed class SchedulingWorld : IAsyncDisposable
             Email = $"user{n}-{id:N}@sched.test",
             PasswordHash = "not-a-real-hash",
             ApiKey = $"sched-test-key-{id:N}",
-            Role = role,
             IsActive = true,
             CreatedAt = DateTimeOffset.UtcNow
         });
@@ -308,7 +307,7 @@ public sealed class SchedulingWorld : IAsyncDisposable
         bool withWorkingHours = true, Guid? companyId = null, Guid? serviceId = null)
     {
         await using DatabaseContext db = NewDb();
-        Guid userId = await AddUser(UserRole.Member, db);
+        Guid userId = await AddUser(db);
         Guid employeeId = Guid.NewGuid();
 
         db.Employees.Add(new Employee
@@ -1000,7 +999,7 @@ public sealed class SchedulingWorld : IAsyncDisposable
     public async Task<Guid> AddMemberUser()
     {
         await using DatabaseContext db = NewDb();
-        return await AddUser(UserRole.Member, db);
+        return await AddUser(db);
     }
 
     public async Task<Group> LoadGroup(Guid id)

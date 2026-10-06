@@ -70,7 +70,7 @@ public class GrantDiagnosticsService : IGrantDiagnosticsService
             "GrantMissingFromDefaultRoles je strukturno uvijek prazna kategorija dok je Admin definiran kao CIJELI Grants.Catalog (vidi DefaultGrantGroups.AdminGrants) — Admin po definiciji pokriva svaki grant. Kategorija je zadržana radi buduće promjene (ako Admin ikad postane kuriran popis).",
             "DefaultRoleDrift i SnapshotBasedTemplateDrift presijecaju SVE organizacije (cross-tenant upit) — namjerno, jer je ovo platform/development dijagnostika, a ne tenant runtime funkcionalnost. Ne smije se koristiti kao osnova za tenant-facing odgovor.",
             "Endpoint metapodaci dolaze iz IActionDescriptorCollectionProvider u trenutku poziva — pokrivaju samo kontrolere registrirane u trenutnom API hostu, ne uključuju eventualne minimal-API endpointove (trenutno ih nema).",
-            "RawGrantNotCoveredByCapability/CapabilityReferencesUnknownGrant/TemplateGrantReferencesUnknownGrant presijecaju SVE verzije (uklj. deprecated) — jedna stara, deprecated verzija koja referencira nešto zastarjelo ne bi trebala paničariti, ali je zadržano vidljivo dok se ne pokaže potreba filtrirati na is_active."
+            "TemplateGrantReferencesUnknownGrant presijeca SVE verzije predložaka (uklj. neaktivne). CapabilityReferencesUnknownGrant preskače deprecated capability verzije (namjerno povučena povijest čiji grant-ključ je uklonjen iz Grants.Catalog, npr. employees.role.manage); RawGrantNotCoveredByCapability gleda samo aktivne verzije."
         };
 
         return new GrantDiagnosticsReport(
@@ -85,7 +85,10 @@ public class GrantDiagnosticsService : IGrantDiagnosticsService
 
     private static void AddCapabilityReferencesUnknownGrantFindings(List<GrantDiagnosticFinding> findings, HashSet<string> catalogKeys, List<CapabilityDefinition> allCapabilityVersions)
     {
+        // Deprecated verzije su namjerno povučena, nepromjenjiva povijest (npr. employees.role.manage nakon uklanjanja
+        // grant-ključa iz Grants.Catalog, ADR-0019) — njihov grant-ključ smije nestati iz kataloga.
         List<string> unknown = allCapabilityVersions
+            .Where(c => c.DeprecatedAt == null)
             .SelectMany(c => c.Grants.Where(g => !catalogKeys.Contains(g.GrantKey)).Select(g => $"{c.Key} v{c.Version}: {g.GrantKey}"))
             .OrderBy(e => e)
             .ToList();
