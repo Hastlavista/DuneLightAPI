@@ -180,7 +180,11 @@ public class AppointmentHandler : IAppointmentHandler
 
     public async Task UpdateBooking(IUnitOfWork uow, Booking booking)
     {
-        uow.Context.Bookings.Update(booking);
+        // Booking učitan u ovoj transakciji je već praćen: change tracker spremi samo stvarno izmijenjene retke. Update() bi
+        // označio CIJELI graf (sudjelovanja, potrošnje paketa, posljedice politike) kao izmijenjen i ponovno zapisao
+        // nepromjenjive ledger retke (P1). Update() ostaje samo za nepraćen (odvojen) Booking.
+        if (uow.Context.Entry(booking).State == EntityState.Detached)
+            uow.Context.Bookings.Update(booking);
         await uow.Context.SaveChangesAsync();
     }
 
@@ -200,9 +204,9 @@ public class AppointmentHandler : IAppointmentHandler
     /// <summary>Phase D3B1: termin se fizički briše samo ako je SVAKO sudjelovanje svih njegovih Bookinga netaknuto —
     /// sudjelovanja i Bookinzi se brišu eksplicitno (ParticipationHistory), zatim termin (segmenti kaskadom u bazi).
     /// Bilo koje sudjelovanje s poviješću → REFERENCED_CANNOT_DELETE i ništa se ne briše.</summary>
-    public async Task Delete(Appointment appointment)
+    public async Task Delete(IUnitOfWork uow, Appointment appointment)
     {
-        await using DatabaseContext context = DatabaseContext.GenerateContext(_databaseSettings.ConnectionString);
+        DatabaseContext context = uow.Context;
         Appointment tracked = await context.Appointments
             .Include(a => a.Bookings)
             .SingleAsync(a => a.Id == appointment.Id && a.OrganizationId == appointment.OrganizationId);

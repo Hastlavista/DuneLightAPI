@@ -146,8 +146,9 @@ public class AppointmentLifecycleTests
         Client partner = await w.AddClient("Partner", "Client");
         AppointmentDto created = await w.CreateAppointment(SchedulingWorld.Future(10), extraClients: partner);
 
-        await w.SetBookingStatus(created.Id, w.Client, BookingStatus.NoShow);
         await w.SetBookingStatus(created.Id, partner, BookingStatus.Cancelled);
+        await w.MoveToPast(created.Id); // P1: client cancel before start, no-show after start
+        await w.SetBookingStatus(created.Id, w.Client, BookingStatus.NoShow);
 
         Assert.Equal(AppointmentStatus.Closed, await StatusOf(w, created.Id));
     }
@@ -180,7 +181,7 @@ public class AppointmentLifecycleTests
         (_, _, Appointment occurrence, Client[] members) = await GroupOccurrence(w, 1);
         Guid id = occurrence.Id.Value;
 
-        await w.Appointments.Cancel(w.OrganizationId, w.ActorUserId, true, id, new AppointmentCancelRequest { CancellationReason = "trainer ill" });
+        await w.Appointments.Cancel(w.OrganizationId, w.ActorUserId, true, id, SchedulingWorld.BusinessCancel("trainer ill"));
         Appointment cancelled = await w.LoadAppointment(id);
         Assert.Equal(AppointmentStatus.Cancelled, cancelled.Status);
         Assert.NotNull(cancelled.CancelledAt);
@@ -213,7 +214,7 @@ public class AppointmentLifecycleTests
         AppointmentDto created = await w.CreateAppointment(SchedulingWorld.Future(10), extraClients: partner);
 
         AppointmentDto dto = await w.Appointments.Cancel(w.OrganizationId, w.ActorUserId, true, created.Id,
-            new AppointmentCancelRequest { CancellationReason = "closed" });
+            SchedulingWorld.BusinessCancel("closed"));
 
         Assert.Equal(AppointmentStatus.Cancelled, dto.Status);
         Assert.All((await w.LoadAppointment(created.Id)).Bookings, b => Assert.Equal((BookingStatus.Cancelled, 1), (b.Status, b.StatusVersion)));
@@ -227,7 +228,7 @@ public class AppointmentLifecycleTests
         Guid id = occurrence.Id.Value;
         await w.SetBookingStatus(id, members[0], BookingStatus.Completed);
 
-        AppointmentDto dto = await w.Appointments.Cancel(w.OrganizationId, w.ActorUserId, true, id, new AppointmentCancelRequest { CancellationReason = "storm" });
+        AppointmentDto dto = await w.Appointments.Cancel(w.OrganizationId, w.ActorUserId, true, id, SchedulingWorld.BusinessCancel("storm"));
 
         Booking completed = await w.LoadBooking(id, members[0]);
         Booking cancelled = await w.LoadBooking(id, members[1]);
@@ -240,7 +241,7 @@ public class AppointmentLifecycleTests
 
         // Nothing active is left: a second appointment-level cancel is refused (operationally resolved).
         await SchedulingAssert.BusinessRule(Core.Shared.ErrorCodes.AlreadyCompleted,
-            () => w.Appointments.Cancel(w.OrganizationId, w.ActorUserId, true, id, new AppointmentCancelRequest()));
+            () => w.Appointments.Cancel(w.OrganizationId, w.ActorUserId, true, id, SchedulingWorld.BusinessCancel()));
     }
 
     [Fact]
@@ -251,12 +252,13 @@ public class AppointmentLifecycleTests
         AppointmentDto created = await w.CreateAppointment(SchedulingWorld.Future(10), extraClients: partner);
         Guid second = await w.AddArtificialSegmentParticipation(created.Id, w.Client, SchedulingWorld.Future(14), 30m); // artificial
 
-        await w.Bookings.CancelBooking(w.OrganizationId, w.ActorUserId, true, created.Id, w.Client.Id.Value, new BookingCancelRequest());
+        await w.Bookings.CancelBooking(w.OrganizationId, w.ActorUserId, true, created.Id, w.Client.Id.Value, SchedulingWorld.ClientCancel());
 
         Assert.All(await w.LoadParticipations(created.Id, w.Client), p => Assert.Equal((Ca, 1), (p.Status, p.StatusVersion)));
         BookingSegmentParticipation partnerParticipation = Assert.Single(await w.LoadParticipations(created.Id, partner));
         Assert.Equal((Cf, 0), (partnerParticipation.Status, partnerParticipation.StatusVersion));
         Assert.Equal(AppointmentStatus.Scheduled, await StatusOf(w, created.Id)); // the partner is still Confirmed
+        await w.MoveToPast(created.Id); // P1: the partner no-show needs started segments
 
         await w.Bookings.SetParticipationStatus(w.OrganizationId, w.ActorUserId, true, partnerParticipation.Id.Value,
             new BookingSetStatusRequest { Status = BookingStatus.NoShow });
@@ -339,7 +341,7 @@ public class AppointmentLifecycleTests
         await w.Appointments.CompleteGroupAppointment(w.OrganizationId, w.ActorUserId, true, id);
         Assert.Equal(AppointmentStatus.Scheduled, await StatusOf(w, id)); // zero participations, not cancelled => Scheduled
 
-        await w.Appointments.Cancel(w.OrganizationId, w.ActorUserId, true, id, new AppointmentCancelRequest());
+        await w.Appointments.Cancel(w.OrganizationId, w.ActorUserId, true, id, SchedulingWorld.BusinessCancel());
         Assert.Equal(AppointmentStatus.Cancelled, await StatusOf(w, id)); // derived from the explicit cancellation alone
     }
 
@@ -363,7 +365,7 @@ public class AppointmentLifecycleTests
                 new WaitlistJoinRequest { ClientId = waiter.Id.Value, SegmentId = Assert.Single(occurrence.Segments).Id }));
         Assert.Equal(AppointmentStatus.Scheduled, await StatusOf(w, id));
 
-        await w.Appointments.Cancel(w.OrganizationId, w.ActorUserId, true, id, new AppointmentCancelRequest());
+        await w.Appointments.Cancel(w.OrganizationId, w.ActorUserId, true, id, SchedulingWorld.BusinessCancel());
         Assert.Equal(AppointmentStatus.Cancelled, await StatusOf(w, id));
         Client another = await w.AddClient("Another", "Client");
         await SchedulingAssert.BusinessRule(Core.Shared.ErrorCodes.AppointmentNotMovable,
@@ -383,7 +385,7 @@ public class AppointmentLifecycleTests
         AppointmentDto worked = await w.CreateAppointment(SchedulingWorld.Future(10));
         await w.CompleteParticipations(worked.Id, w.CompleteRequest(SchedulingWorld.Future(10)));
         Client other = await w.AddClient("Other", "Client");
-        AppointmentDto noShow = await w.CreateAppointment(SchedulingWorld.Future(12), client: other);
+        AppointmentDto noShow = await w.CreateAppointment(SchedulingWorld.Past(12), client: other);
         await w.SetBookingStatus(noShow.Id, other, BookingStatus.NoShow);
         Assert.Equal(AppointmentStatus.Closed, await StatusOf(w, noShow.Id)); // Closed, but nobody was served
 

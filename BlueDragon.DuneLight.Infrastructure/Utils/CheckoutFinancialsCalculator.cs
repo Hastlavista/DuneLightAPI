@@ -68,7 +68,8 @@ public static class CheckoutFinancialsCalculator
     /// <summary>
     /// Izračun jedne stavke. Stavka USLUGE (Type=Booking) od Phase D3B3B računa se na granici SUDJELOVANJA
     /// (item.Participation, vidi ParticipationSettlement):
-    /// - MonetaryDue = 0 kad je sudjelovanje pokriveno paketom (aktivna PackageConsumption), inače snapshot Amount stavke;
+    /// - MonetaryDue = 0 kad je usluga pokrivena paketom (aktivna PackageConsumption), za otkazano/izostalo sudjelovanje
+    ///   (P1) dug sudjelovanja (naknada aktivne posljedice politike, najviše snapshot iznos), inače snapshot Amount stavke;
     /// - OutstandingAmount = min(MonetaryDue - aktivne alokacije OVE stavke, preostali dug SUDJELOVANJA preko svih njegovih
     ///   stavki) — isto sudjelovanje se ne može preplatiti kroz više stavki/checkouta, a stavka čije je sudjelovanje već
     ///   namireno drugdje nema dug.
@@ -87,9 +88,13 @@ public static class CheckoutFinancialsCalculator
 
         if (item.Type == CheckoutItemType.Booking && item.Participation != null)
         {
+            // P1 (D5): dug stavke slijedi status-aware dug sudjelovanja (npr. otkazano sudjelovanje duguje samo naknadu
+            // politike), nikad više od snapshot iznosa stavke.
             ParticipationSettlement settlement = ParticipationSettlement.Of(item.Participation);
-            if (settlement.EntitlementCovered)
+            if (settlement.EntitlementCovered || MembershipCoverages.IsPending(item.Participation))
                 monetaryDue = 0m;
+            else if (!ParticipationOccupancy.Occupies(item.Participation.Status))
+                monetaryDue = Math.Min(retail, settlement.MonetaryDue);
             outstanding = Math.Min(monetaryDue - paid, settlement.OutstandingAmount);
         }
 

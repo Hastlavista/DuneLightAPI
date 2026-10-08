@@ -167,6 +167,7 @@ public class OperationalDashboardService : IOperationalDashboardService
             BookingStatus = BookingSummary.StatusOf(booking),
             PaidAmount = commercial.MonetarySettled,
             OutstandingAmount = commercial.Outstanding,
+            SurplusAmount = commercial.Surplus,
             IsPaid = commercial.FullySettled,
             // Phase M0: "pokriveno paketom" = SVA sudjelovanja Bookinga namirena paketom.
             PackageCovered = commercial.PackageCoveredCount == commercial.ParticipationCount
@@ -176,18 +177,16 @@ public class OperationalDashboardService : IOperationalDashboardService
     private async Task<DashboardFinancialDto> BuildFinancial(
         Guid organizationId, Guid companyId, DateTimeOffset dayStart, DateTimeOffset dayEnd, List<Appointment> appointments)
     {
-        // Obveze se izvode SAMO iz Bookinga na rasporedu odabranog dana ove Company (već učitano) — Cancelled
-        // isključen jer trenutna poslovna pravila ne zadržavaju novčanu obvezu nad otkazanim bookingom (vidi
-        // spec section 17, Booking.IsLateCancellation je trenutno samo klasifikacijska priprema, ne naplata).
-        // Phase M0: obveza je po SUDJELOVANJU (Cancelled sudjelovanje nema obvezu); "neplaćen Booking" = Booking s barem
-        // jednim ne-otkazanim sudjelovanjem koje još duguje.
+        // Obveze se izvode SAMO iz Bookinga na rasporedu odabranog dana ove Company (već učitano), po SUDJELOVANJU i
+        // isključivo iz jedine status-aware derivacije (P1, D5 — nema lokalnog filtra po statusu: otkazano/izostalo
+        // sudjelovanje duguje samo aktivnu naknadu politike). Zbraja se samo POZITIVAN dug (odluka 2026-10-06): preplata
+        // jednog sudjelovanja ne umanjuje tuđi dug. "Neplaćen Booking" = Booking s barem jednim sudjelovanjem koje duguje.
         decimal outstandingAmount = 0m;
         int unpaidBookingCount = 0;
         foreach (Booking booking in appointments.SelectMany(a => a.Bookings))
         {
             decimal outstanding = booking.Participations
-                .Where(p => p.Status != ParticipationStatus.Cancelled)
-                .Sum(p => ParticipationSettlement.Of(p).OutstandingAmount);
+                .Sum(p => Math.Max(ParticipationSettlement.Of(p).OutstandingAmount, 0m));
             outstandingAmount += outstanding;
             if (outstanding > 0m)
                 unpaidBookingCount++;

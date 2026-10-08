@@ -40,7 +40,8 @@ public class Appointment
     [Column("note")]
     public string Note { get; set; }
 
-    /// <summary>Popunjeno samo kad je Status Cancelled ili NoShow (trener/recepcija upisuje razlog kod ChangeToTerminalStatus).</summary>
+    /// <summary>Razlog EKSPLICITNOG otkazivanja termina (P1: uvijek Business, razlog obavezan); briše se kad korekcija vrati
+    /// termin u rad. Izostanak termina ga ne piše — razlog izostanka je NoShowReason na sudjelovanjima.</summary>
     [Column("cancellation_reason")]
     public string CancellationReason { get; set; }
 

@@ -1,12 +1,10 @@
 namespace BlueDragon.DuneLight.Core.Enums;
 
 /// <summary>
-/// Individualni Booking completion IMA reverzijsku putanju: BookingService.ApplyIndividualCompletionCorrection
-/// (Individual Booking Completed -&gt; Confirmed korekcija) prebacuje odgovarajući Earned zapis u Reversed u istoj
-/// transakciji (vidi CommissionEntry.cs SourceVersion domensku napomenu). Grupni Appointment completion i
-/// Checkout (Product/Package sale) completion i dalje NEMAJU legitiman put natrag (vidi CommissionService
-/// domensku napomenu) — Reversed za te izvore ostaje bez pozivatelja. CommissionEntry retke NIKAD se ne briše —
-/// reverzija mijenja Status (+ReversedAt/ReversedBy), ne uklanja redak.
+/// Earned → Reversed na istom retku (ReversedAt/ReversedBy/ReversalReason); retci se NIKAD ne brišu. Putevi reverzije:
+/// korekcija individualnog completiona (BookingService.ApplyIndividualCompletionCorrection), P2 (2F) Q38 naknada koja više nije
+/// plaćena / je oproštena, i korekcija korisnika provizije na prodaju (Q50, reverzija + nova provizija). Grupni completion nema
+/// put natrag. Izvještavanje je po događajima: zarada u razdoblju EarnedAt, storno kao negativan iznos u razdoblju ReversedAt.
 /// </summary>
 public enum CommissionEntryStatus
 {

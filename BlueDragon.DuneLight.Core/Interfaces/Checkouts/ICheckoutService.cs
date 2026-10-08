@@ -29,6 +29,9 @@ public interface ICheckoutService
     /// Checkouta) i snapshotta odmah; NE izdaje ClientPackage (to se događa tek na Complete, vidi spec section 24).</summary>
     Task<CheckoutDto> AddPackageItem(Guid organizationId, Guid userId, Guid checkoutId, CheckoutAddPackageItemRequest request);
 
+    /// <summary>P2 (2C) — stavka plaćanja zaduženja članarine (cijelog preostalog duga ili dijela).</summary>
+    Task<CheckoutDto> AddMembershipChargeItem(Guid organizationId, Guid userId, Guid checkoutId, CheckoutAddMembershipChargeItemRequest request);
+
     /// <summary>Dodaje Product stavku — cijena se razrješava iz Product.DefaultPrice i snapshotta odmah. Ako
     /// Checkout već ima aktivnu Product stavku za isti Product, umjesto nove stavke povećava Quantity/Amount
     /// postojeće (jedna stavka po Productu po Checkoutu, vidi Products &amp; Stock spec section 27). NE dira
@@ -38,6 +41,11 @@ public interface ICheckoutService
     /// <summary>Uklanja stavku iz Open checkouta — blokirano ako stavka ima aktivnu (Completed Payment) alokaciju
     /// (CHECKOUT_ITEM_HAS_ALLOCATIONS, vidi spec section 33).</summary>
     Task<CheckoutDto> RemoveItem(Guid organizationId, Guid userId, Guid checkoutId, Guid itemId);
+
+    /// <summary>P2 (2F, §18.1) — kome ide provizija na prodaju stavke (dok je checkout Open; zaduženje prve prodaje članarine
+    /// mijenja korisnika na članstvu).</summary>
+    Task<CheckoutDto> SetItemSaleCommissionEmployee(
+        Guid organizationId, Guid userId, Guid checkoutId, Guid itemId, DTOs.Commissions.SaleCommissionEmployeeRequest request);
 
     /// <summary>Bilježi novčanu naplatu — automatska FIFO raspodjela po redoslijedu dodavanja stavki ako
     /// Allocations izostavljen, inače eksplicitna raspodjela (vidi CheckoutPaymentCreateRequest). Concurrency-safe

@@ -20,8 +20,15 @@ public class GroupAttendanceEntryDto
     public decimal SuggestedAmount { get; set; }
     public decimal PaidAmount { get; set; }
     public decimal OutstandingAmount { get; set; }
+
+    /// <summary>P1 (D7): max(PaidAmount − MonetaryDue, 0) — informativno, nije kredit klijenta.</summary>
+    public decimal SurplusAmount { get; set; }
     public bool IsPaid { get; set; }
     public string Note { get; set; }
+
+    /// <summary>P1 — stanje najnovije posljedice politike (npr. izostanak) ako postoji, inače null.</summary>
+    public PolicyConsequenceStatus? PolicyConsequenceStatus { get; set; }
+    public decimal? PolicyFeeAmount { get; set; }
 
     /// <summary>Je li klijent trenutno aktivan član grupe (razlikuje ga od gosta/zamjene dodanog u prisutnost). Phase M1F.1:
     /// u popisu SEGMENTA = aktivan član koji je odabrao predložak tog segmenta.</summary>
@@ -80,4 +87,19 @@ public class SetGroupAttendanceRequest
     /// <summary>Segment occurrencea čija se prisutnost bilježi — uvijek obavezan.</summary>
     [Required]
     public Guid? SegmentId { get; set; }
+
+    /// <summary>P1 (D9/D10) — Attended=false je izostanak (NoShow politika); otpis posljedice u trenutku događaja traži
+    /// WaiverReason i appointments.policy.override.</summary>
+    public bool WaivePolicyConsequence { get; set; }
+
+    [MaxLength(500)]
+    public string WaiverReason { get; set; }
+
+    /// <summary>P1 (D3) — opcionalan razlog izostanka (Attended=false).</summary>
+    [MaxLength(500)]
+    public string NoShowReason { get; set; }
+
+    /// <summary>P1 (D12) — razlog korekcije kad prijelaz poništava aktivnu posljedicu sa stvarnim učinkom.</summary>
+    [MaxLength(500)]
+    public string CorrectionReason { get; set; }
 }

@@ -33,6 +33,8 @@ public class CheckoutHandler : ICheckoutHandler
                 .ThenInclude(i => i.Allocations).ThenInclude(a => a.Payment)
             .Include(c => c.Items).ThenInclude(i => i.Participation).ThenInclude(p => p.Booking)
             .Include(c => c.Items).ThenInclude(i => i.Allocations).ThenInclude(a => a.Payment)
+            // P2 (2F): korisnik provizije na prodaju za zaduženje prve prodaje se prikazuje s članstva (jedini izvor).
+            .Include(c => c.Items).ThenInclude(i => i.MembershipCharge).ThenInclude(ch => ch.Membership)
             .Include(c => c.Payments);
     }
 

@@ -248,7 +248,7 @@ public class AppointmentSegmentCutoverTests
     public async Task ExecutionContext_AndLateCancellation_FollowTheSegmentStart()
     {
         await using SchedulingWorld w = await SchedulingWorld.Create(nameof(ExecutionContext_AndLateCancellation_FollowTheSegmentStart));
-        await w.SetCancellationCutoffMinutes(120);
+        await w.SetCancellationWindowMinutes(120);
         AppointmentDto created = await w.CreateAppointment(Z(10));
         DateTimeOffset now = DateTimeOffset.UtcNow;
         DateTimeOffset soon = new DateTimeOffset(now.Year, now.Month, now.Day, now.Hour, now.Minute, 0, TimeSpan.Zero).AddMinutes(30);

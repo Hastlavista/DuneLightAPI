@@ -182,7 +182,7 @@ public class BookingParticipationLifecycleTests
         await Assert.ThrowsAsync<InvalidBookingParticipationStateException>(() => w.Appointments.GetById(w.OrganizationId, created.Id));
         await Assert.ThrowsAsync<InvalidBookingParticipationStateException>(
             () => w.Bookings.CancelBooking(w.OrganizationId, w.ActorUserId, true, created.Id, w.Client.Id.Value,
-                new BookingCancelRequest { CancellationReason = "x" }));
+                SchedulingWorld.ClientCancel("x")));
     }
 
     [Fact]
@@ -275,8 +275,18 @@ public class BookingParticipationLifecycleTests
     {
         new object[] { "arrived", (Action<BookingSegmentParticipation>)(p => { p.ArrivedAt = DateTimeOffset.UtcNow; p.ArrivedBy = Guid.NewGuid(); }) },
         new object[] { "version", (Action<BookingSegmentParticipation>)(p => p.StatusVersion = 1) },
-        new object[] { "reason", (Action<BookingSegmentParticipation>)(p => p.CancellationReason = "left over") },
-        new object[] { "late", (Action<BookingSegmentParticipation>)(p => p.IsLateCancellation = false) },
+        // P1: stale cancellation metadata on a Confirmed participation can no longer be persisted (metadata always matches
+        // the status, DB CHECK) — those shapes are pinned in memory by UntouchedDefinition_IsExactlyTheLockedRule.
+    };
+
+    /// <summary>History shapes the rule must still reject even though the database no longer allows them on Confirmed.</summary>
+    private static IEnumerable<Action<BookingSegmentParticipation>> InMemoryOnlyHistory() => new Action<BookingSegmentParticipation>[]
+    {
+        p => p.CancellationReason = "left over",
+        p => p.IsLateCancellation = false,
+        p => p.CancelledAt = DateTimeOffset.UtcNow,
+        p => p.NoShowAt = DateTimeOffset.UtcNow,
+        p => p.PolicyConsequences.Add(new ParticipationPolicyConsequence { Status = PolicyConsequenceStatus.Reversed })
     };
 
     [Theory]
@@ -351,7 +361,8 @@ public class BookingParticipationLifecycleTests
             Assert.False(ParticipationHistory.IsUntouched(p));
         }
 
-        foreach ((string _, Action<BookingSegmentParticipation> history) in ConfirmedWithHistory().Select(x => ((string)x[0], (Action<BookingSegmentParticipation>)x[1])))
+        foreach (Action<BookingSegmentParticipation> history in ConfirmedWithHistory().Select(x => (Action<BookingSegmentParticipation>)x[1])
+                     .Concat(InMemoryOnlyHistory()))
         {
             BookingSegmentParticipation p = Fresh();
             history(p);

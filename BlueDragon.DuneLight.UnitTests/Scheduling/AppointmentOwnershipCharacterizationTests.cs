@@ -162,16 +162,16 @@ public class AppointmentOwnershipCharacterizationTests
         AppointmentDto alsoMine = await w.CreateAppointment(SchedulingWorld.Future(12));
 
         BusinessRuleException ex = await SchedulingAssert.BusinessRule(ErrorCodes.NotOwner,
-            () => w.Appointments.Cancel(w.OrganizationId, other.UserId, false, mine.Id, new AppointmentCancelRequest()));
+            () => w.Appointments.Cancel(w.OrganizationId, other.UserId, false, mine.Id, SchedulingWorld.BusinessCancel()));
         Assert.Equal("Trener smije upravljati samo svojim vlastitim terminima.", ex.Message);
 
         // CHANGED in M1E: cancelling the WHOLE appointment requires appointments.write.all even when the caller is assigned to
         // every segment; own scope cancels its own participations (ParticipationId) instead.
         BusinessRuleException assigned = await SchedulingAssert.BusinessRule(ErrorCodes.NotOwner,
-            () => w.Appointments.Cancel(w.OrganizationId, w.Employee.UserId, false, alsoMine.Id, new AppointmentCancelRequest()));
+            () => w.Appointments.Cancel(w.OrganizationId, w.Employee.UserId, false, alsoMine.Id, SchedulingWorld.BusinessCancel()));
         Assert.Equal("Trener smije upravljati samo svojim vlastitim terminima.", assigned.Message);
 
-        AppointmentDto cancelled = await w.Appointments.Cancel(w.OrganizationId, w.ActorUserId, true, alsoMine.Id, new AppointmentCancelRequest());
+        AppointmentDto cancelled = await w.Appointments.Cancel(w.OrganizationId, w.ActorUserId, true, alsoMine.Id, SchedulingWorld.BusinessCancel());
         Assert.Equal(AppointmentStatus.Cancelled, cancelled.Status);
     }
 

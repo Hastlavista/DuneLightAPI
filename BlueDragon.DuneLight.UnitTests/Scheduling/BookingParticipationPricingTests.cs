@@ -187,9 +187,9 @@ public class BookingParticipationPricingTests
     }
 
     [Fact]
-    public async Task GroupUnCheckIn_ResetsThePriceToZero_WithoutAFabricatedResolutionSnapshot()
+    public async Task GroupUnCheckIn_KeepsThePriceSnapshot()
     {
-        await using SchedulingWorld w = await SchedulingWorld.Create(nameof(GroupUnCheckIn_ResetsThePriceToZero_WithoutAFabricatedResolutionSnapshot));
+        await using SchedulingWorld w = await SchedulingWorld.Create(nameof(GroupUnCheckIn_KeepsThePriceSnapshot));
         ServiceEntity groupService = await w.AddGroupService();
         GroupDto group = await w.CreateGroup(groupService, capacity: 3);
         await w.AddGroupMember(group, w.Client);
@@ -200,7 +200,8 @@ public class BookingParticipationPricingTests
 
         await w.SetBookingStatus(occurrence.Id.Value, w.Client, BookingStatus.Confirmed);
 
-        AssertPrice(await ParticipationOf(w, occurrence.Id.Value, w.Client), 0m, 0m, false, null, null);
+        // CHANGED in P1 (D12, intentional): leaving Completed no longer zeroes a group price or its resolution snapshot.
+        AssertPrice(await ParticipationOf(w, occurrence.Id.Value, w.Client), 12m, 15m, true, 15m, PriceSource.Default);
     }
 
     #endregion

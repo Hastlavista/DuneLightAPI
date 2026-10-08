@@ -396,8 +396,75 @@ These items are explicitly out of P1 and must not be implemented silently.
 
 ---
 
+## Implementation summary (2026-10-06)
+
+P1 is implemented on `development-claude` (uncommitted working tree, on top of the baseline reset). D1–D13 were implemented as
+locked; no locked rule was reopened. Choices the record left to implementation are listed in the decision log below.
+
+**Schema** — migrations `20261026000000` (`P1CancellationPolicies`), `20261026000001` (`P1ParticipationConsequences`),
+`20261026000002` (`P1AdminGrants`, the three grants added only to `system_key = 'admin'` groups, ADR-0023). No data
+backfill. DB CHECKs keep participation metadata consistent with the status, the consequence state machine consistent with
+its fields, and a `PolicyConsequence` package consumption linked to exactly one consequence.
+
+**Code map**
+- Resolution / management: `CancellationPolicyService` (`ICancellationPolicyService`, `ICancellationPolicyResolver`),
+  `CancellationPolicyHandler`, `CancellationPoliciesController` (`/api/cancellation-policies`).
+- Evaluation and ledger: `ParticipationPolicyService` (`IParticipationPolicyService`); pure rules in
+  `Utils/CancellationPolicyRules` (lateness, fee, rule validation), `Utils/ParticipationEventMetadata`, `Utils/PolicyConsequences`.
+- Transition matrix: `BookingService.ApplyTransitionInTransaction` / `ReversePreviousStateEffects` (shared by participation,
+  Booking-wide, group attendance, CompleteNow and — via `ApplyCascadeTransitionInTransaction` — appointment-wide commands).
+- Settlement: `ParticipationSettlement` (status-aware Due, unclamped Outstanding, `SurplusAmount`) used by every read model,
+  the dashboard (positive debt only), checkout and payments.
+- Package penalty: `IPackageConsumptionLedgerService.ConsumeForPolicyConsequence` (counted packages only, independent of
+  `PackageConsumptionTiming`).
+- Registration creates the neutral default policy (`AuthService.Register`).
+
+**API changes for the frontend**
+- New: `GET/POST /api/cancellation-policies`, `GET /api/cancellation-policies/{id}`, `PATCH …/{id}/name`,
+  `POST …/{id}/versions`, `POST …/{id}/activate|deactivate`, `PUT …/default`, `GET|PUT …/assignments`,
+  `DELETE …/assignments/{id}`, `GET …/resolve?companyId&serviceId`; `POST /api/participations/{id}/policy-consequence/waive`.
+- Changed: `BookingCancelRequest` and `AppointmentCancelRequest` require `cancellationInitiator` (appointment-wide: Business
+  only, reason required); participation and appointment no-show take `NoShowRequest` (`noShowReason`, `clientPackageId`,
+  `waivePolicyConsequence`, `waiverReason`, `correctionReason`); `BookingSetStatusRequest` and `SetGroupAttendanceRequest`
+  gain the same P1 fields; `PATCH /api/participations/{id}/confirm` with optional body `{ correctionReason }`; Booking-wide cancel and appointment-wide no-show choose the penalty package per participation through `packageSelections: [{ participationId, clientPackageId }]` (a single `clientPackageId` is rejected there, and `packageSelections` is rejected on single-participation commands); `BookingDto.outstandingAmount` is the sum of POSITIVE participation debt (raw debt per participation); participation DTOs expose the metadata,
+  `monetaryDue`, `surplusAmount` and the latest `policyConsequence`; Booking / history / dashboard / attendance DTOs expose
+  `surplusAmount`; `booking.cancelled.v1` carries `cancellationInitiator`.
+- Removed: `PUT /api/organization/settings/cancellation-cutoff`, `OrganizationSettingsDto.cancellationCutoffMinutes`,
+  `ReturnPackageEntry`, `ReturnEntryForClientIds`.
+
+**Tests** — new `CancellationPolicyEngineTests` (28) and `CancellationPolicyHttpContractTests` (2, real API pipeline); characterization tests pinning the 17 changes are updated in place and
+marked `CHANGED in P1`; five tests pinning removed dead inputs (`ReturnPackageEntry` / `ReturnEntryForClientIds`) were deleted.
+
 ## Implementation decision log
 
 Decisions, clarifications and answers given during P1 implementation, newest last. Format: date — question/context — answer — effect.
 
-*(No entries yet — P1 implementation has not started.)*
+- 2026-10-06 — D11 traži da P1 cutover stvori neutralni default za postojeće organizacije, a ADR-0022/ADR-0003 zabranjuju
+  seed/backfill u migracijama. — Postojećih organizacija nema (baza i tablice su prazne). — P1 migracija je samo shema;
+  neutralni default nastaje isključivo pri registraciji organizacije (aplikacijski kod, ista transakcija). Organizacija
+  bez defaulta je integritetna greška.
+- 2026-10-06 — Outstanding više nije klampan (negativan = surplus); kako dashboard zbraja dug dana? — Samo pozitivni dug:
+  dashboard `OutstandingAmount` = Σ max(Outstanding, 0) po sudjelovanju; surplus jednog klijenta ne umanjuje tuđi dug.
+  Participation DTO nosi sirovi Outstanding + `SurplusAmount`; Booking sažetak zbraja samo pozitivni dug (vidi unos o reviewu
+  niže) + `SurplusAmount`.
+- 2026-10-06 — Outbox kod terminal → terminal korekcija (npr. Completed → Cancelled, NoShow → Cancelled)? — Događaj
+  `booking.cancelled.v1` / `booking.no-show.v1` piše se za svaki stvarni ulaz u Cancelled/NoShow (identitet ostaje
+  sudjelovanje + StatusVersion); pri izlasku iz Cancelled/NoShow pending obavijest te pojave se poništava (kao danas).
+- 2026-10-06 — Implementacijska napomena (Claude): D5 "prihvatljivost checkouta = pozitivan Outstanding" primijenjena je na
+  Cancelled/NoShow (stavka = naknada politike, iznos stavke = MonetaryDue); Confirmed/Completed ostaju prihvatljivi kao prije
+  (predujam, preplatu odbija plaćanje), da se ne uvede promjena ponašanja izvan popisa 17 namjernih promjena.
+- 2026-10-06 — Implementacijska napomena (Claude): appointment-wide izostanak više ne upisuje `Appointment.CancellationReason`
+  (razlog izostanka je `NoShowReason` na sudjelovanjima, D3); `Appointment.CancellationReason` nosi samo eksplicitno
+  otkazivanje termina. Zadana politika je profil s `is_organization_default` (D1 implementacijski izbor).
+- 2026-10-07 — Code review P1 promjena (10 nalaza) — korisnik: "riješi sve". — Popravljeno:
+  (1) Booking sažetak (`BookingDto`, povijest klijenta, dashboard Booking redak) zbraja samo POZITIVNI dug sudjelovanja —
+  preplata jednog sudjelovanja ne umanjuje dug drugog (isto pravilo kao dashboard, D7); sirovi dug ostaje na sudjelovanju.
+  (2)+(4) Naredbe nad više sudjelovanja (Booking-wide otkazivanje, izostanak cijelog termina) biraju paket za kaznu PO
+  SUDJELOVANJU (`PackageSelections`); jedan `ClientPackageId` se tamo odbija (VALIDATION_ERROR), a `PackageSelections` na
+  naredbi nad jednim sudjelovanjem također. (3) Prijelaz koristi zaključani okvir termina (`GetForUpdate`) — klasifikacija,
+  guardovi i politika po svježem segmentu, ne po pred-transakcijskom čitanju. (5) Napomena Bookinga se sprema i kod novog
+  gosta s Confirmed i kod pravog no-opa istog statusa (bez StatusVersiona/audita/Outboxa). (6) `UpdateBooking` nad praćenim
+  Bookingom više ne prepisuje cijeli graf (nepromjenjivi ledger retci se ne UPDATE-aju). (7) Provjera override granta je u
+  jednom mjestu (`Utils/PolicyOverride`). (8) Pravilo brojenog paketa (`Utils/PackageCounting`) i prepoznavanje unique
+  povrede (`Utils/DbErrors`) više nisu duplicirani. (9) Razlog korekcije za `confirm` ide u tijelo zahtjeva. (10) Dodani
+  HTTP contract testovi za nove endpointe.

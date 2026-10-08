@@ -83,7 +83,7 @@ public class AppointmentOverlapCharacterizationTests
         await using SchedulingWorld w = await SchedulingWorld.Create(nameof(EmployeeOverlap_CancelledAppointmentNoLongerBlocksTheEmployee));
         Client other = await w.AddClient("Other", "Client");
         AppointmentDto existing = await w.CreateAppointment(SchedulingWorld.Future(10));
-        await w.Appointments.Cancel(w.OrganizationId, w.ActorUserId, true, existing.Id, new AppointmentCancelRequest { CancellationReason = "test" });
+        await w.Appointments.Cancel(w.OrganizationId, w.ActorUserId, true, existing.Id, SchedulingWorld.BusinessCancel("test"));
 
         AppointmentDto replacement = await w.CreateAppointment(SchedulingWorld.Future(10), client: other);
 
@@ -219,7 +219,7 @@ public class AppointmentOverlapCharacterizationTests
         await using SchedulingWorld w = await SchedulingWorld.Create(nameof(ClientOverlap_CancelledAppointmentDoesNotBlockTheClient));
         Employee secondEmployee = await w.AddEmployee("Second");
         AppointmentDto existing = await w.CreateAppointment(SchedulingWorld.Future(10));
-        await w.Appointments.Cancel(w.OrganizationId, w.ActorUserId, true, existing.Id, new AppointmentCancelRequest { CancellationReason = "test" });
+        await w.Appointments.Cancel(w.OrganizationId, w.ActorUserId, true, existing.Id, SchedulingWorld.BusinessCancel("test"));
 
         AppointmentDto replacement = await w.CreateAppointment(SchedulingWorld.Future(10), employee: secondEmployee);
 
@@ -325,7 +325,7 @@ public class AppointmentOverlapCharacterizationTests
         Client other = await w.AddClient("Other", "Client");
         Employee secondEmployee = await w.AddEmployee("Second");
         AppointmentDto existing = await w.CreateAppointment(SchedulingWorld.Future(10), room: room);
-        await w.Appointments.Cancel(w.OrganizationId, w.ActorUserId, true, existing.Id, new AppointmentCancelRequest { CancellationReason = "test" });
+        await w.Appointments.Cancel(w.OrganizationId, w.ActorUserId, true, existing.Id, SchedulingWorld.BusinessCancel("test"));
 
         AppointmentDto reuse = await w.CreateAppointment(SchedulingWorld.Future(10), client: other, employee: secondEmployee, room: room);
 

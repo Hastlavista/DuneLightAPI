@@ -181,6 +181,16 @@ public class CompanyHandler : ICompanyHandler
             .Where(c => c.OrganizationId == organizationId && c.CompanyId == id)
             .Select(c => 1);
 
+        // P1: dodjela politike otkazivanja (cancellation_policy_assignments.company_id, Restrict FK).
+        IQueryable<int> cancellationPolicyAssignments = context.CancellationPolicyAssignments
+            .Where(a => a.OrganizationId == organizationId && a.CompanyId == id)
+            .Select(a => 1);
+
+        // P2: odabrana poslovnica u verziji plana članarine (Restrict FK; verzije se nikad ne brišu).
+        IQueryable<int> membershipPlanCompanies = context.MembershipPlanVersionCompanies
+            .Where(c => c.OrganizationId == organizationId && c.CompanyId == id)
+            .Select(c => 1);
+
         IQueryable<int> anyReference = priceListItems
             .Union(rooms)
             .Union(resources)
@@ -192,7 +202,9 @@ public class CompanyHandler : ICompanyHandler
             .Union(workingHoursTemplates)
             .Union(companyHolidays)
             .Union(commissionEntries)
-            .Union(checkouts);
+            .Union(checkouts)
+            .Union(cancellationPolicyAssignments)
+            .Union(membershipPlanCompanies);
 
         return await anyReference.AnyAsync();
     }

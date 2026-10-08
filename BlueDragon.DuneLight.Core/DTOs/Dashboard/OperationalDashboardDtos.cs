@@ -69,6 +69,7 @@ public class DashboardBookingSummaryDto
     public BookingStatusSummary BookingStatus { get; set; }
     public decimal PaidAmount { get; set; }
     public decimal OutstandingAmount { get; set; }
+    public decimal SurplusAmount { get; set; }
     public bool IsPaid { get; set; }
 
     /// <summary>True kad je booking stvarno paket-namiren (Booking.PackageCoverageApplied &amp;&amp; ne
@@ -148,11 +149,12 @@ public class DashboardFinancialDto
     /// Company — vidi spec section 15. Cash/payment aktivnost, NE profit/računovodstveni prihod.</summary>
     public decimal TodayRevenue { get; set; }
 
-    /// <summary>Zbroj ParticipationSettlement.OutstandingAmount (Phase D3B3B) preko svih Booking redaka na rasporedu
-    /// odabranog dana (isključujući Cancelled — vidi spec section 17), ne novi izračun.</summary>
+    /// <summary>P1: zbroj POZITIVNOG duga (max(Outstanding, 0)) svih sudjelovanja na rasporedu odabranog dana, iz jedine
+    /// derivacije ParticipationSettlement (otkazano/izostalo sudjelovanje duguje samo aktivnu naknadu politike); preplata
+    /// jednog sudjelovanja ne umanjuje tuđi dug.</summary>
     public decimal OutstandingAmount { get; set; }
 
-    /// <summary>Broj Booking redaka (raspored odabranog dana, bez Cancelled) čiji je OutstandingAmount &gt; 0.</summary>
+    /// <summary>Broj Booking redaka (raspored odabranog dana) s barem jednim sudjelovanjem čiji je dug &gt; 0.</summary>
     public int UnpaidBookingCount { get; set; }
 
     /// <summary>Svi TRENUTNO Open Checkouti ove Company (bez obzira na datum kreiranja) — vidi spec section 18.</summary>

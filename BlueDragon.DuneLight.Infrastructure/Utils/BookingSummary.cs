@@ -56,8 +56,10 @@ public static class BookingSummary
 /// <summary>
 /// Phase M0 — izvedeni komercijalni sažetak Bookinga preko njegovih sudjelovanja (ParticipationSettlement po svakom):
 /// FinalPrice = Σ cijena; SuggestedPrice = Σ predloženih; MonetarySettled = Σ aktivnih novčanih alokacija;
-/// Outstanding = Σ preostalog duga (svaki ≥ 0); FullySettled = SVAKO sudjelovanje ima preostali dug 0. Paket nije novac:
-/// sudjelovanje pokriveno paketom ima dug 0 i ne doprinosi MonetarySettled (broji se u PackageCoveredCount).
+/// P1: Outstanding = Σ POZITIVNOG duga sudjelovanja — preplata jednog sudjelovanja nikad ne umanjuje dug drugog (D7: surplus
+/// nije kredit ni raspoloživ iznos; isto pravilo kao dashboard, odluka 2026-10-06); Surplus = Σ preplata sudjelovanja
+/// (informativno, odvojeno); FullySettled = SVAKO sudjelovanje ima dug &lt;= 0. Sirovi (neklampani) dug je na sudjelovanju. Paket nije novac: sudjelovanje pokriveno paketom ima dug 0 i ne
+/// doprinosi MonetarySettled (broji se u PackageCoveredCount).
 /// </summary>
 public readonly record struct BookingCommercialSummary(
     decimal FinalPrice,
@@ -65,6 +67,7 @@ public readonly record struct BookingCommercialSummary(
     bool AnyManuallyOverridden,
     decimal MonetarySettled,
     decimal Outstanding,
+    decimal Surplus,
     bool FullySettled,
     int PackageCoveredCount,
     int ParticipationCount)
@@ -81,9 +84,10 @@ public readonly record struct BookingCommercialSummary(
             rows.Sum(r => r.Participation.SuggestedAmount),
             rows.Any(r => r.Participation.IsAmountManuallyOverridden),
             rows.Sum(r => r.Settlement.SettledAmount),
-            rows.Sum(r => r.Settlement.OutstandingAmount),
+            rows.Sum(r => Math.Max(r.Settlement.OutstandingAmount, 0m)),
+            rows.Sum(r => r.Settlement.SurplusAmount),
             rows.All(r => r.Settlement.FullySettled),
-            rows.Count(r => r.Settlement.EntitlementCovered),
+            rows.Count(r => PackageConsumptions.IsSettledByPackage(r.Participation)),
             rows.Count);
     }
 }
@@ -111,6 +115,7 @@ public static class BookingReadModel
             IsAmountManuallyOverridden = commercial.AnyManuallyOverridden,
             PaidAmount = commercial.MonetarySettled,
             OutstandingAmount = commercial.Outstanding,
+            SurplusAmount = commercial.Surplus,
             IsPaid = commercial.FullySettled,
             ClientPackageId = coverage.ClientPackageId,
             CoverageType = coverage.CoverageType,
@@ -140,16 +145,30 @@ public static class BookingReadModel
             SuggestedAmount = participation.SuggestedAmount,
             IsAmountManuallyOverridden = participation.IsAmountManuallyOverridden,
             PaidAmount = settlement.SettledAmount,
+            MonetaryDue = settlement.MonetaryDue,
             OutstandingAmount = settlement.OutstandingAmount,
+            SurplusAmount = settlement.SurplusAmount,
             IsPaid = settlement.FullySettled,
-            PackageCovered = settlement.EntitlementCovered,
+            PackageCovered = PackageConsumptions.IsSettledByPackage(participation),
             ClientPackageId = PackageConsumptions.CoverageOf(participation, form).ClientPackageId,
+            CancellationInitiator = participation.CancellationInitiator,
+            CancelledAt = participation.CancelledAt,
+            CancelledBy = participation.CancelledBy,
             CancellationReason = participation.CancellationReason,
             IsLateCancellation = participation.IsLateCancellation,
+            CancellationPolicyId = participation.CancellationPolicyId,
+            CancellationPolicyVersion = participation.CancellationPolicyVersion,
+            AppliedCancellationWindowMinutes = participation.AppliedCancellationWindowMinutes,
+            NoShowAt = participation.NoShowAt,
+            NoShowBy = participation.NoShowBy,
+            NoShowReason = participation.NoShowReason,
+            PolicyConsequence = PolicyConsequences.ToDto(PolicyConsequences.LatestOf(participation)),
             BaseAmount = participation.BaseAmount,
             BaseAmountSource = participation.BaseAmountSource,
             PricingMode = participation.PricingMode,
-            PricingEmployeeId = participation.PricingEmployeeId
+            PricingEmployeeId = participation.PricingEmployeeId,
+            MembershipCoverage = MembershipCoverages.ToDto(participation.MembershipCoverage),
+            PriceAdjustment = MembershipCoverages.PriceAdjustmentOf(participation)
         };
     }
 }

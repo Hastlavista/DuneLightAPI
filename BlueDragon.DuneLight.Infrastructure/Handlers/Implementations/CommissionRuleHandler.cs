@@ -20,19 +20,18 @@ public class CommissionRuleHandler : ICommissionRuleHandler
         _databaseSettings = databaseSettings;
     }
 
-    public async Task<List<CommissionRule>> GetList(Guid organizationId, Guid? employeeId, CommissionSubjectType? subjectType, bool? isActive)
+    public async Task<List<CommissionRule>> GetList(
+        Guid organizationId, Guid? employeeId, CommissionRuleKind? kind, CommissionSubjectType? subjectType, bool? isActive)
     {
         await using DatabaseContext context = DatabaseContext.GenerateContext(_databaseSettings.ConnectionString);
 
-        IQueryable<CommissionRule> query = context.CommissionRules
-            .Include(r => r.Employee)
-            .Include(r => r.Service)
-            .Include(r => r.Product)
-            .Include(r => r.Package)
+        IQueryable<CommissionRule> query = WithDetails(context.CommissionRules)
             .Where(r => r.OrganizationId == organizationId);
 
         if (employeeId.HasValue)
             query = query.Where(r => r.EmployeeId == employeeId.Value);
+        if (kind.HasValue)
+            query = query.Where(r => r.Kind == kind.Value);
         if (subjectType.HasValue)
             query = query.Where(r => r.SubjectType == subjectType.Value);
         if (isActive.HasValue)
@@ -40,40 +39,35 @@ public class CommissionRuleHandler : ICommissionRuleHandler
 
         return await query
             .OrderBy(r => r.CreatedAt)
+            .ThenBy(r => r.EffectiveFrom)
             .ToListAsync();
     }
 
     public async Task<CommissionRule> GetById(Guid organizationId, Guid id)
     {
         await using DatabaseContext context = DatabaseContext.GenerateContext(_databaseSettings.ConnectionString);
-        return await context.CommissionRules
-            .Include(r => r.Employee)
-            .Include(r => r.Service)
-            .Include(r => r.Product)
-            .Include(r => r.Package)
+        return await WithDetails(context.CommissionRules)
             .SingleOrDefaultAsync(r => r.OrganizationId == organizationId && r.Id == id);
     }
 
-    public async Task<CommissionRule> GetActiveForSubject(
-        Guid organizationId, Guid employeeId, CommissionSubjectType subjectType, Guid? serviceId, Guid? productId, Guid? packageId)
+    public async Task<CommissionRule> GetVersionOn(
+        Guid organizationId, Guid employeeId, CommissionRuleKind kind, CommissionSubjectType subjectType, Guid? subjectId, DateOnly date)
     {
         await using DatabaseContext context = DatabaseContext.GenerateContext(_databaseSettings.ConnectionString);
-        return await context.CommissionRules.SingleOrDefaultAsync(r =>
-            r.OrganizationId == organizationId &&
-            r.EmployeeId == employeeId &&
-            r.SubjectType == subjectType &&
-            r.ServiceId == serviceId &&
-            r.ProductId == productId &&
-            r.PackageId == packageId &&
-            r.IsActive);
-    }
-
-    public async Task<List<CommissionRule>> GetAllActiveForEmployee(Guid organizationId, Guid employeeId)
-    {
-        await using DatabaseContext context = DatabaseContext.GenerateContext(_databaseSettings.ConnectionString);
-        return await context.CommissionRules
-            .Where(r => r.OrganizationId == organizationId && r.EmployeeId == employeeId && r.IsActive)
-            .ToListAsync();
+        IQueryable<CommissionRule> query = context.CommissionRules
+            .Include(r => r.Tiers)
+            .Where(r => r.OrganizationId == organizationId && r.EmployeeId == employeeId && r.Kind == kind &&
+                        r.SubjectType == subjectType && r.EffectiveFrom <= date);
+        query = subjectType switch
+        {
+            CommissionSubjectType.Service => query.Where(r => r.ServiceId == subjectId),
+            CommissionSubjectType.Product => query.Where(r => r.ProductId == subjectId),
+            CommissionSubjectType.Package => query.Where(r => r.PackageId == subjectId),
+            CommissionSubjectType.MembershipPlan => query.Where(r => r.MembershipPlanId == subjectId),
+            CommissionSubjectType.AllServices => query,
+            _ => throw new ArgumentOutOfRangeException(nameof(subjectType))
+        };
+        return await query.OrderByDescending(r => r.EffectiveFrom).FirstOrDefaultAsync();
     }
 
     public async Task Add(CommissionRule rule)
@@ -83,17 +77,29 @@ public class CommissionRuleHandler : ICommissionRuleHandler
         await context.SaveChangesAsync();
     }
 
-    public async Task Update(CommissionRule rule)
+    public async Task Update(CommissionRule rule, List<CommissionRuleTier> tiers = null)
     {
         await using DatabaseContext context = DatabaseContext.GenerateContext(_databaseSettings.ConnectionString);
-        context.CommissionRules.Update(rule);
+        await using var transaction = await context.Database.BeginTransactionAsync();
+        CommissionRule tracked = await context.CommissionRules
+            .Include(r => r.Tiers)
+            .SingleAsync(r => r.Id == rule.Id);
+        context.Entry(tracked).CurrentValues.SetValues(rule);
+        if (tiers != null)
+        {
+            context.CommissionRuleTiers.RemoveRange(tracked.Tiers);
+            await context.SaveChangesAsync();
+            context.CommissionRuleTiers.AddRange(tiers);
+        }
         await context.SaveChangesAsync();
+        await transaction.CommitAsync();
     }
 
     public async Task Delete(CommissionRule rule)
     {
         await using DatabaseContext context = DatabaseContext.GenerateContext(_databaseSettings.ConnectionString);
-        context.CommissionRules.Remove(rule);
+        CommissionRule tracked = await context.CommissionRules.SingleAsync(r => r.Id == rule.Id);
+        context.CommissionRules.Remove(tracked);
         await context.SaveChangesAsync();
     }
 
@@ -113,4 +119,12 @@ public class CommissionRuleHandler : ICommissionRuleHandler
             r.CalculationType == CommissionCalculationType.Percentage &&
             r.IsActive);
     }
+
+    private static IQueryable<CommissionRule> WithDetails(IQueryable<CommissionRule> rules) => rules
+        .Include(r => r.Employee)
+        .Include(r => r.Service)
+        .Include(r => r.Product)
+        .Include(r => r.Package)
+        .Include(r => r.MembershipPlan)
+        .Include(r => r.Tiers);
 }

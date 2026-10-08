@@ -16,10 +16,21 @@ namespace BlueDragon.DuneLight.API.Controllers.Groups;
 public class GroupsController : ControllerBase
 {
     private readonly IGroupService _groupService;
+    private readonly IGroupMembershipSkipService _membershipSkipService;
 
-    public GroupsController(IGroupService groupService)
+    public GroupsController(IGroupService groupService, IGroupMembershipSkipService membershipSkipService)
     {
         _groupService = groupService;
+        _membershipSkipService = membershipSkipService;
+    }
+
+    /// <summary>P2 (Q18/Q53) — članovi grupe preskočeni u generiranim terminima zbog duga članarine uz postavku "blokiraj
+    /// rezervaciju" (otvoreni i razriješeni: dodan nakon plaćanja, pun termin, sudar, već sudjeluje, nije primjenjivo).</summary>
+    [HttpGet("{id:guid}/membership-skips")]
+    [RequireGrant(Grants.GroupsView)]
+    public async Task<ActionResult<List<GroupMembershipSkipDto>>> GetMembershipSkips(Guid id)
+    {
+        return Ok(await _membershipSkipService.GetForGroup(this.CurrentOrganizationId(), id));
     }
 
     [HttpGet]

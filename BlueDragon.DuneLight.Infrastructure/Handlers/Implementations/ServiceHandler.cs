@@ -145,13 +145,36 @@ public class ServiceHandler : IServiceHandler
             .Where(s => s.OrganizationId == organizationId && s.ServiceId == id)
             .Select(s => 1);
 
+        // P1: dodjela politike otkazivanja (cancellation_policy_assignments.service_id, Restrict FK).
+        IQueryable<int> cancellationPolicyAssignments = context.CancellationPolicyAssignments
+            .Where(a => a.OrganizationId == organizationId && a.ServiceId == id)
+            .Select(a => 1);
+
+        // P2: pokrivena usluga ili limit usluge u verziji plana članarine (Restrict FK; verzije se nikad ne brišu).
+        IQueryable<int> membershipPlanServices = context.MembershipPlanVersionServices
+            .Where(s => s.OrganizationId == organizationId && s.ServiceId == id)
+            .Select(s => 1);
+
+        IQueryable<int> membershipPlanUsageLimits = context.MembershipPlanUsageLimits
+            .Where(l => l.OrganizationId == organizationId && l.ServiceId == id)
+            .Select(l => 1);
+
+        // P2 (2E): pravilo cjenovne pogodnosti za uslugu.
+        IQueryable<int> membershipPlanPriceBenefits = context.MembershipPlanPriceBenefits
+            .Where(b => b.OrganizationId == organizationId && b.ServiceId == id)
+            .Select(b => 1);
+
         IQueryable<int> anyReference = priceListItems
             .Union(segments)
             .Union(packageServiceItems)
             .Union(employeeServiceAssignments)
             .Union(clientPackageServiceEntries)
             .Union(groups)
-            .Union(commissionRules);
+            .Union(commissionRules)
+            .Union(cancellationPolicyAssignments)
+            .Union(membershipPlanServices)
+            .Union(membershipPlanUsageLimits)
+            .Union(membershipPlanPriceBenefits);
 
         return await anyReference.AnyAsync();
     }

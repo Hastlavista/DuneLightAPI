@@ -172,6 +172,22 @@ public class ClientPackageService : IClientPackageService, IPackageConsumptionLe
         if (!PackageConsumptionPolicy.ConsumesOn(timing, trigger))
             return null;
 
+        return await ConsumeCore(uow, organizationId, userId, participation, execution, clientPackageId,
+            PackageConsumptionTrigger.ServiceCompletion, consequenceId: null);
+    }
+
+    public async Task<PackageConsumption> ConsumeForPolicyConsequence(
+        IUnitOfWork uow, Guid organizationId, Guid userId, BookingSegmentParticipation participation, ParticipationExecutionContext execution,
+        Guid clientPackageId, Guid consequenceId)
+    {
+        return await ConsumeCore(uow, organizationId, userId, participation, execution, clientPackageId,
+            PackageConsumptionTrigger.PolicyConsequence, consequenceId);
+    }
+
+    private async Task<PackageConsumption> ConsumeCore(
+        IUnitOfWork uow, Guid organizationId, Guid userId, BookingSegmentParticipation participation, ParticipationExecutionContext execution,
+        Guid clientPackageId, PackageConsumptionTrigger trigger, Guid? consequenceId)
+    {
         ArgumentNullException.ThrowIfNull(participation);
         PackageConsumption active = PackageConsumptions.ActiveOf(participation);
         if (active != null)
@@ -199,7 +215,10 @@ public class ClientPackageService : IClientPackageService, IPackageConsumptionLe
 
         // F-08: valjanost na DATUM IZVOĐENJA usluge (lokalni datum poslovnice), ne na trenutni sat.
         OrganizationCalendar calendar = await _organizationCalendarService.GetCompanyCalendar(organizationId, execution.CompanyId);
-        bool counted = IsCounted(clientPackage, execution.ServiceId);
+        bool counted = PackageCounting.IsCounted(clientPackage, execution.ServiceId);
+        // P1 (D6): kazna politike troši isključivo jedinicu BROJENOG paketa — neograničen paket nikad nije izvor kazne.
+        if (trigger == PackageConsumptionTrigger.PolicyConsequence && !counted)
+            throw new BusinessRuleException(ErrorCodes.PackageNotEligible, "Neograničen paket ne može podmiriti kaznu politike otkazivanja.");
         DateOnly serviceDate = PackageValidity.ServiceDate(calendar, execution.StartsAt);
         ClientPackageEntryMutator.Deduct(clientPackage, execution.ServiceId, serviceDate);
 
@@ -219,6 +238,8 @@ public class ClientPackageService : IClientPackageService, IPackageConsumptionLe
             ServiceStartsAt = execution.StartsAt,
             ServiceDate = serviceDate,
             Status = PackageConsumptionStatus.Consumed,
+            Trigger = trigger,
+            ParticipationPolicyConsequenceId = consequenceId,
             CreatedAt = now,
             CreatedBy = userId
         };
@@ -249,16 +270,6 @@ public class ClientPackageService : IClientPackageService, IPackageConsumptionLe
         clientPackage.UpdatedBy = userId;
         await _clientPackageHandler.Update(uow, clientPackage);
         return true;
-    }
-
-    /// <summary>Ima li paket brojač za ovu uslugu (potrošnja skida 1 jedinicu) ili je neograničen (0 jedinica).</summary>
-    private static bool IsCounted(ClientPackage clientPackage, Guid serviceId)
-    {
-        if (clientPackage.EntryMode == PackageEntryMode.SharedPool)
-            return clientPackage.RemainingSharedEntries.HasValue;
-
-        ClientPackageServiceEntry entry = clientPackage.ServiceEntries.FirstOrDefault(e => e.ServiceId == serviceId);
-        return entry?.RemainingEntries != null;
     }
 
     /// <summary>Active/Depleted/Expired -> Cancelled. Terminalno (nema "uncancel") — vidi ClientPackageEntryMutator.Return,

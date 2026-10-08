@@ -1,13 +1,15 @@
 namespace BlueDragon.DuneLight.Core.Enums;
 
 /// <summary>
-/// Phase D3B3A — zašto je potrošnja paketa poništena. Odgovara postojećim putanjama vraćanja ulaska:
-/// Cancellation/NoShow (otkazivanje/izostanak uz eksplicitan ili grupni povrat ulaska) i CompletionCorrection
-/// (administrativna korekcija Completed -&gt; Confirmed, individualna ili grupna).
+/// Phase D3B3A — zašto je potrošnja paketa poništena. Cancellation/NoShow/CompletionCorrection: korekcija statusa koja
+/// poništava potrošnju izvršenja usluge (prema ciljnom statusu). P1: PolicyConsequenceReversed (posljedica politike je
+/// poništena korekcijom) i PolicyConsequenceWaived (posljedica je otpisana) vraćaju jedinicu potrošenu kao kaznu.
 /// </summary>
 public enum PackageConsumptionReversalReason
 {
     Cancellation,
     NoShow,
-    CompletionCorrection
+    CompletionCorrection,
+    PolicyConsequenceReversed,
+    PolicyConsequenceWaived
 }

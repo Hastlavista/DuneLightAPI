@@ -60,12 +60,15 @@ namespace BlueDragon.DuneLight.API;
 
 public class Startup
 {
-    public Startup(IConfiguration configuration)
+    public Startup(IConfiguration configuration, IWebHostEnvironment environment)
     {
         Configuration = configuration;
+        Environment = environment;
     }
 
     public IConfiguration Configuration { get; }
+
+    public IWebHostEnvironment Environment { get; }
 
     #region ServicesConfiguration
 
@@ -76,7 +79,13 @@ public class Startup
         services.AddCors();
         services.AddControllers()
             .AddJsonOptions(ConfigureJsonOptions)
-            .ConfigureApiBehaviorOptions(ConfigureApiBehavior);
+            .ConfigureApiBehaviorOptions(ConfigureApiBehavior)
+            // Razvojni alati ([DevelopmentOnly], npr. simulacija vremena članarina) izvan Developmenta fizički ne postoje (404).
+            .ConfigureApplicationPartManager(manager =>
+            {
+                if (!Environment.IsDevelopment())
+                    manager.FeatureProviders.Add(new Development.DevelopmentOnlyControllers());
+            });
         services.AddOptions();
         services.AddMemoryCache();
 
@@ -97,6 +106,10 @@ public class Startup
 
         OutboxSettings outboxSettings = Configuration.GetSection("OutboxSettings").Get<OutboxSettings>() ?? new OutboxSettings();
         services.AddSingleton(outboxSettings);
+
+        MembershipRenewalSettings membershipRenewalSettings =
+            Configuration.GetSection("MembershipRenewalSettings").Get<MembershipRenewalSettings>() ?? new MembershipRenewalSettings();
+        services.AddSingleton(membershipRenewalSettings);
 
         PlatformSettings platformSettings = Configuration.GetSection("PlatformSettings").Get<PlatformSettings>() ?? new PlatformSettings();
         services.AddSingleton(platformSettings);
@@ -234,8 +247,17 @@ public class Startup
 
         services.AddScoped<IAppointmentService, AppointmentService>();
         services.AddScoped<IBookingService, BookingService>();
-        // Phase M1H: ista jezgra prijelaza sudjelovanja za poziv iz tuđe transakcije (CompleteNow).
+        // Phase M1H: ista jezgra prijelaza sudjelovanja za poziv iz tuđe transakcije (CompleteNow, P1 appointment-wide kaskada).
         services.AddScoped<IParticipationLifecycleService, BookingService>();
+        // P1 (ADR-0015 – ADR-0018): politike otkazivanja (upravljanje + jedini resolver) i evaluacija politike po sudjelovanju.
+        services.AddScoped<ICancellationPolicyService, CancellationPolicyService>();
+        services.AddScoped<ICancellationPolicyResolver, CancellationPolicyService>();
+        services.AddScoped<IMembershipPlanService, MembershipPlanService>();
+        services.AddScoped<IClientMembershipService, ClientMembershipService>();
+        services.AddScoped<IMembershipRenewalService, MembershipRenewalService>();
+        services.AddScoped<IMembershipCoverageService, MembershipCoverageService>();
+        services.AddScoped<IGroupMembershipSkipService, GroupMembershipSkipService>();
+        services.AddScoped<IParticipationPolicyService, ParticipationPolicyService>();
         services.AddScoped<IScheduleBreakService, ScheduleBreakService>();
 
         // Jedan WaitlistService, dva sučelja (IWaitlistService za kontrolere, IWaitlistPromotionService za
@@ -323,6 +345,9 @@ public class Startup
 
         services.AddHostedService<OutboxProcessorService>();
 
+        // P2 (2C) — obnova članarina (periodi i zaduženja); idempotentna.
+        services.AddHostedService<MembershipRenewalBackgroundService>();
+
         #endregion
 
         #region Platform Management
@@ -344,6 +369,9 @@ public class Startup
 
         services.AddSingleton<ICompanyHandler, CompanyHandler>();
         services.AddSingleton<IRoomHandler, RoomHandler>();
+        services.AddSingleton<ICancellationPolicyHandler, CancellationPolicyHandler>();
+        services.AddSingleton<IMembershipPlanHandler, MembershipPlanHandler>();
+        services.AddSingleton<IClientMembershipHandler, ClientMembershipHandler>();
         services.AddSingleton<IResourceHandler, ResourceHandler>();
         services.AddSingleton<IAppointmentSegmentHandler, AppointmentSegmentHandler>();
         services.AddSingleton<IBookingSegmentParticipationHandler, BookingSegmentParticipationHandler>();

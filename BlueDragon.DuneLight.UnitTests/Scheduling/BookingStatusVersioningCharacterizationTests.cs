@@ -167,7 +167,7 @@ public class BookingStatusVersioningCharacterizationTests
     public async Task Individual_NoShowCorrectionThenNoShowAgain_ProducesANewOccurrenceKeyForTheOutbox()
     {
         await using SchedulingWorld w = await SchedulingWorld.Create(nameof(Individual_NoShowCorrectionThenNoShowAgain_ProducesANewOccurrenceKeyForTheOutbox));
-        AppointmentDto created = await w.CreateAppointment(SchedulingWorld.Future(10));
+        AppointmentDto created = await w.CreateAppointment(SchedulingWorld.Past(10));
         Guid participationId = created.Bookings.Single().Participations.Single().Id; // M0: occurrences are per participation
 
         await w.SetBookingStatus(created.Id, w.Client, BookingStatus.NoShow);      // 1
@@ -199,17 +199,17 @@ public class BookingStatusVersioningCharacterizationTests
     }
 
     [Fact]
-    public async Task Individual_RepeatingATerminalStatus_IsRejected_UnlikeGroupWhichIsIdempotent()
+    public async Task Individual_RepeatingATerminalStatus_IsATrueNoOp_LikeGroup()
     {
-        await using SchedulingWorld w = await SchedulingWorld.Create(nameof(Individual_RepeatingATerminalStatus_IsRejected_UnlikeGroupWhichIsIdempotent));
+        // CHANGED in P1 (D12, intentional): Individual repeat used to be ALREADY_COMPLETED; same status is now a true no-op.
+        await using SchedulingWorld w = await SchedulingWorld.Create(nameof(Individual_RepeatingATerminalStatus_IsATrueNoOp_LikeGroup));
         AppointmentDto created = await w.CreateAppointment(SchedulingWorld.Future(10));
         await w.SetBookingStatus(created.Id, w.Client, BookingStatus.Cancelled);
 
-        // Individual: Cancelled → Cancelled is an error (ALREADY_COMPLETED code, "already terminal"), version untouched.
-        await SchedulingAssert.BusinessRule(ErrorCodes.AlreadyCompleted,
-            () => w.SetBookingStatus(created.Id, w.Client, BookingStatus.Cancelled));
+        await w.SetBookingStatus(created.Id, w.Client, BookingStatus.Cancelled);
 
         Assert.Equal(1, (await w.LoadBooking(created.Id, w.Client)).StatusVersion);
+        Assert.Single(await w.LoadOutbox());
     }
 
     #endregion

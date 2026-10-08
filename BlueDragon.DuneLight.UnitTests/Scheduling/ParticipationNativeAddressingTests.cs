@@ -47,7 +47,7 @@ public class ParticipationNativeAddressingTests
     }
 
     private static Task<BookingDto> SetParticipation(SchedulingWorld w, Guid participationId, BookingStatus status) =>
-        w.Bookings.SetParticipationStatus(w.OrganizationId, w.ActorUserId, true, participationId, new BookingSetStatusRequest { Status = status });
+        w.Bookings.SetParticipationStatus(w.OrganizationId, w.ActorUserId, true, participationId, new BookingSetStatusRequest { Status = status, CancellationInitiator = status == BookingStatus.Cancelled ? CancellationInitiator.Client : null });
 
     private static BookingSegmentParticipation P(ParticipationStatus status, decimal amount = 0m) => new()
     {
@@ -189,7 +189,7 @@ public class ParticipationNativeAddressingTests
         await using SchedulingWorld _ = w;
 
         BookingDto dto = await w.Bookings.CancelBooking(w.OrganizationId, w.ActorUserId, true, created.Id, w.Client.Id.Value,
-            new BookingCancelRequest { CancellationReason = "client left" });
+            SchedulingWorld.ClientCancel("client left"));
 
         Assert.Equal(BookingStatusSummary.Cancelled, dto.Status);
         List<BookingSegmentParticipation> rows = await w.LoadParticipations(created.Id, w.Client);
@@ -208,20 +208,20 @@ public class ParticipationNativeAddressingTests
     {
         (SchedulingWorld w, AppointmentDto created, Guid first, Guid second) = await TwoParticipations(nameof(BookingWideCancel_LeavesTerminalParticipationsAsHistory_AndVersionsAdvanceIndependently));
         await using SchedulingWorld _ = w;
-        await SetParticipation(w, first, BookingStatus.NoShow);       // first: v1 NoShow
+        await SetParticipation(w, first, BookingStatus.Completed);    // first: v1 Completed
         await SetParticipation(w, first, BookingStatus.Confirmed);    // first: v2 Confirmed (correction)
-        await SetParticipation(w, first, BookingStatus.NoShow);       // first: v3 NoShow
+        await SetParticipation(w, first, BookingStatus.Completed);    // first: v3 Completed
 
-        BookingDto dto = await w.Bookings.CancelBooking(w.OrganizationId, w.ActorUserId, true, created.Id, w.Client.Id.Value, new BookingCancelRequest());
+        BookingDto dto = await w.Bookings.CancelBooking(w.OrganizationId, w.ActorUserId, true, created.Id, w.Client.Id.Value, SchedulingWorld.ClientCancel());
 
         List<BookingSegmentParticipation> rows = await w.LoadParticipations(created.Id, w.Client);
-        Assert.Equal((ParticipationStatus.NoShow, 3), (rows.Single(p => p.Id == first).Status, rows.Single(p => p.Id == first).StatusVersion));
+        Assert.Equal((ParticipationStatus.Completed, 3), (rows.Single(p => p.Id == first).Status, rows.Single(p => p.Id == first).StatusVersion));
         Assert.Equal((ParticipationStatus.Cancelled, 1), (rows.Single(p => p.Id == second).Status, rows.Single(p => p.Id == second).StatusVersion));
-        Assert.Equal(BookingStatusSummary.Mixed, dto.Status); // NoShow + Cancelled
+        Assert.Equal(BookingStatusSummary.Mixed, dto.Status); // Completed + Cancelled
 
         // Nothing active left on a multi-participation Booking: the Booking-wide command refuses instead of guessing.
-        await SchedulingAssert.BusinessRule(ErrorCodes.AlreadyCompleted,
-            () => w.Bookings.CancelBooking(w.OrganizationId, w.ActorUserId, true, created.Id, w.Client.Id.Value, new BookingCancelRequest()));
+        await SchedulingAssert.BusinessRule(ErrorCodes.NoActiveParticipations /* P1 (D12) */,
+            () => w.Bookings.CancelBooking(w.OrganizationId, w.ActorUserId, true, created.Id, w.Client.Id.Value, SchedulingWorld.ClientCancel()));
     }
 
     [Fact]
@@ -231,14 +231,13 @@ public class ParticipationNativeAddressingTests
         AppointmentDto created = await w.CreateAppointment(SchedulingWorld.Future(10));
         Guid participationId = created.Bookings.Single().Participations.Single().Id;
 
-        BookingDto dto = await w.Bookings.CancelBooking(w.OrganizationId, w.ActorUserId, true, created.Id, w.Client.Id.Value, new BookingCancelRequest());
+        BookingDto dto = await w.Bookings.CancelBooking(w.OrganizationId, w.ActorUserId, true, created.Id, w.Client.Id.Value, SchedulingWorld.ClientCancel());
         Assert.Equal(BookingStatusSummary.Cancelled, dto.Status);
         Assert.Equal($"booking-cancelled:{participationId}:1", Assert.Single(await w.LoadOutbox()).IdempotencyKey);
 
-        // Same single-participation semantics as before M0: with no active participation left the command delegates to the
-        // participation command, which (as before) rejects a repeat on a terminal individual participation.
-        await SchedulingAssert.BusinessRule(ErrorCodes.AlreadyCompleted,
-            () => w.Bookings.CancelBooking(w.OrganizationId, w.ActorUserId, true, created.Id, w.Client.Id.Value, new BookingCancelRequest()));
+        // CHANGED in P1 (D12/D13): with nothing active left the Booking-wide command returns NO_ACTIVE_PARTICIPATIONS.
+        await SchedulingAssert.BusinessRule(ErrorCodes.NoActiveParticipations,
+            () => w.Bookings.CancelBooking(w.OrganizationId, w.ActorUserId, true, created.Id, w.Client.Id.Value, SchedulingWorld.ClientCancel()));
         Assert.Equal(1, (await w.LoadBooking(created.Id, w.Client)).StatusVersion);
     }
 
@@ -314,6 +313,8 @@ public class ParticipationNativeAddressingTests
         {
             BookingSegmentParticipation b = await db.BookingSegmentParticipations.SingleAsync(p => p.Id == second);
             b.Status = ParticipationStatus.Confirmed;
+            b.CancellationInitiator = null; // P1: metadata always matches the status
+            b.CancelledAt = null;
             await db.SaveChangesAsync();
         }
         await SetParticipation(w, first, BookingStatus.Cancelled);
@@ -394,7 +395,7 @@ public class ParticipationNativeAddressingTests
     public async Task SingleParticipationReadModel_BookingFieldsEqualTheParticipation()
     {
         await using SchedulingWorld w = await SchedulingWorld.Create(nameof(SingleParticipationReadModel_BookingFieldsEqualTheParticipation));
-        AppointmentDto created = await w.CreateAppointment(SchedulingWorld.Future(10));
+        AppointmentDto created = await w.CreateAppointment(SchedulingWorld.Past(10));
         await w.PayBookingViaCheckout(created.Bookings.Single().Id, w.Client, 20m);
         await w.SetBookingStatus(created.Id, w.Client, BookingStatus.NoShow, cancellationReason: "sick");
 
@@ -404,9 +405,15 @@ public class ParticipationNativeAddressingTests
         Assert.Equal(BookingStatusSummary.NoShow, dto.Status);
         Assert.Equal(BookingStatus.NoShow, p.Status);
         Assert.Equal((p.Amount, p.SuggestedAmount, p.IsAmountManuallyOverridden), (dto.Amount, dto.SuggestedAmount, dto.IsAmountManuallyOverridden));
-        Assert.Equal((p.PaidAmount, p.OutstandingAmount, p.IsPaid), (dto.PaidAmount, dto.OutstandingAmount, dto.IsPaid));
-        Assert.Equal((20m, 30m, false), (dto.PaidAmount, dto.OutstandingAmount, dto.IsPaid));
-        Assert.Equal(("sick", "sick"), (p.CancellationReason, dto.CancellationReason));
+        Assert.Equal((p.PaidAmount, p.IsPaid), (dto.PaidAmount, dto.IsPaid));
+        // CHANGED in P1 (D5/D7): a no-show under the neutral default policy owes nothing — the 20 paid is surplus, not credit.
+        // The participation carries the raw debt (-20); the Booking sums only positive debt (a surplus is never netted).
+        Assert.Equal((20m, -20m, true), (p.PaidAmount, p.OutstandingAmount, p.IsPaid));
+        Assert.Equal((20m, 0m, true), (dto.PaidAmount, dto.OutstandingAmount, dto.IsPaid));
+        Assert.Equal((20m, 20m), (p.SurplusAmount, dto.SurplusAmount));
+        Assert.Equal(0m, p.MonetaryDue);
+        Assert.Equal("sick", p.NoShowReason);
+        Assert.Null(dto.CancellationReason);
         Assert.Single(dto.Payments);
     }
 

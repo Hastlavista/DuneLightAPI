@@ -228,6 +228,27 @@ public class GenerateGroupAppointmentsResult
     public int CreatedCount { get; set; }
     public int SkippedCount { get; set; }
     public List<AppointmentScheduleCellDto> Created { get; set; } = new();
+
+    /// <summary>P2 (Q18) — članovi grupe preskočeni zbog duga članarine uz postavku "blokiraj rezervaciju" (ostaju članovi
+    /// grupe); popis za recepciju, po segmentu occurrencea.</summary>
+    public List<GroupMembershipSkipDto> MembershipSkips { get; set; } = new();
+}
+
+/// <summary>P2 (Q18/Q53) — član grupe preskočen u segmentu occurrencea zbog duga članarine i (kad je riješeno) kako.</summary>
+public class GroupMembershipSkipDto
+{
+    public Guid Id { get; set; }
+    public Guid GroupId { get; set; }
+    public Guid AppointmentId { get; set; }
+    public Guid AppointmentSegmentId { get; set; }
+    public DateTimeOffset PlannedStart { get; set; }
+    public Guid ClientId { get; set; }
+    public Guid ClientMembershipId { get; set; }
+    public DateTimeOffset SkippedAt { get; set; }
+    /// <summary>Null = još preskočen (čeka plaćanje duga); CapacityFull/Conflict = ostaje na popisu recepciji.</summary>
+    public GroupMembershipSkipResolution? Resolution { get; set; }
+    public DateTimeOffset? ResolvedAt { get; set; }
+    public Guid? ParticipationId { get; set; }
 }
 
 /// <summary>Za dopunu Klijent detalja — grupe čiji je klijent član (aktivno i povijesno).</summary>

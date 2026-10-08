@@ -168,7 +168,7 @@ public class AppointmentsController : ControllerBase
 
     [HttpPost("{id:guid}/no-show")]
     [RequireGrant(Grants.AppointmentsWriteOwn, Grants.AppointmentsWriteAll)]
-    public async Task<ActionResult<AppointmentDto>> MarkNoShow(Guid id, [FromBody] AppointmentCancelRequest request)
+    public async Task<ActionResult<AppointmentDto>> MarkNoShow(Guid id, [FromBody] NoShowRequest request)
     {
         return Ok(await _appointmentService.MarkNoShow(
             this.CurrentOrganizationId(), this.CurrentUserId(), this.HasGrant(Grants.AppointmentsWriteAll), id, request));

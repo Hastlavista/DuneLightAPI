@@ -14,5 +14,12 @@ public enum CommissionSourceType
     IndividualService,
     GroupService,
     ProductSale,
-    PackageSale
+    PackageSale,
+
+    /// <summary>P2 (2F, Q42) — prva prodaja članarine (ClientMembershipId); nastaje kad su prvo zaduženje perioda i početna
+    /// naknada konačni, na Checkout Complete ili otpisu.</summary>
+    MembershipSale,
+
+    /// <summary>P2 (2F, Q38) — plaćena P1 naknada kasnog otkaza / izostanka individualne sesije (posljedica politike).</summary>
+    PolicyFee
 }

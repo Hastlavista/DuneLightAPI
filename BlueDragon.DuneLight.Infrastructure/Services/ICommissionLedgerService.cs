@@ -10,50 +10,65 @@ namespace BlueDragon.DuneLight.Infrastructure.Services;
 
 /// <summary>
 /// Infrastructure-only strana provizije — metode s <see cref="IUnitOfWork"/> parametrom pozivaju se IZ TUĐE
-/// transakcije (AppointmentService/CheckoutService), kao dio ISTE atomične cjeline kao prijelaz koji zarađuje
-/// proviziju (vidi spec section 27/28) — isti obrazac kao IPaymentLedgerService. Odvojeno od Core
-/// ICommissionService iz istog razloga kao ondje (Core ne smije referencirati Infrastructure.UnitOfWork).
-/// Jedan CommissionService implementira ICommissionRuleService, ICommissionService i ovo sučelje.
+/// transakcije (AppointmentService/BookingService/CheckoutService/ClientMembershipService), kao dio ISTE atomične cjeline kao
+/// prijelaz koji zarađuje ili stornira proviziju — isti obrazac kao IPaymentLedgerService. Odvojeno od Core ICommissionService
+/// iz istog razloga kao ondje (Core ne smije referencirati Infrastructure.UnitOfWork). Jedan CommissionService implementira
+/// ICommissionRuleService, ICommissionService i ovo sučelje.
 ///
-/// Svaka metoda je no-op (bez iznimke) ako ne postoji primjenjiva aktivna CommissionRule ili se ne može pouzdano
-/// odrediti Employee — nedostatak provizije NIKAD ne smije blokirati poslovni prijelaz koji je pokreće (vidi
-/// spec section 29). Idempotencija je DB-garantirana (unique indeksi na CommissionEntry, vidi migraciju), NE
-/// aplikacijskim "hvati pa preskoči" — pozivatelji već zaključavaju/provjeravaju status izvornog retka PRIJE
-/// poziva ovim metodama, pa je dupli upis u praksi nedostižan; ako se svejedno dogodi, cijela pozivateljeva
-/// transakcija (uklj. izvorni completion) se vraća natrag umjesto tihog djelomičnog uspjeha (vidi
-/// CommissionService.TryAdd, spec section 28/57).
+/// Svaka metoda je no-op (bez iznimke) ako ne postoji primjenjivo pravilo ili korisnik provizije — nedostatak provizije NIKAD
+/// ne blokira poslovni prijelaz koji je pokreće. Idempotencija je DB-garantirana (unique indeksi na CommissionEntry); dupli upis
+/// prekida cijelu pozivateljevu transakciju umjesto tihog djelomičnog uspjeha (vidi CommissionService.TryAdd).
+///
+/// P2 (2F, Vagaro model, ADR-0030): pravilo za uslugu ima prednost pred općim pravilom zaposlenika (sve individualne usluge);
+/// "Bez provizije" je izričit izbor; verzija se bira po datumu važenja (deaktivacija bez povratka na stariju); osnovica za
+/// odrađeno po postavkama "oduzmi popuste" / "oduzmi popuste članstva"; uz zapis snapshot postavki i objašnjenje izbora pravila.
 /// </summary>
 public interface ICommissionLedgerService
 {
-    /// <summary>Individualna usluga — jedno odrađeno sudjelovanje (Status upravo postavljen na Completed od pozivatelja,
-    /// PRIJE poziva ovoj metodi jer FK zahtijeva već persistiran redak) = jedan izvor. Phase M1G: za SVAKOG zaposlenika
-    /// segmenta (execution.EmployeeIds) neovisno — njegovo pravilo, njegov zapis; osnovica postotka = participation.Amount
-    /// (konačna cijena, neovisno o paket-pokriću/nenaplaćenosti). Izvor cijene (PricingEmployeeId) NIJE korisnik provizije.
-    /// SourceVersion = StatusVersion sudjelovanja; Booking samo kontekst (BookingId stupac).</summary>
+    /// <summary>Individualna usluga — jedno odrađeno sudjelovanje (Status upravo postavljen na Completed, pokriće članarinom i
+    /// potrošnja paketa već upisani u istoj transakciji) = jedan izvor. Za SVAKOG zaposlenika segmenta neovisno: njegovo pravilo za
+    /// uslugu ili opće pravilo važeće na lokalni datum sesije (kalendar poslovnice termina). Osnovica: cijena sesije (ručni iznos ako
+    /// je upisan, inače cjenik); "oduzmi popuste" / "oduzmi popuste članstva" uzimaju cijenu nakon prilagodbe; pokrivena sesija uz
+    /// "oduzmi popuste članstva" → 0; paket ne mijenja osnovicu. SourceVersion = StatusVersion sudjelovanja.</summary>
     Task GenerateForIndividualServiceCompletion(
         IUnitOfWork uow, Guid organizationId, ParticipationExecutionContext execution, BookingSegmentParticipation participation);
 
     /// <summary>Grupna sesija — zatvoren (close-out) SEGMENT grupnog occurrencea = izvor, PO SESIJI ne po sudioniku.
-    /// Phase M1G: za svakog zaposlenika segmenta jedan Fixed zapis (jedinstven po segmentu i zaposleniku). Segment bez
-    /// zaposlenika: ništa. Pravilo koje nije Fixed se NE evaluira — vraća se upozorenje GROUP_COMMISSION_RULE_NOT_SUPPORTED
-    /// (nema osnovice za postotak grupne sesije).</summary>
+    /// Za svakog zaposlenika segmenta jedan Fixed zapis po pravilu USLUGE važećem na datum sesije (opće pravilo i prekidači osnovice
+    /// se ne primjenjuju; "Bez provizije" = ništa). Pravilo koje nije Fixed se NE evaluira — upozorenje GROUP_COMMISSION_RULE_NOT_SUPPORTED.</summary>
     Task<List<WarningDto>> GenerateForGroupServiceCompletion(IUnitOfWork uow, Guid organizationId, SegmentExecutionContext execution);
 
-    /// <summary>Prodaja Producta/Packagea — jedna CheckoutItem stavka (Type=Product ili Package) na upravo
-    /// Completed Checkoutu = jedan izvor. Prodavatelj se razrješava iz completedByUserId preko postojeće
-    /// User→Employee veze (Employee.UserId, jedinstveno) — no-op za CIJELI checkout ako se ne razriješi na
-    /// aktivnog Employeea (vidi spec section 19/55, ne nagađa se preko imena/emaila).</summary>
+    /// <summary>Checkout Complete — provizija na prodaju: Product/Package stavke za zaposlenika ODABRANOG na stavci
+    /// (CheckoutItem.SaleCommissionEmployeeId, §18.1) po njegovom pravilu za prodaju važećem na datum nastanka; zatim provjera
+    /// prve prodaje članarine (Q42) za članstva čija su zaduženja stavke ovog checkouta. Booking stavke i zaduženja obnove: odabir
+    /// se samo sprema (Q52).</summary>
     Task GenerateForCheckoutCompletion(IUnitOfWork uow, Guid organizationId, Guid completedByUserId, Checkout checkout);
 
-    /// <summary>Reverzira (Earned -&gt; Reversed) SVE CommissionEntry zapise (Phase M1G: po jedan za svakog zaposlenika segmenta) zarađene TOČNO OVIM completionom individualnog
-    /// Bookinga, kao dio BookingService.ApplyIndividualCompletionCorrection (Individual Booking Completed -&gt;
-    /// Confirmed administrativna korekcija) — poziva se PRIJE nego sudjelovanje stvarno prijeđe na Confirmed
-    /// (pozivatelj još drži Booking pod FOR UPDATE lockom iz iste transakcije). No-op ako aktivan (Earned) zapis
-    /// ne postoji (nikad nije bilo primjenjivog CommissionRule kod completiona, ili je već reverziran — idempotentan
-    /// retry, vidi spec section 15/41). Identificira izvor isključivo preko sudjelovanja + Status=Earned
-    /// (ICommissionEntryHandler.GetActiveForParticipation), nikad po iznosu/datumu/zaposleniku. NE dira BaseAmount/
-    /// CalculationType/RuleValue/CommissionAmount (povijesni snapshot ostaje netaknut, vidi spec section 33) — samo
-    /// Status/ReversedAt/ReversedBy. Sljedeći completion istog Bookinga (nakon korekcije) zarađuje NOVI Earned
-    /// zapis s NOVIM SourceVersion (vidi CommissionEntry.cs), bez sudara sa ovim (sad Reversed) zapisom.</summary>
+    /// <summary>P2 (2F, Q42) — provizija na prvu prodaju članarine: kad su zaduženje prvog perioda i početna naknada PRVI PUT
+    /// konačni (poziva se na Checkout Complete i otpisu), jednom: osnovica = stvarno plaćeno na njima, korisnik = vrijednost s
+    /// članstva, pravilo za prodaju plana važeće na datum nastanka. Ishod se pamti: NoRecipient dopušta naknadnu dodjelu,
+    /// NoRule i ZeroBase su konačni. Zaključava članstvo.</summary>
+    Task EvaluateMembershipFirstSale(IUnitOfWork uow, Guid organizationId, Guid userId, Guid membershipId);
+
+    /// <summary>P2 (2F, Q38) — usklađuje proviziju za plaćenu P1 naknadu individualnog sudjelovanja s trenutnim stanjem: aktivna
+    /// posljedica s naknadom plaćenom u cijelosti → provizija (samo uz postavku WhenFeePaid u trenutku nastanka; pravilo za
+    /// odrađeno važeće na datum sesije kao za sesiju; postotak od naknade, Fixed ograničen na naknadu); naknada više nije
+    /// plaćena u cijelosti, oproštena ili poništena → storno aktivne provizije. Poziva se nakon promjene uplata, otpisa i
+    /// korekcije statusa. No-op za grupne termine i sudjelovanja bez posljedice.</summary>
+    Task SyncPolicyFeeCommission(IUnitOfWork uow, Guid organizationId, Guid userId, Guid participationId);
+
+    /// <summary>P2 (2F, §16.3) — promjena korisnika provizije na prvu prodaju članarine PRIJE nastanka provizije (naredba na
+    /// članstvu ili kroz stavku zaduženja prve prodaje u otvorenom checkoutu): jedini izvor je članstvo, promjena je događaj u
+    /// povijesti članstva (tko, kada, s koga na koga). Nakon nastanka → COMMISSION_SALE_ALREADY_EARNED (korekcija, Q50).
+    /// Zaključava članstvo. Vraća true kad se vrijednost promijenila.</summary>
+    Task<bool> SetMembershipSaleCommissionEmployee(
+        IUnitOfWork uow, Guid organizationId, Guid userId, Guid membershipId, Guid? employeeId, string via);
+
+    /// <summary>Reverzira (Earned -&gt; Reversed) SVE IndividualService zapise zarađene TOČNO OVIM completionom sudjelovanja, kao
+    /// dio BookingService korekcije Completed -&gt; drugi status. No-op ako aktivan zapis ne postoji. Snapshot se ne dira.</summary>
     Task ReverseForIndividualServiceCorrection(IUnitOfWork uow, Guid organizationId, Guid userId, BookingSegmentParticipation participation);
+
+    /// <summary>P2 (2F) — korisnik provizije na prodaju mora biti postojeći AKTIVAN zaposlenik u trenutku odabira (INACTIVE_EMPLOYEE).
+    /// Kasnija neaktivnost ne poništava odabir.</summary>
+    Task EnsureSelectableEmployee(Guid organizationId, Guid employeeId);
 }

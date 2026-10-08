@@ -278,7 +278,7 @@ public class RoomResourceCapacityTests
         AppointmentDto created = await w.CreateAppointment(SchedulingWorld.Future(10), room: room);
         await SchedulingAssert.BusinessRule(ErrorCodes.RoomCapacityExceeded, () => CreateInRoom(w, room, SchedulingWorld.Future(10)));
 
-        await w.Appointments.Cancel(w.OrganizationId, w.ActorUserId, true, created.Id, new AppointmentCancelRequest());
+        await w.Appointments.Cancel(w.OrganizationId, w.ActorUserId, true, created.Id, SchedulingWorld.BusinessCancel());
 
         Assert.Equal(0, await PeopleIn(w, room, SchedulingWorld.Future(10)));
         await CreateInRoom(w, room, SchedulingWorld.Future(10));
@@ -435,7 +435,7 @@ public class RoomResourceCapacityTests
         GroupDto group = await w.CreateGroup(svc, capacity: 5, room: room);
         await w.AddGroupMember(group, w.Client);
         Appointment occurrence = await w.GenerateSingleOccurrence(group);
-        await w.Appointments.Cancel(w.OrganizationId, w.ActorUserId, true, occurrence.Id.Value, new AppointmentCancelRequest());
+        await w.Appointments.Cancel(w.OrganizationId, w.ActorUserId, true, occurrence.Id.Value, SchedulingWorld.BusinessCancel());
 
         // The cancelled occurrence released trainer, client and room — another session takes the room.
         await CreateInRoom(w, room, SchedulingWorld.Future(10));
@@ -547,7 +547,7 @@ public class RoomResourceCapacityTests
         AppointmentDto unexecuted = await CreateWithResources(w, SchedulingWorld.Future(10), (tables, 2));
         AppointmentDto executed = await CreateWithResources(w, SchedulingWorld.Future(12), (tables, 2));
 
-        await w.Appointments.Cancel(w.OrganizationId, w.ActorUserId, true, unexecuted.Id, new AppointmentCancelRequest());
+        await w.Appointments.Cancel(w.OrganizationId, w.ActorUserId, true, unexecuted.Id, SchedulingWorld.BusinessCancel());
         await CreateWithResources(w, SchedulingWorld.Future(10), (tables, 2));
 
         await using (DatabaseContext db = w.NewDb())

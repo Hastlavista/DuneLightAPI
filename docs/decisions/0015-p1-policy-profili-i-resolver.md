@@ -1,6 +1,6 @@
 # ADR-0015: P1 — Imenovani verzionirani policy profili i resolver
 
-- **Status:** Prihvaćeno, nije implementirano
+- **Status:** Prihvaćeno, implementirano 2026-10-06 (migracije `20261026000000` – `20261026000002`)
 - **Datum:** 2026-10-05 (P1 Decision Record, odluke D1, D11, D13)
 
 > Izvor: [P1 Decision Record](../p1/P1_DECISION_RECORD.md) (2026-10-05).
@@ -33,7 +33,10 @@ default 1440) i nikakve konfigurabilne posljedice. Klijent traži politike koje 
 ## Posljedice
 - Nove tablice: `cancellation_policies`, `cancellation_policy_versions` (unique policy+version),
   `cancellation_policy_assignments` (unique po scopeu). Org default na `organization_settings` ili kao default dodjela
-  (implementacijski izbor).
+  (implementacijski izbor). **Implementirano:** zastavica `cancellation_policies.is_organization_default` (djelomični unique
+  po organizaciji, CHECK da je zadana aktivna); neutralni default nastaje pri registraciji (`AuthService.Register`), bez
+  migracijskog backfilla jer postojećih organizacija nema (P1 decision log 2026-10-06). Resolver:
+  `ICancellationPolicyResolver` (`CancellationPolicyService`); upravljanje: `/api/cancellation-policies`.
 - Uklanja se `organization_settings.cancellation_cutoff_minutes`, `PUT /api/organization/settings/cancellation-cutoff`,
   `OrganizationSettingsService.UpdateCancellationCutoff` i default konstanta.
 - Novi grantovi (samo Admin template): `catalog.cancellation-policies.view`, `catalog.cancellation-policies.manage`.

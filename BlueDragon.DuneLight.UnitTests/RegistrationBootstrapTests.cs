@@ -29,7 +29,8 @@ public class RegistrationBootstrapTests
         w.Resolve<IGrantGroupHandler>(),
         new JwtService(MultiSegmentHttpContractTests.Jwt),
         MultiSegmentHttpContractTests.Jwt,
-        w.Resolve<IUnitOfWorkFactory>());
+        w.Resolve<IUnitOfWorkFactory>(),
+        w.Resolve<ICancellationPolicyResolver>());
 
     [Fact]
     public async Task Register_CreatesExactlyOneSystemAdminGroup_WithTheWholeGrantCatalog_AndAssignsTheFounder()
@@ -63,6 +64,17 @@ public class RegistrationBootstrapTests
 
             // Organization initialization also creates the default roster types (application code, not a migration seed).
             Assert.True(await db.RosterTypes.AnyAsync(t => t.OrganizationId == organizationId));
+
+            // P1 (ADR-0015, D11): every organization always has a valid NEUTRAL default cancellation policy, created in the
+            // same transaction (application code, not a migration seed): 1440 min, None/None for both events.
+            var policy = Assert.Single(await db.CancellationPolicies.Include(p => p.Versions)
+                .Where(p => p.OrganizationId == organizationId).ToListAsync());
+            Assert.True(policy.IsOrganizationDefault && policy.IsActive);
+            var version = Assert.Single(policy.Versions);
+            Assert.Equal((1, 1440), (version.Version, version.CancellationWindowMinutes));
+            Assert.Equal(
+                (Core.Enums.CancellationFeeType.None, Core.Enums.CancellationPackageAction.None, Core.Enums.CancellationFeeType.None, Core.Enums.CancellationPackageAction.None),
+                (version.LateCancellationFeeType, version.LateCancellationPackageAction, version.NoShowFeeType, version.NoShowPackageAction));
         }
         finally
         {

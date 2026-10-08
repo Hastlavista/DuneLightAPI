@@ -32,15 +32,47 @@ public class CommissionEntryHandler : ICommissionEntryHandler
     public Task<List<CommissionEntry>> GetActiveForParticipation(IUnitOfWork uow, Guid organizationId, Guid participationId)
     {
         return uow.Context.CommissionEntries
-            .Where(e => e.OrganizationId == organizationId && e.BookingSegmentParticipationId == participationId && e.Status == CommissionEntryStatus.Earned)
+            .Where(e => e.OrganizationId == organizationId && e.BookingSegmentParticipationId == participationId &&
+                        e.SourceType == CommissionSourceType.IndividualService && e.Status == CommissionEntryStatus.Earned)
             .OrderBy(e => e.EmployeeId)
             .ToListAsync();
+    }
+
+    public Task<List<CommissionEntry>> GetForSource(IUnitOfWork uow, Guid organizationId, CommissionSourceType sourceType, Guid sourceId)
+    {
+        IQueryable<CommissionEntry> query = uow.Context.CommissionEntries
+            .Where(e => e.OrganizationId == organizationId && e.SourceType == sourceType);
+        query = sourceType switch
+        {
+            CommissionSourceType.PolicyFee => query.Where(e => e.BookingSegmentParticipationId == sourceId),
+            CommissionSourceType.MembershipSale => query.Where(e => e.ClientMembershipId == sourceId),
+            CommissionSourceType.ProductSale or CommissionSourceType.PackageSale => query.Where(e => e.CheckoutItemId == sourceId),
+            _ => throw new ArgumentOutOfRangeException(nameof(sourceType))
+        };
+        return query.OrderBy(e => e.SourceVersion).ThenBy(e => e.EmployeeId).ToListAsync();
+    }
+
+    public Task<CommissionEntry> GetForUpdate(IUnitOfWork uow, Guid organizationId, Guid id)
+    {
+        return uow.Context.CommissionEntries
+            .FromSqlInterpolated($"SELECT * FROM dunelight.commission_entries WHERE id = {id} AND organization_id = {organizationId} FOR UPDATE")
+            .SingleOrDefaultAsync();
     }
 
     public async Task Update(IUnitOfWork uow, CommissionEntry entry)
     {
         uow.Context.CommissionEntries.Update(entry);
         await uow.Context.SaveChangesAsync();
+    }
+
+    public async Task<CommissionEntry> GetById(Guid organizationId, Guid id)
+    {
+        await using DatabaseContext context = DatabaseContext.GenerateContext(_databaseSettings.ConnectionString);
+        return await context.CommissionEntries
+            .Include(e => e.Employee)
+            .Include(e => e.Company)
+            .AsNoTracking()
+            .SingleOrDefaultAsync(e => e.OrganizationId == organizationId && e.Id == id);
     }
 
     public async Task<(List<CommissionEntry> Items, int TotalCount)> GetPaged(Guid organizationId, CommissionEntryQuery query)
@@ -55,6 +87,7 @@ public class CommissionEntryHandler : ICommissionEntryHandler
             .Include(e => e.Employee)
             .Include(e => e.Company)
             .OrderByDescending(e => e.EarnedAt)
+            .ThenBy(e => e.Id)
             .Skip((query.Page - 1) * query.PageSize)
             .Take(query.PageSize)
             .ToListAsync();
@@ -64,7 +97,8 @@ public class CommissionEntryHandler : ICommissionEntryHandler
 
     /// <summary>Agregira U MEMORIJI nakon filtriranog dohvata (ne preko SQL GROUP BY) — namjerno, jer je
     /// provizija niskog volumena (vidi spec section 58) i ovo izbjegava krhkost EF Core prijevoda ugniježđenih
-    /// uvjetnih Sum() izraza preko GroupBy s navigation-property ključem.</summary>
+    /// uvjetnih Sum() izraza preko GroupBy s navigation-property ključem. P2 (2F): po događajima — zarada se broji u razdoblju
+    /// nastanka (bez obzira na kasniji storno), storno u razdoblju storna (bez obzira kad je provizija nastala).</summary>
     public async Task<List<EmployeeCommissionSummaryDto>> GetSummaryByEmployee(Guid organizationId, CommissionSummaryQuery query)
     {
         await using DatabaseContext context = DatabaseContext.GenerateContext(_databaseSettings.ConnectionString);
@@ -77,8 +111,8 @@ public class CommissionEntryHandler : ICommissionEntryHandler
             .GroupBy(e => e.EmployeeId)
             .Select(g =>
             {
-                decimal earned = g.Where(e => e.Status == CommissionEntryStatus.Earned).Sum(e => e.CommissionAmount);
-                decimal reversed = g.Where(e => e.Status == CommissionEntryStatus.Reversed).Sum(e => e.CommissionAmount);
+                decimal earned = g.Where(e => e.EarnedAt >= query.From && e.EarnedAt < query.To).Sum(e => e.CommissionAmount);
+                decimal reversed = g.Where(e => e.ReversedAt >= query.From && e.ReversedAt < query.To).Sum(e => e.CommissionAmount);
                 Employee employee = g.First().Employee;
                 return new EmployeeCommissionSummaryDto
                 {
@@ -100,7 +134,8 @@ public class CommissionEntryHandler : ICommissionEntryHandler
         DatabaseContext context, Guid organizationId, Guid? employeeId, Guid? companyId, DateTimeOffset from, DateTimeOffset to)
     {
         IQueryable<CommissionEntry> query = context.CommissionEntries
-            .Where(e => e.OrganizationId == organizationId && e.EarnedAt >= from && e.EarnedAt < to);
+            .Where(e => e.OrganizationId == organizationId &&
+                        ((e.EarnedAt >= from && e.EarnedAt < to) || (e.ReversedAt >= from && e.ReversedAt < to)));
 
         if (employeeId.HasValue)
             query = query.Where(e => e.EmployeeId == employeeId.Value);

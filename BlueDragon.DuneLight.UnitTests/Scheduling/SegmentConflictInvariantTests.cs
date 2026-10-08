@@ -297,7 +297,7 @@ public class SegmentConflictInvariantTests
     {
         await using SchedulingWorld w = await SchedulingWorld.Create(nameof(EmployeeLifecycle_AnExplicitlyCancelledUntouchedSegment_NoLongerOccupies));
         AppointmentDto created = await w.CreateAppointment(SchedulingWorld.Future(10));
-        await w.Appointments.Cancel(w.OrganizationId, w.ActorUserId, true, created.Id, new AppointmentCancelRequest());
+        await w.Appointments.Cancel(w.OrganizationId, w.ActorUserId, true, created.Id, SchedulingWorld.BusinessCancel());
 
         await w.CreateAppointment(await EmployeeProbe(w, SchedulingWorld.Future(10)));
         Assert.Equal(2, await w.CountAppointments());
@@ -328,7 +328,7 @@ public class SegmentConflictInvariantTests
         Guid onA = (await w.LoadParticipations(created.Id, w.Client))[0].Id.Value;
         await SetParticipationStatusInDb(w, onA, ParticipationStatus.Completed);
 
-        AppointmentDto cancelled = await w.Appointments.Cancel(w.OrganizationId, w.ActorUserId, true, created.Id, new AppointmentCancelRequest());
+        AppointmentDto cancelled = await w.Appointments.Cancel(w.OrganizationId, w.ActorUserId, true, created.Id, SchedulingWorld.BusinessCancel());
         Assert.Equal(AppointmentStatus.Closed, cancelled.Status);
 
         // Appointment status alone (Closed) says nothing per segment: A keeps the employee, B released it.

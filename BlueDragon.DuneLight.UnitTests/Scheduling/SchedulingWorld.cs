@@ -144,6 +144,7 @@ public sealed class SchedulingWorld : IAsyncDisposable
         await db.SaveChangesAsync();
 
         ActorUserId = await AddUser(db);
+        await SeedDefaultCancellationPolicy(db);
 
         Company = await AddCompany("Main company");
         Service = await AddService(DefaultServiceDuration, DefaultServicePrice, name: "Main service");
@@ -581,12 +582,80 @@ public sealed class SchedulingWorld : IAsyncDisposable
         await db.SaveChangesAsync();
     }
 
-    public async Task SetCancellationCutoffMinutes(int minutes)
+    /// <summary>P1: a whole-appointment cancellation is always Business and needs a reason.</summary>
+    public static AppointmentCancelRequest BusinessCancel(string reason = "test cancellation") =>
+        new() { CancellationInitiator = CancellationInitiator.Business, CancellationReason = reason };
+
+    /// <summary>P1: a Booking-wide / participation cancellation requested by the client (policy evaluated).</summary>
+    public static BookingCancelRequest ClientCancel(string reason = null) =>
+        new() { CancellationInitiator = CancellationInitiator.Client, CancellationReason = reason };
+
+    /// <summary>P1: a Booking-wide / participation cancellation by the studio (appointments.write.all + reason, no policy).</summary>
+    public static BookingCancelRequest BusinessBookingCancel(string reason = "test cancellation") =>
+        new() { CancellationInitiator = CancellationInitiator.Business, CancellationReason = reason };
+
+    /// <summary>P1: the organization's cancellation window lives on its DEFAULT policy — publishes a new neutral version
+    /// (no fee, no package penalty) of the default policy with the given window.</summary>
+    public Task SetCancellationWindowMinutes(int minutes) => PublishDefaultPolicyVersion(minutes);
+
+    /// <summary>P1: publishes a new (immutable) version of the organization's default cancellation policy, exactly as
+    /// ICancellationPolicyService.PublishVersion would (reference data, so seeded directly).</summary>
+    public async Task PublishDefaultPolicyVersion(
+        int windowMinutes,
+        CancellationFeeType lateFeeType = CancellationFeeType.None, decimal? lateFeeValue = null,
+        CancellationPackageAction latePackageAction = CancellationPackageAction.None,
+        CancellationFeeType noShowFeeType = CancellationFeeType.None, decimal? noShowFeeValue = null,
+        CancellationPackageAction noShowPackageAction = CancellationPackageAction.None,
+        CancellationMembershipAction? lateMembershipAction = null, CancellationMembershipAction? noShowMembershipAction = null)
+    {
+        await PublishPolicyVersion(DefaultPolicyId, windowMinutes, lateFeeType, lateFeeValue, latePackageAction,
+            noShowFeeType, noShowFeeValue, noShowPackageAction, lateMembershipAction, noShowMembershipAction);
+    }
+
+    public async Task PublishPolicyVersion(
+        Guid policyId, int windowMinutes,
+        CancellationFeeType lateFeeType = CancellationFeeType.None, decimal? lateFeeValue = null,
+        CancellationPackageAction latePackageAction = CancellationPackageAction.None,
+        CancellationFeeType noShowFeeType = CancellationFeeType.None, decimal? noShowFeeValue = null,
+        CancellationPackageAction noShowPackageAction = CancellationPackageAction.None,
+        CancellationMembershipAction? lateMembershipAction = null, CancellationMembershipAction? noShowMembershipAction = null)
     {
         await using DatabaseContext db = NewDb();
-        db.OrganizationSettings.Add(new OrganizationSettings
+        int next = (await db.CancellationPolicyVersions.Where(v => v.CancellationPolicyId == policyId).MaxAsync(v => (int?)v.Version) ?? 0) + 1;
+        db.CancellationPolicyVersions.Add(new CancellationPolicyVersion
         {
-            Id = Guid.NewGuid(), OrganizationId = OrganizationId, CancellationCutoffMinutes = minutes, CreatedAt = DateTimeOffset.UtcNow
+            Id = Guid.NewGuid(), OrganizationId = OrganizationId, CancellationPolicyId = policyId, Version = next,
+            CancellationWindowMinutes = windowMinutes,
+            LateCancellationFeeType = lateFeeType, LateCancellationFeeValue = lateFeeValue, LateCancellationPackageAction = latePackageAction,
+            LateCancellationMembershipAction = CancellationPolicyRules.MembershipActionFor(lateMembershipAction, lateFeeType, lateFeeValue),
+            NoShowFeeType = noShowFeeType, NoShowFeeValue = noShowFeeValue, NoShowPackageAction = noShowPackageAction,
+            NoShowMembershipAction = CancellationPolicyRules.MembershipActionFor(noShowMembershipAction, noShowFeeType, noShowFeeValue),
+            CreatedAt = DateTimeOffset.UtcNow
+        });
+        await db.SaveChangesAsync();
+    }
+
+    /// <summary>P1: the organization default (neutral: 1440 min, None/None) that registration creates — seeded the same way.</summary>
+    public Guid DefaultPolicyId { get; private set; }
+
+    private async Task SeedDefaultCancellationPolicy(DatabaseContext db)
+    {
+        DefaultPolicyId = Guid.NewGuid();
+        db.CancellationPolicies.Add(new CancellationPolicy
+        {
+            Id = DefaultPolicyId, OrganizationId = OrganizationId, Name = "Zadana politika", IsActive = true,
+            IsOrganizationDefault = true, CreatedAt = DateTimeOffset.UtcNow
+        });
+        db.CancellationPolicyVersions.Add(new CancellationPolicyVersion
+        {
+            Id = Guid.NewGuid(), OrganizationId = OrganizationId, CancellationPolicyId = DefaultPolicyId, Version = 1,
+            CancellationWindowMinutes = 1440,
+            LateCancellationFeeType = CancellationFeeType.None, LateCancellationPackageAction = CancellationPackageAction.None,
+            NoShowFeeType = CancellationFeeType.None, NoShowPackageAction = CancellationPackageAction.None,
+            // P2 (pregled 2D #8): politika bez naknade ne kažnjava ni članove.
+            LateCancellationMembershipAction = CancellationMembershipAction.ReturnCreditChargeFee,
+            NoShowMembershipAction = CancellationMembershipAction.ReturnCreditChargeFee,
+            CreatedAt = DateTimeOffset.UtcNow
         });
         await db.SaveChangesAsync();
     }
@@ -975,6 +1044,20 @@ public sealed class SchedulingWorld : IAsyncDisposable
         });
 
     /// <summary>Generates the single occurrence on <see cref="FutureDay"/> and returns its persisted Appointment (with Bookings).</summary>
+    /// <summary>P1: a no-show needs a STARTED segment (ATTENDANCE_BEFORE_START). Moves every segment of an existing
+    /// (future) appointment from <see cref="FutureDay"/> to <see cref="PastDay"/>, same time of day — setup, not behaviour.</summary>
+    public async Task MoveToPast(Guid appointmentId)
+    {
+        await using DatabaseContext db = NewDb();
+        TimeSpan shift = PastDay - FutureDay;
+        foreach (AppointmentSegment segment in await db.AppointmentSegments.Where(s => s.AppointmentId == appointmentId).ToListAsync())
+        {
+            segment.PlannedStart += shift;
+            segment.PlannedEnd += shift;
+        }
+        await db.SaveChangesAsync();
+    }
+
     public async Task<Appointment> GenerateSingleOccurrence(GroupDto group)
     {
         GenerateGroupAppointmentsResult result = await GenerateOccurrences(group, FutureDay);
@@ -997,6 +1080,9 @@ public sealed class SchedulingWorld : IAsyncDisposable
         });
         db.UserGrantGroups.Add(new BlueDragon.DuneLight.Infrastructure.Domain.Models.Permissions.UserGrantGroup { UserId = userId, GrantGroupId = groupId });
         await db.SaveChangesAsync();
+        // GrantResolver keeps a ~30 s per-user cache (accepted production trade-off); a test that grants AFTER a refused
+        // check evicts it so the new grants are seen immediately (key format of GrantResolver).
+        Resolve<Microsoft.Extensions.Caching.Memory.IMemoryCache>().Remove($"grant-context:{OrganizationId}:{userId}");
     }
 
     /// <summary>M1F: a member user (no grants) of this organization.</summary>
@@ -1069,13 +1155,19 @@ public sealed class SchedulingWorld : IAsyncDisposable
                 ClientId = client.Id.Value,
                 CreatedAt = DateTimeOffset.UtcNow
             };
+            // P1: current-state metadata always matches the status (DB CHECK) — a seeded Cancelled participation is a
+            // business cancellation, a seeded NoShow carries its no-show stamp.
+            ParticipationStatus seededStatus = BookingParticipations.ToParticipationStatus(bookingStatus);
             booking.Participations.Add(new BookingSegmentParticipation
             {
                 Id = Guid.NewGuid(),
                 OrganizationId = OrganizationId,
                 BookingId = bookingId,
                 AppointmentSegmentId = appointment.Segments[0].Id.Value,
-                Status = BookingParticipations.ToParticipationStatus(bookingStatus),
+                Status = seededStatus,
+                CancellationInitiator = seededStatus == ParticipationStatus.Cancelled ? CancellationInitiator.Business : null,
+                CancelledAt = seededStatus == ParticipationStatus.Cancelled ? booking.CreatedAt : null,
+                NoShowAt = seededStatus == ParticipationStatus.NoShow ? booking.CreatedAt : null,
                 Amount = amount,
                 SuggestedAmount = amount,
                 CreatedAt = booking.CreatedAt
@@ -1092,22 +1184,32 @@ public sealed class SchedulingWorld : IAsyncDisposable
     #region Booking status helpers (the real IBookingService target commands)
 
     /// <summary>M1H: one-segment status helper — a GROUP occurrence goes through the (appointment, client, explicit segment)
-    /// attendance path; an INDIVIDUAL appointment addresses the client's participation on its only segment.</summary>
+    /// attendance path; an INDIVIDUAL appointment addresses the client's participation on its only segment.
+    /// P1: a cancellation through this helper is a CLIENT cancellation unless <paramref name="initiator"/> says otherwise
+    /// (the API itself has no default initiator); a Business cancellation without a reason gets a fixed test reason.</summary>
     public async Task<BookingDto> SetBookingStatus(
-        Guid appointmentId, Client client, BookingStatus status, string cancellationReason = null, bool returnPackageEntry = false,
+        Guid appointmentId, Client client, BookingStatus status, string cancellationReason = null,
         Guid? clientPackageId = null, PaymentMethod? paymentMethod = null, decimal? amount = null, bool isPaid = true,
-        bool hasFullScope = true, Guid? userId = null)
+        bool hasFullScope = true, Guid? userId = null, CancellationInitiator? initiator = null, string correctionReason = null,
+        bool waivePolicyConsequence = false, string waiverReason = null)
     {
         Appointment appointment = await LoadAppointment(appointmentId);
+        CancellationInitiator? effectiveInitiator = status == BookingStatus.Cancelled ? initiator ?? CancellationInitiator.Client : null;
         BookingSetStatusRequest request = new()
         {
             Status = status,
-            CancellationReason = cancellationReason,
-            ReturnPackageEntry = returnPackageEntry,
+            CancellationInitiator = effectiveInitiator,
+            CancellationReason = status == BookingStatus.Cancelled
+                ? cancellationReason ?? (effectiveInitiator == CancellationInitiator.Business ? "business test reason" : null)
+                : null,
+            NoShowReason = status == BookingStatus.NoShow ? cancellationReason : null,
             ClientPackageId = clientPackageId,
             PaymentMethod = paymentMethod,
             Amount = amount,
-            IsPaid = isPaid
+            IsPaid = isPaid,
+            CorrectionReason = correctionReason,
+            WaivePolicyConsequence = waivePolicyConsequence,
+            WaiverReason = waiverReason
         };
         if (appointment.Form == AppointmentForm.Group)
         {
@@ -1168,6 +1270,10 @@ public sealed class SchedulingWorld : IAsyncDisposable
         BookingSegmentParticipation participation = new()
         {
             Id = Guid.NewGuid(), OrganizationId = OrganizationId, BookingId = booking.Id.Value, AppointmentSegmentId = segment.Id.Value,
+            // P1: current-state metadata always matches the status (DB CHECK).
+            CancellationInitiator = status == ParticipationStatus.Cancelled ? CancellationInitiator.Business : null,
+            CancelledAt = status == ParticipationStatus.Cancelled ? DateTimeOffset.UtcNow : null,
+            NoShowAt = status == ParticipationStatus.NoShow ? DateTimeOffset.UtcNow : null,
             Status = status, StatusVersion = 0, SuggestedAmount = amount, Amount = amount, CreatedAt = DateTimeOffset.UtcNow
         };
         db.BookingSegmentParticipations.Add(participation);
@@ -1233,6 +1339,26 @@ public sealed class SchedulingWorld : IAsyncDisposable
         return await db.CheckoutItems.AsNoTracking()
             .Include(i => i.Allocations).ThenInclude(a => a.Payment)
             .Where(i => i.Participation.BookingId == bookingId) // D3B3B: service items settle the booking's participation
+            .ToListAsync();
+    }
+
+    /// <summary>P1: the consequence ledger of every participation on an appointment, oldest source version first.</summary>
+    public async Task<List<ParticipationPolicyConsequence>> LoadPolicyConsequences(Guid appointmentId)
+    {
+        await using DatabaseContext db = NewDb();
+        return await db.ParticipationPolicyConsequences.AsNoTracking()
+            .Where(c => c.OrganizationId == OrganizationId && c.Participation.Booking.AppointmentId == appointmentId)
+            .OrderBy(c => c.SourceVersion)
+            .ToListAsync();
+    }
+
+    /// <summary>P1: package consumptions of every participation on an appointment, oldest first.</summary>
+    public async Task<List<PackageConsumption>> LoadPackageConsumptions(Guid appointmentId)
+    {
+        await using DatabaseContext db = NewDb();
+        return await db.PackageConsumptions.AsNoTracking()
+            .Where(c => c.OrganizationId == OrganizationId && c.Participation.Booking.AppointmentId == appointmentId)
+            .OrderBy(c => c.CreatedAt)
             .ToListAsync();
     }
 

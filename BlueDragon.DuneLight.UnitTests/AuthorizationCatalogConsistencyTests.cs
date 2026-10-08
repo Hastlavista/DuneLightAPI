@@ -23,7 +23,8 @@ public class AuthorizationCatalogConsistencyTests
     /// </summary>
     private static readonly Dictionary<string, string> CheckedInCodeOnly = new()
     {
-        [Grants.GroupsCapacityOverride] = "GroupCapacityGuard: eksplicitno prekoračenje mekog kapaciteta segmenta grupe unutar groups.manage/appointments akcija."
+        [Grants.GroupsCapacityOverride] = "GroupCapacityGuard: eksplicitno prekoračenje mekog kapaciteta segmenta grupe unutar groups.manage/appointments akcija.",
+        [Grants.AppointmentsMembershipBlockOverride] = "MembershipCoverageService: rezervacija člana u dugu uz postavku \"blokiraj rezervaciju\" unutar appointments/groups akcija (P2 Q54)."
     };
 
     private static readonly HashSet<string> CatalogKeys = Grants.Catalog.Select(g => g.Key).ToHashSet();

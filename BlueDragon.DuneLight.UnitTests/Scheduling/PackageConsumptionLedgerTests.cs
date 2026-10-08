@@ -267,6 +267,7 @@ public class PackageConsumptionLedgerTests
         GroupDto group = await w.CreateGroup(groupService, capacity: 3);
         await w.AddGroupMember(group, w.Client);
         Appointment occurrence = await w.GenerateSingleOccurrence(group);
+        await w.MoveToPast(occurrence.Id.Value); // P1: a no-show needs a started segment
         Guid id = occurrence.Id.Value;
 
         await w.SetBookingStatus(id, w.Client, BookingStatus.Completed, clientPackageId: package.Id);
@@ -300,23 +301,6 @@ public class PackageConsumptionLedgerTests
         Assert.Equal(PackageConsumptionStatus.Reversed, Assert.Single(await ConsumptionsOf(w, created.Id, w.Client)).Status);
     }
 
-    [Fact]
-    public async Task AppointmentCancel_WithReturn_ReversesWithTheCancellationReason()
-    {
-        await using SchedulingWorld w = await SchedulingWorld.Create(nameof(AppointmentCancel_WithReturn_ReversesWithTheCancellationReason));
-        ClientPackage package = await w.AddClientPackage(w.Client, w.Service, 5, LongValid);
-        AppointmentDto created = await w.CreateAppointment(Z(10));
-        await w.SeedCoverageApplied(await w.LoadBooking(created.Id, w.Client), package);
-
-        await w.Appointments.Cancel(w.OrganizationId, w.ActorUserId, true, created.Id, new AppointmentCancelRequest
-        {
-            CancellationReason = "closed", ReturnEntryForClientIds = new List<Guid> { w.Client.Id.Value }
-        });
-
-        PackageConsumption c = Assert.Single(await ConsumptionsOf(w, created.Id, w.Client));
-        Assert.Equal((PackageConsumptionStatus.Reversed, PackageConsumptionReversalReason.Cancellation), (c.Status, c.ReversalReason));
-        Assert.Equal(5, await Remaining(w, package));
-    }
 
     #endregion
 
@@ -384,8 +368,11 @@ public class PackageConsumptionLedgerTests
         Assert.Equal(new[]
         {
             "ck_package_consumptions_reversal", "ck_package_consumptions_reversal_reason", "ck_package_consumptions_status",
+            // P1 (D6): trigger ServiceCompletion | PolicyConsequence, the latter linked to its consequence.
+            "ck_package_consumptions_trigger",
             "ck_package_consumptions_units", "fk_package_consumptions_client_package_id", "fk_package_consumptions_organization_id",
-            "fk_package_consumptions_participation_id", "fk_package_consumptions_service_id", "pk_package_consumptions"
+            "fk_package_consumptions_participation_id", "fk_package_consumptions_policy_consequence",
+            "fk_package_consumptions_service_id", "pk_package_consumptions"
         }, constraints);
         // Every FK is RESTRICT/NO ACTION: consumption history is never cascaded away.
         Assert.Empty(await db.Database.SqlQueryRaw<string>(@"

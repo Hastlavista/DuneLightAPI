@@ -107,18 +107,6 @@ public static class ParticipationLifecycle
         participation.UpdatedAt = DateTimeOffset.UtcNow;
         return true;
     }
-
-    public static void SetCancellationReason(BookingSegmentParticipation participation, string reason)
-    {
-        participation.CancellationReason = reason;
-        participation.UpdatedAt = DateTimeOffset.UtcNow;
-    }
-
-    public static void SetLateCancellation(BookingSegmentParticipation participation, bool? isLateCancellation)
-    {
-        participation.IsLateCancellation = isLateCancellation;
-        participation.UpdatedAt = DateTimeOffset.UtcNow;
-    }
 }
 
 /// <summary>
@@ -138,6 +126,7 @@ public static class ParticipationPrice
     /// <summary>Upis cjenovnog stanja na sudjelovanje — dijele ga Apply i BookingFactory (nastanak).</summary>
     internal static void ApplyTo(BookingSegmentParticipation participation, BookingPricing pricing)
     {
+        bool suggestedChanged = participation.SuggestedAmount != pricing.SuggestedAmount || participation.BaseAmount != pricing.BaseAmount;
         participation.Amount = pricing.Amount;
         participation.SuggestedAmount = pricing.SuggestedAmount;
         participation.IsAmountManuallyOverridden = pricing.IsAmountManuallyOverridden;
@@ -145,6 +134,16 @@ public static class ParticipationPrice
         participation.BaseAmountSource = pricing.BaseAmountSource;
         participation.PricingMode = pricing.PricingMode;
         participation.PricingEmployeeId = pricing.PricingEmployeeId;
+        // P2 (2E): re-cijenjenje koje mijenja predloženu ili osnovnu cijenu (cjenik, check-in) briše prilagodbu prethodne cijene;
+        // pogodnost članarine ponovno postavlja samo IMembershipCoverageService. Ručni iznos ne mijenja predloženu cijenu, pa
+        // zapis pogodnosti ostaje. Bez članarine su ova polja uvijek prazna (nema promjene ponašanja).
+        if (!suggestedChanged)
+            return;
+        participation.AdjustmentAmount = null;
+        participation.AdjustmentType = null;
+        participation.AdjustmentSourceId = null;
+        participation.AdjustmentRuleSnapshot = null;
+        participation.AdjustmentEvaluation = null;
     }
 }
 

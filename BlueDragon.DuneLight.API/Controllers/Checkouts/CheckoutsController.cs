@@ -63,6 +63,14 @@ public class CheckoutsController : ControllerBase
         return Ok(await _checkoutService.AddPackageItem(this.CurrentOrganizationId(), this.CurrentUserId(), id, request));
     }
 
+    /// <summary>P2 (2C) — stavka plaćanja zaduženja članarine (cijeli preostali dug ili dio, Q20).</summary>
+    [HttpPost("{id:guid}/items/membership-charge")]
+    [RequireGrant(Grants.CheckoutManage)]
+    public async Task<ActionResult<CheckoutDto>> AddMembershipChargeItem(Guid id, [FromBody] CheckoutAddMembershipChargeItemRequest request)
+    {
+        return Ok(await _checkoutService.AddMembershipChargeItem(this.CurrentOrganizationId(), this.CurrentUserId(), id, request));
+    }
+
     /// <summary>Dodaje Product stavku — server razrješava UnitPrice iz Product.DefaultPrice, ne prima iznos.
     /// Ponovno dodavanje istog Producta povećava Quantity postojeće stavke umjesto duplikata. Ne dira zalihu
     /// (konzumacija se događa tek na Complete).</summary>
@@ -79,6 +87,17 @@ public class CheckoutsController : ControllerBase
     public async Task<ActionResult<CheckoutDto>> RemoveItem(Guid id, Guid itemId)
     {
         return Ok(await _checkoutService.RemoveItem(this.CurrentOrganizationId(), this.CurrentUserId(), id, itemId));
+    }
+
+    /// <summary>P2 (2F, §18.1) — kome ide provizija na prodaju stavke (default zaposlenik koji je dodao stavku; null = nikome),
+    /// dok je checkout otvoren. Za zaduženje prve prodaje članarine mijenja korisnika na članstvu (nakon nastanka provizije
+    /// COMMISSION_SALE_ALREADY_EARNED — korekcija ide preko /api/commissions/entries/{id}/reassign).</summary>
+    [HttpPatch("{id:guid}/items/{itemId:guid}/sale-commission-employee")]
+    [RequireGrant(Grants.CheckoutManage)]
+    public async Task<ActionResult<CheckoutDto>> SetItemSaleCommissionEmployee(
+        Guid id, Guid itemId, [FromBody] Core.DTOs.Commissions.SaleCommissionEmployeeRequest request)
+    {
+        return Ok(await _checkoutService.SetItemSaleCommissionEmployee(this.CurrentOrganizationId(), this.CurrentUserId(), id, itemId, request));
     }
 
     /// <summary>Bilježi novčanu naplatu — automatska FIFO raspodjela po stavkama ako Allocations izostavljen.</summary>

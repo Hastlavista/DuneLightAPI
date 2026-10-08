@@ -25,5 +25,8 @@ public class BookingCancelledEvent
     /// Cancelled). Nosi ga i Outbox idempotency-key i Notification.SourceVersion.</summary>
     public int StatusVersion { get; set; }
 
+    /// <summary>P1 (D2) — tko je inicirao otkazivanje (Client | Business | System). Tekst obavijesti se u P1 ne mijenja.</summary>
+    public Enums.CancellationInitiator CancellationInitiator { get; set; }
+
     public DateTimeOffset OccurredAt { get; set; }
 }

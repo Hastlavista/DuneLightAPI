@@ -314,12 +314,12 @@ public class GroupWaitlistCharacterizationTests
         Client latecomer = await w.AddClient("Latecomer", "Client");
         await Join(w, occurrence, waiter);
 
+        await w.MoveToPast(occurrence.Id.Value); // P1: a no-show is recorded only after the segment started
         await w.SetBookingStatus(occurrence.Id.Value, members[0], BookingStatus.NoShow);
 
         Assert.Equal(WaitlistEntryStatus.Waiting, Assert.Single(await w.LoadWaitlist(occurrence.Id.Value)).Status);
-        // The waiter stays queued while the Confirmed count is now 0 < capacity, so the "full" precondition of Join no
-        // longer holds for a new client — a small inconsistency of the current model.
-        await SchedulingAssert.BusinessRule(ErrorCodes.CapacityAvailable, () => Join(w, occurrence, latecomer));
+        // CHANGED in P1 (D3): a no-show always follows the start, and a started segment no longer takes waitlist joins.
+        await SchedulingAssert.BusinessRule(ErrorCodes.WaitlistNotAvailable, () => Join(w, occurrence, latecomer));
     }
 
     #endregion
@@ -334,7 +334,7 @@ public class GroupWaitlistCharacterizationTests
         Client waiter = await w.AddClient("Waiter", "Client");
         await Join(w, occurrence, waiter);
 
-        await w.Appointments.Cancel(w.OrganizationId, w.ActorUserId, true, occurrence.Id.Value, new AppointmentCancelRequest { CancellationReason = "trainer ill" });
+        await w.Appointments.Cancel(w.OrganizationId, w.ActorUserId, true, occurrence.Id.Value, SchedulingWorld.BusinessCancel("trainer ill"));
 
         WaitlistEntry entry = Assert.Single(await w.LoadWaitlist(occurrence.Id.Value));
         Assert.Equal(WaitlistEntryStatus.Expired, entry.Status);

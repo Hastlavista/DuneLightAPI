@@ -214,6 +214,15 @@ public partial class AppointmentService
             });
 
             await uow.Context.SaveChangesAsync();
+
+            // P2 (2D, Q6.3): promjena vremena ili usluge segmenta — svako potvrđeno sudjelovanje se ponovno evaluira (vlastiti
+            // claim se stornira i uzima na novom datumu/usluzi ako limiti dopuštaju; inače sljedeći izvor). Bez članarine no-op.
+            if (target.PlannedStart != segment.PlannedStart || target.ServiceId != segment.ServiceId)
+                foreach (Booking booking in locked.Bookings.OrderBy(b => b.ClientId))
+                foreach (BookingSegmentParticipation participation in booking.Participations
+                             .Where(p => p.AppointmentSegmentId == segmentId && p.Status == ParticipationStatus.Confirmed))
+                    await _membershipCoverage.ReevaluateParticipation(uow, organizationId, userId, locked, booking, participation);
+
             await AppointmentLifecycle.Refresh(_appointmentHandler, _auditLogHandler, uow, organizationId, locked.Id.GetValueOrDefault(), userId);
             await uow.CommitAsync();
         }
@@ -263,6 +272,11 @@ public partial class AppointmentService
             });
 
             await uow.Context.SaveChangesAsync();
+            // P2 (2D): claim na rezervaciji za nova sudjelovanja segmenta (no-op bez članarine).
+            foreach (BookingSegmentParticipation participation in added.OrderBy(p => p.Id))
+                await _membershipCoverage.SyncParticipation(uow, organizationId, userId, locked,
+                    locked.Bookings.Single(b => b.Id == participation.BookingId), participation,
+                    MembershipCoverageEvent.Booking, MembershipCoverageMode.Interactive);
             await AppointmentLifecycle.Refresh(_appointmentHandler, _auditLogHandler, uow, organizationId, appointmentId, userId);
             await uow.CommitAsync();
         }
@@ -290,6 +304,8 @@ public partial class AppointmentService
 
             List<BookingSegmentParticipation> participations = locked.Bookings
                 .SelectMany(b => b.Participations).Where(p => p.AppointmentSegmentId == segmentId).ToList();
+            // P2 (2D): claim netaknutog sudjelovanja se vraća prije brisanja (no-op bez članarine).
+            await _membershipCoverage.ReleaseForRemoval(uow, organizationId, userId, participations);
             await ParticipationHistory.RemoveUntouchedParticipations(uow.Context, locked.Bookings, participations,
                 "Segment ima sudjelovanja s poviješću (status, paket, naplata) — ne može se obrisati; otkažite sudjelovanja.");
 
@@ -389,6 +405,12 @@ public partial class AppointmentService
             });
 
             await uow.Context.SaveChangesAsync();
+            // P2 (2D): claim na rezervaciji, redom po početku segmenta (no-op bez članarine).
+            foreach (BookingSegmentParticipation participation in booking.Participations
+                         .Where(p => plans.Any(x => x.Segment.Id == p.AppointmentSegmentId))
+                         .OrderBy(p => locked.Segments.Single(s => s.Id == p.AppointmentSegmentId).PlannedStart))
+                await _membershipCoverage.SyncParticipation(uow, organizationId, userId, locked, booking, participation,
+                    MembershipCoverageEvent.Booking, MembershipCoverageMode.Interactive);
             await AppointmentLifecycle.Refresh(_appointmentHandler, _auditLogHandler, uow, organizationId, appointmentId, userId);
             await uow.CommitAsync();
         }
@@ -414,6 +436,7 @@ public partial class AppointmentService
             BookingSegmentParticipation participation = locked.Bookings.SelectMany(b => b.Participations).SingleOrDefault(p => p.Id == participationId)
                 ?? throw new NotFoundAppException("Participation", participationId);
             Booking booking = locked.Bookings.Single(b => b.Id == participation.BookingId);
+            await _membershipCoverage.ReleaseForRemoval(uow, organizationId, userId, new[] { participation });
             await ParticipationHistory.RemoveUntouchedParticipations(uow.Context, new[] { booking }, new[] { participation },
                 "Sudjelovanje ima povijest (status, paket, naplata) — ne može se ukloniti; koristite otkazivanje.");
 

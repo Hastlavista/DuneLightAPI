@@ -254,7 +254,7 @@ public class SegmentNativeModelTests
         AppointmentDto created = await w.CreateAppointment(SchedulingWorld.Future(10));
         (_, Guid participationB, _, _, Employee employeeB) = await AddSecondSegment(w, created.Id, SchedulingWorld.Future(12));
         Guid participationA = (await w.LoadParticipations(created.Id, w.Client))[0].Id.Value;
-        BookingSetStatusRequest cancel = new() { Status = BookingStatus.Cancelled, CancellationReason = "r" };
+        BookingSetStatusRequest cancel = new() { Status = BookingStatus.Cancelled, CancellationInitiator = CancellationInitiator.Client, CancellationReason = "r" };
 
         // The employee of segment B may not touch the participation on segment A...
         await SchedulingAssert.BusinessRule(ErrorCodes.NotOwner,
@@ -276,7 +276,7 @@ public class SegmentNativeModelTests
 
         // Assigned to segment A only: cancelling the whole appointment touches segment B too → needs `all`.
         await SchedulingAssert.BusinessRule(ErrorCodes.NotOwner,
-            () => w.Appointments.Cancel(w.OrganizationId, w.Employee.UserId, false, created.Id, new AppointmentCancelRequest()));
+            () => w.Appointments.Cancel(w.OrganizationId, w.Employee.UserId, false, created.Id, SchedulingWorld.BusinessCancel()));
 
         Assert.Equal(AppointmentStatus.Scheduled, (await w.LoadAppointment(created.Id)).Status);
     }
@@ -294,7 +294,7 @@ public class SegmentNativeModelTests
         Guid terminal = await w.AddArtificialSegmentParticipation(created.Id, w.Client, SchedulingWorld.Future(14), 10m, ParticipationStatus.NoShow);
 
         AppointmentDto cancelled = await w.Appointments.Cancel(
-            w.OrganizationId, w.ActorUserId, true, created.Id, new AppointmentCancelRequest { CancellationReason = "closed" });
+            w.OrganizationId, w.ActorUserId, true, created.Id, SchedulingWorld.BusinessCancel("closed"));
 
         // Derived afterwards: the untouched NoShow is resolved work, so the explicitly cancelled appointment is Closed
         // (M1A.1 rule 2) — the cancellation fact is still recorded.
@@ -316,7 +316,7 @@ public class SegmentNativeModelTests
         AppointmentDto created = await w.CreateAppointment(SchedulingWorld.Future(10));
         await AddSecondSegment(w, created.Id, SchedulingWorld.Future(12));
 
-        AppointmentDto cancelled = await w.Appointments.Cancel(w.OrganizationId, w.ActorUserId, true, created.Id, new AppointmentCancelRequest());
+        AppointmentDto cancelled = await w.Appointments.Cancel(w.OrganizationId, w.ActorUserId, true, created.Id, SchedulingWorld.BusinessCancel());
 
         Assert.Equal(AppointmentStatus.Cancelled, cancelled.Status);
         Assert.All(await w.LoadParticipations(created.Id, w.Client), p => Assert.Equal(ParticipationStatus.Cancelled, p.Status));
@@ -337,7 +337,7 @@ public class SegmentNativeModelTests
         Assert.Empty(occurrence.Bookings);
 
         await SchedulingAssert.BusinessRule(ErrorCodes.NoActiveParticipations,
-            () => w.Appointments.MarkNoShow(w.OrganizationId, w.ActorUserId, true, occurrence.Id.Value, new AppointmentCancelRequest()));
+            () => w.Appointments.MarkNoShow(w.OrganizationId, w.ActorUserId, true, occurrence.Id.Value, new NoShowRequest()));
 
         Appointment after = await w.LoadAppointment(occurrence.Id.Value);
         Assert.Equal(AppointmentStatus.Scheduled, after.Status);
@@ -354,7 +354,7 @@ public class SegmentNativeModelTests
         await w.SetBookingStatus(created.Id, w.Client, BookingStatus.Cancelled, "client");
 
         await SchedulingAssert.BusinessRule(ErrorCodes.NoActiveParticipations,
-            () => w.Appointments.MarkNoShow(w.OrganizationId, w.ActorUserId, true, created.Id, new AppointmentCancelRequest()));
+            () => w.Appointments.MarkNoShow(w.OrganizationId, w.ActorUserId, true, created.Id, new NoShowRequest()));
 
         Assert.Equal(AppointmentStatus.Scheduled, (await w.LoadAppointment(created.Id)).Status);
         Assert.Equal(ParticipationStatus.Cancelled, Assert.Single(await w.LoadParticipations(created.Id, w.Client)).Status);

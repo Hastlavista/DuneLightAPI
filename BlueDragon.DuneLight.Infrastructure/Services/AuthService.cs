@@ -11,7 +11,6 @@ using BlueDragon.DuneLight.Infrastructure.Handlers.Interfaces;
 using BlueDragon.DuneLight.Infrastructure.UnitOfWork;
 using BlueDragon.DuneLight.Infrastructure.Utils;
 using Microsoft.EntityFrameworkCore;
-using Npgsql;
 
 namespace BlueDragon.DuneLight.Infrastructure.Services;
 
@@ -23,9 +22,12 @@ public class AuthService : IAuthService
     private readonly IJwtService _jwtService;
     private readonly JwtSettings _jwtSettings;
     private readonly IUnitOfWorkFactory _unitOfWorkFactory;
+    private readonly ICancellationPolicyResolver _cancellationPolicyResolver;
 
-    public AuthService(IAuthHandler authHandler, IRosterTypeHandler rosterTypeHandler, IGrantGroupHandler grantGroupHandler, IJwtService jwtService, JwtSettings jwtSettings, IUnitOfWorkFactory unitOfWorkFactory)
+    public AuthService(IAuthHandler authHandler, IRosterTypeHandler rosterTypeHandler, IGrantGroupHandler grantGroupHandler, IJwtService jwtService, JwtSettings jwtSettings, IUnitOfWorkFactory unitOfWorkFactory,
+        ICancellationPolicyResolver cancellationPolicyResolver)
     {
+        _cancellationPolicyResolver = cancellationPolicyResolver;
         _authHandler = authHandler;
         _rosterTypeHandler = rosterTypeHandler;
         _grantGroupHandler = grantGroupHandler;
@@ -65,6 +67,10 @@ public class AuthService : IAuthService
             await _authHandler.AddUser(uow, user);
             await _rosterTypeHandler.SeedDefaultTypes(uow, organization.Id.GetValueOrDefault());
 
+            // P1 (ADR-0015, D11): svaka organizacija UVIJEK ima valjanu zadanu politiku otkazivanja — neutralna (1440 min,
+            // bez naknade i bez paketne kazne), u istoj transakciji kao i organizacija.
+            await _cancellationPolicyResolver.CreateNeutralOrganizationDefault(uow, organization.Id.GetValueOrDefault(), user.Id);
+
             // Inicijalizacija organizacije (ADR-0023): Admin grupa sa SVIM grantovima iz Grants.Catalog, bez
             // predloška. Osnivač se odmah dodjeljuje na nju — bez Owner bypassa to je JEDINI način na koji dobiva
             // bilo kakav pristup, uključujući dovršavanje vlastitog Employee profila.
@@ -79,7 +85,7 @@ public class AuthService : IAuthService
 
             await uow.CommitAsync();
         }
-        catch (DbUpdateException ex) when (IsUniqueSlugViolation(ex))
+        catch (DbUpdateException ex) when (DbErrors.IsUniqueViolation(ex))
         {
             // SlugExists gore je samo brza provjera (TOCTOU) — jedinstveni indeks na organizations.slug je
             // stvarni izvor istine kod dvije istovremene registracije s istim nazivom organizacije.
@@ -87,11 +93,6 @@ public class AuthService : IAuthService
         }
 
         return ToAuthResponse(user, organization);
-    }
-
-    private static bool IsUniqueSlugViolation(DbUpdateException ex)
-    {
-        return ex.InnerException is PostgresException pgEx && pgEx.SqlState == PostgresErrorCodes.UniqueViolation;
     }
 
     public async Task<AuthResponse> Login(LoginRequest request)

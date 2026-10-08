@@ -117,7 +117,7 @@ public class MultiEmployeeHttpContractTests : IClassFixture<MultiSegmentHttpCont
         AssertError(HttpStatusCode.Conflict, ErrorCodes.NotOwner,
             await Send(HttpMethod.Patch, $"/api/segments/{segmentId}/employees", ownAna, new { employeeIds = new[] { ana.Id } }));
         AssertError(HttpStatusCode.Conflict, ErrorCodes.NotOwner,
-            await Send(HttpMethod.Post, $"/api/appointments/{appointmentId}/cancel", ownAna, new { }));
+            await Send(HttpMethod.Post, $"/api/appointments/{appointmentId}/cancel", ownAna, new { cancellationInitiator = "Business", cancellationReason = "x" }));
 
         // Employee-set change (write.all): 2+ needs a choice; down to one is automatic.
         AssertError(HttpStatusCode.BadRequest, ErrorCodes.PricingSourceRequired,

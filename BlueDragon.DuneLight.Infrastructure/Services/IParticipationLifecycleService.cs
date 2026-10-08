@@ -18,4 +18,10 @@ public interface IParticipationLifecycleService
     Task ApplyTransitionInTransaction(
         IUnitOfWork uow, Guid organizationId, Guid userId, Appointment appointment, Booking booking,
         BookingSegmentParticipation participation, BookingSetStatusRequest request);
+
+    /// <summary>P1 — appointment-wide kaskada (otkazivanje/izostanak cijelog termina): isti prijelaz s ZAJEDNIČKIM serverskim
+    /// timestampom događaja; pozivatelj nakon svih sudjelovanja sam izvodi status termina i istječe listu čekanja.</summary>
+    Task ApplyCascadeTransitionInTransaction(
+        IUnitOfWork uow, Guid organizationId, Guid userId, Appointment appointment, Booking booking,
+        BookingSegmentParticipation participation, BookingSetStatusRequest request, DateTimeOffset eventAt);
 }

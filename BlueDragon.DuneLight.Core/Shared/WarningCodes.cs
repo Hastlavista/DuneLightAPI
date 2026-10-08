@@ -25,9 +25,42 @@ public static class WarningCodes
     /// WarningGroupCommissionRuleDetails.</summary>
     public const string GroupCommissionRuleNotSupported = "GROUP_COMMISSION_RULE_NOT_SUPPORTED";
 
+    /// <summary>P2 (2F) — deaktivirano pravilo za uslugu: od datuma deaktivacije za tu uslugu vrijedi opće pravilo zaposlenika.
+    /// Za isključenje usluge treba odabrati "Bez provizije".</summary>
+    public const string CommissionServiceRuleGeneralApplies = "COMMISSION_SERVICE_RULE_GENERAL_APPLIES";
+
     // Roster
     public const string RosterEntryOverlap = "ROSTER_ENTRY_OVERLAP";
 
     // Employees
     public const string EmployeeHasFutureAppointments = "EMPLOYEE_HAS_FUTURE_APPOINTMENTS";
+
+    // P2 — planovi članarina (details: WarningMembershipLimitDetails / WarningMembershipPlanCompaniesDetails)
+    /// <summary>Q49 — limit plana nema učinka: dulji prozor s limitom &gt;= kredit perioda × broj perioda u prozoru, ili limit
+    /// usluge &gt;= limit cijelog plana za isti prozor.</summary>
+    public const string MembershipLimitWithoutEffect = "MEMBERSHIP_LIMIT_WITHOUT_EFFECT";
+    /// <summary>Q29 — nijedna odabrana poslovnica plana nije aktivna; nova prodaja nije moguća.</summary>
+    public const string MembershipPlanNoActiveCompany = "MEMBERSHIP_PLAN_NO_ACTIVE_COMPANY";
+    /// <summary>Prodaja na poslovnici u kojoj plan ne vrijedi (details: WarningMembershipPlanCompaniesDetails = poslovnice
+    /// u kojima vrijedi).</summary>
+    public const string MembershipPlanNotValidAtSaleCompany = "MEMBERSHIP_PLAN_NOT_VALID_AT_SALE_COMPANY";
+    /// <summary>Otkaz, raniji izlazak ili poništavanje je poništilo zakazanu pauzu koja još nije počela (details:
+    /// WarningMembershipPausesDetails).</summary>
+    public const string MembershipScheduledPauseCancelled = "MEMBERSHIP_SCHEDULED_PAUSE_CANCELLED";
+    /// <summary>Pregled 2B (#7) — rok najave izmjene plana kraći od 14 dana: nepovoljne izmjene (npr. povećanje cijene) se
+    /// postojećim članovima primjenjuju bez ili s kratkom najavom (details: WarningMembershipChangeNoticeDetails).</summary>
+    public const string MembershipChangeNoticeShort = "MEMBERSHIP_CHANGE_NOTICE_SHORT";
+    /// <summary>2C — deaktiviran plan: postojeća članstva završavaju na sljedećoj obnovi ako plan tada još nije aktivan
+    /// (details: WarningMembershipsEndingDetails).</summary>
+    public const string MembershipPlanMembershipsEnding = "MEMBERSHIP_PLAN_MEMBERSHIPS_ENDING";
+    /// <summary>2D (Q24.4) — poništena prodaja: budući termini koje je članarina pokrivala (ili čekali evaluaciju) postaju
+    /// nepokriveni (normalna naplata), bez automatskog otkazivanja (details: WarningMembershipSessionsDetails).</summary>
+    public const string MembershipVoidedSessionsUncovered = "MEMBERSHIP_VOIDED_SESSIONS_UNCOVERED";
+    /// <summary>2E (pregled #1) — fiksna cijena za člana je viša ili jednaka cjeniku usluge u nekoj poslovnici plana, pa se tamo
+    /// pogodnost neće primjenjivati (details: WarningMembershipBenefitDetails). Računa se pri čitanju plana (cjenik se mijenja).</summary>
+    public const string MembershipBenefitWithoutEffect = "MEMBERSHIP_BENEFIT_WITHOUT_EFFECT";
+    /// <summary>Otvoreni checkout: iznos stavke sesije razlikuje se od trenutnog duga te sesije (automatska promjena cijene zbog
+    /// članarine ili ručna promjena cijene nakon dodavanja). Stavka se NE mijenja automatski; recepcija je može osvježiti (ukloniti i
+    /// ponovno dodati) prije zatvaranja (details: WarningCheckoutItemPriceDetails). Računa se pri čitanju checkouta.</summary>
+    public const string CheckoutItemPriceChanged = "CHECKOUT_ITEM_PRICE_CHANGED";
 }

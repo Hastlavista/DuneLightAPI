@@ -15,18 +15,26 @@ namespace BlueDragon.DuneLight.Infrastructure.Utils;
 /// </summary>
 public static class PackageConsumptions
 {
-    /// <summary>Aktivna (Consumed) potrošnja sudjelovanja ili null — najviše jedna (unique indeks u bazi).</summary>
+    /// <summary>Aktivna (Consumed) potrošnja sudjelovanja bez obzira na okidač ili null — najviše jedna (unique indeks u bazi).</summary>
     public static PackageConsumption ActiveOf(BookingSegmentParticipation participation) =>
         participation.PackageConsumptions.SingleOrDefault(c => c.Status == PackageConsumptionStatus.Consumed);
 
-    /// <summary>"Je li izvršna jedinica namirena paketom" — aktivna potrošnja postoji. Paket nije novac: namirenje
-    /// paketom je cijela usluga (jedinični paketi), ne iznos.</summary>
-    public static bool IsSettledByPackage(BookingSegmentParticipation participation) => ActiveOf(participation) != null;
+    /// <summary>P1: aktivna potrošnja IZVRŠENJA USLUGE (okidač ServiceCompletion) ili null — jedinica potrošena kao kazna
+    /// politike (PolicyConsequence) ne pokriva uslugu (čita se kroz PolicyConsequences).</summary>
+    public static PackageConsumption ActiveServiceOf(BookingSegmentParticipation participation) =>
+        participation.PackageConsumptions.SingleOrDefault(c =>
+            c.Status == PackageConsumptionStatus.Consumed && c.Trigger == PackageConsumptionTrigger.ServiceCompletion);
 
-    /// <summary>Najnovija potrošnja (aktivna ima prednost, inače zadnja poništena) ili null.</summary>
+    /// <summary>"Je li usluga namirena paketom" — aktivna potrošnja izvršenja usluge postoji. Paket nije novac: namirenje
+    /// paketom je cijela usluga (jedinični paketi), ne iznos.</summary>
+    public static bool IsSettledByPackage(BookingSegmentParticipation participation) => ActiveServiceOf(participation) != null;
+
+    /// <summary>Najnovija potrošnja izvršenja usluge (aktivna ima prednost, inače zadnja poništena) ili null.</summary>
     public static PackageConsumption LatestOf(BookingSegmentParticipation participation) =>
-        participation.PackageConsumptions.SingleOrDefault(c => c.Status == PackageConsumptionStatus.Consumed)
-        ?? participation.PackageConsumptions.OrderByDescending(c => c.CreatedAt).FirstOrDefault();
+        ActiveServiceOf(participation)
+        ?? participation.PackageConsumptions
+            .Where(c => c.Trigger == PackageConsumptionTrigger.ServiceCompletion)
+            .OrderByDescending(c => c.CreatedAt).FirstOrDefault();
 
     /// <summary>
     /// Izvedeni prikaz paketnog pokrića jednog sudjelovanja za postojeće API ugovore:

@@ -70,6 +70,7 @@ public class MultiEmployeeSegmentTests
         (bookings ?? w.Bookings).SetParticipationStatus(w.OrganizationId, w.ActorUserId, true, participationId, new BookingSetStatusRequest
         {
             Status = status,
+            CancellationInitiator = status == BookingStatus.Cancelled ? CancellationInitiator.Client : null,
             ClientPackageId = clientPackageId
         });
 
@@ -497,7 +498,7 @@ public class MultiEmployeeSegmentTests
         // Own scope cannot remove (or add) coworkers — even an assigned employee.
         await SchedulingAssert.BusinessRule(ErrorCodes.NotOwner, () => ChangeEmployees(w, segment, new[] { s.Ana }, fullScope: false, userId: s.Ana.UserId));
         await SchedulingAssert.BusinessRule(ErrorCodes.NotOwner, () => w.Appointments.Cancel(w.OrganizationId, s.Ana.UserId, false, dto.Id,
-            new AppointmentCancelRequest { CancellationReason = "own" }));
+            SchedulingWorld.BusinessCancel("own")));
         // Own scope cannot create a segment for a coworker either.
         await SchedulingAssert.BusinessRule(ErrorCodes.NotOwner, () => Create(w,
             Seg(s.Duo, SchedulingWorld.Future(15), new[] { s.Ana, s.Marko }, SegmentPricingMode.Standard, clients: w.Client), fullScope: false, userId: s.Ana.UserId));

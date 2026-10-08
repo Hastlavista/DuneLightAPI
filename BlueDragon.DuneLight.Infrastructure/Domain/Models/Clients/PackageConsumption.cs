@@ -56,6 +56,14 @@ public class PackageConsumption
     [Column("status")]
     public PackageConsumptionStatus Status { get; set; }
 
+    /// <summary>P1 (D6) — izvršenje usluge ili kazna politike. PolicyConsequence ⇔ ParticipationPolicyConsequenceId je
+    /// popunjen (DB CHECK); najviše jedna potrošnja po posljedici (djelomični unique indeks).</summary>
+    [Column("trigger")]
+    public PackageConsumptionTrigger Trigger { get; set; } = PackageConsumptionTrigger.ServiceCompletion;
+
+    [Column("participation_policy_consequence_id")]
+    public Guid? ParticipationPolicyConsequenceId { get; set; }
+
     [Column("created_at")]
     public DateTimeOffset CreatedAt { get; set; }
 

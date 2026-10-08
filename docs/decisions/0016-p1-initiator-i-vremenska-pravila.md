@@ -1,6 +1,6 @@
 # ADR-0016: P1 — Initiator otkazivanja, lateness i vremenski guardovi
 
-- **Status:** Prihvaćeno, nije implementirano
+- **Status:** Prihvaćeno, implementirano 2026-10-06 (migracije `20261026000000` – `20261026000002`)
 - **Datum:** 2026-10-05 (P1 Decision Record, odluke D2, D3)
 - **Izvor:** [P1 Decision Record](../p1/P1_DECISION_RECORD.md)
 

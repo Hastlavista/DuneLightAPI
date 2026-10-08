@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.ComponentModel.DataAnnotations;
 using System.ComponentModel.DataAnnotations.Schema;
 using BlueDragon.DuneLight.Core.Enums;
@@ -9,20 +10,24 @@ using BlueDragon.DuneLight.Infrastructure.Domain.Models.Products;
 namespace BlueDragon.DuneLight.Infrastructure.Domain.Models.Commissions;
 
 /// <summary>
-/// Konfiguracija provizije: Employee + točno jedan predmet (Service/Product/Package prema SubjectType).
-/// Namjerno BEZ ValidFrom/ValidTo — provizija se ne preklapa u vremenu (najviše jedan AKTIVAN redak po
-/// Employee+Subject, vidi djelomični unique indeks u migraciji), promjena vrijednosti ide kroz Update
-/// (izravna izmjena Value/CalculationType) ili deaktivaciju+novi redak. Ovo je namjerno manji model od
-/// PriceListItem/PriceListItemHistory (koji datumski raspon treba jer se prošle cijene moraju rekonstruirati
-/// za povijesne izvještaje) — CommissionEntry već snapshotta CalculationType/RuleValue/BaseAmount/
-/// CommissionAmount u trenutku zarade, pa povijesni izračun NIKAD ne čita trenutni CommissionRule (vidi
-/// CommissionEntry.cs) i datumski raspon ovdje ne bi ništa dodao osim složenosti preklapanja (vidi spec section
-/// 11 — eksplicitno dopušten manji model uz obrazloženje).
+/// Konfiguracija provizije: Employee + vrsta (Kind) + predmet (Service/Product/Package/MembershipPlan prema SubjectType, ili
+/// AllServices = opće pravilo zaposlenika) + datum od kad vrijedi.
 ///
-/// Value je Percentage (0-100) ili Fixed (&gt;=0) prema CalculationType — validirano u CommissionRuleService,
-/// CHECK constraint u migraciji kao backstop. Percentage NIJE dopušten kad je SubjectType=Service i
-/// referencirani Service.ExecutionMode=Group (nema nedvosmislene per-occurrence osnovice za postotak na grupni
-/// termin — vidi spec section 16/54, CommissionRuleService baca COMMISSION_GROUP_PERCENTAGE_NOT_SUPPORTED).
+/// P2 (2F, Vagaro model, ADR-0030): pravilo nije obavezno (nema pravila = nema provizije). Povijest: promjena koja treba vrijediti
+/// od datuma je NOVI redak s novim EffectiveFrom (stari ostaje); izmjena retka ispravlja tu verziju. Za datum se bira verzija s
+/// najvećim EffectiveFrom &lt;= lokalni datum (odrađeno: datum sesije u kalendaru poslovnice termina; prodaja: datum nastanka
+/// provizije) — UKLJUČUJUĆI deaktivirane verzije: deaktivirana verzija od DeactivatedFrom znači "nema pravila" i NIKAD ne vraća
+/// stariju verziju (bez povratka). Za grešku se verzija bez ijedne provizije može obrisati; tada za njezin raspon vrijedi
+/// prethodna verzija. EffectiveFrom = DateOnly.MinValue = "bez početnog datuma". Unique (Employee, Kind, predmet, EffectiveFrom)
+/// neovisno o aktivnosti. CommissionEntry snapshotta sve primijenjene vrijednosti.
+///
+/// Kind: Service/AllServices → Performance; Product/Package/MembershipPlan → Sale (provizija na prodaju usluge je odluka nakon 2F,
+/// Q52b). Pravilo za uslugu ima prednost pred općim pravilom i može biti None ("Bez provizije", izričito isključuje uslugu). Opće
+/// pravilo vrijedi samo za individualne usluge; iznos je u razinama (Tiers, u P2 jedna bez praga). Grupni treninzi: samo pravilo
+/// usluge, fiksno po terminu.
+///
+/// Value je Percentage (0-100) ili Fixed (&gt;=0) prema CalculationType (None = 0); za AllServices su CalculationType/Value prazni
+/// (iznos je u razini). Percentage NIJE dopušten kad je SubjectType=Service i Service.ExecutionMode=Group.
 /// </summary>
 [Table("commission_rules")]
 public class CommissionRule
@@ -38,6 +43,10 @@ public class CommissionRule
     [Column("employee_id")]
     public Guid EmployeeId { get; set; }
 
+    /// <summary>P2 (2F, §18.1) — za odrađeno ili za prodaju.</summary>
+    [Column("kind")]
+    public CommissionRuleKind Kind { get; set; } = CommissionRuleKind.Performance;
+
     [Column("subject_type")]
     public CommissionSubjectType SubjectType { get; set; }
 
@@ -50,11 +59,25 @@ public class CommissionRule
     [Column("package_id")]
     public Guid? PackageId { get; set; }
 
+    /// <summary>P2 (2F, Q39) — plan članarine (samo Kind = Sale).</summary>
+    [Column("membership_plan_id")]
+    public Guid? MembershipPlanId { get; set; }
+
+    /// <summary>P2 (2F, Q28.5) — od kad pravilo vrijedi (uključivo); MinValue = bez početnog datuma.</summary>
+    [Column("effective_from")]
+    public DateOnly EffectiveFrom { get; set; } = DateOnly.MinValue;
+
+    /// <summary>P2 (2F, pregled) — od kad je verzija deaktivirana (uključivo): od tog datuma nema pravila, bez povratka na stariju
+    /// verziju. Null uz IsActive = false = deaktivirana bez datuma (nikad ne vrijedi).</summary>
+    [Column("deactivated_from")]
+    public DateOnly? DeactivatedFrom { get; set; }
+
+    /// <summary>Null samo za AllServices (iznos je u razini).</summary>
     [Column("calculation_type")]
-    public CommissionCalculationType CalculationType { get; set; }
+    public CommissionCalculationType? CalculationType { get; set; }
 
     [Column("value")]
-    public decimal Value { get; set; }
+    public decimal? Value { get; set; }
 
     [Column("is_active")]
     public bool IsActive { get; set; }
@@ -75,4 +98,11 @@ public class CommissionRule
     public Service Service { get; set; }
     public Product Product { get; set; }
     public Package Package { get; set; }
+    public MembershipPlan MembershipPlan { get; set; }
+
+    /// <summary>P2 (2F) — razine općeg pravila (AllServices); prazno za ostale predmete.</summary>
+    public List<CommissionRuleTier> Tiers { get; set; } = new();
+
+    /// <summary>Vrijedi li ova verzija (kad je izabrana za datum) na taj datum, ili je deaktivirana.</summary>
+    public bool AppliesOn(DateOnly date) => IsActive || (DeactivatedFrom.HasValue && date < DeactivatedFrom.Value);
 }

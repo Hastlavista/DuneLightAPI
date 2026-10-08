@@ -7,6 +7,8 @@ using BlueDragon.DuneLight.Core.Shared;
 using BlueDragon.DuneLight.Core.Shared.Exceptions;
 using BlueDragon.DuneLight.Infrastructure.Domain.Contexts;
 using BlueDragon.DuneLight.Infrastructure.Domain.Models.Appointments;
+using BlueDragon.DuneLight.Infrastructure.Domain.Models.Clients;
+using Microsoft.EntityFrameworkCore;
 
 namespace BlueDragon.DuneLight.Infrastructure.Utils;
 
@@ -36,6 +38,9 @@ public static class ParticipationHistory
                && participation.ArrivedBy == null
                && participation.CancellationReason == null
                && participation.IsLateCancellation == null
+               && participation.CancelledAt == null
+               && participation.NoShowAt == null
+               && participation.PolicyConsequences.Count == 0
                && participation.PackageConsumptions.Count == 0
                && participation.CheckoutItems.Count == 0;
     }
@@ -58,6 +63,7 @@ public static class ParticipationHistory
 
         if (participations.Any(p => !IsUntouched(p)))
             throw new BusinessRuleException(ErrorCodes.ReferencedCannotDelete, message);
+        await EnsureMembershipCoverageReleased(context, participations);
 
         HashSet<Guid> removed = participations.Select(p => p.Id.GetValueOrDefault()).ToHashSet();
         context.BookingSegmentParticipations.RemoveRange(participations);
@@ -81,8 +87,23 @@ public static class ParticipationHistory
 
         if (participations.Any(p => !IsUntouched(p)))
             throw new BusinessRuleException(ErrorCodes.ReferencedCannotDelete, message);
+        await EnsureMembershipCoverageReleased(context, participations);
 
         context.BookingSegmentParticipations.RemoveRange(participations);
         context.Bookings.RemoveRange(bookings);
+    }
+
+    /// <summary>P2 (2D) — integritetna zaštita: ledger korištenja članarine i projekcija pokrića nemaju FK na sudjelovanje, pa
+    /// svaka putanja brisanja MORA prije pozvati IMembershipCoverageService.ReleaseForRemoval (vraća claim, briše projekciju).
+    /// Putanja koja to zaboravi ovdje puca umjesto da ostavi aktivan claim ili projekciju bez sudjelovanja.</summary>
+    private static async Task EnsureMembershipCoverageReleased(DatabaseContext context, IEnumerable<BookingSegmentParticipation> participations)
+    {
+        List<Guid> ids = participations.Select(p => p.Id.GetValueOrDefault()).ToList();
+        bool claimed = await context.MembershipUsages.AnyAsync(u =>
+            ids.Contains(u.ParticipationId) && u.EntryType == MembershipUsageEntryType.Claim && u.IsActive);
+        bool projected = await context.ParticipationMembershipCoverages.AnyAsync(c => ids.Contains(c.ParticipationId));
+        if (claimed || projected)
+            throw new InvalidOperationException(
+                "Sudjelovanje s pokrićem članarinom briše se bez prethodnog vraćanja claima (IMembershipCoverageService.ReleaseForRemoval).");
     }
 }

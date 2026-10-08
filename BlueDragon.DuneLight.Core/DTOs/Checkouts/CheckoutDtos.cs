@@ -34,6 +34,16 @@ public class CheckoutAddPackageItemRequest
     public Guid PackageId { get; set; }
 }
 
+/// <summary>P2 (2C, Q20/Q24) — plaćanje zaduženja članarine. Amount = dio koji se sada plaća (djelomično plaćanje je
+/// dopušteno); prazno = cijeli preostali dug zaduženja.</summary>
+public class CheckoutAddMembershipChargeItemRequest
+{
+    [Required]
+    public Guid? MembershipChargeId { get; set; }
+
+    public decimal? Amount { get; set; }
+}
+
 /// <summary>Dodaje Product stavku (ili povećava Quantity postojeće aktivne Product stavke za isti proizvod,
 /// vidi spec section 27) — server razrješava UnitPrice iz Product.DefaultPrice i snapshotta, klijent ne šalje
 /// iznos (vidi spec section 66). Jedini CheckoutItemType kod kojeg Quantity smije biti &gt; 1.</summary>
@@ -115,6 +125,14 @@ public class CheckoutItemDto
     public Guid? ProductId { get; set; }
     public Guid? ClientPackageId { get; set; }
 
+    /// <summary>P2 (2C) — zaduženje članarine koje stavka plaća (Type = MembershipCharge).</summary>
+    public Guid? MembershipChargeId { get; set; }
+
+    /// <summary>P2 (2F, §18.1) — kome ide provizija na prodaju stavke (null = nikome). Za zaduženje prve prodaje članarine
+    /// prikazuje vrijednost s članstva (jedini izvor, SaleCommissionFromMembership = true).</summary>
+    public Guid? SaleCommissionEmployeeId { get; set; }
+    public bool SaleCommissionFromMembership { get; set; }
+
     public DateTimeOffset CreatedAt { get; set; }
     public Guid? CreatedBy { get; set; }
 }
@@ -143,6 +161,10 @@ public class CheckoutDto
     public List<CheckoutItemDto> Items { get; set; } = new();
     public List<PaymentDto> Payments { get; set; } = new();
     public CheckoutTotalsDto Totals { get; set; }
+
+    /// <summary>Neblokirajuća upozorenja otvorenog checkouta (npr. CHECKOUT_ITEM_PRICE_CHANGED); računaju se pri svakom čitanju,
+    /// pa ih nose i odgovori plaćanja i zatvaranja.</summary>
+    public List<Shared.WarningDto> Warnings { get; set; } = new();
 
     public DateTimeOffset CreatedAt { get; set; }
     public Guid? CreatedBy { get; set; }

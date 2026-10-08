@@ -13,4 +13,9 @@ public class WaitlistPromotedEvent
     public Guid ClientId { get; set; }
     public Guid CompanyId { get; set; }
     public DateTimeOffset OccurredAt { get; set; }
+
+    /// <summary>P2 (pregled 2D #11) — promovirana sesija koju članarina klijenta NE pokriva (npr. dug uz "blokiraj rezervaciju"):
+    /// stanje i razlog pokrića za recepciju. Null = bez članarine ili pokriveno (aditivno polje, stari payloadi ostaju valjani).</summary>
+    public Enums.MembershipCoverageStatus? MembershipCoverageStatus { get; set; }
+    public Enums.MembershipCoverageReason? MembershipCoverageReason { get; set; }
 }

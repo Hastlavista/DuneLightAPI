@@ -72,7 +72,9 @@ public class MultiSegmentHttpContractTests : IClassFixture<MultiSegmentHttpContr
                 ["PlatformJwtSettings:ExpirationHours"] = "1",
                 ["BrandingSettings:StoragePath"] = "wwwroot/branding",
                 ["BrandingSettings:PublicBasePath"] = "/uploads/branding",
-                ["BrandingSettings:MaxFileSizeBytes"] = "2097152"
+                ["BrandingSettings:MaxFileSizeBytes"] = "2097152",
+                // P2 (2C): pozadinska obnova članarina ne smije raditi nad dijeljenom testnom bazom; testovi je pozivaju izravno.
+                ["MembershipRenewalSettings:Enabled"] = "false"
             };
 
             _host = Host.CreateDefaultBuilder()
@@ -383,7 +385,7 @@ public class MultiSegmentHttpContractTests : IClassFixture<MultiSegmentHttpContr
         Assert.Equal(HttpStatusCode.OK, own.Status);
         // Whole-appointment cancel: write.all only.
         AssertError(HttpStatusCode.Conflict, ErrorCodes.NotOwner,
-            await Send(HttpMethod.Post, $"/api/appointments/{a.Appointment.Id}/cancel", a.WriteOwnAsA, new { }));
+            await Send(HttpMethod.Post, $"/api/appointments/{a.Appointment.Id}/cancel", a.WriteOwnAsA, new { cancellationInitiator = "Business", cancellationReason = "x" }));
     }
 
     [Fact]

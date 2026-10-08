@@ -25,13 +25,6 @@ public class OrganizationSettingsHandler : IOrganizationSettingsHandler
         return await context.OrganizationSettings.SingleOrDefaultAsync(s => s.OrganizationId == organizationId);
     }
 
-    public async Task Add(OrganizationSettings settings)
-    {
-        await using DatabaseContext context = DatabaseContext.GenerateContext(_databaseSettings.ConnectionString);
-        context.OrganizationSettings.Add(settings);
-        await context.SaveChangesAsync();
-    }
-
     public async Task<string> GetTimeZone(Guid organizationId)
     {
         await using DatabaseContext context = DatabaseContext.GenerateContext(_databaseSettings.ConnectionString);
@@ -53,10 +46,23 @@ public class OrganizationSettingsHandler : IOrganizationSettingsHandler
         return true;
     }
 
-    public async Task Update(OrganizationSettings settings)
+    public async Task Upsert(Guid organizationId, Guid userId, Action<OrganizationSettings> change)
     {
         await using DatabaseContext context = DatabaseContext.GenerateContext(_databaseSettings.ConnectionString);
-        context.OrganizationSettings.Update(settings);
+        OrganizationSettings settings = await context.OrganizationSettings.SingleOrDefaultAsync(s => s.OrganizationId == organizationId);
+        DateTimeOffset now = DateTimeOffset.UtcNow;
+        if (settings == null)
+        {
+            settings = new OrganizationSettings { Id = Guid.NewGuid(), OrganizationId = organizationId, CreatedAt = now, CreatedBy = userId };
+            context.OrganizationSettings.Add(settings);
+        }
+        else
+        {
+            settings.UpdatedAt = now;
+            settings.UpdatedBy = userId;
+        }
+
+        change(settings);
         await context.SaveChangesAsync();
     }
 }

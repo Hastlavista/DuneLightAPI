@@ -268,6 +268,18 @@ Legend — **Test**: the characterization test(s) that pin it. **Later**: whethe
   removing a group member kept `IsLateCancellation` empty. Target: every cancelled participation is classified from its own
   segment's `PlannedStart` through the central `BookingCancellationPolicy` (one removal can yield late A and on-time C).
   Test: `GroupCapacityCharacterizationTests.RemoveMember_*`, `MultiSegmentGroupTests.RemoveMember_*`.
+* **F-20/F-21 superseded by P1 (ADR-0016, D2).** Lateness is classified ONLY for a CLIENT cancellation (participation or
+  Booking-wide, per participation segment, against the resolved policy version's window — `CancellationPolicyRules`).
+  An appointment-wide cancel is always Business and a member removal / template deselection is System: neither is
+  classified nor produces a policy consequence. Tests: `MultiSegmentAppointmentTests.BookingWideClientCancel_*`,
+  `ClientCancel_ManyBookingsAndSegments_*`, `MultiSegmentGroupTests.RemoveMember_*_AsSystem_*`.
+* **P1 — the 17 intentional changes of the policy engine (docs/p1/P1_DECISION_RECORD.md).** Pinned in
+  `CancellationPolicyEngineTests` and updated in place (each changed assertion is marked `CHANGED in P1`): one transition
+  matrix for Individual and Group, same status is a true no-op, manual payments no longer block a correction, Group
+  un-check-in keeps the price, NoShow only from segment start (`ATTENDANCE_BEFORE_START`) and Client cancel only before it
+  (`CANCELLATION_AFTER_START`), structured cancellation / no-show metadata that always matches the status, status-aware Due
+  with unclamped Outstanding + `SurplusAmount`, and `NO_ACTIVE_PARTICIPATIONS` for an empty Booking-wide cancel. Tests that
+  need a started segment use `SchedulingWorld.MoveToPast`; seeded Cancelled/NoShow rows carry status-consistent metadata.
 * **F-22 Group capacity — CHANGED in M1F (intentional).** Old: one hard `Group.Capacity` for the whole occurrence; generation
   refused to run when the roster exceeded it. Target: capacity is a SOFT business seat limit per `GroupSegmentTemplate`
   (seat = Confirmed participation on that segment; membership = active members selecting the template); exceeding it needs an

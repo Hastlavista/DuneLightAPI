@@ -36,6 +36,9 @@ public static class ParticipationEvents
                 ClientId = booking.ClientId,
                 CompanyId = appointment.CompanyId,
                 StatusVersion = participation.StatusVersion,
+                // P1 (D2): sudjelovanje je već otkazano s upisanim initiatorom (metapodaci uvijek odgovaraju statusu).
+                CancellationInitiator = participation.CancellationInitiator
+                    ?? throw new InvalidOperationException("Otkazano sudjelovanje nema initiator otkazivanja."),
                 OccurredAt = DateTimeOffset.UtcNow
             },
             DateTimeOffset.UtcNow,

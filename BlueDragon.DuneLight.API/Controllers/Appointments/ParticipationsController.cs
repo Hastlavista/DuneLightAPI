@@ -6,6 +6,8 @@ using BlueDragon.DuneLight.Core.DTOs.Appointments;
 using BlueDragon.DuneLight.Core.Enums;
 using BlueDragon.DuneLight.Core.Interfaces.Appointments;
 using BlueDragon.DuneLight.Core.Shared;
+using BlueDragon.DuneLight.Core.Shared.Exceptions;
+using Microsoft.AspNetCore.Mvc.ModelBinding;
 using Microsoft.AspNetCore.Mvc;
 
 namespace BlueDragon.DuneLight.API.Controllers.Appointments;
@@ -59,40 +61,73 @@ public class ParticipationsController : ControllerBase
             this.CurrentOrganizationId(), this.CurrentUserId(), this.HasGrant(Grants.AppointmentsWriteAll), participationId, request));
     }
 
+    /// <summary>P1: otkazivanje sudjelovanja s obaveznim initiatorom (Client → politika i klasifikacija; Business →
+    /// appointments.write.all + razlog, bez posljedice).</summary>
     [HttpPatch("{participationId:guid}/cancel")]
     [RequireGrant(Grants.AppointmentsWriteOwn, Grants.AppointmentsWriteAll)]
     public async Task<ActionResult<BookingDto>> Cancel(Guid participationId, [FromBody] BookingCancelRequest request)
     {
+        EnsureNoPackageSelections(request?.PackageSelections);
         return Ok(await _bookingService.SetParticipationStatus(
             this.CurrentOrganizationId(), this.CurrentUserId(), this.HasGrant(Grants.AppointmentsWriteAll), participationId,
             new BookingSetStatusRequest
             {
                 Status = BookingStatus.Cancelled,
-                ReturnPackageEntry = request.ReturnPackageEntry,
-                CancellationReason = request.CancellationReason
+                CancellationInitiator = request?.CancellationInitiator,
+                CancellationReason = request?.CancellationReason,
+                ClientPackageId = request?.ClientPackageId,
+                WaivePolicyConsequence = request?.WaivePolicyConsequence ?? false,
+                WaiverReason = request?.WaiverReason,
+                CorrectionReason = request?.CorrectionReason
             }));
     }
 
+    /// <summary>P1: izostanak (tek od početka segmenta) — evaluira NoShow politiku.</summary>
     [HttpPatch("{participationId:guid}/no-show")]
     [RequireGrant(Grants.AppointmentsWriteOwn, Grants.AppointmentsWriteAll)]
-    public async Task<ActionResult<BookingDto>> MarkNoShow(Guid participationId, [FromBody] BookingCancelRequest request)
+    public async Task<ActionResult<BookingDto>> MarkNoShow(Guid participationId, [FromBody] NoShowRequest request)
     {
+        EnsureNoPackageSelections(request?.PackageSelections);
         return Ok(await _bookingService.SetParticipationStatus(
             this.CurrentOrganizationId(), this.CurrentUserId(), this.HasGrant(Grants.AppointmentsWriteAll), participationId,
             new BookingSetStatusRequest
             {
                 Status = BookingStatus.NoShow,
-                ReturnPackageEntry = request.ReturnPackageEntry,
-                CancellationReason = request.CancellationReason
+                NoShowReason = request?.NoShowReason,
+                ClientPackageId = request?.ClientPackageId,
+                WaivePolicyConsequence = request?.WaivePolicyConsequence ?? false,
+                WaiverReason = request?.WaiverReason,
+                CorrectionReason = request?.CorrectionReason
             }));
     }
 
+    /// <summary>Korekcija natrag na Confirmed. P1 (D12): poništenje aktivne posljedice sa stvarnim učinkom traži
+    /// appointments.policy.override i razlog korekcije (correctionReason u tijelu; tijelo je opcionalno).</summary>
     [HttpPatch("{participationId:guid}/confirm")]
     [RequireGrant(Grants.AppointmentsWriteOwn, Grants.AppointmentsWriteAll)]
-    public async Task<ActionResult<BookingDto>> Confirm(Guid participationId)
+    public async Task<ActionResult<BookingDto>> Confirm(
+        Guid participationId, [FromBody(EmptyBodyBehavior = EmptyBodyBehavior.Allow)] ParticipationConfirmRequest request)
     {
         return Ok(await _bookingService.SetParticipationStatus(
             this.CurrentOrganizationId(), this.CurrentUserId(), this.HasGrant(Grants.AppointmentsWriteAll), participationId,
-            new BookingSetStatusRequest { Status = BookingStatus.Confirmed }));
+            new BookingSetStatusRequest { Status = BookingStatus.Confirmed, CorrectionReason = request?.CorrectionReason }));
+    }
+
+    /// <summary>P1 (D10) — naknadni otpis AKTIVNE posljedice politike (cijele; razlog obavezan; nepovratno). Vraća jedinicu
+    /// paketa potrošenu kao kaznu; novac se ne pomiče. Normalan pristup sudjelovanju se provjerava u servisu.</summary>
+    [HttpPost("{participationId:guid}/policy-consequence/waive")]
+    [RequireGrant(Grants.AppointmentsPolicyOverride)]
+    public async Task<ActionResult<BookingDto>> WaivePolicyConsequence(Guid participationId, [FromBody] PolicyConsequenceWaiveRequest request)
+    {
+        return Ok(await _bookingService.WaivePolicyConsequence(
+            this.CurrentOrganizationId(), this.CurrentUserId(), participationId, request));
+    }
+
+    /// <summary>P1 (D6): naredba nad JEDNIM sudjelovanjem bira paket kroz ClientPackageId; PackageSelections (paket po
+    /// sudjelovanju) postoji samo za Booking-wide / appointment-wide naredbe — ovdje se odbija, nikad tiho ignorira.</summary>
+    private static void EnsureNoPackageSelections(System.Collections.Generic.ICollection<ParticipationPackageSelection> selections)
+    {
+        if (selections is { Count: > 0 })
+            throw new ValidationAppException("Naredba nad jednim sudjelovanjem bira paket kroz ClientPackageId, ne PackageSelections.");
     }
 }

@@ -1,6 +1,6 @@
 # ADR-0017: P1 — Ledger posljedica, Due, paketna kazna, surplus i provizija
 
-- **Status:** Prihvaćeno, nije implementirano
+- **Status:** Prihvaćeno, implementirano 2026-10-06 (migracije `20261026000000` – `20261026000002`)
 - **Datum:** 2026-10-05 (P1 Decision Record, odluke D4, D5, D6, D7, D8)
 - **Izvor:** [P1 Decision Record](../p1/P1_DECISION_RECORD.md)
 

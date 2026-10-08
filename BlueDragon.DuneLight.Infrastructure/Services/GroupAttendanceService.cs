@@ -59,7 +59,12 @@ public class GroupAttendanceService : IGroupAttendanceService
             Amount = request.Amount,
             IsPaid = request.IsPaid,
             Note = request.Note,
-            SegmentId = request.SegmentId
+            SegmentId = request.SegmentId,
+            // P1 (D9/D10/D12): Attended=false je izostanak (NoShow politika); otpis i razlog korekcije prolaze kroz istu jezgru.
+            NoShowReason = request.NoShowReason,
+            WaivePolicyConsequence = request.WaivePolicyConsequence,
+            WaiverReason = request.WaiverReason,
+            CorrectionReason = request.CorrectionReason
         });
 
         Appointment refreshed = await LoadGroupAppointmentOrThrow(organizationId, appointmentId);
@@ -118,6 +123,7 @@ public class GroupAttendanceService : IGroupAttendanceService
                 {
                     ParticipationSettlement settlement = ParticipationSettlement.Of(x.Participation);
                     PackageCoverageView coverage = PackageConsumptions.CoverageOf(x.Participation, AppointmentForm.Group);
+                    ParticipationPolicyConsequence consequence = PolicyConsequences.LatestOf(x.Participation);
                     return new GroupAttendanceEntryDto
                     {
                         ClientId = x.Booking.ClientId,
@@ -131,8 +137,11 @@ public class GroupAttendanceService : IGroupAttendanceService
                         SuggestedAmount = x.Participation.SuggestedAmount,
                         PaidAmount = settlement.SettledAmount,
                         OutstandingAmount = settlement.OutstandingAmount,
+                        SurplusAmount = settlement.SurplusAmount,
                         IsPaid = settlement.FullySettled,
                         Note = x.Booking.Note,
+                        PolicyConsequenceStatus = consequence?.Status,
+                        PolicyFeeAmount = consequence?.CalculatedFeeAmount,
                         IsMember = SelectsTemplate(x.Booking.ClientId, segment.GroupSegmentTemplateId),
                         ParticipationId = x.Participation.Id
                     };

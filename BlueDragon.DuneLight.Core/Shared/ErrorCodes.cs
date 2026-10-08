@@ -99,7 +99,77 @@ public static class ErrorCodes
     /// <summary>Phase M1F — grupa mora zadržati barem jedan predložak segmenta.</summary>
     public const string LastGroupSegmentTemplate = "LAST_GROUP_SEGMENT_TEMPLATE";
     public const string AttendanceBeforeStart = "ATTENDANCE_BEFORE_START";
+    /// <summary>P1 (D3) — klijentsko otkazivanje u trenutku ili nakon početka segmenta sudjelovanja (Business/System smiju).</summary>
+    public const string CancellationAfterStart = "CANCELLATION_AFTER_START";
+    /// <summary>P1 (D6) — posljedica politike troši jedinicu paketa, a klijent ima više prihvatljivih brojenih paketa;
+    /// potreban je eksplicitan ClientPackageId.</summary>
+    public const string PackageSelectionRequired = "PACKAGE_SELECTION_REQUIRED";
+    /// <summary>P1 (D11) — politika je zadana politika organizacije ili ima dodjelu, pa se ne može deaktivirati.</summary>
+    public const string CancellationPolicyInUse = "CANCELLATION_POLICY_IN_USE";
+    /// <summary>P1 (D11) — neaktivna politika se ne može dodijeliti niti postaviti kao zadana.</summary>
+    public const string CancellationPolicyInactive = "CANCELLATION_POLICY_INACTIVE";
+    /// <summary>P1 (D10) — sudjelovanje nema aktivnu posljedicu politike koja bi se mogla otpisati.</summary>
+    public const string NoActivePolicyConsequence = "NO_ACTIVE_POLICY_CONSEQUENCE";
     public const string PackageAlreadyCancelled = "PACKAGE_ALREADY_CANCELLED";
+
+    // P2 — članarine (docs/p2/P2_DECISION_RECORD.md)
+    /// <summary>Q29 — plan s opsegom SelectedCompanies mora imati barem jednu poslovnicu (prazna lista nikad ne znači "sve"). 400.</summary>
+    public const string MembershipPlanCompaniesRequired = "MEMBERSHIP_PLAN_COMPANIES_REQUIRED";
+    /// <summary>Q17/Q49 — nedopuštena kombinacija prozora limita i kredita perioda (isti prozor kao period, kraći prozor s
+    /// limitom koji nije manji od kredita, dulji prozor s limitom koji nije veći od kredita). 400.</summary>
+    public const string MembershipUsageLimitInvalid = "MEMBERSHIP_USAGE_LIMIT_INVALID";
+    /// <summary>Plan nije aktivan — nova prodaja ni promjena na taj plan nisu moguće. 409.</summary>
+    public const string MembershipPlanInactive = "MEMBERSHIP_PLAN_INACTIVE";
+    /// <summary>Plan je dosegnuo najveći broj aktivnih članstava. 409.</summary>
+    public const string MembershipPlanFull = "MEMBERSHIP_PLAN_FULL";
+    /// <summary>Q29.3 — nijedna odabrana poslovnica plana nije aktivna, prodaja nije moguća. 409.</summary>
+    public const string MembershipPlanNoActiveCompany = "MEMBERSHIP_PLAN_NO_ACTIVE_COMPANY";
+    /// <summary>Q10/Q46 — razdoblja važenja se preklapaju i dijele barem jednu uslugu u barem jednoj poslovnici;
+    /// details: conflictingMembershipId, planName, sharedServiceIds, sharedCompanyIds. 409.</summary>
+    public const string MembershipOverlappingCoverage = "MEMBERSHIP_OVERLAPPING_COVERAGE";
+    /// <summary>Q45 — datum početka u prošlosti ili više od mjesec dana unaprijed. 400.</summary>
+    public const string MembershipStartDateOutOfRange = "MEMBERSHIP_START_DATE_OUT_OF_RANGE";
+    /// <summary>Članstvo je završilo ili je poništeno; naredba nije moguća. 409.</summary>
+    public const string MembershipNotActive = "MEMBERSHIP_NOT_ACTIVE";
+    /// <summary>Članstvo već ima zakazan završetak (otkaz ili raniji izlazak). 409.</summary>
+    public const string MembershipEndAlreadyScheduled = "MEMBERSHIP_END_ALREADY_SCHEDULED";
+    /// <summary>Nema zakazanog otkaza koji bi se mogao povući. 409.</summary>
+    public const string MembershipNoScheduledCancellation = "MEMBERSHIP_NO_SCHEDULED_CANCELLATION";
+    /// <summary>Q5/Q12 — pauza nije dopuštena (plan je ne dopušta, zakazan je završetak, preklapa se s drugom pauzom,
+    /// pogrešne granice). 409.</summary>
+    public const string MembershipPauseNotAllowed = "MEMBERSHIP_PAUSE_NOT_ALLOWED";
+    /// <summary>Q5 — pauza bi prešla dopušteni zbroj dana/perioda ili broj pauza u 12 mjeseci od početka članstva. 409.</summary>
+    public const string MembershipPauseLimitExceeded = "MEMBERSHIP_PAUSE_LIMIT_EXCEEDED";
+    /// <summary>Pauza je već počela, završila ili je otkazana; naredba nije moguća. 409.</summary>
+    public const string MembershipPauseNotPending = "MEMBERSHIP_PAUSE_NOT_PENDING";
+    /// <summary>Raniji izlazak: datum mora biti od danas do izračunatog datuma otkaza. 400.</summary>
+    public const string MembershipEndDateOutOfRange = "MEMBERSHIP_END_DATE_OUT_OF_RANGE";
+    /// <summary>Promjena plana nije moguća (isti plan, završetak prije stupanja promjene na snagu). 409.</summary>
+    public const string MembershipPlanChangeNotAllowed = "MEMBERSHIP_PLAN_CHANGE_NOT_ALLOWED";
+    /// <summary>Nema zakazane promjene plana koju je zatražio klijent. 409.</summary>
+    public const string MembershipNoScheduledPlanChange = "MEMBERSHIP_NO_SCHEDULED_PLAN_CHANGE";
+    /// <summary>2C — zaduženje nije otvoreno (otpisano ili poništeno) ili nema preostalog duga. 409.</summary>
+    public const string MembershipChargeNotOpen = "MEMBERSHIP_CHARGE_NOT_OPEN";
+    /// <summary>2C — zaduženje je stavka otvorenog checkouta (dodavanje u drugi checkout, otpis ili poništavanje prodaje nisu
+    /// mogući dok se stavka ne ukloni ili checkout ne zatvori). 409.</summary>
+    public const string MembershipChargeInOpenCheckout = "MEMBERSHIP_CHARGE_IN_OPEN_CHECKOUT";
+    /// <summary>2C (Q24.4/Q51) — prodaja ima aktivne alokacije plaćanja (ili korištenje); poništavanje nije moguće. 409.</summary>
+    public const string MembershipSaleHasPayments = "MEMBERSHIP_SALE_HAS_PAYMENTS";
+    /// <summary>Q5.3 — pauza nije dopuštena dok članstvo ima dug nakon isteka grace perioda. 409.</summary>
+    public const string MembershipDelinquent = "MEMBERSHIP_DELINQUENT";
+    /// <summary>2D (Q4) — limit članarine je iskorišten, a postavka organizacije je "odbij" (details: clientMembershipId,
+    /// window, serviceId (null = limit plana), maxUses, used, plannedStart). 409.</summary>
+    public const string MembershipLimitExceeded = "MEMBERSHIP_LIMIT_EXCEEDED";
+    /// <summary>2D (Q27.2) — pokriće sudjelovanja čeka evaluaciju (termin iza horizonta); naplata nije moguća dok se ne
+    /// evaluira. 409.</summary>
+    public const string MembershipCoveragePending = "MEMBERSHIP_COVERAGE_PENDING";
+    /// <summary>2D — sudjelovanje je pokriveno članarinom (članarina ima prednost pred paketom i novcem). 409.</summary>
+    public const string ParticipationCoveredByMembership = "PARTICIPATION_COVERED_BY_MEMBERSHIP";
+    /// <summary>2D (Q24.4) — članstvo ima korištenje (claim); poništavanje prodaje nije moguće, samo otkaz. 409.</summary>
+    public const string MembershipSaleHasUsage = "MEMBERSHIP_SALE_HAS_USAGE";
+    /// <summary>2D (Q15.4/Q54) — članarina koja bi pokrila sesiju je u dugu nakon grace perioda, a postavka organizacije je
+    /// "blokiraj rezervaciju"; nadjačava se grantom appointments.membership-block.override (details: clientMembershipId). 409.</summary>
+    public const string MembershipBookingBlocked = "MEMBERSHIP_BOOKING_BLOCKED";
 
     // Payment ledger (vidi Payment.cs/IPaymentService)
     public const string PaymentExceedsOutstandingAmount = "PAYMENT_EXCEEDS_OUTSTANDING_AMOUNT";
@@ -132,6 +202,24 @@ public static class ErrorCodes
     // Commissions (vidi CommissionRule.cs/CommissionEntry.cs/ICommissionRuleService)
     public const string CommissionRuleAlreadyExists = "COMMISSION_RULE_ALREADY_EXISTS";
     public const string CommissionGroupPercentageNotSupported = "COMMISSION_GROUP_PERCENTAGE_NOT_SUPPORTED";
+
+    /// <summary>P2 (2F, §16.3) — korisnik provizije na prodaju se nakon nastanka provizije mijenja samo korekcijom (Q50).</summary>
+    public const string CommissionSaleAlreadyEarned = "COMMISSION_SALE_ALREADY_EARNED";
+
+    /// <summary>P2 (2F, Q50) — korekcija korisnika moguća je samo za aktivnu (Earned) proviziju na prodaju.</summary>
+    public const string CommissionEntryNotReassignable = "COMMISSION_ENTRY_NOT_REASSIGNABLE";
+
+    /// <summary>P2 (2F) — provizija na prvu prodaju članarine je već evaluirana; korisnik se može naknadno dodijeliti samo ako ga
+    /// nije bilo (naknadna dodjela, commissions.manage + razlog).</summary>
+    public const string CommissionSaleAlreadyEvaluated = "COMMISSION_SALE_ALREADY_EVALUATED";
+
+    /// <summary>P2 (2F) — naknadna dodjela korisnika provizije na prodaju moguća je samo kad provizija nije nastala jer korisnika nije
+    /// bilo ("nema pravila" i "osnovica 0" su konačni).</summary>
+    public const string CommissionSaleNotAssignable = "COMMISSION_SALE_NOT_ASSIGNABLE";
+
+    /// <summary>P2 (2F-11) — korekcija bi prebacila proviziju na zaposlenika bez pravila (nova provizija ne bi nastala); ništa nije
+    /// promijenjeno, ponoviti uz ConfirmWithoutCommission = true. Details: employeeId, ruleDate, subjectType, subjectId.</summary>
+    public const string CommissionReassignWithoutRule = "COMMISSION_REASSIGN_WITHOUT_RULE";
 
     // Waitlist (vidi WaitlistEntry/IWaitlistService)
     public const string WaitlistNotAvailable = "WAITLIST_NOT_AVAILABLE";

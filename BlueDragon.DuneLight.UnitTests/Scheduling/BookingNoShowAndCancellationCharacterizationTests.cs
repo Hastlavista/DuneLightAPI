@@ -37,7 +37,7 @@ public class BookingNoShowAndCancellationCharacterizationTests
     {
         await using SchedulingWorld w = await SchedulingWorld.Create(nameof(IndividualNoShow_SetsStatusReasonAndVersion_AndLeavesTheAppointmentScheduled));
         Client partner = await w.AddClient("Partner", "Client");
-        AppointmentDto created = await w.CreateAppointment(SchedulingWorld.Future(10), extraClients: partner);
+        AppointmentDto created = await w.CreateAppointment(SchedulingWorld.Past(10), extraClients: partner);
 
         BookingDto dto = await w.SetBookingStatus(created.Id, w.Client, BookingStatus.NoShow, "did not show");
 
@@ -47,8 +47,13 @@ public class BookingNoShowAndCancellationCharacterizationTests
         Booking b = a.Bookings.Single(x => x.ClientId == w.Client.Id);
         Assert.Equal(BookingStatus.NoShow, b.Status);
         Assert.Equal(1, b.StatusVersion);
-        Assert.Equal("did not show", b.CancellationReason);
-        Assert.Null(b.IsLateCancellation); // lateness is a Cancelled-only classification
+        // CHANGED in P1 (D3, intentional): a no-show has its own NoShowAt/By/Reason — it no longer reuses CancellationReason.
+        BookingSegmentParticipation p = b.Participations.Single();
+        Assert.Null(p.CancellationReason);
+        Assert.Equal("did not show", p.NoShowReason);
+        Assert.NotNull(p.NoShowAt);
+        Assert.Equal(w.ActorUserId, p.NoShowBy);
+        Assert.Null(b.IsLateCancellation); // lateness is a Client-cancellation-only classification
         Assert.Equal(BookingStatus.Confirmed, a.Bookings.Single(x => x.ClientId == partner.Id).Status);
         AppointmentAuditLog audit = Assert.Single(await w.LoadAuditLog(created.Id), l => l.ChangeType == "BookingStatus");
         Assert.Equal("NoShow", audit.NewValue);
@@ -60,7 +65,7 @@ public class BookingNoShowAndCancellationCharacterizationTests
     {
         await using SchedulingWorld w = await SchedulingWorld.Create(nameof(IndividualNoShow_CreatesNoPayment_NoCommission_AndKeepsTheAmount));
         await w.AddCommissionRule(w.Employee, w.Service, CommissionCalculationType.Percentage, 10m);
-        AppointmentDto created = await w.CreateAppointment(SchedulingWorld.Future(10));
+        AppointmentDto created = await w.CreateAppointment(SchedulingWorld.Past(10));
 
         await w.SetBookingStatus(created.Id, w.Client, BookingStatus.NoShow, paymentMethod: PaymentMethod.Cash);
 
@@ -74,7 +79,7 @@ public class BookingNoShowAndCancellationCharacterizationTests
     public async Task IndividualNoShow_EmitsOneNoShowEventKeyedOnTheBookingVersion()
     {
         await using SchedulingWorld w = await SchedulingWorld.Create(nameof(IndividualNoShow_EmitsOneNoShowEventKeyedOnTheBookingVersion));
-        AppointmentDto created = await w.CreateAppointment(SchedulingWorld.Future(10));
+        AppointmentDto created = await w.CreateAppointment(SchedulingWorld.Past(10));
 
         await w.SetBookingStatus(created.Id, w.Client, BookingStatus.NoShow);
 
@@ -85,27 +90,32 @@ public class BookingNoShowAndCancellationCharacterizationTests
         Assert.Equal(OutboxMessageStatus.Pending, message.Status);
     }
 
+
     [Fact]
-    public async Task IndividualNoShow_AsksForAPackageReturnThatDoesNotApply_WhenNothingWasCovered()
+    public async Task IndividualNoShow_Repeated_IsATrueNoOp()
     {
-        await using SchedulingWorld w = await SchedulingWorld.Create(nameof(IndividualNoShow_AsksForAPackageReturnThatDoesNotApply_WhenNothingWasCovered));
-        AppointmentDto created = await w.CreateAppointment(SchedulingWorld.Future(10));
+        // CHANGED in P1 (D12, intentional): a repeated same-status command is a true no-op (it used to be ALREADY_COMPLETED).
+        await using SchedulingWorld w = await SchedulingWorld.Create(nameof(IndividualNoShow_Repeated_IsATrueNoOp));
+        AppointmentDto created = await w.CreateAppointment(SchedulingWorld.Past(10));
+        await w.SetBookingStatus(created.Id, w.Client, BookingStatus.NoShow);
 
-        // A Confirmed booking has no applied coverage yet (coverage is applied only while completing), so the flag is a no-op.
-        await w.SetBookingStatus(created.Id, w.Client, BookingStatus.NoShow, returnPackageEntry: true);
+        await w.SetBookingStatus(created.Id, w.Client, BookingStatus.NoShow);
 
-        Assert.DoesNotContain(await w.LoadAuditLog(created.Id), l => l.ChangeType == "BookingPackageCoverageReturned");
-        Assert.False((await w.LoadBooking(created.Id, w.Client)).PackageCoverageReturned);
+        Assert.Equal(1, (await w.LoadBooking(created.Id, w.Client)).StatusVersion);
+        Assert.Single(await w.LoadOutbox());
+        Assert.Single(await w.LoadAuditLog(created.Id), l => l.ChangeType == "BookingStatus");
+        Assert.Single(await w.LoadPolicyConsequences(created.Id)); // one NoShow consequence, not two
     }
 
     [Fact]
-    public async Task IndividualNoShow_Repeated_IsRejected()
+    public async Task IndividualNoShow_BeforeTheSegmentStarts_IsRejected()
     {
-        await using SchedulingWorld w = await SchedulingWorld.Create(nameof(IndividualNoShow_Repeated_IsRejected));
+        // CHANGED in P1 (D3, intentional): a no-show before start used to be allowed for existing participations.
+        await using SchedulingWorld w = await SchedulingWorld.Create(nameof(IndividualNoShow_BeforeTheSegmentStarts_IsRejected));
         AppointmentDto created = await w.CreateAppointment(SchedulingWorld.Future(10));
-        await w.SetBookingStatus(created.Id, w.Client, BookingStatus.NoShow);
 
-        await SchedulingAssert.BusinessRule(ErrorCodes.AlreadyCompleted, () => w.SetBookingStatus(created.Id, w.Client, BookingStatus.NoShow));
+        await SchedulingAssert.BusinessRule(ErrorCodes.AttendanceBeforeStart, () => w.SetBookingStatus(created.Id, w.Client, BookingStatus.NoShow));
+        Assert.Equal(BookingStatus.Confirmed, (await w.LoadBooking(created.Id, w.Client)).Status);
     }
 
     [Fact]
@@ -116,6 +126,7 @@ public class BookingNoShowAndCancellationCharacterizationTests
         var group = await w.CreateGroup(svc, capacity: 3);
         await w.AddGroupMember(group, w.Client);
         Appointment occurrence = await w.GenerateSingleOccurrence(group);
+        await w.MoveToPast(occurrence.Id.Value); // P1: attendance (no-show) only after the segment started
 
         GroupAttendanceListDto list = await w.GroupAttendance.SetAttendance(w.OrganizationId, w.ActorUserId, true, occurrence.Id.Value,
             new SetGroupAttendanceRequest { ClientId = w.Client.Id.Value, SegmentId = Assert.Single(occurrence.Segments).Id, Attended = false });
@@ -137,22 +148,25 @@ public class BookingNoShowAndCancellationCharacterizationTests
     {
         await using SchedulingWorld w = await SchedulingWorld.Create(nameof(MarkNoShow_OnTheAppointment_EndsTheAppointmentClosed_AndEveryConfirmedBookingNoShow));
         Client partner = await w.AddClient("Partner", "Client");
-        AppointmentDto created = await w.CreateAppointment(SchedulingWorld.Future(10), extraClients: partner);
+        AppointmentDto created = await w.CreateAppointment(SchedulingWorld.Past(10), extraClients: partner);
 
         AppointmentDto dto = await w.Appointments.MarkNoShow(w.OrganizationId, w.ActorUserId, true, created.Id,
-            new AppointmentCancelRequest { CancellationReason = "nobody came" });
+            new NoShowRequest { NoShowReason = "nobody came" });
 
         // M1A: the appointment status is DERIVED — every participation NoShow is an operationally resolved (not cancelled)
         // outcome, so the bulk no-show ends Closed (it used to be forced to Cancelled).
         Assert.Equal(AppointmentStatus.Closed, dto.Status);
         Appointment a = await w.LoadAppointment(created.Id);
         Assert.Equal(AppointmentStatus.Closed, a.Status);
-        Assert.Equal("nobody came", a.CancellationReason);
+        // CHANGED in P1 (D3): the no-show reason lives on each participation (NoShowReason); a bulk no-show is not an
+        // appointment cancellation and no longer writes Appointment.CancellationReason.
+        Assert.Null(a.CancellationReason);
         Assert.All(a.Bookings, b =>
         {
             Assert.Equal(BookingStatus.NoShow, b.Status);
             Assert.Equal(1, b.StatusVersion);
-            Assert.Equal("nobody came", b.CancellationReason);
+            Assert.Equal("nobody came", b.Participations.Single().NoShowReason);
+            Assert.Null(b.CancellationReason);
             Assert.Null(b.IsLateCancellation);
         });
         Assert.Equal(2, (await w.LoadOutbox()).Count(m => m.Type == OutboxEventTypes.BookingNoShowV1));
@@ -165,10 +179,10 @@ public class BookingNoShowAndCancellationCharacterizationTests
     {
         await using SchedulingWorld w = await SchedulingWorld.Create(nameof(MarkNoShow_OnTheAppointment_LeavesAlreadyTerminalBookingsUntouched));
         Client cancelled = await w.AddClient("Cancelled", "Client");
-        Appointment seeded = await w.SeedAppointment(SchedulingWorld.Future(10),
+        Appointment seeded = await w.SeedAppointment(SchedulingWorld.Past(10),
             bookings: new[] { (w.Client, BookingStatus.Confirmed, 50m), (cancelled, BookingStatus.Cancelled, 50m) });
 
-        await w.Appointments.MarkNoShow(w.OrganizationId, w.ActorUserId, true, seeded.Id.Value, new AppointmentCancelRequest { CancellationReason = "x" });
+        await w.Appointments.MarkNoShow(w.OrganizationId, w.ActorUserId, true, seeded.Id.Value, new NoShowRequest { NoShowReason = "x" });
 
         Appointment a = await w.LoadAppointment(seeded.Id.Value);
         Assert.Equal(BookingStatus.NoShow, a.Bookings.Single(b => b.ClientId == w.Client.Id).Status);
@@ -184,7 +198,7 @@ public class BookingNoShowAndCancellationCharacterizationTests
         AppointmentDto completed = await w.CompleteNew(w.CompleteRequest(SchedulingWorld.Past(10)));
 
         await SchedulingAssert.BusinessRule(ErrorCodes.AlreadyCompleted,
-            () => w.Appointments.MarkNoShow(w.OrganizationId, w.ActorUserId, true, completed.Id, new AppointmentCancelRequest()));
+            () => w.Appointments.MarkNoShow(w.OrganizationId, w.ActorUserId, true, completed.Id, new NoShowRequest()));
     }
 
     [Fact]
@@ -275,7 +289,7 @@ public class BookingNoShowAndCancellationCharacterizationTests
     public async Task IndividualCancel_ClassifiesLateCancellationAgainstTheOrganizationCutoff_UsingTheRealClock()
     {
         await using SchedulingWorld w = await SchedulingWorld.Create(nameof(IndividualCancel_ClassifiesLateCancellationAgainstTheOrganizationCutoff_UsingTheRealClock));
-        await w.SetCancellationCutoffMinutes(60);
+        await w.SetCancellationWindowMinutes(60);
         DateTimeOffset now = DateTimeOffset.UtcNow;
         Client lateClient = await w.AddClient("Late", "Client");
         Employee otherEmployee = await w.AddEmployee("Other");
@@ -296,67 +310,43 @@ public class BookingNoShowAndCancellationCharacterizationTests
     {
         DateTimeOffset now = new(2031, 3, 3, 8, 0, 0, TimeSpan.Zero);
 
-        Assert.False(BookingCancellationPolicy.IsLateCancellation(now.AddMinutes(60), now, 60)); // exactly at the cutoff
-        Assert.True(BookingCancellationPolicy.IsLateCancellation(now.AddMinutes(60).AddTicks(-1), now, 60));
-        Assert.False(BookingCancellationPolicy.IsLateCancellation(now.AddMinutes(61), now, 60));
-        Assert.True(BookingCancellationPolicy.IsLateCancellation(now.AddMinutes(-5), now, 60)); // already started
+        Assert.False(CancellationPolicyRules.IsLateCancellation(now.AddMinutes(60), now, 60)); // exactly at the cutoff
+        Assert.True(CancellationPolicyRules.IsLateCancellation(now.AddMinutes(60).AddTicks(-1), now, 60));
+        Assert.False(CancellationPolicyRules.IsLateCancellation(now.AddMinutes(61), now, 60));
+        Assert.True(CancellationPolicyRules.IsLateCancellation(now.AddMinutes(-5), now, 60)); // already started
     }
 
     [Fact]
-    public async Task IndividualCancel_CannotBeUndone_CancelledHasNoReturnPathForIndividualBookings()
+    public async Task IndividualCancel_CanBeCorrectedBackToConfirmed_AndTheMetadataIsCleared()
     {
-        await using SchedulingWorld w = await SchedulingWorld.Create(nameof(IndividualCancel_CannotBeUndone_CancelledHasNoReturnPathForIndividualBookings));
+        // CHANGED in P1 (D12, intentional): Individual Cancelled -> Confirmed used to be rejected (400); one matrix now allows it.
+        await using SchedulingWorld w = await SchedulingWorld.Create(nameof(IndividualCancel_CanBeCorrectedBackToConfirmed_AndTheMetadataIsCleared));
         AppointmentDto created = await w.CreateAppointment(SchedulingWorld.Future(10));
-        await w.SetBookingStatus(created.Id, w.Client, BookingStatus.Cancelled);
+        await w.SetBookingStatus(created.Id, w.Client, BookingStatus.Cancelled, "changed my mind");
 
-        await SchedulingAssert.Validation(() => w.SetBookingStatus(created.Id, w.Client, BookingStatus.Confirmed));
+        await w.SetBookingStatus(created.Id, w.Client, BookingStatus.Confirmed);
 
         Booking b = await w.LoadBooking(created.Id, w.Client);
-        Assert.Equal(BookingStatus.Cancelled, b.Status);
-        Assert.Equal(1, b.StatusVersion);
+        Assert.Equal(BookingStatus.Confirmed, b.Status);
+        Assert.Equal(2, b.StatusVersion);
+        BookingSegmentParticipation p = b.Participations.Single();
+        Assert.Null(p.CancellationInitiator);
+        Assert.Null(p.CancelledAt);
+        Assert.Null(p.CancellationReason);
+        Assert.Null(p.IsLateCancellation);
+        Assert.Null(p.CancellationPolicyId);
     }
 
-    [Fact]
-    public async Task IndividualCancel_WithReturnPackageEntry_ReturnsAnAppliedCoverage_WhenOneIsPresent()
-    {
-        await using SchedulingWorld w = await SchedulingWorld.Create(nameof(IndividualCancel_WithReturnPackageEntry_ReturnsAnAppliedCoverage_WhenOneIsPresent));
-        ClientPackage package = await w.AddClientPackage(w.Client, w.Service, 5, new DateTimeOffset(2035, 1, 1, 0, 0, 0, TimeSpan.Zero));
-        Appointment seeded = await w.SeedAppointment(SchedulingWorld.Future(10), bookings: (w.Client, BookingStatus.Confirmed, 50m));
-        await w.SeedCoverageApplied(await w.LoadBooking(seeded.Id.Value, w.Client), package); // 5 -> 4 (seeded state, see helper)
 
-        await w.SetBookingStatus(seeded.Id.Value, w.Client, BookingStatus.Cancelled, returnPackageEntry: true);
-
-        Booking b = await w.LoadBooking(seeded.Id.Value, w.Client);
-        Assert.True(b.PackageCoverageApplied);
-        Assert.True(b.PackageCoverageReturned);
-        Assert.NotNull(b.PackageCoverageReturnedAt);
-        Assert.Equal(w.ActorUserId, b.PackageCoverageReturnedBy);
-        Assert.Equal(5, (await w.LoadClientPackage(package.Id.Value)).ServiceEntries.Single().RemainingEntries);
-        Assert.Single(await w.LoadAuditLog(seeded.Id.Value), l => l.ChangeType == "BookingPackageCoverageReturned");
-    }
-
-    [Fact]
-    public async Task IndividualCancel_WithoutReturnPackageEntry_KeepsTheEntryConsumed_ReturnIsOptIn()
-    {
-        await using SchedulingWorld w = await SchedulingWorld.Create(nameof(IndividualCancel_WithoutReturnPackageEntry_KeepsTheEntryConsumed_ReturnIsOptIn));
-        ClientPackage package = await w.AddClientPackage(w.Client, w.Service, 5, new DateTimeOffset(2035, 1, 1, 0, 0, 0, TimeSpan.Zero));
-        Appointment seeded = await w.SeedAppointment(SchedulingWorld.Future(10), bookings: (w.Client, BookingStatus.Confirmed, 50m));
-        await w.SeedCoverageApplied(await w.LoadBooking(seeded.Id.Value, w.Client), package);
-
-        await w.SetBookingStatus(seeded.Id.Value, w.Client, BookingStatus.Cancelled);
-
-        Assert.False((await w.LoadBooking(seeded.Id.Value, w.Client)).PackageCoverageReturned);
-        Assert.Equal(4, (await w.LoadClientPackage(package.Id.Value)).ServiceEntries.Single().RemainingEntries);
-    }
 
     #endregion
 
     #region M. Cancellation — group booking and appointment-wide
 
     [Fact]
-    public async Task GroupCancel_ComputesTheLateFlag_AndIsIdempotentOnRepeat()
+    public async Task GroupCancel_ComputesTheLateFlag_AndARepeatIsATrueNoOp()
     {
-        await using SchedulingWorld w = await SchedulingWorld.Create(nameof(GroupCancel_ComputesTheLateFlag_AndIsIdempotentOnRepeat));
+        await using SchedulingWorld w = await SchedulingWorld.Create(nameof(GroupCancel_ComputesTheLateFlag_AndARepeatIsATrueNoOp));
         var svc = await w.AddGroupService();
         var group = await w.CreateGroup(svc, capacity: 3);
         await w.AddGroupMember(group, w.Client);
@@ -368,7 +358,8 @@ public class BookingNoShowAndCancellationCharacterizationTests
         Booking b = await w.LoadBooking(occurrence.Id.Value, w.Client);
         Assert.Equal(false, b.IsLateCancellation);
         Assert.Equal(1, b.StatusVersion); // no second increment
-        Assert.Equal("second", b.CancellationReason); // but the reason is overwritten on the repeat
+        // CHANGED in P1 (D12): same status is a true no-op — no re-stamping, so the first reason stays.
+        Assert.Equal("first", b.CancellationReason);
         Assert.Single(await w.LoadOutbox(), m => m.Type == OutboxEventTypes.BookingCancelledV1); // no second event
     }
 
@@ -380,7 +371,7 @@ public class BookingNoShowAndCancellationCharacterizationTests
         AppointmentDto created = await w.CreateAppointment(SchedulingWorld.Future(10), extraClients: partner);
 
         AppointmentDto dto = await w.Appointments.Cancel(w.OrganizationId, w.ActorUserId, true, created.Id,
-            new AppointmentCancelRequest { CancellationReason = "studio closed" });
+            SchedulingWorld.BusinessCancel("studio closed"));
 
         Assert.Equal(AppointmentStatus.Cancelled, dto.Status);
         Appointment a = await w.LoadAppointment(created.Id);
@@ -389,33 +380,15 @@ public class BookingNoShowAndCancellationCharacterizationTests
         {
             Assert.Equal(BookingStatus.Cancelled, b.Status);
             Assert.Equal(1, b.StatusVersion);
-            // CHANGED in M1E.1 (intentional asymmetry fix): the old pin left IsLateCancellation empty for an appointment-wide
-            // cancel. Every cancelled participation is now classified from its own segment start, exactly like a participation
-            // or Booking-wide cancel — 2031 is far outside the default cutoff, so: not late.
-            Assert.False(b.IsLateCancellation);
+            // CHANGED in P1 (D2, intentional): an appointment-wide cancellation is always Business — no classification and no
+            // consequence (M1E.1 had classified each participation as if the client cancelled).
+            Assert.Null(b.IsLateCancellation);
+            Assert.Equal(CancellationInitiator.Business, b.Participations.Single().CancellationInitiator);
             Assert.Equal("studio closed", b.CancellationReason);
         });
         Assert.Equal(2, (await w.LoadOutbox()).Count(m => m.Type == OutboxEventTypes.BookingCancelledV1));
     }
 
-    [Fact]
-    public async Task AppointmentCancel_ReturnsThePackageEntryOnlyForTheClientsListed()
-    {
-        await using SchedulingWorld w = await SchedulingWorld.Create(nameof(AppointmentCancel_ReturnsThePackageEntryOnlyForTheClientsListed));
-        Client partner = await w.AddClient("Partner", "Client");
-        ClientPackage p1 = await w.AddClientPackage(w.Client, w.Service, 5, new DateTimeOffset(2035, 1, 1, 0, 0, 0, TimeSpan.Zero));
-        ClientPackage p2 = await w.AddClientPackage(partner, w.Service, 5, new DateTimeOffset(2035, 1, 1, 0, 0, 0, TimeSpan.Zero));
-        Appointment seeded = await w.SeedAppointment(SchedulingWorld.Future(10),
-            bookings: new[] { (w.Client, BookingStatus.Confirmed, 50m), (partner, BookingStatus.Confirmed, 50m) });
-        await w.SeedCoverageApplied(await w.LoadBooking(seeded.Id.Value, w.Client), p1);
-        await w.SeedCoverageApplied(await w.LoadBooking(seeded.Id.Value, partner), p2);
-
-        await w.Appointments.Cancel(w.OrganizationId, w.ActorUserId, true, seeded.Id.Value,
-            new AppointmentCancelRequest { CancellationReason = "x", ReturnEntryForClientIds = new List<Guid> { w.Client.Id.Value } });
-
-        Assert.Equal(5, (await w.LoadClientPackage(p1.Id.Value)).ServiceEntries.Single().RemainingEntries); // returned
-        Assert.Equal(4, (await w.LoadClientPackage(p2.Id.Value)).ServiceEntries.Single().RemainingEntries); // not listed: stays consumed
-    }
 
     [Fact]
     public async Task AppointmentCancel_OnACompletedAppointment_IsRejected()
@@ -424,7 +397,7 @@ public class BookingNoShowAndCancellationCharacterizationTests
         AppointmentDto completed = await w.CompleteNew(w.CompleteRequest(SchedulingWorld.Past(10)));
 
         await SchedulingAssert.BusinessRule(ErrorCodes.AlreadyCompleted,
-            () => w.Appointments.Cancel(w.OrganizationId, w.ActorUserId, true, completed.Id, new AppointmentCancelRequest()));
+            () => w.Appointments.Cancel(w.OrganizationId, w.ActorUserId, true, completed.Id, SchedulingWorld.BusinessCancel()));
     }
 
     [Fact]
@@ -432,9 +405,9 @@ public class BookingNoShowAndCancellationCharacterizationTests
     {
         await using SchedulingWorld w = await SchedulingWorld.Create(nameof(AppointmentCancel_Twice_IsAnIdempotentNoOpForBookings_ButOverwritesTheReason));
         AppointmentDto created = await w.CreateAppointment(SchedulingWorld.Future(10));
-        await w.Appointments.Cancel(w.OrganizationId, w.ActorUserId, true, created.Id, new AppointmentCancelRequest { CancellationReason = "first" });
+        await w.Appointments.Cancel(w.OrganizationId, w.ActorUserId, true, created.Id, SchedulingWorld.BusinessCancel("first"));
 
-        await w.Appointments.Cancel(w.OrganizationId, w.ActorUserId, true, created.Id, new AppointmentCancelRequest { CancellationReason = "second" });
+        await w.Appointments.Cancel(w.OrganizationId, w.ActorUserId, true, created.Id, SchedulingWorld.BusinessCancel("second"));
 
         Appointment a = await w.LoadAppointment(created.Id);
         Assert.Equal("second", a.CancellationReason); // FINDING: the recorded reason is silently replaced
@@ -471,7 +444,7 @@ public class BookingNoShowAndCancellationCharacterizationTests
     public async Task ANoShowCorrection_CancelsThePendingNotificationOfTheCorrectedOccurrence()
     {
         await using SchedulingWorld w = await SchedulingWorld.Create(nameof(ANoShowCorrection_CancelsThePendingNotificationOfTheCorrectedOccurrence));
-        AppointmentDto created = await w.CreateAppointment(SchedulingWorld.Future(10));
+        AppointmentDto created = await w.CreateAppointment(SchedulingWorld.Past(10));
         await w.SetBookingStatus(created.Id, w.Client, BookingStatus.NoShow);
         await w.ProcessOutbox(Assert.Single(await w.LoadOutbox()));
         Assert.Equal(NotificationStatus.Pending, Assert.Single(await w.LoadNotifications()).Status);
@@ -487,7 +460,7 @@ public class BookingNoShowAndCancellationCharacterizationTests
     public async Task ALateProcessedEventForAnAlreadyCorrectedOccurrence_IsStoredAsCancelled_NeverAsPending()
     {
         await using SchedulingWorld w = await SchedulingWorld.Create(nameof(ALateProcessedEventForAnAlreadyCorrectedOccurrence_IsStoredAsCancelled_NeverAsPending));
-        AppointmentDto created = await w.CreateAppointment(SchedulingWorld.Future(10));
+        AppointmentDto created = await w.CreateAppointment(SchedulingWorld.Past(10));
         await w.SetBookingStatus(created.Id, w.Client, BookingStatus.NoShow);
         await w.SetBookingStatus(created.Id, w.Client, BookingStatus.Confirmed); // corrected BEFORE the outbox ran
 
@@ -500,7 +473,7 @@ public class BookingNoShowAndCancellationCharacterizationTests
     public async Task ASecondNoShowOccurrence_GetsItsOwnNotification_IndependentOfTheCancelledFirstOne()
     {
         await using SchedulingWorld w = await SchedulingWorld.Create(nameof(ASecondNoShowOccurrence_GetsItsOwnNotification_IndependentOfTheCancelledFirstOne));
-        AppointmentDto created = await w.CreateAppointment(SchedulingWorld.Future(10));
+        AppointmentDto created = await w.CreateAppointment(SchedulingWorld.Past(10));
         await w.SetBookingStatus(created.Id, w.Client, BookingStatus.NoShow);       // v1
         await w.SetBookingStatus(created.Id, w.Client, BookingStatus.Confirmed);    // v2
         await w.SetBookingStatus(created.Id, w.Client, BookingStatus.NoShow);       // v3

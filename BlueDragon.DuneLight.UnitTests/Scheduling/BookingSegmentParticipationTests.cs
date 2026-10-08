@@ -64,6 +64,10 @@ public class BookingSegmentParticipationTests
         BookingId = booking.Id.Value,
         AppointmentSegmentId = segment.Id.Value,
         Status = status,
+        // P1: current-state metadata always matches the status (DB CHECK).
+        CancellationInitiator = status == ParticipationStatus.Cancelled ? CancellationInitiator.Business : null,
+        CancelledAt = status == ParticipationStatus.Cancelled ? DateTimeOffset.UtcNow : null,
+        NoShowAt = status == ParticipationStatus.NoShow ? DateTimeOffset.UtcNow : null,
         BaseAmount = 50m,
         BaseAmountSource = PriceSource.Default,
         SuggestedAmount = 50m,
@@ -325,6 +329,7 @@ public class BookingSegmentParticipationTests
         {
             BookingSegmentParticipation tracked = await db.BookingSegmentParticipations.SingleAsync(x => x.Id == p.Id);
             tracked.Status = ParticipationStatus.NoShow;
+            tracked.NoShowAt = DateTimeOffset.UtcNow;
             tracked.StatusVersion = 3;
             await db.SaveChangesAsync();
         }
@@ -379,14 +384,15 @@ public class BookingSegmentParticipationTests
     {
         await using SchedulingWorld w = await SchedulingWorld.Create(nameof(Cancellation_KeepsReasonAndLateClassification_AsMetadataBesideTheCancelledStatus));
         Setup s = await AppointmentWithSegments(w, 10, segments: 4);
+        // P1: the late classification + policy snapshot exist only for a CLIENT cancellation; a no-show has its own reason.
         BookingSegmentParticipation late = Participation(w, s.Bookings[0], s.Segments[3], ParticipationStatus.Cancelled);
+        ClientClassified(late, w, isLate: true);
         late.CancellationReason = "sick";
-        late.IsLateCancellation = true;
         BookingSegmentParticipation inTime = Participation(w, s.Bookings[0], s.Segments[1], ParticipationStatus.Cancelled);
+        ClientClassified(inTime, w, isLate: false);
         inTime.CancellationReason = "travel";
-        inTime.IsLateCancellation = false;
         BookingSegmentParticipation noShow = Participation(w, s.Bookings[0], s.Segments[2], ParticipationStatus.NoShow);
-        noShow.CancellationReason = "did not come"; // late classification stays null for a no-show, as on Booking
+        noShow.NoShowReason = "did not come"; // late classification stays null for a no-show
 
         foreach (BookingSegmentParticipation p in new[] { late, inTime, noShow })
             await Participations(w).Add(p);
@@ -401,7 +407,17 @@ public class BookingSegmentParticipationTests
         BookingSegmentParticipation readNoShow = await Participations(w).GetById(w.OrganizationId, noShow.Id.Value);
         Assert.Equal(ParticipationStatus.NoShow, readNoShow.Status);
         Assert.Null(readNoShow.IsLateCancellation);
-        Assert.Equal("did not come", readNoShow.CancellationReason);
+        Assert.Null(readNoShow.CancellationReason);
+        Assert.Equal("did not come", readNoShow.NoShowReason);
+    }
+
+    private static void ClientClassified(BookingSegmentParticipation p, SchedulingWorld w, bool isLate)
+    {
+        p.CancellationInitiator = CancellationInitiator.Client;
+        p.IsLateCancellation = isLate;
+        p.CancellationPolicyId = w.DefaultPolicyId;
+        p.CancellationPolicyVersion = 1;
+        p.AppliedCancellationWindowMinutes = 1440;
     }
 
     #endregion

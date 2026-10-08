@@ -130,7 +130,7 @@ public class AppointmentReadModelCharacterizationTests
     {
         await using SchedulingWorld w = await SchedulingWorld.Create(nameof(Schedule_IncludesCancelledAppointments_FlaggedAsCancelled));
         AppointmentDto created = await w.CreateAppointment(SchedulingWorld.Future(10));
-        await w.Appointments.Cancel(w.OrganizationId, w.ActorUserId, true, created.Id, new AppointmentCancelRequest());
+        await w.Appointments.Cancel(w.OrganizationId, w.ActorUserId, true, created.Id, SchedulingWorld.BusinessCancel());
 
         AppointmentScheduleCellDto cell = Assert.Single(await w.Appointments.GetSchedule(w.OrganizationId, Day(w)));
 
@@ -149,7 +149,7 @@ public class AppointmentReadModelCharacterizationTests
         AppointmentDto mine = await w.CreateAppointment(SchedulingWorld.Future(10), room: room);
         AppointmentDto theirs = await w.CreateAppointment(SchedulingWorld.Future(10), client: otherClient, employee: otherEmployee);
         AppointmentDto cancelled = await w.CreateAppointment(SchedulingWorld.Future(12));
-        await w.Appointments.Cancel(w.OrganizationId, w.ActorUserId, true, cancelled.Id, new AppointmentCancelRequest());
+        await w.Appointments.Cancel(w.OrganizationId, w.ActorUserId, true, cancelled.Id, SchedulingWorld.BusinessCancel());
         GroupDto group = await w.CreateGroup(groupService, capacity: 4, slots: (SchedulingWorld.FutureDay.DayOfWeek, TimeSpan.FromHours(15)));
         Appointment occurrence = await w.GenerateSingleOccurrence(group);
 
@@ -232,7 +232,7 @@ public class AppointmentReadModelCharacterizationTests
     {
         await using SchedulingWorld w = await SchedulingWorld.Create(nameof(ClientHistory_ListsOnlyTheClientsOwnBooking_NewestFirst_IncludingCancelledAndNoShow));
         Client partner = await w.AddClient("Partner", "Client");
-        AppointmentDto first = await w.CreateAppointment(SchedulingWorld.Future(10), extraClients: partner);
+        AppointmentDto first = await w.CreateAppointment(SchedulingWorld.Past(10), extraClients: partner);
         AppointmentDto second = await w.CreateAppointment(SchedulingWorld.Future(12));
         await w.SetBookingStatus(first.Id, w.Client, BookingStatus.NoShow);
         await w.SetBookingStatus(second.Id, w.Client, BookingStatus.Cancelled);

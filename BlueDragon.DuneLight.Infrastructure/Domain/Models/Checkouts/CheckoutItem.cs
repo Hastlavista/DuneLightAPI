@@ -82,6 +82,21 @@ public class CheckoutItem
     [Column("locks_participation")]
     public bool LocksParticipation { get; set; }
 
+    /// <summary>P2 (2C) — zaduženje članarine koje stavka (Type = MembershipCharge) plaća; Amount = dio koji se plaća.</summary>
+    [Column("membership_charge_id")]
+    public Guid? MembershipChargeId { get; set; }
+
+    /// <summary>P2 (2C) — isti mehanizam kao LocksParticipation: vrijedi dok je checkout Open i stavka nije uklonjena;
+    /// jedinstveni djelomični indeks sprječava da isto zaduženje bude u dva otvorena checkouta.</summary>
+    [Column("locks_membership_charge")]
+    public bool LocksMembershipCharge { get; set; }
+
+    /// <summary>P2 (2F, §18.1) — kome ide provizija na prodaju ove stavke; default zaposlenik korisnika koji dodaje stavku,
+    /// promjenjivo dok je checkout Open (zapis u CheckoutAuditLog); null = bez provizije na prodaju. Za stavku zaduženja PRVE
+    /// prodaje članarine (prvi period, početna naknada) se ne koristi: jedini izvor je ClientMembership.SaleCommissionEmployeeId.</summary>
+    [Column("sale_commission_employee_id")]
+    public Guid? SaleCommissionEmployeeId { get; set; }
+
     [Column("created_at")]
     public DateTimeOffset CreatedAt { get; set; }
 
@@ -93,6 +108,7 @@ public class CheckoutItem
     public Package Package { get; set; }
     public Product Product { get; set; }
     public ClientPackage ClientPackage { get; set; }
+    public MembershipCharge MembershipCharge { get; set; }
 
     public List<PaymentAllocation> Allocations { get; set; } = new();
 }

@@ -1,6 +1,6 @@
 # ADR-0010: Model provizija (Individual po Participationu, Group po Segmentu)
 
-- **Status:** Prihvaćeno
+- **Status:** Prihvaćeno; proširen ADR-0030 (P2 2F: povijest pravila, osnovica po postavkama organizacije, nadjačavanje po načinu plaćanja, provizija na prodaju i naknade)
 - **Datum:** 2026-10-05 (zatvara Decision Log v1 #38; implementirano u M1G)
 
 ## Kontekst

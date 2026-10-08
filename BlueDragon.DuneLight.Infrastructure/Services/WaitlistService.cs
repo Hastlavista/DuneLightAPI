@@ -6,6 +6,7 @@ using BlueDragon.DuneLight.Core.DTOs.Appointments;
 using BlueDragon.DuneLight.Core.DTOs.Catalog;
 using BlueDragon.DuneLight.Core.Enums;
 using BlueDragon.DuneLight.Core.Events;
+using BlueDragon.DuneLight.Core.Interfaces;
 using BlueDragon.DuneLight.Core.Interfaces.Appointments;
 using BlueDragon.DuneLight.Core.Interfaces.Catalog;
 using BlueDragon.DuneLight.Core.Shared;
@@ -40,6 +41,8 @@ public class WaitlistService : IWaitlistService, IWaitlistPromotionService
     private readonly IPricingService _pricingService;
     private readonly IOutboxWriter _outboxWriter;
     private readonly IUnitOfWorkFactory _unitOfWorkFactory;
+    private readonly IMembershipCoverageService _membershipCoverage;
+    private readonly IGrantResolver _grantResolver;
 
     public WaitlistService(
         IWaitlistHandler waitlistHandler,
@@ -51,8 +54,11 @@ public class WaitlistService : IWaitlistService, IWaitlistPromotionService
         IEmployeeHandler employeeHandler,
         IPricingService pricingService,
         IOutboxWriter outboxWriter,
-        IUnitOfWorkFactory unitOfWorkFactory)
+        IUnitOfWorkFactory unitOfWorkFactory,
+        IMembershipCoverageService membershipCoverage,
+        IGrantResolver grantResolver)
     {
+        _grantResolver = grantResolver;
         _waitlistHandler = waitlistHandler;
         _appointmentHandler = appointmentHandler;
         _schedulingOccupancyHandler = schedulingOccupancyHandler;
@@ -63,6 +69,7 @@ public class WaitlistService : IWaitlistService, IWaitlistPromotionService
         _pricingService = pricingService;
         _outboxWriter = outboxWriter;
         _unitOfWorkFactory = unitOfWorkFactory;
+        _membershipCoverage = membershipCoverage;
     }
 
     /// <summary>Isti IPricingService poziv kao BookingService/AppointmentService/GroupService — centralni
@@ -172,6 +179,15 @@ public class WaitlistService : IWaitlistService, IWaitlistPromotionService
 
         await using (IUnitOfWork uow = await _unitOfWorkFactory.Begin())
         {
+            // P2 (pregled 2D #11): upis na listu čekanja je nova rezervacija — uz dug i postavku "blokiraj rezervaciju" samo s
+            // grantom appointments.membership-block.override (promocija takvog upisa tada prolazi bez pokrića).
+            Guid? blocking = await _membershipCoverage.BlockingMembership(
+                uow, organizationId, request.ClientId, segment.ServiceId, appointment.CompanyId, segment.PlannedStart);
+            if (blocking != null && !(await _grantResolver.Resolve(organizationId, userId)).Has(Grants.AppointmentsMembershipBlockOverride))
+                throw new BusinessRuleException(ErrorCodes.MembershipBookingBlocked,
+                    "Članarina klijenta je u dugu nakon grace perioda, a postavka organizacije blokira rezervaciju.",
+                    new { clientMembershipId = blocking, plannedStart = segment.PlannedStart });
+
             await _waitlistHandler.Add(uow, entry);
 
             await _auditLogHandler.Add(uow, new AppointmentAuditLog
@@ -331,18 +347,26 @@ public class WaitlistService : IWaitlistService, IWaitlistPromotionService
             // postojećim Bookingom occurrencea (npr. sudjeluje u drugom segmentu) dobiva SAMO novo sudjelovanje.
             Booking booking = await uow.Context.Bookings
                 .SingleOrDefaultAsync(b => b.AppointmentId == appointmentId && b.ClientId == entry.ClientId);
+            BookingSegmentParticipation promoted;
             if (booking == null)
             {
                 booking = BookingFactory.CreateConfirmed(
                     organizationId, segment, entry.ClientId, BookingPricing.AtSuggested(resolvedPrice), now);
                 uow.Context.Bookings.Add(booking);
+                promoted = booking.Participations.Single();
             }
             else
             {
-                uow.Context.BookingSegmentParticipations.Add(BookingFactory.AddParticipation(
-                    booking, segment, ParticipationStatus.Confirmed, BookingPricing.AtSuggested(resolvedPrice), now));
+                promoted = BookingFactory.AddParticipation(
+                    booking, segment, ParticipationStatus.Confirmed, BookingPricing.AtSuggested(resolvedPrice), now);
+                uow.Context.BookingSegmentParticipations.Add(promoted);
             }
             await uow.Context.SaveChangesAsync();
+            // P2 (2D): promocija je rezervacija — claim kao i svaka druga, automatski proces (nikad ne odbija; bez članarine no-op).
+            MembershipCoverageDecision coverage = await _membershipCoverage.SyncParticipation(uow, organizationId, userId, appointment, booking, promoted,
+                MembershipCoverageEvent.Booking, MembershipCoverageMode.Automatic);
+            // Pregled 2D #11: promocija postojećeg upisa prolazi i bez pokrića (npr. dug) — recepcija dobiva razlog u obavijesti.
+            bool uncovered = coverage != null && !coverage.IsCovered;
 
             entry.Status = WaitlistEntryStatus.Promoted;
             entry.PromotedAt = now;
@@ -373,7 +397,9 @@ public class WaitlistService : IWaitlistService, IWaitlistPromotionService
                     AppointmentId = appointmentId,
                     ClientId = entry.ClientId,
                     CompanyId = appointment.CompanyId,
-                    OccurredAt = now
+                    OccurredAt = now,
+                    MembershipCoverageStatus = uncovered ? coverage.Status : null,
+                    MembershipCoverageReason = uncovered ? coverage.Reason : null
                 },
                 now,
                 idempotencyKey: $"waitlist-promoted:{entry.Id.GetValueOrDefault()}");

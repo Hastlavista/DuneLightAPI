@@ -7,12 +7,14 @@ using BlueDragon.DuneLight.Core.DTOs.Checkouts;
 using BlueDragon.DuneLight.Core.Enums;
 using BlueDragon.DuneLight.Core.Interfaces.Catalog;
 using BlueDragon.DuneLight.Core.Interfaces.Checkouts;
+using BlueDragon.DuneLight.Core.Interfaces.Groups;
 using BlueDragon.DuneLight.Core.Shared;
 using BlueDragon.DuneLight.Core.Shared.Exceptions;
 using BlueDragon.DuneLight.Infrastructure.Domain.Models.Appointments;
 using BlueDragon.DuneLight.Infrastructure.Domain.Models.Catalog;
 using BlueDragon.DuneLight.Infrastructure.Domain.Models.Checkouts;
 using BlueDragon.DuneLight.Infrastructure.Domain.Models.Clients;
+using BlueDragon.DuneLight.Infrastructure.Domain.Models.Employees;
 using BlueDragon.DuneLight.Infrastructure.Domain.Models.Products;
 using BlueDragon.DuneLight.Infrastructure.Handlers.Interfaces;
 using BlueDragon.DuneLight.Infrastructure.UnitOfWork;
@@ -42,6 +44,10 @@ public class CheckoutService : ICheckoutService
     private readonly IUnitOfWorkFactory _unitOfWorkFactory;
     private readonly IOrganizationCalendarService _organizationCalendarService;
     private readonly IBookingSegmentParticipationHandler _participationHandler;
+    private readonly IClientMembershipHandler _membershipHandler;
+    private readonly IMembershipCoverageService _membershipCoverage;
+    private readonly IGroupMembershipSkipService _membershipSkips;
+    private readonly IEmployeeHandler _employeeHandler;
 
     public CheckoutService(
         ICheckoutHandler checkoutHandler,
@@ -56,8 +62,16 @@ public class CheckoutService : ICheckoutService
         ICommissionLedgerService commissionLedgerService,
         IUnitOfWorkFactory unitOfWorkFactory,
         IOrganizationCalendarService organizationCalendarService,
-        IBookingSegmentParticipationHandler participationHandler)
+        IBookingSegmentParticipationHandler participationHandler,
+        IClientMembershipHandler membershipHandler,
+        IMembershipCoverageService membershipCoverage,
+        IGroupMembershipSkipService membershipSkips,
+        IEmployeeHandler employeeHandler)
     {
+        _membershipCoverage = membershipCoverage;
+        _membershipSkips = membershipSkips;
+        _employeeHandler = employeeHandler;
+        _membershipHandler = membershipHandler;
         _organizationCalendarService = organizationCalendarService;
         _participationHandler = participationHandler;
         _checkoutHandler = checkoutHandler;
@@ -162,11 +176,23 @@ public class CheckoutService : ICheckoutService
         if (execution.CompanyId != locked.CompanyId)
             throw new BusinessRuleException(ErrorCodes.CheckoutItemCompanyMismatch, "Booking pripada drugoj tvrtki.");
 
-        if (participation.Status == ParticipationStatus.Cancelled)
-            throw new BusinessRuleException(ErrorCodes.CheckoutItemNotEligible, "Otkazan booking se ne može dodati u checkout.");
-
         // Zaključaj ciljno sudjelovanje (isti lock kao svako drugo namirenje) prije provjere "već u otvorenom checkoutu".
         await _participationHandler.LockForUpdate(uow, organizationId, new[] { participation.Id.GetValueOrDefault() });
+        // P2 (pregled 2E #4): nikad ne naplaćuj zastarjelu cijenu — PriceStale se uskladi pod lockom prije snapshota stavke.
+        if (await _membershipCoverage.EnsurePriceCurrent(uow, organizationId, userId, participation.Id.GetValueOrDefault()))
+            await uow.Context.Entry(participation).ReloadAsync();
+
+        // P1 (D5): prihvatljivost otkazanog/izostalog sudjelovanja je FINANCIJSKA, ne po statusu — smije se namiriti samo uz
+        // pozitivan preostali dug (aktivna naknada politike, iz jedine status-aware derivacije, svježe pod lockom).
+        // Confirmed/Completed ostaju prihvatljivi kao i prije (predujam; preplatu i dalje odbija plaćanje).
+        ParticipationSettlement settlement = ParticipationSettlement.Of(
+            participation, await _checkoutHandler.GetItemsForParticipation(uow, organizationId, participation.Id.GetValueOrDefault()));
+        bool isPolicyFee = !ParticipationOccupancy.Occupies(participation.Status);
+        // P2 (2D): usluga pokrivena članarinom ili pokriće koje čeka evaluaciju se ne naplaćuje (bez članarine: no-op).
+        SettlementExclusivityPolicy.EnsureNotMembershipCovered(participation);
+        if (isPolicyFee && settlement.OutstandingAmount <= 0m)
+            throw new BusinessRuleException(ErrorCodes.CheckoutItemNotEligible,
+                "Otkazano/izostalo sudjelovanje nema naknadu za naplatu.");
         bool alreadyLocked = await uow.Context.CheckoutItems
             .AnyAsync(i => i.OrganizationId == organizationId && i.BookingSegmentParticipationId == participation.Id && i.LocksParticipation);
         if (alreadyLocked)
@@ -180,12 +206,16 @@ public class CheckoutService : ICheckoutService
             OrganizationId = organizationId,
             CheckoutId = checkoutId,
             Type = CheckoutItemType.Booking,
-            Description = execution.ServiceName ?? "Booking",
-            UnitPrice = participation.Amount,
+            // P1: otkazano/izostalo sudjelovanje se naplaćuje samo kao naknada politike (snapshot = trenutni dug).
+            Description = isPolicyFee
+                ? $"{execution.ServiceName ?? "Booking"} — naknada ({(participation.Status == ParticipationStatus.NoShow ? "izostanak" : "kasno otkazivanje")})"
+                : execution.ServiceName ?? "Booking",
+            UnitPrice = isPolicyFee ? settlement.MonetaryDue : participation.Amount,
             Quantity = 1,
-            Amount = participation.Amount,
+            Amount = isPolicyFee ? settlement.MonetaryDue : participation.Amount,
             BookingSegmentParticipationId = participation.Id,
             LocksParticipation = true,
+            SaleCommissionEmployeeId = await DefaultSaleCommissionEmployee(organizationId, userId),
             CreatedAt = now,
             CreatedBy = userId
         };
@@ -241,6 +271,7 @@ public class CheckoutService : ICheckoutService
             Amount = price,
             PackageId = package.Id,
             LocksParticipation = false,
+            SaleCommissionEmployeeId = await DefaultSaleCommissionEmployee(organizationId, userId),
             CreatedAt = now,
             CreatedBy = userId
         };
@@ -259,6 +290,114 @@ public class CheckoutService : ICheckoutService
         await uow.CommitAsync();
 
         return await GetById(organizationId, checkoutId);
+    }
+
+    /// <summary>P2 (2C, Q20/Q24) — stavka plaćanja zaduženja članarine. Zaduženje mora pripadati klijentu checkouta, biti
+    /// otvoreno s preostalim dugom i ne smije biti stavka drugog otvorenog checkouta (lock zaduženja, isti mehanizam kao
+    /// sudjelovanje). Iznos stavke = dio koji se sada plaća (djelomično dopušteno), najviše preostali dug.</summary>
+    public async Task<CheckoutDto> AddMembershipChargeItem(Guid organizationId, Guid userId, Guid checkoutId, CheckoutAddMembershipChargeItemRequest request)
+    {
+        Guid chargeId = request?.MembershipChargeId ?? throw new ValidationAppException("MembershipChargeId je obavezan.");
+        await using IUnitOfWork uow = await _unitOfWorkFactory.Begin();
+
+        Checkout locked = await LockOpenCheckout(uow, organizationId, checkoutId);
+        MembershipCharge charge = await _membershipHandler.GetChargeForUpdate(uow, organizationId, chargeId)
+            ?? throw new NotFoundAppException("MembershipCharge", chargeId);
+        if (charge.ClientId != locked.ClientId)
+            throw new BusinessRuleException(ErrorCodes.CheckoutItemClientMismatch, "Zaduženje članarine pripada drugom klijentu.");
+        if (charge.CheckoutItems.Any(i => i.LocksMembershipCharge))
+            throw new BusinessRuleException(ErrorCodes.MembershipChargeInOpenCheckout, "Zaduženje je već stavka otvorenog checkouta.");
+
+        decimal outstanding = MembershipChargeSettlement.Outstanding(charge);
+        if (outstanding <= 0m)
+            throw new BusinessRuleException(ErrorCodes.MembershipChargeNotOpen, "Zaduženje nije otvoreno ili nema preostalog duga.");
+        decimal amount = request.Amount ?? outstanding;
+        if (amount <= 0m || amount > outstanding || decimal.Round(amount, 2) != amount)
+            throw new ValidationAppException($"Iznos mora biti veći od 0, najviše {outstanding} (preostali dug), s najviše 2 decimale.");
+
+        DateTimeOffset now = DateTimeOffset.UtcNow;
+        CheckoutItem item = new CheckoutItem
+        {
+            Id = Guid.NewGuid(),
+            OrganizationId = organizationId,
+            CheckoutId = checkoutId,
+            Type = CheckoutItemType.MembershipCharge,
+            Description = charge.Description,
+            UnitPrice = amount,
+            Quantity = 1,
+            Amount = amount,
+            MembershipChargeId = charge.Id,
+            LocksMembershipCharge = true,
+            // 2F: zaduženje prve prodaje nosi korisnika provizije na članstvu (jedini izvor); obnova sprema odabir na stavci.
+            SaleCommissionEmployeeId = MembershipFirstSale.IsFirstSaleCharge(charge, charge.Membership.StartsOn)
+                ? null
+                : await DefaultSaleCommissionEmployee(organizationId, userId),
+            CreatedAt = now,
+            CreatedBy = userId
+        };
+
+        try
+        {
+            await _checkoutHandler.AddItem(uow, item);
+        }
+        catch (DbUpdateException)
+        {
+            throw new BusinessRuleException(ErrorCodes.MembershipChargeInOpenCheckout, "Zaduženje je već stavka otvorenog checkouta.");
+        }
+
+        await _auditLogHandler.Add(uow, new CheckoutAuditLog
+        {
+            Id = Guid.NewGuid(),
+            CheckoutId = checkoutId,
+            ChangeType = "ItemAdded",
+            NewValue = $"MembershipCharge:{charge.Id}:{amount}",
+            ChangedAt = now,
+            ChangedBy = userId
+        });
+        await uow.CommitAsync();
+
+        return await GetById(organizationId, checkoutId);
+    }
+
+    /// <summary>P2 (Q16.3) — projekcija plaćenosti zaduženja članarine nakon promjene alokacija, u istoj transakciji.</summary>
+    private async Task<Guid> ClientOf(Guid organizationId, Guid checkoutId)
+    {
+        await using IUnitOfWork uow = await _unitOfWorkFactory.Begin();
+        return await uow.Context.Checkouts.Where(c => c.OrganizationId == organizationId && c.Id == checkoutId).Select(c => c.ClientId).SingleAsync();
+    }
+
+    /// <remarks>P2 (2D): plaćanje ili storno zaduženja mijenja stanje duga članstva (Q15) — pokriće budućih termina se
+    /// usklađuje (plaćen dug vraća pokriće, storno nakon grace perioda ga oduzima). Storno uplate sudjelovanja vraća ga u
+    /// evaluaciju (AlreadyPaid → pokriće ako limiti dopuštaju). Bez članarine no-op.</remarks>
+    private async Task RefreshMembershipCharges(IUnitOfWork uow, Guid organizationId, Guid userId, Guid checkoutId, bool paymentVoided)
+    {
+        List<Guid> chargeIds = await uow.Context.CheckoutItems
+            .Where(i => i.OrganizationId == organizationId && i.CheckoutId == checkoutId && i.MembershipChargeId != null)
+            .Select(i => i.MembershipChargeId.Value)
+            .Distinct()
+            .ToListAsync();
+        await _membershipHandler.RefreshChargeSettlement(uow, chargeIds);
+        await uow.Context.SaveChangesAsync();
+
+        if (chargeIds.Count > 0)
+        {
+            List<Guid> membershipIds = await uow.Context.MembershipCharges
+                .Where(c => chargeIds.Contains(c.Id))
+                .Select(c => c.ClientMembershipId)
+                .Distinct()
+                .OrderBy(id => id)
+                .ToListAsync();
+            foreach (Guid membershipId in membershipIds)
+                await _membershipCoverage.ReconcileMembership(uow, organizationId, membershipId, MembershipCoverageEvent.DebtChanged, userId);
+        }
+
+        bool hasServiceItems = await uow.Context.CheckoutItems
+            .AnyAsync(i => i.OrganizationId == organizationId && i.CheckoutId == checkoutId && i.BookingSegmentParticipationId != null);
+        if (paymentVoided && hasServiceItems)
+        {
+            Guid clientId = await uow.Context.Checkouts.Where(c => c.Id == checkoutId).Select(c => c.ClientId).SingleAsync();
+            await _membershipCoverage.ReconcileClient(uow, organizationId, clientId, MembershipCoverageEvent.PaymentChanged, userId);
+        }
     }
 
     public async Task<CheckoutDto> AddProductItem(Guid organizationId, Guid userId, Guid checkoutId, CheckoutAddProductItemRequest request)
@@ -317,6 +456,7 @@ public class CheckoutService : ICheckoutService
                 Amount = newAmount,
                 ProductId = product.Id,
                 LocksParticipation = false,
+                SaleCommissionEmployeeId = await DefaultSaleCommissionEmployee(organizationId, userId),
                 CreatedAt = now,
                 CreatedBy = userId
             };
@@ -389,6 +529,50 @@ public class CheckoutService : ICheckoutService
         return await GetById(organizationId, checkoutId);
     }
 
+    /// <summary>P2 (2F, §18.1/§16.3) — kome ide provizija na prodaju stavke, dok je checkout Open. Stavka zaduženja prve prodaje
+    /// članarine mijenja korisnika na članstvu (jedini izvor; događaj u povijesti članstva; nakon nastanka provizije samo korekcija,
+    /// Q50); ostale stavke spremaju odabir na stavci uz zapis u CheckoutAuditLog. Null = bez provizije na prodaju.</summary>
+    public async Task<CheckoutDto> SetItemSaleCommissionEmployee(
+        Guid organizationId, Guid userId, Guid checkoutId, Guid itemId, Core.DTOs.Commissions.SaleCommissionEmployeeRequest request)
+    {
+        Guid? employeeId = request?.EmployeeId;
+        if (employeeId.HasValue)
+            await _commissionLedgerService.EnsureSelectableEmployee(organizationId, employeeId.Value);
+
+        await using IUnitOfWork uow = await _unitOfWorkFactory.Begin();
+        await LockOpenCheckout(uow, organizationId, checkoutId);
+
+        CheckoutItem item = await uow.Context.CheckoutItems
+            .Include(i => i.MembershipCharge).ThenInclude(c => c.Membership)
+            .SingleOrDefaultAsync(i => i.OrganizationId == organizationId && i.CheckoutId == checkoutId && i.Id == itemId)
+            ?? throw new NotFoundAppException("CheckoutItem", itemId);
+
+        if (SaleCommissionFromMembership(item))
+        {
+            await _commissionLedgerService.SetMembershipSaleCommissionEmployee(
+                uow, organizationId, userId, item.MembershipCharge.ClientMembershipId, employeeId, $"Checkout:{checkoutId}");
+        }
+        else if (item.SaleCommissionEmployeeId != employeeId)
+        {
+            Guid? previous = item.SaleCommissionEmployeeId;
+            item.SaleCommissionEmployeeId = employeeId;
+            await uow.Context.SaveChangesAsync();
+            await _auditLogHandler.Add(uow, new CheckoutAuditLog
+            {
+                Id = Guid.NewGuid(),
+                CheckoutId = checkoutId,
+                ChangeType = "SaleCommissionEmployeeChanged",
+                OldValue = $"{item.Id}:{previous}",
+                NewValue = $"{item.Id}:{employeeId}",
+                ChangedAt = DateTimeOffset.UtcNow,
+                ChangedBy = userId
+            });
+        }
+
+        await uow.CommitAsync();
+        return await GetById(organizationId, checkoutId);
+    }
+
     public async Task<CheckoutDto> RecordPayment(Guid organizationId, Guid userId, Guid checkoutId, CheckoutPaymentCreateRequest request)
     {
         if (request.Amount <= 0m)
@@ -399,8 +583,11 @@ public class CheckoutService : ICheckoutService
         await LockOpenCheckout(uow, organizationId, checkoutId);
         // Phase D3B3B: zaključaj sudjelovanja stavki usluge PRIJE učitavanja grafa — svako novčano namirenje istog
         // sudjelovanja (ovaj ili drugi checkout, check-in plaćanje) se serijalizira, pa izračun duga ispod vidi svježe stanje.
-        await _participationHandler.LockForUpdate(
-            uow, organizationId, await _checkoutHandler.GetServiceParticipationIds(uow, organizationId, checkoutId));
+        List<Guid> serviceParticipationIds = await _checkoutHandler.GetServiceParticipationIds(uow, organizationId, checkoutId);
+        await _participationHandler.LockForUpdate(uow, organizationId, serviceParticipationIds);
+        // P2 (pregled 2E #4): zastarjela cijena sudjelovanja se uskladi prije izračuna duga (bez članarine no-op).
+        foreach (Guid participationId in serviceParticipationIds)
+            await _membershipCoverage.EnsurePriceCurrent(uow, organizationId, userId, participationId);
         Checkout graph = await _checkoutHandler.GetGraph(uow, organizationId, checkoutId);
 
         List<CheckoutItem> orderedItems = graph.Items.OrderBy(i => i.CreatedAt).ToList();
@@ -434,6 +621,8 @@ public class CheckoutService : ICheckoutService
             : BuildFifoAllocations(paymentId, request.Amount, orderedItems, financials, now);
 
         await _checkoutHandler.AddPayment(uow, payment);
+        await RefreshMembershipCharges(uow, organizationId, userId, checkoutId, paymentVoided: false);
+        await SyncPolicyFeeCommissions(uow, organizationId, userId, checkoutId);
 
         await _auditLogHandler.Add(uow, new CheckoutAuditLog
         {
@@ -446,6 +635,8 @@ public class CheckoutService : ICheckoutService
         });
         await uow.CommitAsync();
 
+        // P2 (Q53): plaćeno zaduženje može okončati dug — preskočeni budući termini grupe se popunjavaju (vlastite transakcije).
+        await _membershipSkips.BackfillForClient(organizationId, await ClientOf(organizationId, checkoutId), userId);
         return await GetById(organizationId, checkoutId);
     }
 
@@ -547,6 +738,8 @@ public class CheckoutService : ICheckoutService
         payment.VoidReason = request.Reason.Trim();
 
         await _checkoutHandler.UpdatePayment(uow, payment);
+        await RefreshMembershipCharges(uow, organizationId, userId, checkoutId, paymentVoided: true);
+        await SyncPolicyFeeCommissions(uow, organizationId, userId, checkoutId);
 
         await _auditLogHandler.Add(uow, new CheckoutAuditLog
         {
@@ -590,6 +783,8 @@ public class CheckoutService : ICheckoutService
         graph.CompletedBy = userId;
         foreach (CheckoutItem item in graph.Items.Where(i => i.LocksParticipation))
             item.LocksParticipation = false;
+        foreach (CheckoutItem item in graph.Items.Where(i => i.LocksMembershipCharge))
+            item.LocksMembershipCharge = false;
 
         await _checkoutHandler.Update(uow, graph);
 
@@ -630,6 +825,8 @@ public class CheckoutService : ICheckoutService
         graph.CancelledBy = userId;
         foreach (CheckoutItem item in graph.Items.Where(i => i.LocksParticipation))
             item.LocksParticipation = false;
+        foreach (CheckoutItem item in graph.Items.Where(i => i.LocksMembershipCharge))
+            item.LocksMembershipCharge = false;
 
         await _checkoutHandler.Update(uow, graph);
 
@@ -737,6 +934,57 @@ public class CheckoutService : ICheckoutService
         });
     }
 
+    /// <summary>Pregled 2E — otvoreni checkout: stavka AKTIVNE sesije čiji iznos (snapshot pri dodavanju) se razlikuje od trenutnog
+    /// duga sesije (automatska promjena cijene zbog članarine ili ručna promjena cijene) daje upozorenje s oba iznosa. Stavka se ne
+    /// mijenja automatski; recepcija je osvježava uklanjanjem i ponovnim dodavanjem prije zatvaranja.</summary>
+    private static List<WarningDto> ItemPriceWarnings(Checkout checkout, List<CheckoutItem> orderedItems)
+    {
+        if (checkout.Status != CheckoutStatus.Open)
+            return new List<WarningDto>();
+
+        List<WarningCheckoutItemPrice> changed = orderedItems
+            .Where(i => i.Type == CheckoutItemType.Booking && i.Participation != null && ParticipationOccupancy.Occupies(i.Participation.Status))
+            .Select(i => new WarningCheckoutItemPrice
+            {
+                CheckoutItemId = i.Id.GetValueOrDefault(),
+                ParticipationId = i.BookingSegmentParticipationId.GetValueOrDefault(),
+                ItemAmount = i.Amount,
+                CurrentDue = ParticipationSettlement.Of(i.Participation).MonetaryDue
+            })
+            .Where(x => x.ItemAmount != x.CurrentDue)
+            .ToList();
+        return changed.Count == 0
+            ? new List<WarningDto>()
+            : new List<WarningDto> { new(WarningCodes.CheckoutItemPriceChanged, new WarningCheckoutItemPriceDetails { Items = changed }) };
+    }
+
+    /// <summary>P2 (2F, §18.1) — default korisnik provizije na prodaju nove stavke: aktivan zaposlenik korisnika koji radi s
+    /// checkoutom (User → Employee); bez njega null (nema provizije dok se ne odabere).</summary>
+    private async Task<Guid?> DefaultSaleCommissionEmployee(Guid organizationId, Guid userId)
+    {
+        Employee employee = await _employeeHandler.GetByUserId(organizationId, userId);
+        return employee is { IsActive: true } ? employee.Id : null;
+    }
+
+    /// <summary>P2 (2F) — stavka zaduženja PRVE prodaje članarine: korisnik provizije je na članstvu (jedini izvor).</summary>
+    private static bool SaleCommissionFromMembership(CheckoutItem item) =>
+        item.MembershipCharge?.Membership != null
+        && MembershipFirstSale.IsFirstSaleCharge(item.MembershipCharge, item.MembershipCharge.Membership.StartsOn);
+
+    /// <summary>P2 (2F, Q38) — promjena uplata mijenja plaćenost P1 naknada otkazanih/izostalih sudjelovanja checkouta; provizija
+    /// na naknadu se usklađuje u istoj transakciji (bez naknade no-op).</summary>
+    private async Task SyncPolicyFeeCommissions(IUnitOfWork uow, Guid organizationId, Guid userId, Guid checkoutId)
+    {
+        List<Guid> participationIds = await uow.Context.CheckoutItems
+            .Where(i => i.OrganizationId == organizationId && i.CheckoutId == checkoutId && i.BookingSegmentParticipationId != null &&
+                        (i.Participation.Status == ParticipationStatus.Cancelled || i.Participation.Status == ParticipationStatus.NoShow))
+            .Select(i => i.BookingSegmentParticipationId.Value)
+            .Distinct()
+            .ToListAsync();
+        foreach (Guid participationId in participationIds.OrderBy(id => id))
+            await _commissionLedgerService.SyncPolicyFeeCommission(uow, organizationId, userId, participationId);
+    }
+
     private static CheckoutDto ToDto(Checkout checkout)
     {
         List<CheckoutItem> orderedItems = checkout.Items.OrderBy(i => i.CreatedAt).ToList();
@@ -762,6 +1010,9 @@ public class CheckoutService : ICheckoutService
                 PackageId = item.PackageId,
                 ProductId = item.ProductId,
                 ClientPackageId = item.ClientPackageId,
+                MembershipChargeId = item.MembershipChargeId,
+                SaleCommissionEmployeeId = SaleCommissionFromMembership(item) ? item.MembershipCharge.Membership.SaleCommissionEmployeeId : item.SaleCommissionEmployeeId,
+                SaleCommissionFromMembership = SaleCommissionFromMembership(item),
                 CreatedAt = item.CreatedAt,
                 CreatedBy = item.CreatedBy
             };
@@ -785,6 +1036,7 @@ public class CheckoutService : ICheckoutService
                 OutstandingAmount = totals.OutstandingAmount,
                 IsFullyPaid = totals.IsFullyPaid
             },
+            Warnings = ItemPriceWarnings(checkout, orderedItems),
             CreatedAt = checkout.CreatedAt,
             CreatedBy = checkout.CreatedBy,
             CompletedAt = checkout.CompletedAt,

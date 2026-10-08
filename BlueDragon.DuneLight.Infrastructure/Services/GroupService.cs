@@ -59,9 +59,9 @@ public class GroupService : IGroupService
     private readonly IOutboxWriter _outboxWriter;
     private readonly IUnitOfWorkFactory _unitOfWorkFactory;
     private readonly IOrganizationCalendarService _organizationCalendarService;
-    private readonly IOrganizationSettingsService _organizationSettingsService;
     private readonly IBookingSegmentParticipationHandler _participationHandler;
     private readonly IGrantResolver _grantResolver;
+    private readonly IMembershipCoverageService _membershipCoverage;
 
     public GroupService(
         IGroupHandler groupHandler,
@@ -85,14 +85,14 @@ public class GroupService : IGroupService
         IOutboxWriter outboxWriter,
         IUnitOfWorkFactory unitOfWorkFactory,
         IOrganizationCalendarService organizationCalendarService,
-        IOrganizationSettingsService organizationSettingsService,
         IBookingSegmentParticipationHandler participationHandler,
-        IGrantResolver grantResolver)
+        IGrantResolver grantResolver,
+        IMembershipCoverageService membershipCoverage)
     {
         _organizationCalendarService = organizationCalendarService;
-        _organizationSettingsService = organizationSettingsService;
         _participationHandler = participationHandler;
         _grantResolver = grantResolver;
+        _membershipCoverage = membershipCoverage;
         _groupHandler = groupHandler;
         _auditLogHandler = auditLogHandler;
         _appointmentAuditLogHandler = appointmentAuditLogHandler;
@@ -675,7 +675,7 @@ public class GroupService : IGroupService
 
             // Novi član odmah sudjeluje na već generiranim BUDUĆIM occurrenceima — samo u segmentima odabranih predložaka.
             List<Appointment> futureAppointments = await _appointmentHandler.GetFutureScheduledForGroup(uow, organizationId, groupId);
-            await JoinFutureOccurrences(uow, organizationId, request.ClientId, futureAppointments,
+            await JoinFutureOccurrences(uow, organizationId, userId, request.ClientId, futureAppointments,
                 selected.Select(t => t.Id.GetValueOrDefault()).ToHashSet(), request.OverrideCapacity, now);
 
             await uow.CommitAsync();
@@ -743,7 +743,7 @@ public class GroupService : IGroupService
             if (added.Count > 0)
             {
                 futureAppointments = await _appointmentHandler.GetFutureScheduledForGroup(uow, organizationId, groupId);
-                await JoinFutureOccurrences(uow, organizationId, member.ClientId, futureAppointments,
+                await JoinFutureOccurrences(uow, organizationId, userId, member.ClientId, futureAppointments,
                     added.Select(t => t.Id.GetValueOrDefault()).ToHashSet(), request.OverrideCapacity, now);
             }
 
@@ -870,7 +870,7 @@ public class GroupService : IGroupService
     /// Pozivatelj je zaključao klijenta.
     /// </summary>
     private async Task JoinFutureOccurrences(
-        IUnitOfWork uow, Guid organizationId, Guid clientId, List<Appointment> futureAppointments, HashSet<Guid> templateIds,
+        IUnitOfWork uow, Guid organizationId, Guid userId, Guid clientId, List<Appointment> futureAppointments, HashSet<Guid> templateIds,
         bool overrideCapacity, DateTimeOffset now)
     {
         List<(Appointment Appointment, List<AppointmentSegment> Segments)> targets = futureAppointments
@@ -934,6 +934,16 @@ public class GroupService : IGroupService
             List<BookingSegmentParticipation> created = new();
             foreach (AppointmentSegment segment in segments)
             {
+                // P2 (pregled 2D #11): novi član u već generiranim terminima = generiranje (Q18) — dok je članarina u dugu uz
+                // "blokiraj rezervaciju", segment se preskače i bilježi; nakon plaćanja ga dodaje Q53. Bez članarine no-op.
+                Guid? blocking = await _membershipCoverage.BlockingMembership(
+                    uow, organizationId, clientId, segment.ServiceId, appointment.CompanyId, segment.PlannedStart);
+                if (blocking != null)
+                {
+                    await RecordMembershipSkip(uow, organizationId, userId, appointment, segment, clientId, blocking.Value, now);
+                    continue;
+                }
+
                 await GroupCapacityGuard.EnsureAvailable(_appointmentHandler, uow, organizationId, appointmentId, segment.Id.GetValueOrDefault(), overrideCapacity);
                 // Provjere gore su rađene nad PROČITANIM okvirom segmenta — pod Appointment lockom se potvrđuje da ga segmentna
                 // naredba (vrijeme/prostorija) u međuvremenu nije promijenila.
@@ -948,27 +958,68 @@ public class GroupService : IGroupService
                 created.Add(BookingFactory.AddParticipation(booking, segment, ParticipationStatus.Confirmed, BookingPricing.AtSuggested(resolvedPrice), now));
             }
 
+            if (created.Count == 0)
+            {
+                if (newBooking)
+                    appointment.Bookings.Remove(booking);
+                await uow.Context.SaveChangesAsync();
+                continue;
+            }
+
             if (newBooking)
                 uow.Context.Bookings.Add(booking);
             else
                 uow.Context.BookingSegmentParticipations.AddRange(created);
             await uow.Context.SaveChangesAsync();
+
+            // P2 (2D): claim na rezervaciji (automatski proces, nikad ne odbija; bez članarine no-op).
+            foreach (BookingSegmentParticipation participation in created)
+                await _membershipCoverage.SyncParticipation(uow, organizationId, userId, appointment, booking, participation,
+                    MembershipCoverageEvent.Booking, MembershipCoverageMode.Automatic);
         }
+    }
+
+    /// <summary>P2 (Q18, pregled 2D #11) — zapis preskočenog člana u segmentu; postojeći zapis za isti (segment, klijent) se
+    /// ponovno otvara (npr. član uklonjen pa ponovno dodan).</summary>
+    private async Task RecordMembershipSkip(
+        IUnitOfWork uow, Guid organizationId, Guid userId, Appointment appointment, AppointmentSegment segment, Guid clientId,
+        Guid membershipId, DateTimeOffset now)
+    {
+        GroupOccurrenceMembershipSkip skip = await uow.Context.GroupOccurrenceMembershipSkips
+            .SingleOrDefaultAsync(s => s.AppointmentSegmentId == segment.Id && s.ClientId == clientId);
+        if (skip == null)
+        {
+            skip = new GroupOccurrenceMembershipSkip
+            {
+                Id = Guid.NewGuid(),
+                OrganizationId = organizationId,
+                GroupId = appointment.GroupId.GetValueOrDefault(),
+                AppointmentId = appointment.Id.GetValueOrDefault(),
+                AppointmentSegmentId = segment.Id.GetValueOrDefault(),
+                ClientId = clientId
+            };
+            uow.Context.GroupOccurrenceMembershipSkips.Add(skip);
+        }
+
+        skip.ClientMembershipId = membershipId;
+        skip.SkippedAt = now;
+        skip.SkippedBy = userId;
+        skip.Resolution = null;
+        skip.ResolvedAt = null;
+        skip.ParticipationId = null;
     }
 
     /// <summary>
     /// Klijent izlazi iz BUDUĆIH segmenata (filtar) već generiranih occurrencea. Samo aktivna (Confirmed) sudjelovanja na
     /// segmentima koji još nisu počeli; terminalna i prošla ostaju povijest. <paramref name="removeUntouched"/>: netaknuto
-    /// sudjelovanje (bez statusa, paketa, naplate) se uklanja (prazan Booking s njim); inače / s poviješću → Cancelled uz
-    /// kasno-otkazivanje po POČETKU SEGMENTA tog sudjelovanja (centralna BookingCancellationPolicy), audit i događaj.
+    /// sudjelovanje (bez statusa, paketa, naplate) se uklanja (prazan Booking s njim); inače / s poviješću → Cancelled s
+    /// initiatorom System (P1, bez klasifikacije i posljedice politike), audit i događaj.
     /// Oslobođeno mjesto promovira SAMO listu čekanja tog segmenta; status occurrencea se zatim izvodi.
     /// </summary>
     private async Task WithdrawFromFutureSegments(
         IUnitOfWork uow, Guid organizationId, Guid userId, Guid clientId, List<Appointment> futureAppointments,
         Func<AppointmentSegment, bool> segmentFilter, string reason, bool removeUntouched, DateTimeOffset now)
     {
-        int cutoffMinutes = await _organizationSettingsService.GetCancellationCutoffMinutes(organizationId);
-
         foreach (Appointment appointment in futureAppointments)
         {
             Booking booking = appointment.Bookings.FirstOrDefault(b => b.ClientId == clientId);
@@ -1001,6 +1052,8 @@ public class GroupService : IGroupService
                 List<BookingSegmentParticipation> untouched = active.Where(ParticipationHistory.IsUntouched).ToList();
                 if (untouched.Count > 0)
                 {
+                    // P2 (2D): claim netaknutog sudjelovanja se vraća prije brisanja (bez članarine no-op).
+                    await _membershipCoverage.ReleaseForRemoval(uow, organizationId, userId, untouched);
                     await ParticipationHistory.RemoveUntouchedParticipations(uow.Context, new[] { booking }, untouched,
                         "Sudjelovanje ima povijest — otkazuje se umjesto brisanja.");
                     foreach (BookingSegmentParticipation participation in untouched)
@@ -1016,12 +1069,12 @@ public class GroupService : IGroupService
             foreach (BookingSegmentParticipation participation in active)
             {
                 ParticipationStatus oldStatus = participation.Status;
+                // P1 (D2/D9): uklanjanje člana / odznačavanje predloška je SISTEMSKO otkazivanje (initiator System, razlog
+                // postavlja kod) — bez klasifikacije kasnog otkazivanja i bez posljedice politike. Samo aktivna sudjelovanja,
+                // pa nema efekata prethodnog stanja za reverziju.
+                ParticipationEventMetadata.Clear(participation);
                 ParticipationLifecycle.TrySetStatus(participation, ParticipationStatus.Cancelled);
-                ParticipationLifecycle.SetCancellationReason(participation, reason);
-                // Phase M1F: kasno otkazivanje po POČETKU SEGMENTA ovog sudjelovanja (ne grupe ni termina) — isto pravilo
-                // kao otkazivanje sudjelovanja/Bookinga/termina.
-                ParticipationLifecycle.SetLateCancellation(participation, BookingCancellationPolicy.IsLateCancellation(
-                    ExecutionContextResolver.ForParticipation(appointment, booking, participation), now, cutoffMinutes));
+                ParticipationEventMetadata.SetCancelled(participation, CancellationInitiator.System, now, userId, reason);
                 booking.UpdatedAt = now;
                 booking.UpdatedBy = userId;
                 await _appointmentHandler.UpdateBooking(uow, booking);
@@ -1041,6 +1094,10 @@ public class GroupService : IGroupService
                 });
 
                 await ParticipationEvents.WriteCancelled(_outboxWriter, uow, organizationId, appointment, booking, participation);
+
+                // P2 (2D): sustavsko otkazivanje vraća claim (CancelledBySystem); bez članarine no-op.
+                await _membershipCoverage.SyncParticipation(uow, organizationId, userId, appointment, booking, participation,
+                    MembershipCoverageEvent.ParticipationCancelled, MembershipCoverageMode.Automatic);
             }
 
             await uow.Context.SaveChangesAsync();
@@ -1256,11 +1313,26 @@ public class GroupService : IGroupService
 
         List<Appointment> toCreate = new List<Appointment>();
         List<AppointmentScheduleCellDto> createdDtos = new List<AppointmentScheduleCellDto>();
+        List<GroupOccurrenceMembershipSkip> membershipSkips = new();
 
         foreach (GroupOccurrenceCandidate candidate in candidates)
         {
             Group group = candidate.Group;
             GroupSlot slot = candidate.Slot;
+
+            // P2 (Q18): član čija bi članarina pokrila segment, a u dugu je uz "blokiraj rezervaciju", se PRESKAČE u tom segmentu
+            // (ostaje član grupe; zapis za recepciju i naknadno dodavanje nakon plaćanja, Q53). Bez članarine no-op.
+            List<(Guid TemplateId, Guid ClientId, Guid MembershipId)> blocked = new();
+            foreach (CandidateSegment segment in candidate.Segments)
+                foreach (Guid clientId in segment.ClientIds.ToList())
+                {
+                    Guid? blocking = await _membershipCoverage.BlockingMembership(
+                        uow, organizationId, clientId, segment.Template.ServiceId, group.CompanyId, segment.Start);
+                    if (blocking == null)
+                        continue;
+                    segment.ClientIds.Remove(clientId);
+                    blocked.Add((segment.Template.Id.GetValueOrDefault(), clientId, blocking.Value));
+                }
 
             // Predložena cijena po SUDJELOVANJU: usluga predloška tog segmenta i početak segmenta. Booking ostaje
             // financijski neplaćen do check-ina (BookingService.ResolveCoverage).
@@ -1285,6 +1357,19 @@ public class GroupService : IGroupService
                 organizationId, group.CompanyId, group.Id.GetValueOrDefault(), slot.Id.GetValueOrDefault(),
                 userId, DateTimeOffset.UtcNow, plans);
             toCreate.Add(appointment);
+            foreach ((Guid templateId, Guid clientId, Guid membershipId) in blocked)
+                membershipSkips.Add(new GroupOccurrenceMembershipSkip
+                {
+                    Id = Guid.NewGuid(),
+                    OrganizationId = organizationId,
+                    GroupId = group.Id.GetValueOrDefault(),
+                    AppointmentId = appointment.Id.GetValueOrDefault(),
+                    AppointmentSegmentId = appointment.Segments.Single(s => s.GroupSegmentTemplateId == templateId).Id.GetValueOrDefault(),
+                    ClientId = clientId,
+                    ClientMembershipId = membershipId,
+                    SkippedAt = DateTimeOffset.UtcNow,
+                    SkippedBy = userId
+                });
 
             warningsByCandidate.TryGetValue((slot.Id.GetValueOrDefault(), candidate.StartsAt), out List<WarningDto> occurrenceWarnings);
             AppointmentRange range = AppointmentRange.Of(appointment);
@@ -1325,13 +1410,30 @@ public class GroupService : IGroupService
                 });
         }
 
+        if (membershipSkips.Count > 0)
+        {
+            uow.Context.GroupOccurrenceMembershipSkips.AddRange(membershipSkips);
+            await uow.Context.SaveChangesAsync();
+        }
+
+        // P2 (2D, §11.4): pokriće članova redom po vremenu occurrencea; generiranje je automatski proces i nikad ne odbija
+        // (iskorišten limit → sljedeći izvor, razlog na sudjelovanju). Bez članarine no-op.
+        foreach (Appointment appointment in toCreate.OrderBy(a => AppointmentRange.Of(a).PlannedStart))
+        foreach ((Booking booking, BookingSegmentParticipation participation) in appointment.Bookings
+                     .SelectMany(b => b.Participations.Select(p => (Booking: b, Participation: p)))
+                     .OrderBy(x => appointment.Segments.Single(s => s.Id == x.Participation.AppointmentSegmentId).PlannedStart)
+                     .ThenBy(x => x.Booking.ClientId))
+            await _membershipCoverage.SyncParticipation(uow, organizationId, userId, appointment, booking, participation,
+                MembershipCoverageEvent.Booking, MembershipCoverageMode.Automatic);
+
         await uow.CommitAsync();
 
         return new GenerateGroupAppointmentsResult
         {
             CreatedCount = toCreate.Count,
             SkippedCount = skipped,
-            Created = createdDtos.OrderBy(a => a.PlannedStart).ToList()
+            Created = createdDtos.OrderBy(a => a.PlannedStart).ToList(),
+            MembershipSkips = membershipSkips.Select(s => GroupMembershipSkips.ToDto(s, toCreate.SelectMany(a => a.Segments).Single(x => x.Id == s.AppointmentSegmentId).PlannedStart)).ToList()
         };
     }
 

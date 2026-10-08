@@ -92,13 +92,22 @@ public class CommissionEntry
     [Column("appointment_segment_id")]
     public Guid? AppointmentSegmentId { get; set; }
 
-    /// <summary>Snapshot retail vrijednosti izvora u trenutku zarade (Booking.Amount za IndividualService,
-    /// CheckoutItem.Amount za Product/PackageSale). 0 za GroupService (nema nedvosmislene per-occurrence
-    /// osnovice u ovom MVP-u, vidi CommissionRule — samo Fixed je podržan za Group, pa BaseAmount nije
-    /// relevantan za izračun, čuva se kao 0 radi dosljednosti stupca, ne kao "prava" osnovica).</summary>
+    /// <summary>P2 (2F, Q42) — izvor MembershipSale provizije: članstvo (prva prodaja). Null za ostale izvore.</summary>
+    [Column("client_membership_id")]
+    public Guid? ClientMembershipId { get; set; }
+
+    /// <summary>P2 (2F, Q38) — izvor PolicyFee provizije: posljedica politike čija je naknada plaćena (uz sudjelovanje, Booking i
+    /// termin kao kontekst). Null za ostale izvore.</summary>
+    [Column("participation_policy_consequence_id")]
+    public Guid? ParticipationPolicyConsequenceId { get; set; }
+
+    /// <summary>OSNOVICA primijenjenog izračuna u trenutku zarade. IndividualService (P2 2F): cijena sesije (ručni iznos ili
+    /// cjenik) umanjena prema primijenjenim postavkama osnovice; PolicyFee: plaćena naknada; Product/PackageSale:
+    /// CheckoutItem.Amount; MembershipSale: stvarno plaćeno za prvi period + početnu naknadu. 0 za GroupService (samo Fixed).</summary>
     [Column("base_amount")]
     public decimal BaseAmount { get; set; }
 
+    /// <summary>Primijenjeni izračun (osnovno pravilo ili nadjačavanje po načinu plaćanja, vidi OverrideApplied).</summary>
     [Column("calculation_type")]
     public CommissionCalculationType CalculationType { get; set; }
 
@@ -108,11 +117,52 @@ public class CommissionEntry
     [Column("commission_amount")]
     public decimal CommissionAmount { get; set; }
 
+    /// <summary>P2 (2F, Q28.6) — način plaćanja sesije u trenutku zarade (IndividualService, PolicyFee); null za ostale izvore.</summary>
+    [Column("payment_source")]
+    public CommissionPaymentSource? PaymentSource { get; set; }
+
+    /// <summary>P2 (2F) — izvor pokrića: članstvo (Membership) ili paket klijenta (Package); null kod izravne naplate.</summary>
+    [Column("coverage_source_id")]
+    public Guid? CoverageSourceId { get; set; }
+
+    /// <summary>P2 (2F) — cijena sesije prije oduzimanja popusta i pokrića: ručni iznos ako je upisan, inače cjenik.</summary>
+    [Column("session_price_amount")]
+    public decimal? SessionPriceAmount { get; set; }
+
+    /// <summary>P2 (2F) — cijena iz cjenika (za izvještaje o ručnim sniženjima); null kad cijena nije razriješena iz cjenika.</summary>
+    [Column("list_price_amount")]
+    public decimal? ListPriceAmount { get; set; }
+
+    [Column("is_manual_price")]
+    public bool? IsManualPrice { get; set; }
+
+    /// <summary>P2 (2F, Vagaro) — primijenjene postavke osnovice organizacije (snapshot; kasnija promjena postavki ne mijenja
+    /// zarađenu proviziju): "oduzmi popuste" i "oduzmi popuste članstva". Null za izvore na koje se postavke ne odnose.</summary>
+    [Column("deduct_discounts")]
+    public bool? DeductDiscounts { get; set; }
+
+    [Column("deduct_membership_discounts")]
+    public bool? DeductMembershipDiscounts { get; set; }
+
+    /// <summary>P2 (2F, Vagaro) — razina primijenjenog pravila: pravilo predmeta ili opće pravilo zaposlenika (AllServices).</summary>
+    [Column("applied_rule_scope")]
+    public CommissionRuleScope? AppliedRuleScope { get; set; }
+
+    /// <summary>P2 (2F, Vagaro) — objašnjenje izbora pravila (jsonb): primijenjeno pravilo i zašto, te neprimijenjena pravila s
+    /// razlogom (npr. "pravilo za uslugu ima prednost pred općim"). Snapshot u trenutku nastanka.</summary>
+    [Column("rule_evaluation")]
+    public string RuleEvaluation { get; set; }
+
+    /// <summary>P2 (2F, Q38) — Fixed iznos je ograničen na iznos naknade.</summary>
+    [Column("was_capped")]
+    public bool WasCapped { get; set; }
+
     [Column("status")]
     public CommissionEntryStatus Status { get; set; }
 
-    /// <summary>StatusVersion izvornog SUDJELOVANJA u trenutku zarade (samo SourceType=IndividualService, inače uvijek 0)
-    /// — vidi klasnu napomenu. Dio unique indeksa uz BookingSegmentParticipationId (Phase M0).</summary>
+    /// <summary>StatusVersion izvornog SUDJELOVANJA u trenutku zarade (SourceType=IndividualService) — vidi klasnu napomenu. Dio
+    /// unique indeksa uz BookingSegmentParticipationId (Phase M0). P2 (2F): za ProductSale/PackageSale/MembershipSale/PolicyFee je
+    /// redni broj pojave izvora (0 prva, korekcija Q50 ili ponovno plaćena naknada +1), dio unique indeksa izvora. GroupService 0.</summary>
     [Column("source_version")]
     public int SourceVersion { get; set; }
 
@@ -131,6 +181,14 @@ public class CommissionEntry
 
     [Column("reversed_by")]
     public Guid? ReversedBy { get; set; }
+
+    /// <summary>P2 (2F) — razlog storna (npr. korekcija korisnika provizije, Q50 — obavezan razlog; storno/oprost naknade).</summary>
+    [Column("reversal_reason")]
+    public string ReversalReason { get; set; }
+
+    /// <summary>P2 (2F, Q50) — ova provizija je nastala korekcijom korisnika provizije na prodaju zapisa s ovim Id-em.</summary>
+    [Column("correction_of_entry_id")]
+    public Guid? CorrectionOfEntryId { get; set; }
 
     public Employee Employee { get; set; }
     public Company Company { get; set; }

@@ -71,6 +71,7 @@ public class MultiSegmentAppointmentTests
         w.Bookings.SetParticipationStatus(w.OrganizationId, userId ?? w.ActorUserId, fullScope, participationId, new BookingSetStatusRequest
         {
             Status = status,
+            CancellationInitiator = status == BookingStatus.Cancelled ? CancellationInitiator.Client : null,
             ClientPackageId = clientPackageId,
             PaymentMethod = paymentMethod
         });
@@ -421,7 +422,7 @@ public class MultiSegmentAppointmentTests
         await using SchedulingWorld w = await SchedulingWorld.Create(nameof(SegmentCommands_OnAnExplicitlyCancelledAppointment_AreRefused));
         Spa spa = await SetUp(w);
         AppointmentDto created = await CreateMassageThenPhysio(w, spa);
-        await w.Appointments.Cancel(w.OrganizationId, w.ActorUserId, true, created.Id, new AppointmentCancelRequest());
+        await w.Appointments.Cancel(w.OrganizationId, w.ActorUserId, true, created.Id, SchedulingWorld.BusinessCancel());
 
         await SchedulingAssert.BusinessRule(ErrorCodes.AppointmentNotMovable, () => w.Appointments.ChangeSegmentTime(w.OrganizationId, w.ActorUserId, true,
             SegmentOf(created, spa.Physio.Id.Value).Id, new AppointmentSegmentTimeChangeRequest { PlannedStart = SchedulingWorld.Future(12) }));
@@ -595,9 +596,9 @@ public class MultiSegmentAppointmentTests
         Spa spa = await SetUp(w);
         AppointmentDto created = await CreateMassageThenPhysio(w, spa);
         // The cutoff ends between the massage (09:00) and the physio (10:00).
-        await w.SetCancellationCutoffMinutes((int)(SchedulingWorld.Future(9, 30) - DateTimeOffset.UtcNow).TotalMinutes);
+        await w.SetCancellationWindowMinutes((int)(SchedulingWorld.Future(9, 30) - DateTimeOffset.UtcNow).TotalMinutes);
 
-        BookingDto booking = await w.Bookings.CancelBooking(w.OrganizationId, w.ActorUserId, true, created.Id, w.Client.Id.Value, new BookingCancelRequest());
+        BookingDto booking = await w.Bookings.CancelBooking(w.OrganizationId, w.ActorUserId, true, created.Id, w.Client.Id.Value, SchedulingWorld.ClientCancel());
 
         Assert.Equal(BookingStatusSummary.Cancelled, booking.Status);
         Assert.True(booking.Participations.Single(p => p.AppointmentSegmentId == SegmentOf(created, spa.Massage.Id.Value).Id).IsLateCancellation);
@@ -612,7 +613,7 @@ public class MultiSegmentAppointmentTests
         await using SchedulingWorld w = await SchedulingWorld.Create(nameof(LateCancellation_ForASingleParticipation_UsesItsOwnSegmentStart));
         Spa spa = await SetUp(w);
         AppointmentDto created = await CreateMassageThenPhysio(w, spa);
-        await w.SetCancellationCutoffMinutes((int)(SchedulingWorld.Future(9, 30) - DateTimeOffset.UtcNow).TotalMinutes);
+        await w.SetCancellationWindowMinutes((int)(SchedulingWorld.Future(9, 30) - DateTimeOffset.UtcNow).TotalMinutes);
 
         BookingDto booking = await SetParticipation(w, ParticipationOn(created, w.Client, SegmentOf(created, spa.Physio.Id.Value).Id).Id, BookingStatus.Cancelled);
 
@@ -623,40 +624,43 @@ public class MultiSegmentAppointmentTests
     /// <summary>Organization cutoff that ends at 09:30 on the test day: a segment starting 09:00 is inside the late window, any
     /// segment starting 10:00 or later is outside it.</summary>
     private static Task CutoffEndingAt0930(SchedulingWorld w) =>
-        w.SetCancellationCutoffMinutes((int)(SchedulingWorld.Future(9, 30) - DateTimeOffset.UtcNow).TotalMinutes);
+        w.SetCancellationWindowMinutes((int)(SchedulingWorld.Future(9, 30) - DateTimeOffset.UtcNow).TotalMinutes);
 
     [Fact]
-    public async Task AppointmentCancel_ClassifiesEachParticipationFromItsOwnSegmentStart()
+    public async Task BookingWideClientCancel_ClassifiesEachParticipationFromItsOwnSegmentStart()
     {
-        await using SchedulingWorld w = await SchedulingWorld.Create(nameof(AppointmentCancel_ClassifiesEachParticipationFromItsOwnSegmentStart));
+        // P1 (D2/D3): classification belongs to a CLIENT cancellation and is per participation segment (an appointment-wide
+        // cancellation is Business and is never classified — see AppointmentCancel_AfterPartialExecution).
+        await using SchedulingWorld w = await SchedulingWorld.Create(nameof(BookingWideClientCancel_ClassifiesEachParticipationFromItsOwnSegmentStart));
         Spa spa = await SetUp(w);
         AppointmentDto created = await CreateMassageThenPhysio(w, spa);
         await CutoffEndingAt0930(w);
 
-        AppointmentDto dto = await w.Appointments.Cancel(w.OrganizationId, w.ActorUserId, true, created.Id,
-            new AppointmentCancelRequest { CancellationReason = "studio closed" });
+        BookingDto booking = await w.Bookings.CancelBooking(w.OrganizationId, w.ActorUserId, true, created.Id, w.Client.Id.Value,
+            SchedulingWorld.ClientCancel("cannot come"));
 
-        BookingDto booking = Assert.Single(dto.Bookings);
         Assert.Equal(BookingStatusSummary.Cancelled, booking.Status);
-        BookingParticipationDto massage = ParticipationOn(dto, w.Client, SegmentOf(dto, spa.Massage.Id.Value).Id);
-        BookingParticipationDto physio = ParticipationOn(dto, w.Client, SegmentOf(dto, spa.Physio.Id.Value).Id);
-        Assert.Equal(BookingStatus.Cancelled, massage.Status);
+        BookingParticipationDto massage = booking.Participations.Single(p => p.AppointmentSegmentId == SegmentOf(created, spa.Massage.Id.Value).Id);
+        BookingParticipationDto physio = booking.Participations.Single(p => p.AppointmentSegmentId == SegmentOf(created, spa.Physio.Id.Value).Id);
         Assert.True(massage.IsLateCancellation);
-        Assert.Equal(BookingStatus.Cancelled, physio.Status);
         Assert.False(physio.IsLateCancellation);
-        Assert.All(booking.Participations, p => Assert.Equal("studio closed", p.CancellationReason));
+        Assert.All(booking.Participations, p =>
+        {
+            Assert.Equal(CancellationInitiator.Client, p.CancellationInitiator);
+            Assert.Equal("cannot come", p.CancellationReason);
+            Assert.Equal(p.CancelledAt, booking.Participations[0].CancelledAt); // one server timestamp for the whole command
+        });
 
-        // Explicit cancellation fact (M1A.1): recorded and audited; nothing was executed, so the derived status is Cancelled.
+        // D2 debt: a Booking-wide client cancel of the last client leaves the appointment Scheduled (no explicit cancel).
         Appointment a = await w.LoadAppointment(created.Id);
-        Assert.NotNull(a.CancelledAt);
-        Assert.Equal(AppointmentStatus.Cancelled, a.Status);
-        Assert.Single(await w.LoadAuditLog(created.Id), l => l.ChangeType == "AppointmentCancelled");
+        Assert.Null(a.CancelledAt);
+        Assert.Equal(AppointmentStatus.Scheduled, a.Status);
     }
 
     [Fact]
-    public async Task AppointmentCancel_ManyBookingsAndSegments_NeverSharesOneClassification()
+    public async Task ClientCancel_ManyBookingsAndSegments_NeverSharesOneClassification()
     {
-        await using SchedulingWorld w = await SchedulingWorld.Create(nameof(AppointmentCancel_ManyBookingsAndSegments_NeverSharesOneClassification));
+        await using SchedulingWorld w = await SchedulingWorld.Create(nameof(ClientCancel_ManyBookingsAndSegments_NeverSharesOneClassification));
         Spa spa = await SetUp(w);
         Employee c = await w.AddEmployee("C");
         Client first = w.Client;
@@ -669,7 +673,9 @@ public class MultiSegmentAppointmentTests
             Seg(w.Service, SchedulingWorld.Future(11), c, third));
         await CutoffEndingAt0930(w);
 
-        AppointmentDto dto = await w.Appointments.Cancel(w.OrganizationId, w.ActorUserId, true, created.Id, new AppointmentCancelRequest());
+        foreach (Client client in new[] { first, second, third })
+            await w.Bookings.CancelBooking(w.OrganizationId, w.ActorUserId, true, created.Id, client.Id.Value, SchedulingWorld.ClientCancel());
+        AppointmentDto dto = await w.Appointments.GetById(w.OrganizationId, created.Id);
 
         Guid early = dto.Segments.OrderBy(s => s.PlannedStart).First().Id;
         foreach (BookingDto booking in dto.Bookings)
@@ -699,14 +705,14 @@ public class MultiSegmentAppointmentTests
         await SetParticipation(w, ParticipationOn(created, w.Client, massageSegment).Id, BookingStatus.Completed);
         await CutoffEndingAt0930(w);
 
-        AppointmentDto dto = await w.Appointments.Cancel(w.OrganizationId, w.ActorUserId, true, created.Id, new AppointmentCancelRequest());
+        AppointmentDto dto = await w.Appointments.Cancel(w.OrganizationId, w.ActorUserId, true, created.Id, SchedulingWorld.BusinessCancel());
 
         BookingParticipationDto massage = ParticipationOn(dto, w.Client, massageSegment);
         BookingParticipationDto physio = ParticipationOn(dto, w.Client, physioSegment);
         Assert.Equal(BookingStatus.Completed, massage.Status);
         Assert.Null(massage.IsLateCancellation);
         Assert.Equal(BookingStatus.Cancelled, physio.Status);
-        Assert.False(physio.IsLateCancellation);
+        Assert.Null(physio.IsLateCancellation); // P1 (D2): an appointment-wide cancellation is Business — never classified
         Assert.Equal(BookingStatusSummary.Mixed, Assert.Single(dto.Bookings).Status);
         Appointment a = await w.LoadAppointment(created.Id);
         Assert.Equal(AppointmentStatus.Closed, a.Status);
@@ -749,7 +755,7 @@ public class MultiSegmentAppointmentTests
         AppointmentDto created = await CreateMassageThenPhysio(w, spa);
 
         await SchedulingAssert.BusinessRule(ErrorCodes.NotOwner, () => w.Bookings.CancelBooking(
-            w.OrganizationId, spa.A.UserId, false, created.Id, w.Client.Id.Value, new BookingCancelRequest()));
+            w.OrganizationId, spa.A.UserId, false, created.Id, w.Client.Id.Value, SchedulingWorld.ClientCancel()));
 
         Assert.All(await w.LoadParticipations(created.Id, w.Client), p => Assert.Equal(ParticipationStatus.Confirmed, p.Status));
     }
@@ -765,13 +771,13 @@ public class MultiSegmentAppointmentTests
             Seg(spa.Physio, SchedulingWorld.Future(10), spa.A, w.Client));
 
         await SchedulingAssert.BusinessRule(ErrorCodes.NotOwner,
-            () => w.Appointments.Cancel(w.OrganizationId, spa.A.UserId, false, created.Id, new AppointmentCancelRequest()));
+            () => w.Appointments.Cancel(w.OrganizationId, spa.A.UserId, false, created.Id, SchedulingWorld.BusinessCancel()));
         await SchedulingAssert.BusinessRule(ErrorCodes.NotOwner,
-            () => w.Appointments.MarkNoShow(w.OrganizationId, spa.A.UserId, false, created.Id, new AppointmentCancelRequest()));
+            () => w.Appointments.MarkNoShow(w.OrganizationId, spa.A.UserId, false, created.Id, new NoShowRequest()));
         Assert.Equal(AppointmentStatus.Scheduled, (await w.LoadAppointment(created.Id)).Status);
 
         // The same caller owns every affected segment, so the Booking-wide cancel is allowed.
-        BookingDto booking = await w.Bookings.CancelBooking(w.OrganizationId, spa.A.UserId, false, created.Id, w.Client.Id.Value, new BookingCancelRequest());
+        BookingDto booking = await w.Bookings.CancelBooking(w.OrganizationId, spa.A.UserId, false, created.Id, w.Client.Id.Value, SchedulingWorld.ClientCancel());
         Assert.Equal(BookingStatusSummary.Cancelled, booking.Status);
     }
 
@@ -810,7 +816,7 @@ public class MultiSegmentAppointmentTests
         await SchedulingAssert.Validation(() => w.Bookings.AddGroupGuest(w.OrganizationId, w.ActorUserId, true, created.Id,
             new BookingCreateRequest { ClientId = partner.Id.Value, SegmentId = firstSegment }));
         await SchedulingAssert.Validation(() => w.Bookings.SetStatusOnSegment(w.OrganizationId, w.ActorUserId, true, created.Id, w.Client.Id.Value,
-            new BookingSetStatusRequest { Status = BookingStatus.Cancelled, SegmentId = firstSegment }));
+            new BookingSetStatusRequest { Status = BookingStatus.Cancelled, CancellationInitiator = CancellationInitiator.Client, SegmentId = firstSegment }));
 
         AppointmentDto after = await Reload(w, created.Id);
         Assert.Equal(new[] { SchedulingWorld.Future(9), SchedulingWorld.Future(10) }, after.Segments.Select(s => s.PlannedStart).OrderBy(x => x));

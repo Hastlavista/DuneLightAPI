@@ -48,6 +48,26 @@ public class DatabaseContext : DbContext
     public DbSet<ClientPackage> ClientPackages { get; set; }
     public DbSet<ClientPackageServiceEntry> ClientPackageServiceEntries { get; set; }
     public DbSet<PackageConsumption> PackageConsumptions { get; set; }
+    public DbSet<ClientMembership> ClientMemberships { get; set; }
+    public DbSet<MembershipPause> MembershipPauses { get; set; }
+    public DbSet<ClientMembershipAuditLog> ClientMembershipAuditLog { get; set; }
+    public DbSet<ClientMembershipPeriod> ClientMembershipPeriods { get; set; }
+    public DbSet<MembershipCharge> MembershipCharges { get; set; }
+    public DbSet<MembershipUsage> MembershipUsages { get; set; }
+    public DbSet<ParticipationMembershipCoverage> ParticipationMembershipCoverages { get; set; }
+    public DbSet<GroupOccurrenceMembershipSkip> GroupOccurrenceMembershipSkips { get; set; }
+
+    public DbSet<CancellationPolicy> CancellationPolicies { get; set; }
+    public DbSet<CancellationPolicyVersion> CancellationPolicyVersions { get; set; }
+    public DbSet<CancellationPolicyAssignment> CancellationPolicyAssignments { get; set; }
+    public DbSet<ParticipationPolicyConsequence> ParticipationPolicyConsequences { get; set; }
+
+    public DbSet<MembershipPlan> MembershipPlans { get; set; }
+    public DbSet<MembershipPlanVersion> MembershipPlanVersions { get; set; }
+    public DbSet<MembershipPlanVersionService> MembershipPlanVersionServices { get; set; }
+    public DbSet<MembershipPlanVersionCompany> MembershipPlanVersionCompanies { get; set; }
+    public DbSet<MembershipPlanUsageLimit> MembershipPlanUsageLimits { get; set; }
+    public DbSet<MembershipPlanPriceBenefit> MembershipPlanPriceBenefits { get; set; }
 
     public DbSet<Appointment> Appointments { get; set; }
     public DbSet<Booking> Bookings { get; set; }
@@ -70,6 +90,7 @@ public class DatabaseContext : DbContext
 
     public DbSet<CommissionRule> CommissionRules { get; set; }
     public DbSet<CommissionEntry> CommissionEntries { get; set; }
+    public DbSet<CommissionRuleTier> CommissionRuleTiers { get; set; }
 
     public DbSet<Group> Groups { get; set; }
     public DbSet<GroupSlot> GroupSlots { get; set; }
@@ -129,6 +150,15 @@ public class DatabaseContext : DbContext
         modelBuilder.Entity<OrganizationSettings>()
             .Property(s => s.PackageConsumptionTiming)
             .HasConversion(v => v.ToString(), v => Enum.Parse<PackageConsumptionTiming>(v));
+        modelBuilder.Entity<OrganizationSettings>()
+            .Property(s => s.MembershipDebtBehavior)
+            .HasConversion(v => v.ToString(), v => Enum.Parse<MembershipDebtBehavior>(v));
+        modelBuilder.Entity<OrganizationSettings>()
+            .Property(s => s.MembershipLimitExceededBehavior)
+            .HasConversion(v => v.ToString(), v => Enum.Parse<MembershipLimitExceededBehavior>(v));
+        modelBuilder.Entity<OrganizationSettings>()
+            .Property(s => s.CommissionLateCancellation)
+            .HasConversion(v => v.ToString(), v => Enum.Parse<CommissionLateCancellationMode>(v));
 
         modelBuilder.Entity<User>().HasKey(u => new { u.Id });
         // ADR-0020 — jedinstvenost emaila je u bazi funkcijski indeks ux_users_organization_email (organization_id,
@@ -154,6 +184,134 @@ public class DatabaseContext : DbContext
     {
         modelBuilder.Entity<Company>().HasKey(l => l.Id);
         modelBuilder.Entity<Company>().HasIndex(l => l.OrganizationId);
+
+        // P1 (ADR-0015) — politike otkazivanja: profil, nepromjenjive verzije, dodjele po scopeu.
+        modelBuilder.Entity<CancellationPolicy>().HasKey(p => p.Id);
+        modelBuilder.Entity<CancellationPolicy>()
+            .HasMany(p => p.Versions)
+            .WithOne(v => v.Policy)
+            .HasForeignKey(v => v.CancellationPolicyId)
+            .OnDelete(DeleteBehavior.Restrict);
+        modelBuilder.Entity<CancellationPolicyVersion>().HasKey(v => v.Id);
+        modelBuilder.Entity<CancellationPolicyVersion>()
+            .HasIndex(v => new { v.CancellationPolicyId, v.Version })
+            .IsUnique();
+        modelBuilder.Entity<CancellationPolicyVersion>()
+            .Property(v => v.LateCancellationFeeType)
+            .HasConversion(v => v.ToString(), v => Enum.Parse<CancellationFeeType>(v));
+        modelBuilder.Entity<CancellationPolicyVersion>()
+            .Property(v => v.NoShowFeeType)
+            .HasConversion(v => v.ToString(), v => Enum.Parse<CancellationFeeType>(v));
+        modelBuilder.Entity<CancellationPolicyVersion>()
+            .Property(v => v.LateCancellationPackageAction)
+            .HasConversion(v => v.ToString(), v => Enum.Parse<CancellationPackageAction>(v));
+        modelBuilder.Entity<CancellationPolicyVersion>()
+            .Property(v => v.NoShowPackageAction)
+            .HasConversion(v => v.ToString(), v => Enum.Parse<CancellationPackageAction>(v));
+        modelBuilder.Entity<CancellationPolicyVersion>()
+            .Property(v => v.LateCancellationMembershipAction)
+            .HasConversion(v => v.ToString(), v => Enum.Parse<CancellationMembershipAction>(v));
+        modelBuilder.Entity<CancellationPolicyVersion>()
+            .Property(v => v.NoShowMembershipAction)
+            .HasConversion(v => v.ToString(), v => Enum.Parse<CancellationMembershipAction>(v));
+        modelBuilder.Entity<CancellationPolicyAssignment>().HasKey(a => a.Id);
+        modelBuilder.Entity<CancellationPolicyAssignment>()
+            .HasOne(a => a.Policy)
+            .WithMany()
+            .HasForeignKey(a => a.CancellationPolicyId)
+            .OnDelete(DeleteBehavior.Restrict);
+        modelBuilder.Entity<CancellationPolicyAssignment>()
+            .HasOne(a => a.Company)
+            .WithMany()
+            .HasForeignKey(a => a.CompanyId)
+            .OnDelete(DeleteBehavior.Restrict);
+        modelBuilder.Entity<CancellationPolicyAssignment>()
+            .HasOne(a => a.Service)
+            .WithMany()
+            .HasForeignKey(a => a.ServiceId)
+            .OnDelete(DeleteBehavior.Restrict);
+
+        // P2 (faza 2A) — planovi članarina: profil, nepromjenjive verzije uvjeta, pokrivene usluge, poslovnice i limiti.
+        // Jedinstveni aktivni naziv i unique limita (verzija, usluga ili plan, prozor) su raw SQL indeksi u migraciji.
+        modelBuilder.Entity<MembershipPlan>().HasKey(p => p.Id);
+        modelBuilder.Entity<MembershipPlan>()
+            .HasMany(p => p.Versions)
+            .WithOne(v => v.Plan)
+            .HasForeignKey(v => v.MembershipPlanId)
+            .OnDelete(DeleteBehavior.Restrict);
+        modelBuilder.Entity<MembershipPlanVersion>().HasKey(v => v.Id);
+        modelBuilder.Entity<MembershipPlanVersion>()
+            .HasIndex(v => new { v.MembershipPlanId, v.Version })
+            .IsUnique();
+        modelBuilder.Entity<MembershipPlanVersion>()
+            .Property(v => v.BillingInterval)
+            .HasConversion(v => v.ToString(), v => Enum.Parse<MembershipBillingInterval>(v));
+        modelBuilder.Entity<MembershipPlanVersion>()
+            .Property(v => v.RenewalAnchor)
+            .HasConversion(v => v.ToString(), v => Enum.Parse<MembershipRenewalAnchor>(v));
+        modelBuilder.Entity<MembershipPlanVersion>()
+            .Property(v => v.CompanyScope)
+            .HasConversion(v => v.ToString(), v => Enum.Parse<MembershipCompanyScope>(v));
+        modelBuilder.Entity<MembershipPlanVersion>()
+            .HasMany(v => v.Services)
+            .WithOne(s => s.PlanVersion)
+            .HasForeignKey(s => s.MembershipPlanVersionId)
+            .OnDelete(DeleteBehavior.Restrict);
+        modelBuilder.Entity<MembershipPlanVersion>()
+            .HasMany(v => v.Companies)
+            .WithOne(c => c.PlanVersion)
+            .HasForeignKey(c => c.MembershipPlanVersionId)
+            .OnDelete(DeleteBehavior.Restrict);
+        modelBuilder.Entity<MembershipPlanVersion>()
+            .HasMany(v => v.UsageLimits)
+            .WithOne(l => l.PlanVersion)
+            .HasForeignKey(l => l.MembershipPlanVersionId)
+            .OnDelete(DeleteBehavior.Restrict);
+        // P2 (2E) — pravila cjenovne pogodnosti verzije plana.
+        modelBuilder.Entity<MembershipPlanVersion>()
+            .HasMany(v => v.PriceBenefits)
+            .WithOne(b => b.PlanVersion)
+            .HasForeignKey(b => b.MembershipPlanVersionId)
+            .OnDelete(DeleteBehavior.Restrict);
+        modelBuilder.Entity<MembershipPlanPriceBenefit>().HasKey(b => b.Id);
+        modelBuilder.Entity<MembershipPlanPriceBenefit>()
+            .Property(b => b.Scope)
+            .HasConversion(v => v.ToString(), v => Enum.Parse<MembershipPriceBenefitScope>(v));
+        modelBuilder.Entity<MembershipPlanPriceBenefit>()
+            .Property(b => b.Type)
+            .HasConversion(v => v.ToString(), v => Enum.Parse<MembershipPriceBenefitType>(v));
+        modelBuilder.Entity<MembershipPlanPriceBenefit>()
+            .HasOne(b => b.Service)
+            .WithMany()
+            .HasForeignKey(b => b.ServiceId)
+            .OnDelete(DeleteBehavior.Restrict);
+        modelBuilder.Entity<MembershipPlanVersionService>().HasKey(s => s.Id);
+        modelBuilder.Entity<MembershipPlanVersionService>()
+            .HasIndex(s => new { s.MembershipPlanVersionId, s.ServiceId })
+            .IsUnique();
+        modelBuilder.Entity<MembershipPlanVersionService>()
+            .HasOne(s => s.Service)
+            .WithMany()
+            .HasForeignKey(s => s.ServiceId)
+            .OnDelete(DeleteBehavior.Restrict);
+        modelBuilder.Entity<MembershipPlanVersionCompany>().HasKey(c => c.Id);
+        modelBuilder.Entity<MembershipPlanVersionCompany>()
+            .HasIndex(c => new { c.MembershipPlanVersionId, c.CompanyId })
+            .IsUnique();
+        modelBuilder.Entity<MembershipPlanVersionCompany>()
+            .HasOne(c => c.Company)
+            .WithMany()
+            .HasForeignKey(c => c.CompanyId)
+            .OnDelete(DeleteBehavior.Restrict);
+        modelBuilder.Entity<MembershipPlanUsageLimit>().HasKey(l => l.Id);
+        modelBuilder.Entity<MembershipPlanUsageLimit>()
+            .Property(l => l.Window)
+            .HasConversion(v => v.ToString(), v => Enum.Parse<MembershipUsageWindow>(v));
+        modelBuilder.Entity<MembershipPlanUsageLimit>()
+            .HasOne(l => l.Service)
+            .WithMany()
+            .HasForeignKey(l => l.ServiceId)
+            .OnDelete(DeleteBehavior.Restrict);
 
         modelBuilder.Entity<Room>().HasKey(r => r.Id);
         modelBuilder.Entity<Room>().HasIndex(r => new { r.OrganizationId, r.CompanyId });
@@ -386,6 +544,108 @@ public class DatabaseContext : DbContext
             .ValueGeneratedOnAddOrUpdate()
             .IsConcurrencyToken();
 
+        // P2 (faza 2B) — članstva: uvjeti su nepromjenjiva verzija plana; stanje se izvodi (Utils.MembershipState).
+        modelBuilder.Entity<ClientMembership>().HasKey(m => m.Id);
+        modelBuilder.Entity<ClientMembership>().HasIndex(m => new { m.OrganizationId, m.ClientId });
+        modelBuilder.Entity<ClientMembership>()
+            .Property(m => m.FirstSaleCommissionOutcome)
+            .HasConversion(v => v.ToString(), v => Enum.Parse<MembershipFirstSaleCommissionOutcome>(v));
+        modelBuilder.Entity<ClientMembership>()
+            .Property(m => m.SoldVia)
+            .HasConversion(v => v.ToString(), v => Enum.Parse<MembershipSaleChannel>(v));
+        modelBuilder.Entity<ClientMembership>()
+            .Property(m => m.PendingSource)
+            .HasConversion(v => v.ToString(), v => Enum.Parse<MembershipPendingChangeSource>(v));
+        modelBuilder.Entity<ClientMembership>()
+            .Property(m => m.EndReason)
+            .HasConversion(v => v.ToString(), v => Enum.Parse<MembershipEndReason>(v));
+        modelBuilder.Entity<ClientMembership>()
+            .HasOne(m => m.Client)
+            .WithMany()
+            .HasForeignKey(m => m.ClientId)
+            .OnDelete(DeleteBehavior.Restrict);
+        modelBuilder.Entity<ClientMembership>()
+            .HasOne(m => m.Plan)
+            .WithMany()
+            .HasForeignKey(m => m.MembershipPlanId)
+            .OnDelete(DeleteBehavior.Restrict);
+        modelBuilder.Entity<ClientMembership>()
+            .HasOne(m => m.PlanVersion)
+            .WithMany()
+            .HasForeignKey(m => m.PlanVersionId)
+            .OnDelete(DeleteBehavior.Restrict);
+        modelBuilder.Entity<ClientMembership>()
+            .HasOne(m => m.PendingPlanVersion)
+            .WithMany()
+            .HasForeignKey(m => m.PendingPlanVersionId)
+            .OnDelete(DeleteBehavior.Restrict);
+        modelBuilder.Entity<ClientMembership>()
+            .HasOne(m => m.DisplacedPlanVersion)
+            .WithMany()
+            .HasForeignKey(m => m.DisplacedPlanVersionId)
+            .OnDelete(DeleteBehavior.Restrict);
+        modelBuilder.Entity<ClientMembership>()
+            .HasOne(m => m.PlanUpdateSkippedVersion)
+            .WithMany()
+            .HasForeignKey(m => m.PlanUpdateSkippedVersionId)
+            .OnDelete(DeleteBehavior.Restrict);
+        modelBuilder.Entity<ClientMembership>()
+            .HasMany(m => m.Pauses)
+            .WithOne(p => p.Membership)
+            .HasForeignKey(p => p.ClientMembershipId)
+            .OnDelete(DeleteBehavior.Restrict);
+        modelBuilder.Entity<MembershipPause>().HasKey(p => p.Id);
+        modelBuilder.Entity<MembershipPause>()
+            .Property(p => p.Kind)
+            .HasConversion(v => v.ToString(), v => Enum.Parse<MembershipPauseKind>(v));
+        modelBuilder.Entity<MembershipPause>()
+            .Property(p => p.CancellationReason)
+            .HasConversion(v => v.ToString(), v => Enum.Parse<MembershipPauseCancellationReason>(v));
+        // P2 (2C) — otvoreni periodi i zaduženja; stavka checkouta tipa MembershipCharge plaća zaduženje.
+        modelBuilder.Entity<ClientMembershipPeriod>().HasKey(p => p.Id);
+        modelBuilder.Entity<ClientMembershipPeriod>()
+            .HasIndex(p => new { p.ClientMembershipId, p.StartsOn })
+            .IsUnique();
+        modelBuilder.Entity<ClientMembershipPeriod>()
+            .HasOne(p => p.Membership)
+            .WithMany(m => m.Periods)
+            .HasForeignKey(p => p.ClientMembershipId)
+            .OnDelete(DeleteBehavior.Restrict);
+        modelBuilder.Entity<ClientMembershipPeriod>()
+            .HasOne(p => p.PlanVersion)
+            .WithMany()
+            .HasForeignKey(p => p.PlanVersionId)
+            .OnDelete(DeleteBehavior.Restrict);
+        modelBuilder.Entity<MembershipCharge>().HasKey(c => c.Id);
+        modelBuilder.Entity<MembershipCharge>()
+            .Property(c => c.Kind)
+            .HasConversion(v => v.ToString(), v => Enum.Parse<MembershipChargeKind>(v));
+        modelBuilder.Entity<MembershipCharge>()
+            .Property(c => c.Lifecycle)
+            .HasConversion(v => v.ToString(), v => Enum.Parse<MembershipChargeLifecycle>(v));
+        modelBuilder.Entity<MembershipCharge>()
+            .Property(c => c.SettlementStatus)
+            .HasConversion(v => v.ToString(), v => Enum.Parse<MembershipChargeSettlementStatus>(v));
+        modelBuilder.Entity<MembershipCharge>()
+            .HasOne(c => c.Membership)
+            .WithMany(m => m.Charges)
+            .HasForeignKey(c => c.ClientMembershipId)
+            .OnDelete(DeleteBehavior.Restrict);
+        modelBuilder.Entity<MembershipCharge>()
+            .HasOne(c => c.Period)
+            .WithMany()
+            .HasForeignKey(c => c.PeriodId)
+            .OnDelete(DeleteBehavior.Restrict);
+
+        modelBuilder.Entity<ClientMembershipAuditLog>().HasKey(a => a.Id);
+        modelBuilder.Entity<ClientMembershipAuditLog>().HasIndex(a => a.ClientMembershipId);
+        // Veza bez navigacije: EF mora znati za FK da zapis povijesti upiše NAKON novog članstva u istoj transakciji.
+        modelBuilder.Entity<ClientMembershipAuditLog>()
+            .HasOne<ClientMembership>()
+            .WithMany()
+            .HasForeignKey(a => a.ClientMembershipId)
+            .OnDelete(DeleteBehavior.Restrict);
+
         modelBuilder.Entity<ClientPackageServiceEntry>().HasKey(e => e.Id);
         modelBuilder.Entity<ClientPackageServiceEntry>()
             .HasIndex(e => new { e.ClientPackageId, e.ServiceId })
@@ -508,6 +768,9 @@ public class DatabaseContext : DbContext
             .Property(p => p.PricingMode)
             .HasConversion(v => v.ToString(), v => Enum.Parse<SegmentPricingMode>(v));
         modelBuilder.Entity<BookingSegmentParticipation>()
+            .Property(p => p.CancellationInitiator)
+            .HasConversion(v => v.ToString(), v => Enum.Parse<CancellationInitiator>(v));
+        modelBuilder.Entity<BookingSegmentParticipation>()
             .HasOne<Employee>()
             .WithMany()
             .HasForeignKey(p => p.PricingEmployeeId)
@@ -525,6 +788,90 @@ public class DatabaseContext : DbContext
         // Phase D3B3A: povijest potrošnje paketa se učitava uvijek sa sudjelovanjem (pa i s Bookingom), da nijedan upit
         // ne vidi sudjelovanje "bez paketa" samo zato što je zaboravio Include.
         modelBuilder.Entity<BookingSegmentParticipation>().Navigation(p => p.PackageConsumptions).AutoInclude();
+        // P1: dug sudjelovanja ovisi o aktivnoj posljedici politike — učitava se uvijek sa sudjelovanjem (kao potrošnja paketa).
+        modelBuilder.Entity<BookingSegmentParticipation>().Navigation(p => p.PolicyConsequences).AutoInclude();
+
+        // P1 (ADR-0017) — ledger posljedica politike. Restrict: povijest se nikad ne briše kaskadom. Unique (sudjelovanje,
+        // SourceVersion) i najviše jedna Active posljedica po sudjelovanju.
+        modelBuilder.Entity<ParticipationPolicyConsequence>().HasKey(c => c.Id);
+        modelBuilder.Entity<ParticipationPolicyConsequence>()
+            .HasIndex(c => new { c.BookingSegmentParticipationId, c.SourceVersion })
+            .IsUnique();
+        modelBuilder.Entity<ParticipationPolicyConsequence>()
+            .Property(c => c.Event)
+            .HasConversion(v => v.ToString(), v => Enum.Parse<PolicyConsequenceEvent>(v));
+        modelBuilder.Entity<ParticipationPolicyConsequence>()
+            .Property(c => c.FeeType)
+            .HasConversion(v => v.ToString(), v => Enum.Parse<CancellationFeeType>(v));
+        modelBuilder.Entity<ParticipationPolicyConsequence>()
+            .Property(c => c.PackageAction)
+            .HasConversion(v => v.ToString(), v => Enum.Parse<CancellationPackageAction>(v));
+        modelBuilder.Entity<ParticipationPolicyConsequence>()
+            .Property(c => c.Status)
+            .HasConversion(v => v.ToString(), v => Enum.Parse<PolicyConsequenceStatus>(v));
+        modelBuilder.Entity<ParticipationPolicyConsequence>()
+            .HasOne(c => c.Participation)
+            .WithMany(p => p.PolicyConsequences)
+            .HasForeignKey(c => c.BookingSegmentParticipationId)
+            .OnDelete(DeleteBehavior.Restrict);
+        modelBuilder.Entity<ParticipationPolicyConsequence>()
+            .HasOne<ClientPackage>()
+            .WithMany()
+            .HasForeignKey(c => c.ClientPackageId)
+            .OnDelete(DeleteBehavior.Restrict);
+        modelBuilder.Entity<ParticipationPolicyConsequence>()
+            .HasOne<CancellationPolicy>()
+            .WithMany()
+            .HasForeignKey(c => c.CancellationPolicyId)
+            .OnDelete(DeleteBehavior.Restrict);
+        modelBuilder.Entity<ParticipationPolicyConsequence>()
+            .Property(c => c.MembershipAction)
+            .HasConversion(v => v.ToString(), v => Enum.Parse<CancellationMembershipAction>(v));
+
+        // P2 (2D) — ledger korištenja članarine i projekcija pokrića sudjelovanja. Namjerno BEZ relacije prema sudjelovanju u
+        // bazi (vidi migraciju 2D); projekcija je u modelu 1:1 navigacija sudjelovanja (AutoInclude), bez kaskade.
+        modelBuilder.Entity<MembershipUsage>().HasKey(u => u.Id);
+        modelBuilder.Entity<MembershipUsage>()
+            .Property(u => u.EntryType)
+            .HasConversion(v => v.ToString(), v => Enum.Parse<MembershipUsageEntryType>(v));
+        modelBuilder.Entity<MembershipUsage>()
+            .Property(u => u.ReleaseReason)
+            .HasConversion(v => v.ToString(), v => Enum.Parse<MembershipUsageReleaseReason>(v));
+        modelBuilder.Entity<ParticipationMembershipCoverage>().HasKey(c => c.ParticipationId);
+        modelBuilder.Entity<ParticipationMembershipCoverage>()
+            .Property(c => c.Status)
+            .HasConversion(v => v.ToString(), v => Enum.Parse<MembershipCoverageStatus>(v));
+        modelBuilder.Entity<ParticipationMembershipCoverage>()
+            .Property(c => c.Reason)
+            .HasConversion(v => v.ToString(), v => Enum.Parse<MembershipCoverageReason>(v));
+        modelBuilder.Entity<ParticipationMembershipCoverage>()
+            .Property(c => c.ChangedByEvent)
+            .HasConversion(v => v.ToString(), v => Enum.Parse<MembershipCoverageEvent>(v));
+        modelBuilder.Entity<ParticipationMembershipCoverage>()
+            .Property(c => c.LimitWindow)
+            .HasConversion(v => v.ToString(), v => Enum.Parse<MembershipUsageWindow>(v));
+        modelBuilder.Entity<ParticipationMembershipCoverage>()
+            .Property(c => c.LastPriceChangeEvent)
+            .HasConversion(v => v.ToString(), v => Enum.Parse<MembershipCoverageEvent>(v));
+        modelBuilder.Entity<ParticipationMembershipCoverage>()
+            .Property(c => c.PriceProtectedReason)
+            .HasConversion(v => v.ToString(), v => Enum.Parse<PriceProtectionReason>(v));
+        // P2 (2E) — prilagodba cijene sudjelovanja (snapshot pravila i evaluacija su jsonb).
+        modelBuilder.Entity<BookingSegmentParticipation>()
+            .Property(p => p.AdjustmentType)
+            .HasConversion(v => v.ToString(), v => Enum.Parse<PriceAdjustmentType>(v));
+        modelBuilder.Entity<BookingSegmentParticipation>().Property(p => p.AdjustmentRuleSnapshot).HasColumnType("jsonb");
+        modelBuilder.Entity<BookingSegmentParticipation>().Property(p => p.AdjustmentEvaluation).HasColumnType("jsonb");
+        modelBuilder.Entity<BookingSegmentParticipation>()
+            .HasOne(p => p.MembershipCoverage)
+            .WithOne()
+            .HasForeignKey<ParticipationMembershipCoverage>(c => c.ParticipationId)
+            .OnDelete(DeleteBehavior.ClientNoAction);
+        modelBuilder.Entity<BookingSegmentParticipation>().Navigation(p => p.MembershipCoverage).AutoInclude();
+        modelBuilder.Entity<GroupOccurrenceMembershipSkip>().HasKey(s => s.Id);
+        modelBuilder.Entity<GroupOccurrenceMembershipSkip>()
+            .Property(s => s.Resolution)
+            .HasConversion(v => v.ToString(), v => Enum.Parse<GroupMembershipSkipResolution>(v));
 
         // Phase D3B3A — PackageConsumption ledger. Restrict prema svemu: povijest potrošnje se nikad ne briše kaskadom.
         // Najviše jedan aktivan (Consumed) zapis po sudjelovanju — idempotentnost potrošnje i poništenja u bazi.
@@ -538,6 +885,14 @@ public class DatabaseContext : DbContext
         modelBuilder.Entity<PackageConsumption>()
             .Property(c => c.Status)
             .HasConversion(v => v.ToString(), v => Enum.Parse<PackageConsumptionStatus>(v));
+        modelBuilder.Entity<PackageConsumption>()
+            .Property(c => c.Trigger)
+            .HasConversion(v => v.ToString(), v => Enum.Parse<PackageConsumptionTrigger>(v));
+        modelBuilder.Entity<PackageConsumption>()
+            .HasOne<ParticipationPolicyConsequence>()
+            .WithMany()
+            .HasForeignKey(c => c.ParticipationPolicyConsequenceId)
+            .OnDelete(DeleteBehavior.Restrict);
         modelBuilder.Entity<PackageConsumption>()
             .Property(c => c.ReversalReason)
             .HasConversion(
@@ -657,6 +1012,12 @@ public class DatabaseContext : DbContext
             .WithMany()
             .HasForeignKey(ci => ci.ClientPackageId)
             .OnDelete(DeleteBehavior.Restrict);
+        // P2 (2C) — stavka plaćanja zaduženja članarine; djelomični unique (locks_membership_charge) kao kod sudjelovanja.
+        modelBuilder.Entity<CheckoutItem>()
+            .HasOne(ci => ci.MembershipCharge)
+            .WithMany(c => c.CheckoutItems)
+            .HasForeignKey(ci => ci.MembershipChargeId)
+            .OnDelete(DeleteBehavior.Restrict);
 
         modelBuilder.Entity<PaymentAllocation>().HasKey(a => a.Id);
         modelBuilder.Entity<PaymentAllocation>().HasIndex(a => a.PaymentId);
@@ -771,6 +1132,25 @@ public class DatabaseContext : DbContext
             .WithMany()
             .HasForeignKey(r => r.PackageId)
             .OnDelete(DeleteBehavior.Restrict);
+        modelBuilder.Entity<CommissionRule>()
+            .Property(r => r.Kind)
+            .HasConversion(v => v.ToString(), v => Enum.Parse<CommissionRuleKind>(v));
+        modelBuilder.Entity<CommissionRule>()
+            .HasOne(r => r.MembershipPlan)
+            .WithMany()
+            .HasForeignKey(r => r.MembershipPlanId)
+            .OnDelete(DeleteBehavior.Restrict);
+        modelBuilder.Entity<CommissionRule>()
+            .HasMany(r => r.Tiers)
+            .WithOne()
+            .HasForeignKey(t => t.CommissionRuleId)
+            .OnDelete(DeleteBehavior.Cascade);
+
+        // P2 (2F, Vagaro) — razine općeg pravila; unique (pravilo, prag) je u migraciji.
+        modelBuilder.Entity<CommissionRuleTier>().HasKey(t => t.Id);
+        modelBuilder.Entity<CommissionRuleTier>()
+            .Property(t => t.CalculationType)
+            .HasConversion(v => v.ToString(), v => Enum.Parse<CommissionCalculationType>(v));
 
         // Izvor je točno jedno od Booking(+Appointment)/Appointment(samo, GroupService)/CheckoutItem prema
         // SourceType (CHECK constraint u migraciji) — idempotencija preko tri unique indeksa (dva standardna
@@ -826,6 +1206,23 @@ public class DatabaseContext : DbContext
             .WithMany()
             .HasForeignKey(e => e.CheckoutItemId)
             .OnDelete(DeleteBehavior.Restrict);
+        modelBuilder.Entity<CommissionEntry>()
+            .Property(e => e.PaymentSource)
+            .HasConversion(v => v.ToString(), v => Enum.Parse<CommissionPaymentSource>(v));
+        modelBuilder.Entity<CommissionEntry>()
+            .Property(e => e.AppliedRuleScope)
+            .HasConversion(v => v.ToString(), v => Enum.Parse<CommissionRuleScope>(v));
+        modelBuilder.Entity<CommissionEntry>().Property(e => e.RuleEvaluation).HasColumnType("jsonb");
+        modelBuilder.Entity<CommissionEntry>()
+            .HasOne<ClientMembership>()
+            .WithMany()
+            .HasForeignKey(e => e.ClientMembershipId)
+            .OnDelete(DeleteBehavior.Restrict);
+        modelBuilder.Entity<CommissionEntry>()
+            .HasOne<ParticipationPolicyConsequence>()
+            .WithMany()
+            .HasForeignKey(e => e.ParticipationPolicyConsequenceId)
+            .OnDelete(DeleteBehavior.Cascade);
     }
 
     private static void ConfigureScheduleBreaks(ModelBuilder modelBuilder)

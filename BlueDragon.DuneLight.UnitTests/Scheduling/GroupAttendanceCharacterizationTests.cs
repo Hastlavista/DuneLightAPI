@@ -104,6 +104,7 @@ public class GroupAttendanceCharacterizationTests
     {
         (SchedulingWorld w, _, Appointment occurrence) = await Arrange(nameof(SetAttendance_True_CompletesTheBooking_False_MarksNoShow_AndTheListMirrorsIt));
         await using SchedulingWorld _w = w;
+        await w.MoveToPast(occurrence.Id.Value); // P1: attendance (incl. a no-show) is recorded after the segment started
 
         GroupAttendanceListDto attended = await Set(w, occurrence.Id.Value, w.Client, attended: true);
         Assert.True(Assert.Single(Assert.Single(attended.Segments).Recorded).Attended);

@@ -27,6 +27,14 @@ public interface IPackageConsumptionLedgerService
         IUnitOfWork uow, Guid organizationId, Guid userId, BookingSegmentParticipation participation, ParticipationExecutionContext execution,
         Guid clientPackageId, BookingStatus trigger);
 
+    /// <summary>P1 (D6) — troši JEDNU jedinicu BROJENOG paketa kao kaznu posljedice politike (okidač PolicyConsequence,
+    /// vezano uz <paramref name="consequenceId"/>), neovisno o PackageConsumptionTiming. Ista pravila zaključavanja,
+    /// isključivosti novca i valjanosti na datum izvođenja kao potrošnja izvršenja usluge; neograničen paket nikad nije
+    /// izvor kazne (PACKAGE_NOT_ELIGIBLE).</summary>
+    Task<PackageConsumption> ConsumeForPolicyConsequence(
+        IUnitOfWork uow, Guid organizationId, Guid userId, BookingSegmentParticipation participation, ParticipationExecutionContext execution,
+        Guid clientPackageId, Guid consequenceId);
+
     /// <summary>Poništava aktivnu potrošnju sudjelovanja (vraća ulazak u paket) — false ako aktivne potrošnje nema.</summary>
     Task<bool> ReverseActive(
         IUnitOfWork uow, Guid organizationId, Guid userId, BookingSegmentParticipation participation, PackageConsumptionReversalReason reason);

@@ -252,7 +252,8 @@ public class UniqueEmailTests
         w.Resolve<IGrantGroupHandler>(),
         new JwtService(MultiSegmentHttpContractTests.Jwt),
         MultiSegmentHttpContractTests.Jwt,
-        w.Resolve<IUnitOfWorkFactory>());
+        w.Resolve<IUnitOfWorkFactory>(),
+        w.Resolve<ICancellationPolicyResolver>());
 
     #endregion
 }

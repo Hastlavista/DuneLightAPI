@@ -28,6 +28,11 @@ public static class Grants
     public const string CatalogRoomsManage = "catalog.rooms.manage";
     public const string CatalogResourcesView = "catalog.resources.view";
     public const string CatalogResourcesManage = "catalog.resources.manage";
+    public const string CatalogCancellationPoliciesView = "catalog.cancellation-policies.view";
+    public const string CatalogCancellationPoliciesManage = "catalog.cancellation-policies.manage";
+    public const string CatalogMembershipsView = "catalog.memberships.view";
+    public const string CatalogMembershipsManage = "catalog.memberships.manage";
+    public const string CatalogMembershipsDeactivate = "catalog.memberships.deactivate";
 
     public const string ClientsView = "clients.view";
     public const string ClientsManage = "clients.manage";
@@ -37,11 +42,25 @@ public static class Grants
     public const string ClientsTagsManage = "clients.tags.manage";
     public const string ClientsPackagesView = "clients.packages.view";
     public const string ClientsPackagesManage = "clients.packages.manage";
+    public const string ClientsMembershipsView = "clients.memberships.view";
+    public const string ClientsMembershipsSell = "clients.memberships.sell";
+    public const string ClientsMembershipsCancel = "clients.memberships.cancel";
+    public const string ClientsMembershipsPause = "clients.memberships.pause";
+    public const string ClientsMembershipsPlanChange = "clients.memberships.plan-change";
+    public const string ClientsMembershipsEndOverride = "clients.memberships.end-override";
+    public const string ClientsMembershipsVoidSale = "clients.memberships.void-sale";
+    public const string MembershipsChargesWriteOff = "memberships.charges.write-off";
 
     public const string AppointmentsView = "appointments.view";
     public const string AppointmentsWriteOwn = "appointments.write.own";
     public const string AppointmentsWriteAll = "appointments.write.all";
     public const string AppointmentsDelete = "appointments.delete";
+    /// <summary>P1 (D10/D12) — otpis posljedice politike otkazivanja i korekcija koja poništava posljedicu sa stvarnim
+    /// učinkom. Nikad ne širi own opseg.</summary>
+    public const string AppointmentsPolicyOverride = "appointments.policy.override";
+    /// <summary>P2 (Q54) — rezervacija člana u dugu unatoč postavci "blokiraj rezervaciju" (Q15.4/Q18.3); takvo sudjelovanje je
+    /// bez pokrića.</summary>
+    public const string AppointmentsMembershipBlockOverride = "appointments.membership-block.override";
 
     public const string ScheduleBreaksView = "schedule.breaks.view";
     public const string ScheduleBreaksWriteOwn = "schedule.breaks.write.own";
@@ -130,6 +149,11 @@ public static class Grants
         new(CatalogRoomsManage, "Upravljanje prostorijama", "catalog", "Uređivanje prostorija po poslovnici."),
         new(CatalogResourcesView, "Pregled resursa", "catalog", "Pregled resursa (oprema/mjesta s kapacitetom) po poslovnici."),
         new(CatalogResourcesManage, "Upravljanje resursima", "catalog", "Uređivanje resursa (oprema/mjesta s kapacitetom) po poslovnici."),
+        new(CatalogCancellationPoliciesView, "Pregled politika otkazivanja", "catalog", "Pregled politika otkazivanja, njihovih verzija i dodjela."),
+        new(CatalogCancellationPoliciesManage, "Upravljanje politikama otkazivanja", "catalog", "Kreiranje politika otkazivanja i verzija, dodjele po poslovnici/usluzi i zadana politika organizacije."),
+        new(CatalogMembershipsView, "Pregled planova članarina", "catalog", "Pregled planova članarina i njihovih verzija uvjeta."),
+        new(CatalogMembershipsManage, "Upravljanje planovima članarina", "catalog", "Kreiranje i uređivanje planova članarina, objava novih verzija uvjeta (i prijenos na postojeća članstva uz najavu) te kapacitet prodaje."),
+        new(CatalogMembershipsDeactivate, "Aktivacija i deaktivacija planova članarina", "catalog", "Deaktivacija plana zaustavlja prodaju i obnovu svih njegovih članstava; aktivacija je vraća."),
 
         new(ClientsView, "Pregled klijenata", "clients", "Pregled klijenata (potpuno transparentno, bez own/all podjele)."),
         new(ClientsManage, "Upravljanje klijentima", "clients", "Kreiranje i uređivanje klijenata."),
@@ -139,11 +163,21 @@ public static class Grants
         new(ClientsTagsManage, "Upravljanje oznakama klijenata", "clients", "Uređivanje oznaka klijenata."),
         new(ClientsPackagesView, "Pregled paketa klijenata", "clients", "Pregled paketa klijenta."),
         new(ClientsPackagesManage, "Dodjela paketa klijentima", "clients", "Dodjela paketa klijentu."),
+        new(ClientsMembershipsView, "Pregled članstava", "clients", "Pregled članarina klijenata, njihovog stanja, pauza i zakazanih promjena."),
+        new(ClientsMembershipsSell, "Prodaja članarina", "clients", "Prodaja članarine klijentu (plan, datum početka, poslovnica prodaje)."),
+        new(ClientsMembershipsCancel, "Otkaz članarine", "clients", "Zahtjev za otkaz članarine (djeluje prema otkaznom roku i minimalnoj obvezi) i povlačenje zakazanog otkaza."),
+        new(ClientsMembershipsPause, "Pauza članarine", "clients", "Zadavanje pauze, raniji povratak iz pauze i otkaz pauze koja još nije počela."),
+        new(ClientsMembershipsPlanChange, "Promjena plana članarine", "clients", "Promjena plana od sljedećeg ciklusa i povlačenje zakazane promjene."),
+        new(ClientsMembershipsEndOverride, "Raniji izlazak iz članarine", "clients", "Ručno nadjačavanje datuma završetka (raniji izlazak bez penala, uz razlog)."),
+        new(ClientsMembershipsVoidSale, "Poništavanje prodaje članarine", "clients", "Poništavanje prodaje članarine koja nije plaćena ni korištena."),
+        new(MembershipsChargesWriteOff, "Otpis zaduženja članarine", "clients", "Otpis preostalog duga zaduženja članarine (uz razlog); otpisano zaduženje je konačno."),
 
         new(AppointmentsView, "Pregled termina", "appointments", "Pregled rasporeda termina (transparentno)."),
         new(AppointmentsWriteOwn, "Vlastiti termini", "appointments", "Zakazivanje/uređivanje/otkazivanje vlastitih termina."),
         new(AppointmentsWriteAll, "Svi termini", "appointments", "Zakazivanje/uređivanje/otkazivanje bilo čijih termina."),
         new(AppointmentsDelete, "Brisanje termina", "appointments", "Trajno brisanje termina (isti dan)."),
+        new(AppointmentsPolicyOverride, "Iznimka od politike otkazivanja", "appointments", "Otpis naknade/kazne kasnog otkazivanja ili izostanka i korekcija koja poništava takvu posljedicu."),
+        new(AppointmentsMembershipBlockOverride, "Rezervacija unatoč blokadi duga članarine", "appointments", "Rezervacija člana čija je članarina u dugu uz postavku \"blokiraj rezervaciju\"; sesija je bez pokrića."),
 
         new(ScheduleBreaksView, "Pregled pauza", "schedule-breaks", "Pregled pauza na rasporedu (transparentno, kao raspored termina)."),
         new(ScheduleBreaksWriteOwn, "Vlastite pauze", "schedule-breaks", "Kreiranje/uređivanje/brisanje vlastitih pauza."),
@@ -173,7 +207,7 @@ public static class Grants
         new(RosterLeaveFundManage, "Korekcija fonda godišnjeg odmora", "roster", "Ručno otvaranje/korekcija fonda godišnjeg odmora za određenu godinu."),
 
         new(OrganizationBrandingManage, "Vizualni identitet", "organization", "Uređivanje vizualnog identiteta organizacije (logo, favicon, boje)."),
-        new(OrganizationSettingsManage, "Postavke organizacije", "organization", "Uređivanje poslovnih postavki organizacije (npr. rok za otkazivanje termina)."),
+        new(OrganizationSettingsManage, "Postavke organizacije", "organization", "Uređivanje poslovnih postavki organizacije (npr. potrošnja paketa, vremenska zona)."),
 
         new(PermissionsView, "Pregled dozvola", "organization", "Pregled GrantGroup-a i konfiguracije dozvola."),
         new(PermissionsManage, "Upravljanje dozvolama", "organization", "Kreiranje/uređivanje/brisanje GrantGroup-a (izravno ili preko capability editora)."),

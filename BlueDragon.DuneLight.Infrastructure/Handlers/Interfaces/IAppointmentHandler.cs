@@ -53,7 +53,7 @@ public interface IAppointmentHandler
     /// <summary>Kao <see cref="UpdateScalar(Appointment)"/>, ali unutar zajedničke transakcije — vidi IUnitOfWork.</summary>
     Task UpdateScalar(IUnitOfWork uow, Appointment appointment);
 
-    Task Delete(Appointment appointment);
+    Task Delete(IUnitOfWork uow, Appointment appointment);
 
     Task<List<Appointment>> GetForSchedule(Guid organizationId, AppointmentScheduleQuery query);
 

@@ -51,7 +51,10 @@ public class WaitlistPromotedNotificationHandler : IOutboxMessageHandler
         {
             appointmentId = @event.AppointmentId,
             bookingId = @event.BookingId,
-            companyId = @event.CompanyId
+            companyId = @event.CompanyId,
+            // P2 (pregled 2D #11): promocija bez pokrića članarinom — razlog za recepciju (null kad nije relevantno).
+            membershipCoverageStatus = @event.MembershipCoverageStatus,
+            membershipCoverageReason = @event.MembershipCoverageReason
         }, OutboxJsonOptions.Instance);
 
         await _notificationHandler.Add(uow, new Notification

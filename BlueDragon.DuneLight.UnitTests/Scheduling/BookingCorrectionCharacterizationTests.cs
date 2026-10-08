@@ -17,19 +17,16 @@ namespace BlueDragon.DuneLight.UnitTests.Scheduling;
 
 /// <summary>
 /// CHARACTERIZATION (matrix N and Q): administrative corrections — moving a Booking BACK to Confirmed — and what they
-/// reverse. The Individual and Group paths are separate implementations with different guarantees; this file pins both
-/// so the asymmetry cannot be "fixed" or lost by accident.
+/// reverse. CHANGED in P1 (ADR-0018, D12): Individual and Group share ONE transition matrix (BookingService
+/// ApplyTransitionInTransaction / ReversePreviousStateEffects).
 ///
-/// Individual (BookingService.ApplyIndividualCompletionCorrection / ApplyIndividualNoShowCorrection):
-///   Completed → Confirmed  reverses: check-in payments (voided), package entry (returned), commission (Reversed),
-///                          appointment Completed → Scheduled; REFUSES when a manual POS payment exists; keeps Booking.Amount.
-///   NoShow → Confirmed     status only (+ appointment revert if it had been closed), no financial side effects.
-///   Cancelled → Confirmed  not supported (validation error).
-/// Group (ApplyGroupTransition, any move away from Completed):
-///   voids check-in payments, returns package coverage, RESETS Amount/SuggestedAmount to 0, never checks manual payments,
-///   has no commission reversal (group commission is per occurrence). Cancelled → Confirmed and NoShow → Confirmed are allowed.
+///   Completed → anything   voids check-in payments, returns the completion package entry, reverses the individual
+///                          completion commission (group commission is per occurrence); the price is KEPT (Group no longer
+///                          resets it to 0); a manual POS payment no longer blocks the correction — it stays as settlement.
+///   NoShow/Cancelled → …   reverses only the active policy consequence (none under the neutral default policy).
+///   Same status            a true no-op.
 ///
-/// Manual (POS) payments are intentionally preserved by both paths — only <c>IsCheckInGenerated</c> payments are voided.
+/// Manual (POS) payments are intentionally preserved — only <c>IsCheckInGenerated</c> payments are voided.
 /// </summary>
 public class BookingCorrectionCharacterizationTests
 {
@@ -127,31 +124,33 @@ public class BookingCorrectionCharacterizationTests
     }
 
     [Fact]
-    public async Task Individual_CompletedToConfirmed_IsRefusedWhileAManualPosPaymentExists_AndChangesNothing()
+    public async Task Individual_CompletedToConfirmed_WithAManualPosPayment_ProceedsAndKeepsTheMoneyAsSettlement()
     {
-        await using SchedulingWorld w = await SchedulingWorld.Create(nameof(Individual_CompletedToConfirmed_IsRefusedWhileAManualPosPaymentExists_AndChangesNothing));
+        // CHANGED in P1 (D7/D12, intentional): a manual payment used to block the correction (BOOKING_HAS_NON_REVERSIBLE_PAYMENT).
+        await using SchedulingWorld w = await SchedulingWorld.Create(nameof(Individual_CompletedToConfirmed_WithAManualPosPayment_ProceedsAndKeepsTheMoneyAsSettlement));
         await w.AddCommissionRule(w.Employee, w.Service, CommissionCalculationType.Percentage, 10m);
         AppointmentDto created = await w.CreateAppointment(SchedulingWorld.Future(10));
         AppointmentDto completed = await w.CompleteParticipations(created.Id, w.CompleteRequest(SchedulingWorld.Future(10))); // unpaid
         Guid bookingId = completed.Bookings.Single().Id;
         await w.PayBookingViaCheckout(bookingId, w.Client, 20m); // a manual POS payment
 
-        await SchedulingAssert.BusinessRule(ErrorCodes.BookingHasNonReversiblePayment,
-            () => w.SetBookingStatus(completed.Id, w.Client, BookingStatus.Confirmed));
+        await w.SetBookingStatus(completed.Id, w.Client, BookingStatus.Confirmed);
 
-        // The whole correction is rolled back: status, version, appointment, commission and payment are unchanged.
         Booking b = await w.LoadBooking(completed.Id, w.Client);
-        Assert.Equal(BookingStatus.Completed, b.Status);
-        Assert.Equal(1, b.StatusVersion);
-        Assert.Equal(AppointmentStatus.Closed, (await w.LoadAppointment(completed.Id)).Status);
-        Assert.Equal(CommissionEntryStatus.Earned, Assert.Single(await w.LoadCommissionEntries()).Status);
-        Assert.Equal(PaymentStatus.Completed, Assert.Single(await w.LoadPayments(bookingId)).Status);
+        Assert.Equal(BookingStatus.Confirmed, b.Status);
+        Assert.Equal(2, b.StatusVersion);
+        Assert.Equal(AppointmentStatus.Scheduled, (await w.LoadAppointment(completed.Id)).Status);
+        Assert.Equal(CommissionEntryStatus.Reversed, Assert.Single(await w.LoadCommissionEntries()).Status);
+        Assert.Equal(PaymentStatus.Completed, Assert.Single(await w.LoadPayments(bookingId)).Status); // money never moves
+        BookingDto dto = (await w.Appointments.GetById(w.OrganizationId, completed.Id)).Bookings.Single();
+        Assert.Equal(20m, dto.PaidAmount);      // kept as a prepayment
+        Assert.Equal(30m, dto.OutstandingAmount);
     }
 
     [Fact]
-    public async Task Individual_CompletedToConfirmed_WithBothAManualAndACheckInPayment_IsRefusedAtomically_NothingIsVoided()
+    public async Task Individual_CompletedToConfirmed_WithBothAManualAndACheckInPayment_VoidsOnlyTheCheckInPayment()
     {
-        await using SchedulingWorld w = await SchedulingWorld.Create(nameof(Individual_CompletedToConfirmed_WithBothAManualAndACheckInPayment_IsRefusedAtomically_NothingIsVoided));
+        await using SchedulingWorld w = await SchedulingWorld.Create(nameof(Individual_CompletedToConfirmed_WithBothAManualAndACheckInPayment_VoidsOnlyTheCheckInPayment));
         await w.AddCommissionRule(w.Employee, w.Service, CommissionCalculationType.Percentage, 10m);
         ClientPackage untouchedPackage = await w.AddClientPackage(w.Client, w.Service, 5, LongValid); // must stay at 5: no package is applied here
         AppointmentDto created = await w.CreateAppointment(SchedulingWorld.Future(10));
@@ -168,23 +167,21 @@ public class BookingCorrectionCharacterizationTests
         Assert.Equal(50m, settled.PaidAmount);       // 20 manual + 30 check-in against a 50 obligation
         Assert.Equal(0m, settled.OutstandingAmount);
 
-        // The manual payment makes the correction non-reversible. The refusal happens BEFORE any void, so the reversible
-        // check-in payment is not voided either: the correction is all-or-nothing.
-        await SchedulingAssert.BusinessRule(ErrorCodes.BookingHasNonReversiblePayment,
-            () => w.SetBookingStatus(completed.Id, w.Client, BookingStatus.Confirmed));
+        // CHANGED in P1 (D12): the manual payment no longer blocks — only the check-in payment is voided, the manual one stays.
+        await w.SetBookingStatus(completed.Id, w.Client, BookingStatus.Confirmed);
 
         Booking b = await w.LoadBooking(completed.Id, w.Client);
-        Assert.Equal(BookingStatus.Completed, b.Status);
-        Assert.Equal(1, b.StatusVersion);
+        Assert.Equal(BookingStatus.Confirmed, b.Status);
+        Assert.Equal(2, b.StatusVersion);
         Assert.Equal(50m, b.Amount);
-        Assert.Equal(AppointmentStatus.Closed, (await w.LoadAppointment(completed.Id)).Status);
         List<Payment> after = await w.LoadPayments(bookingId);
-        Assert.Equal(2, after.Count);
-        Assert.All(after, p => Assert.Equal(PaymentStatus.Completed, p.Status)); // neither payment was voided
-        Assert.Equal(CommissionEntryStatus.Earned, Assert.Single(await w.LoadCommissionEntries()).Status);
+        Assert.Equal(PaymentStatus.Voided, Assert.Single(after, p => p.IsCheckInGenerated).Status);
+        Assert.Equal(PaymentStatus.Completed, Assert.Single(after, p => !p.IsCheckInGenerated).Status);
+        Assert.Equal(CommissionEntryStatus.Reversed, Assert.Single(await w.LoadCommissionEntries()).Status);
         Assert.Equal(5, (await w.LoadClientPackage(untouchedPackage.Id.Value)).ServiceEntries.Single().RemainingEntries);
-        Assert.DoesNotContain(await w.LoadAuditLog(completed.Id), l => l.ChangeType == "PaymentVoided");
-        Assert.DoesNotContain(await w.LoadAuditLog(completed.Id), l => l.ChangeType == "Status" && l.NewValue == "Scheduled");
+        BookingDto dto = (await w.Appointments.GetById(w.OrganizationId, completed.Id)).Bookings.Single();
+        Assert.Equal(20m, dto.PaidAmount);
+        Assert.Equal(30m, dto.OutstandingAmount);
     }
 
     [Fact]
@@ -242,16 +239,17 @@ public class BookingCorrectionCharacterizationTests
     }
 
     [Fact]
-    public async Task Individual_ConfirmingAConfirmedBookingThatHasAManualPartialPayment_IsCurrentlyRefused()
+    public async Task Individual_ConfirmingAConfirmedBookingThatHasAManualPartialPayment_IsANoOp()
     {
-        await using SchedulingWorld w = await SchedulingWorld.Create(nameof(Individual_ConfirmingAConfirmedBookingThatHasAManualPartialPayment_IsCurrentlyRefused));
+        // CHANGED in P1 (D12): the same-status retry is a true no-op (it used to run the correction body and be refused).
+        await using SchedulingWorld w = await SchedulingWorld.Create(nameof(Individual_ConfirmingAConfirmedBookingThatHasAManualPartialPayment_IsANoOp));
         AppointmentDto created = await w.CreateAppointment(SchedulingWorld.Future(10));
         await w.PayBookingViaCheckout(created.Bookings.Single().Id, w.Client, 20m);
 
-        // FINDING: the idempotent "confirm again" retry runs the same correction body as a real Completed -> Confirmed, so a
-        // plain Confirmed booking with a manual payment cannot even be re-confirmed (the non-reversible-payment guard fires).
-        await SchedulingAssert.BusinessRule(ErrorCodes.BookingHasNonReversiblePayment,
-            () => w.SetBookingStatus(created.Id, w.Client, BookingStatus.Confirmed));
+        await w.SetBookingStatus(created.Id, w.Client, BookingStatus.Confirmed);
+
+        Assert.Equal(0, (await w.LoadBooking(created.Id, w.Client)).StatusVersion);
+        Assert.Equal(PaymentStatus.Completed, Assert.Single(await w.LoadPayments(created.Bookings.Single().Id)).Status);
     }
 
     #endregion
@@ -262,7 +260,7 @@ public class BookingCorrectionCharacterizationTests
     public async Task Individual_NoShowToConfirmed_ChangesStatusOnly_AndAdvancesTheVersion()
     {
         await using SchedulingWorld w = await SchedulingWorld.Create(nameof(Individual_NoShowToConfirmed_ChangesStatusOnly_AndAdvancesTheVersion));
-        AppointmentDto created = await w.CreateAppointment(SchedulingWorld.Future(10));
+        AppointmentDto created = await w.CreateAppointment(SchedulingWorld.Past(10));
         await w.SetBookingStatus(created.Id, w.Client, BookingStatus.NoShow, "absent");
 
         BookingDto dto = await w.SetBookingStatus(created.Id, w.Client, BookingStatus.Confirmed);
@@ -270,7 +268,10 @@ public class BookingCorrectionCharacterizationTests
         Assert.Equal(BookingStatusSummary.Confirmed, dto.Status);
         Booking b = await w.LoadBooking(created.Id, w.Client);
         Assert.Equal(2, b.StatusVersion);
-        Assert.Equal("absent", b.CancellationReason); // the previous reason is not cleared
+        // CHANGED in P1 (D12): metadata always matches the status — the no-show stamp and reason are cleared (history is in
+        // the audit log).
+        Assert.Null(b.Participations.Single().NoShowReason);
+        Assert.Null(b.Participations.Single().NoShowAt);
         Assert.Equal(AppointmentStatus.Scheduled, (await w.LoadAppointment(created.Id)).Status);
     }
 
@@ -280,9 +281,9 @@ public class BookingCorrectionCharacterizationTests
         await using SchedulingWorld w = await SchedulingWorld.Create(nameof(Individual_NoShowToConfirmed_ReopensAnAppointmentClosedByASibling));
         Client sibling = await w.AddClient("Sibling", "Client");
         // Shape produced by real flows: one booking no-showed, then a sibling was completed via CompleteExisting.
-        AppointmentDto created = await w.CreateAppointment(SchedulingWorld.Future(10), extraClients: sibling);
+        AppointmentDto created = await w.CreateAppointment(SchedulingWorld.Past(10), extraClients: sibling);
         await w.SetBookingStatus(created.Id, w.Client, BookingStatus.NoShow);
-        await w.CompleteParticipations(created.Id, w.CompleteRequest(SchedulingWorld.Future(10), client: sibling));
+        await w.CompleteParticipations(created.Id, w.CompleteRequest(SchedulingWorld.Past(10), client: sibling));
         Assert.Equal(AppointmentStatus.Closed, (await w.LoadAppointment(created.Id)).Status);
 
         await w.SetBookingStatus(created.Id, w.Client, BookingStatus.Confirmed);
@@ -294,7 +295,7 @@ public class BookingCorrectionCharacterizationTests
     public async Task Individual_NoShowToConfirmed_DoesNotRunTheFinancialReversal_SoAnUnrelatedManualPaymentDoesNotBlockIt()
     {
         await using SchedulingWorld w = await SchedulingWorld.Create(nameof(Individual_NoShowToConfirmed_DoesNotRunTheFinancialReversal_SoAnUnrelatedManualPaymentDoesNotBlockIt));
-        AppointmentDto created = await w.CreateAppointment(SchedulingWorld.Future(10));
+        AppointmentDto created = await w.CreateAppointment(SchedulingWorld.Past(10));
         Guid bookingId = created.Bookings.Single().Id;
         await w.PayBookingViaCheckout(bookingId, w.Client, 20m);
         await w.SetBookingStatus(created.Id, w.Client, BookingStatus.NoShow);
@@ -317,9 +318,9 @@ public class BookingCorrectionCharacterizationTests
     }
 
     [Fact]
-    public async Task Group_CompletedToConfirmed_VoidsTheCheckInPayment_AndResetsAmountAndSuggestedAmountToZero()
+    public async Task Group_CompletedToConfirmed_VoidsTheCheckInPayment_AndKeepsThePrice()
     {
-        await using SchedulingWorld w = await SchedulingWorld.Create(nameof(Group_CompletedToConfirmed_VoidsTheCheckInPayment_AndResetsAmountAndSuggestedAmountToZero));
+        await using SchedulingWorld w = await SchedulingWorld.Create(nameof(Group_CompletedToConfirmed_VoidsTheCheckInPayment_AndKeepsThePrice));
         var svc = await w.AddGroupService();
         (Appointment occurrence, Client member) = await GroupOccurrence(w, svc);
         await w.SetBookingStatus(occurrence.Id.Value, member, BookingStatus.Completed, paymentMethod: PaymentMethod.Cash);
@@ -330,14 +331,13 @@ public class BookingCorrectionCharacterizationTests
 
         Payment payment = Assert.Single(await w.LoadPayments(bookingId));
         Assert.Equal(PaymentStatus.Voided, payment.Status);
-        Assert.Equal("Poništen check-in", payment.VoidReason);
+        Assert.Equal("Poništen check-in (korekcija Completed -> Confirmed)", payment.VoidReason); // one matrix, one reason
         Booking b = await w.LoadBooking(occurrence.Id.Value, member);
         Assert.Equal(BookingStatus.Confirmed, b.Status);
         Assert.Equal(2, b.StatusVersion);
-        // FINDING (asymmetry): Group resets the price to 0 on un-check-in; Individual keeps it.
-        Assert.Equal(0m, b.Amount);
-        Assert.Equal(0m, b.SuggestedAmount);
-        Assert.False(b.IsAmountManuallyOverridden);
+        // CHANGED in P1 (D12, intentional): Group un-check-in no longer zeroes the price — same as Individual.
+        Assert.Equal(15m, b.Amount);
+        Assert.Equal(15m, b.SuggestedAmount);
     }
 
     [Fact]
@@ -365,26 +365,26 @@ public class BookingCorrectionCharacterizationTests
     }
 
     [Fact]
-    public async Task Group_CompletedToConfirmed_DoesNotCheckForManualPayments_AndLeavesThemOnAZeroPricedBooking()
+    public async Task Group_CompletedToConfirmed_KeepsManualPaymentsAsPrepayment_OnTheKeptPrice()
     {
-        await using SchedulingWorld w = await SchedulingWorld.Create(nameof(Group_CompletedToConfirmed_DoesNotCheckForManualPayments_AndLeavesThemOnAZeroPricedBooking));
+        await using SchedulingWorld w = await SchedulingWorld.Create(nameof(Group_CompletedToConfirmed_KeepsManualPaymentsAsPrepayment_OnTheKeptPrice));
         var svc = await w.AddGroupService();
         (Appointment occurrence, Client member) = await GroupOccurrence(w, svc);
         await w.SetBookingStatus(occurrence.Id.Value, member, BookingStatus.Completed); // checked in, unpaid
         Guid bookingId = (await w.LoadBooking(occurrence.Id.Value, member)).Id.Value;
         await w.PayBookingViaCheckout(bookingId, member, 5m); // a manual partial payment
 
-        // FINDING (asymmetry): the Individual path refuses here (BOOKING_HAS_NON_REVERSIBLE_PAYMENT); the Group path proceeds.
+        // P1 (D12): manual payments never block a correction on either form.
         await w.SetBookingStatus(occurrence.Id.Value, member, BookingStatus.Confirmed);
 
         Booking b = await w.LoadBooking(occurrence.Id.Value, member);
-        Assert.Equal(0m, b.Amount);
+        Assert.Equal(15m, b.Amount); // P1: the price is kept
         Payment payment = Assert.Single(await w.LoadPayments(bookingId));
         Assert.Equal(PaymentStatus.Completed, payment.Status); // preserved (manual payments are never voided by a correction)
         Assert.Equal(5m, payment.Amount);
         BookingDto dto = (await w.Appointments.GetById(w.OrganizationId, occurrence.Id.Value)).Bookings.Single();
         Assert.Equal(5m, dto.PaidAmount);
-        Assert.Equal(0m, dto.OutstandingAmount); // money received against an obligation that was reset to 0
+        Assert.Equal(10m, dto.OutstandingAmount); // the kept price still owes the rest
     }
 
     [Fact]
@@ -393,6 +393,7 @@ public class BookingCorrectionCharacterizationTests
         await using SchedulingWorld w = await SchedulingWorld.Create(nameof(Group_NoShowToConfirmed_IsAllowed_AndAdvancesTheVersion));
         var svc = await w.AddGroupService();
         (Appointment occurrence, Client member) = await GroupOccurrence(w, svc);
+        await w.MoveToPast(occurrence.Id.Value); // P1: a no-show needs a started segment
         await w.SetBookingStatus(occurrence.Id.Value, member, BookingStatus.NoShow);
 
         await w.SetBookingStatus(occurrence.Id.Value, member, BookingStatus.Confirmed);

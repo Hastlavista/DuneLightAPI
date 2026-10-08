@@ -96,8 +96,8 @@ public class TenantIsolationCharacterizationTests
 
         await SchedulingAssert.NotFound(() => mine.Appointments.ChangeSegmentTime(mine.OrganizationId, mine.ActorUserId, true, theirs.Segments[0].Id,
             new AppointmentSegmentTimeChangeRequest { PlannedStart = SchedulingWorld.Future(12) }));
-        await SchedulingAssert.NotFound(() => mine.Appointments.Cancel(mine.OrganizationId, mine.ActorUserId, true, theirs.Id, new AppointmentCancelRequest()));
-        await SchedulingAssert.NotFound(() => mine.Appointments.MarkNoShow(mine.OrganizationId, mine.ActorUserId, true, theirs.Id, new AppointmentCancelRequest()));
+        await SchedulingAssert.NotFound(() => mine.Appointments.Cancel(mine.OrganizationId, mine.ActorUserId, true, theirs.Id, SchedulingWorld.BusinessCancel()));
+        await SchedulingAssert.NotFound(() => mine.Appointments.MarkNoShow(mine.OrganizationId, mine.ActorUserId, true, theirs.Id, new NoShowRequest()));
         await SchedulingAssert.NotFound(() => mine.Appointments.ChangeNote(mine.OrganizationId, mine.ActorUserId, true, theirs.Id,
             new AppointmentNoteChangeRequest { Note = "x" }));
         await SchedulingAssert.NotFound(() => mine.Bookings.SetParticipationStatus(mine.OrganizationId, mine.ActorUserId, true,

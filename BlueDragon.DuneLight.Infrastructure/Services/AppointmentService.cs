@@ -8,6 +8,7 @@ using BlueDragon.DuneLight.Core.DTOs.Catalog;
 using BlueDragon.DuneLight.Core.DTOs.Clients;
 using BlueDragon.DuneLight.Core.Enums;
 using BlueDragon.DuneLight.Core.Events;
+using BlueDragon.DuneLight.Core.Interfaces;
 using BlueDragon.DuneLight.Core.Interfaces.Appointments;
 using BlueDragon.DuneLight.Core.Interfaces.Catalog;
 using BlueDragon.DuneLight.Core.Interfaces.Clients;
@@ -62,7 +63,8 @@ public partial class AppointmentService : IAppointmentService
 
     private readonly IOrganizationCalendarService _organizationCalendarService;
 
-    private readonly IOrganizationSettingsService _organizationSettingsService;
+    private readonly IGrantResolver _grantResolver;
+    private readonly IMembershipCoverageService _membershipCoverage;
 
     public AppointmentService(
         IAppointmentHandler appointmentHandler,
@@ -92,10 +94,12 @@ public partial class AppointmentService : IAppointmentService
         IOutboxWriter outboxWriter,
         IUnitOfWorkFactory unitOfWorkFactory,
         IOrganizationCalendarService organizationCalendarService,
-        IOrganizationSettingsService organizationSettingsService)
+        IGrantResolver grantResolver,
+        IMembershipCoverageService membershipCoverage)
     {
         _organizationCalendarService = organizationCalendarService;
-        _organizationSettingsService = organizationSettingsService;
+        _grantResolver = grantResolver;
+        _membershipCoverage = membershipCoverage;
         _appointmentHandler = appointmentHandler;
         _schedulingOccupancyHandler = schedulingOccupancyHandler;
         _auditLogHandler = auditLogHandler;
@@ -425,20 +429,42 @@ public partial class AppointmentService : IAppointmentService
         return dto;
     }
 
-    /// <summary>Otkazuje CIJELI termin — svi aktivni (Confirmed) Bookinzi prelaze u Cancelled zajedno s
-    /// Appointment.Status. Za otkazivanje SAMO jednog klijenta (npr. duo/grupa) koristi se
-    /// IBookingService.SetParticipationStatus umjesto ovoga (vidi Booking.cs section 44).</summary>
+    /// <summary>Otkazuje CIJELI termin — svi aktivni (Confirmed) sudionici prelaze u Cancelled, a termin se eksplicitno
+    /// otkazuje. P1 (D2): otkazivanje termina je uvijek poslovno (initiator Business obavezan, Client se odbija) uz razlog;
+    /// politika se ne evaluira. Za otkazivanje SAMO jednog klijenta koristi se Booking-wide ili participation naredba.</summary>
     public Task<AppointmentDto> Cancel(Guid organizationId, Guid userId, bool hasFullScope, Guid id, AppointmentCancelRequest request)
     {
-        return ChangeToTerminalStatus(organizationId, userId, hasFullScope, id, request, BookingStatus.Cancelled);
+        if (request?.CancellationInitiator == null)
+            throw new ValidationAppException("Initiator otkazivanja je obavezan (otkazivanje termina je uvijek Business).");
+        if (request.CancellationInitiator != CancellationInitiator.Business)
+            throw new ValidationAppException(
+                "Otkazivanje cijelog termina je uvijek poslovno (Business) — klijentsko otkazivanje ide po Bookingu ili sudjelovanju.");
+        if (string.IsNullOrWhiteSpace(request.CancellationReason))
+            throw new ValidationAppException("Poslovno (Business) otkazivanje zahtijeva razlog.");
+
+        return ChangeToTerminalStatus(organizationId, userId, hasFullScope, id, new BookingSetStatusRequest
+        {
+            Status = BookingStatus.Cancelled,
+            CancellationInitiator = CancellationInitiator.Business,
+            CancellationReason = request.CancellationReason
+        }, request.CancellationReason);
     }
 
-    /// <summary>Bulk no-show — svi aktivni Bookinzi prelaze u NoShow, Appointment.Status ipak završava na
-    /// Cancelled (termin kao okvir NIKAD nije NoShow — vidi AppointmentStatus.cs). Za pojedinačni no-show na
-    /// terminu s više klijenata koristi se IBookingService.SetParticipationStatus.</summary>
-    public Task<AppointmentDto> MarkNoShow(Guid organizationId, Guid userId, bool hasFullScope, Guid id, AppointmentCancelRequest request)
+    /// <summary>Bulk no-show — svi aktivni sudionici prelaze u NoShow (termin se izvodi u Closed; termin kao okvir NIKAD nije
+    /// NoShow). P1: politika izostanka se evaluira po sudjelovanju; otpis u trenutku događaja traži razlog i
+    /// appointments.policy.override. Za pojedinačni no-show koristi se participation naredba.</summary>
+    public async Task<AppointmentDto> MarkNoShow(Guid organizationId, Guid userId, bool hasFullScope, Guid id, NoShowRequest request)
     {
-        return ChangeToTerminalStatus(organizationId, userId, hasFullScope, id, request, BookingStatus.NoShow);
+        if (request?.WaivePolicyConsequence == true)
+            await PolicyOverride.EnsureWaiverAllowed(_grantResolver, organizationId, userId, request.WaiverReason);
+
+        return await ChangeToTerminalStatus(organizationId, userId, hasFullScope, id, new BookingSetStatusRequest
+        {
+            Status = BookingStatus.NoShow,
+            NoShowReason = request?.NoShowReason,
+            WaivePolicyConsequence = request?.WaivePolicyConsequence ?? false,
+            WaiverReason = request?.WaiverReason
+        }, appointmentCancellationReason: null, request?.ClientPackageId, request?.PackageSelections);
     }
 
     public async Task Delete(Guid organizationId, Guid userId, Guid id)
@@ -453,8 +479,15 @@ public partial class AppointmentService : IAppointmentService
             throw new BusinessRuleException(ErrorCodes.SameDayOnly, "Termin se može trajno obrisati samo istog dana kad je unesen — u suprotnom ga otkažite.");
 
         // Phase D3B1: fizičko brisanje samo ako su sva sudjelovanja netaknuta (pravilo i brisanje: ParticipationHistory kroz
-        // AppointmentHandler.Delete); sudjelovanje s poviješću → REFERENCED_CANNOT_DELETE.
-        await _appointmentHandler.Delete(appointment);
+        // AppointmentHandler.Delete); sudjelovanje s poviješću → REFERENCED_CANNOT_DELETE. P2 (2D): claim netaknutog
+        // sudjelovanja se prije brisanja vraća (oslobođeno mjesto se prerasporedi), u istoj transakciji; bez članarine no-op.
+        await using IUnitOfWork uow = await _unitOfWorkFactory.Begin();
+        List<BookingSegmentParticipation> participations = await uow.Context.BookingSegmentParticipations
+            .Where(p => p.OrganizationId == organizationId && p.Booking.AppointmentId == id)
+            .ToListAsync();
+        await _membershipCoverage.ReleaseForRemoval(uow, organizationId, userId, participations);
+        await _appointmentHandler.Delete(uow, appointment);
+        await uow.CommitAsync();
     }
 
     public async Task<List<AppointmentDto>> CreateRecurring(Guid organizationId, Guid userId, bool hasFullScope, RecurringAppointmentCreateRequest request)
@@ -508,6 +541,10 @@ public partial class AppointmentService : IAppointmentService
         }
 
         await _appointmentHandler.AddRange(uow, toCreate);
+        // P2 (2D, §11.4): pokriće occurrence po occurrence, redom po vremenu (limit koji presuši usred serije → ostatak na
+        // sljedeći izvor; uz postavku "odbij" odbija se cijela serija).
+        foreach (Appointment appointment in toCreate)
+            await SyncMembershipCoverage(uow, organizationId, userId, appointment);
         await uow.CommitAsync();
 
         List<AppointmentDto> created = new List<AppointmentDto>();
@@ -834,6 +871,7 @@ public partial class AppointmentService : IAppointmentService
                     segment.Clients, segment.Room, ResourcesOf(segment.Plan)))
                 .ToList());
             await _appointmentHandler.Add(uow, appointment);
+            await SyncMembershipCoverage(uow, organizationId, userId, appointment);
             await uow.CommitAsync();
         }
 
@@ -842,23 +880,35 @@ public partial class AppointmentService : IAppointmentService
         return dto;
     }
 
-    /// <summary>Zajednička implementacija za Cancel/MarkNoShow — cijeli termin završava na
-    /// AppointmentStatus.Cancelled (termin kao okvir nikad nije NoShow), svi Bookinzi koji još nisu u
-    /// terminalnom stanju prelaze na targetBookingStatus (Cancelled ili NoShow).</summary>
-    private async Task<AppointmentDto> ChangeToTerminalStatus(
-        Guid organizationId, Guid userId, bool hasFullScope, Guid id, AppointmentCancelRequest request, BookingStatus targetBookingStatus)
+    /// <summary>P2 (2D) — claim na rezervaciji za SVA nova sudjelovanja termina, redom po početku segmenta (pa klijentu):
+    /// interaktivna naredba, pa postavka "odbij" kod iskorištenog limita odbija cijelu naredbu. Bez članarine no-op.</summary>
+    private async Task SyncMembershipCoverage(IUnitOfWork uow, Guid organizationId, Guid userId, Appointment appointment)
     {
-        List<Guid> returnClientIds = (request.ReturnEntryForClientIds ?? new List<Guid>()).Distinct().ToList();
+        foreach ((Booking booking, BookingSegmentParticipation participation) in appointment.Bookings
+                     .SelectMany(b => b.Participations.Select(p => (Booking: b, Participation: p)))
+                     .OrderBy(x => appointment.Segments.Single(s => s.Id == x.Participation.AppointmentSegmentId).PlannedStart)
+                     .ThenBy(x => x.Booking.ClientId))
+        {
+            await _membershipCoverage.SyncParticipation(uow, organizationId, userId, appointment, booking, participation,
+                MembershipCoverageEvent.Booking, MembershipCoverageMode.Interactive);
+        }
+    }
 
+    /// <summary>Zajednička implementacija za Cancel/MarkNoShow — svi AKTIVNI (Confirmed) sudionici termina prelaze u ciljni
+    /// status kroz jedinu jezgru prijelaza sudjelovanja (IParticipationLifecycleService, kaskada) s JEDNIM serverskim
+    /// timestampom događaja; terminalna sudjelovanja se ne diraju (D12). P1: otkazivanje termina je uvijek Business (bez
+    /// politike, razlog obavezan); izostanak termina evaluira politiku po sudjelovanju i atomaran je (ako ijedan aktivni segment
+    /// nije počeo → ATTENDANCE_BEFORE_START, ništa se ne mijenja). Status termina se zatim izvodi.</summary>
+    private async Task<AppointmentDto> ChangeToTerminalStatus(
+        Guid organizationId, Guid userId, bool hasFullScope, Guid id, BookingSetStatusRequest transition, string appointmentCancellationReason,
+        Guid? singleClientPackageId = null, IReadOnlyCollection<ParticipationPackageSelection> packageSelections = null)
+    {
         try
         {
             await using IUnitOfWork uow = await _unitOfWorkFactory.Begin();
 
-            // Zaključava Appointment redak (FOR UPDATE) i čita Status/EmployeeId pod lockom PRIJE bilo kakve
-            // provjere/mutacije — sprječava utrku s konkurentnim prijelazom sudjelovanja/CompleteGroupAppointment na
-            // ISTOM terminu (drugi zahtjev čeka na lock pa vidi svježe stanje nakon commita prvog, vidi spec
-            // section 8-11). Ownership se namjerno provjerava OVDJE (ne pred-transakcijski) — jeftina provjera,
-            // nema razloga za dodatan round-trip prije zaključavanja.
+            // Zaključava Appointment redak (FOR UPDATE) i čita Status pod lockom PRIJE bilo kakve provjere/mutacije —
+            // sprječava utrku s konkurentnim prijelazom sudjelovanja/CompleteGroupAppointment na ISTOM terminu.
             Appointment appointment = await _appointmentHandler.GetForUpdateWithBookings(uow, organizationId, id);
             if (appointment == null)
                 throw new NotFoundAppException("Appointment", id);
@@ -867,120 +917,62 @@ public partial class AppointmentService : IAppointmentService
             // sudjelovanja svih segmenata) — zahtijeva appointments.write.all, own-opseg nikad.
             AppointmentOwnership.EnsureWholeAppointmentScope(hasFullScope, NotOwnerMessage);
 
-            // Phase M1B (zaključano): bulk no-show je operacija nad AKTIVNIM sudjelovanjima — bez ijednog aktivnog (Confirmed)
-            // sudjelovanja (npr. prazan termin) se odbija; status se ne mijenja i ne izmišlja se "NoShow" termina.
-            if (targetBookingStatus == BookingStatus.NoShow && appointment.Status != AppointmentStatus.Closed &&
-                !appointment.Bookings.SelectMany(b => b.Participations).Any(p => p.Status == ParticipationStatus.Confirmed))
-                throw new BusinessRuleException(
-                    ErrorCodes.NoActiveParticipations, "Termin nema aktivnih sudjelovanja koja bi se mogla označiti kao izostanak.");
+            List<(Booking Booking, BookingSegmentParticipation Participation)> active = appointment.Bookings
+                .SelectMany(b => b.Participations.Select(p => (Booking: b, Participation: p)))
+                .Where(x => x.Participation.Status == ParticipationStatus.Confirmed)
+                .OrderBy(x => x.Participation.Id)
+                .ToList();
+            bool isNoShow = transition.Status == BookingStatus.NoShow;
 
-            // Phase M1A: termin bez ijednog Confirmed sudjelovanja koji NIJE "sve otkazano" (Closed — razriješen) nema što
-            // otkazati/označiti izostankom; isto pravilo kao prije za Completed (odrađen i eventualno proviziran termin se
-            // ne smije naknadno "otkazati"). Djelomično izvršen termin (npr. Completed + Confirmed) JEST dopušten: otkazuju
-            // se samo aktivna sudjelovanja, a termin se izvodi (→ Closed).
+            // Phase M1A: termin bez ijednog Confirmed sudjelovanja koji je razriješen (Closed) nema što otkazati/označiti
+            // izostankom. Djelomično izvršen termin (npr. Completed + Confirmed) JEST dopušten.
             if (appointment.Status == AppointmentStatus.Closed)
                 throw new BusinessRuleException(
                     ErrorCodes.AlreadyCompleted,
                     "Termin je već razriješen (Closed) i ne može se otkazati niti označiti kao izostanak.");
 
+            // Phase M1B/P1 (D12): bulk no-show je operacija nad AKTIVNIM sudjelovanjima — bez ijednog se odbija.
+            if (isNoShow && active.Count == 0)
+                throw new BusinessRuleException(
+                    ErrorCodes.NoActiveParticipations, "Termin nema aktivnih sudjelovanja koja bi se mogla označiti kao izostanak.");
+
+            DateTimeOffset eventAt = DateTimeOffset.UtcNow;
+
+            // P1 (D3): appointment-wide izostanak je atomaran — ako ijedan aktivni segment još nije počeo, ništa se ne mijenja.
+            if (isNoShow && active.Any(x => ExecutionContextResolver.ForParticipation(appointment, x.Booking, x.Participation).StartsAt > eventAt))
+                throw new BusinessRuleException(
+                    ErrorCodes.AttendanceBeforeStart, "Izostanak se može evidentirati tek nakon početka svih aktivnih segmenata termina.");
+
             // Phase M1A.1: otkazivanje TERMINA je zasebna, eksplicitna činjenica (CancelledAt/By + "AppointmentCancelled"
-            // audit) — ulaz u izvođenje statusa, nikad izveden iz sudjelovanja. Bulk no-show NIJE otkazivanje termina: samo
-            // bilježi razlog (metapodatak, kao i prije). STATUS se ne postavlja ovdje nego izvodi niže.
-            if (targetBookingStatus == BookingStatus.Cancelled)
+            // audit) — ulaz u izvođenje statusa, nikad izveden iz sudjelovanja. Bulk no-show NIJE otkazivanje termina; razlog
+            // izostanka (P1) je na sudjelovanjima (NoShowReason).
+            if (!isNoShow)
             {
-                await AppointmentLifecycle.MarkExplicitlyCancelled(_auditLogHandler, uow, appointment, request.CancellationReason, userId);
-            }
-            else
-            {
-                appointment.CancellationReason = request.CancellationReason;
-                appointment.UpdatedAt = DateTimeOffset.UtcNow;
-                appointment.UpdatedBy = userId;
+                await AppointmentLifecycle.MarkExplicitlyCancelled(_auditLogHandler, uow, appointment, appointmentCancellationReason, userId);
+                await _appointmentHandler.UpdateScalar(uow, appointment);
             }
 
-            await _appointmentHandler.UpdateScalar(uow, appointment);
-
-            // Phase M0: appointment-wide prijelaz (A) — Booking nema status, pa se cijeli termin zatvara kontroliranim
-            // prijelazom SVAKOG aktivnog (Confirmed) sudjelovanja svih Bookinga. Sudjelovanja se zaključavaju nakon
-            // termina, u stabilnom redoslijedu (po Id-u); statusi su već svježi jer svaki prijelaz statusa prvo zaključava
-            // ovaj isti termin.
-            ParticipationStatus target = BookingParticipations.ToParticipationStatus(targetBookingStatus);
-            // Phase M1E.1: otkazivanje termina klasificira SVAKO otkazano sudjelovanje zasebno (isti cutoff organizacije, isti
-            // trenutak, početak NJEGOVOG segmenta) — kao otkazivanje jednog sudjelovanja ili cijelog Bookinga.
-            int cutoffMinutes = targetBookingStatus == BookingStatus.Cancelled
-                ? await _organizationSettingsService.GetCancellationCutoffMinutes(organizationId)
-                : 0;
-            DateTimeOffset cancelledAt = DateTimeOffset.UtcNow;
+            // Sudjelovanja se zaključavaju nakon termina, u stabilnom redoslijedu (po Id-u).
             await _participationHandler.LockForUpdate(
                 uow, organizationId, appointment.Bookings.SelectMany(b => b.Participations).Select(p => p.Id.GetValueOrDefault()));
 
-            foreach ((Booking booking, BookingSegmentParticipation participation) in appointment.Bookings
-                         .SelectMany(b => b.Participations.Select(p => (Booking: b, Participation: p)))
-                         .Where(x => x.Participation.Status == ParticipationStatus.Confirmed)
-                         .OrderBy(x => x.Participation.Id)
-                         .ToList())
-            {
-                ParticipationStatus oldParticipationStatus = participation.Status;
-                ParticipationLifecycle.TrySetStatus(participation, target);
-                ParticipationLifecycle.SetCancellationReason(participation, request.CancellationReason);
-                if (targetBookingStatus == BookingStatus.Cancelled)
-                    ParticipationLifecycle.SetLateCancellation(participation, BookingCancellationPolicy.IsLateCancellation(
-                        ExecutionContextResolver.ForParticipation(appointment, booking, participation), cancelledAt, cutoffMinutes));
-                booking.UpdatedAt = DateTimeOffset.UtcNow;
-                booking.UpdatedBy = userId;
+            // Phase M1E.1/P1: svako sudjelovanje se obrađuje zasebno (vlastiti StatusVersion, audit, Outbox pojava, posljedica
+            // politike po početku NJEGOVOG segmenta) — isti timestamp događaja za sve.
+            // P1 (D6): paket za kaznu se bira PO SUDJELOVANJU (više klijenata, različite usluge) — samo aktivna sudjelovanja
+            // ovog termina; jedan ClientPackageId za cijeli termin se odbija.
+            IReadOnlyDictionary<Guid, Guid> selections = ParticipationPackageSelections.Resolve(
+                singleClientPackageId, packageSelections, active.Select(x => x.Participation.Id.GetValueOrDefault()).ToList());
 
-                // Phase D3B3A: povrat ulaska = poništenje AKTIVNE potrošnje paketa sudjelovanja (ledger; no-op ako je nema).
-                bool shouldReturn = returnClientIds.Contains(booking.ClientId) &&
-                    await _packageConsumptionLedgerService.ReverseActive(
-                        uow, organizationId, userId, participation,
-                        targetBookingStatus == BookingStatus.NoShow ? PackageConsumptionReversalReason.NoShow : PackageConsumptionReversalReason.Cancellation);
-
-                await _appointmentHandler.UpdateBooking(uow, booking);
-
-                await _auditLogHandler.Add(uow, new AppointmentAuditLog
-                {
-                    Id = Guid.NewGuid(),
-                    AppointmentId = id,
-                    BookingId = booking.Id,
-                    BookingSegmentParticipationId = participation.Id,
-                    ChangeType = "BookingStatus",
-                    OldValue = oldParticipationStatus.ToString(),
-                    NewValue = participation.Status.ToString(),
-                    StatusVersion = participation.StatusVersion,
-                    ChangedAt = DateTimeOffset.UtcNow,
-                    ChangedBy = userId
-                });
-
-                // Jedan booking.cancelled.v1/booking.no-show.v1 po STVARNO otkazanom/izostalom SUDJELOVANJU (ne jedan
-                // generički Appointment event) — vidi spec section 33. Ista uow transakcija kao mutacija iznad.
-                if (targetBookingStatus == BookingStatus.Cancelled)
-                    await ParticipationEvents.WriteCancelled(_outboxWriter, uow, organizationId, appointment, booking, participation);
-                else if (targetBookingStatus == BookingStatus.NoShow)
-                    await ParticipationEvents.WriteNoShow(_outboxWriter, uow, organizationId, appointment, booking, participation);
-
-                if (shouldReturn)
-                {
-                    await _auditLogHandler.Add(uow, new AppointmentAuditLog
-                    {
-                        Id = Guid.NewGuid(),
-                        AppointmentId = id,
-                        BookingId = booking.Id,
-                        BookingSegmentParticipationId = participation.Id,
-                        ChangeType = "BookingPackageCoverageReturned",
-                        OldValue = "Applied",
-                        NewValue = "Returned",
-                        ChangedAt = DateTimeOffset.UtcNow,
-                        ChangedBy = userId
-                    });
-                }
-            }
+            foreach ((Booking booking, BookingSegmentParticipation participation) in active)
+                await _participationLifecycleService.ApplyCascadeTransitionInTransaction(
+                    uow, organizationId, userId, appointment, booking, participation,
+                    ParticipationPackageSelections.ForParticipation(transition, selections, participation.Id.GetValueOrDefault()), eventAt);
 
             // Phase M1A.1: status se IZVODI iz sudjelovanja + eksplicitne otkazanosti: otkazan termin bez izvršenog rada
             // (uključujući prazan termin) → Cancelled; bilo koji Completed/NoShow (uključujući bulk no-show) → Closed.
-            // Terminalna sudjelovanja (Completed/Cancelled/NoShow) nisu dirana.
             await AppointmentLifecycle.Refresh(_appointmentHandler, _auditLogHandler, uow, organizationId, id, userId);
 
-            // Aktivni rad termina je otkazan/izostao — preostali Waiting retci više nisu smisleni, ne promovira se
-            // (spec section 19/41/42).
+            // Aktivni rad termina je otkazan/izostao — preostali Waiting retci više nisu smisleni, ne promovira se.
             if (appointment.Form == AppointmentForm.Group)
                 await _waitlistPromotionService.ExpireWaitingForAppointment(
                     uow, organizationId, id, userId, WaitlistExpiredReasons.AppointmentCancelled);
@@ -1331,6 +1323,7 @@ public partial class AppointmentService : IAppointmentService
             Amount = commercial.FinalPrice,
             PaidAmount = commercial.MonetarySettled,
             OutstandingAmount = commercial.Outstanding,
+            SurplusAmount = commercial.Surplus,
             IsPaid = commercial.FullySettled,
             BookingId = booking.Id.GetValueOrDefault(),
             BookingStatus = BookingSummary.StatusOf(booking),

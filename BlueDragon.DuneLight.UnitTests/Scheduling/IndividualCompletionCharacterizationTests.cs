@@ -375,7 +375,7 @@ public class IndividualCompletionCharacterizationTests
     {
         await using SchedulingWorld w = await SchedulingWorld.Create(nameof(CompleteGroupAppointment_WithUnresolvedConfirmedBookings_IsRecorded_ButTheOccurrenceStaysScheduled_AndWarns));
         Client second = await w.AddClient("Second", "Client");
-        Appointment occurrence = await w.SeedAppointment(SchedulingWorld.Future(10), form: AppointmentForm.Group, employee: w.Employee,
+        Appointment occurrence = await w.SeedAppointment(SchedulingWorld.Past(10), form: AppointmentForm.Group, employee: w.Employee,
             bookings: new[] { (w.Client, BookingStatus.Confirmed, 15m), (second, BookingStatus.Completed, 15m) });
 
         AppointmentDto dto = await w.Appointments.CompleteGroupAppointment(w.OrganizationId, w.ActorUserId, true, occurrence.Id.Value);
@@ -447,24 +447,24 @@ public class IndividualCompletionCharacterizationTests
     }
 
     [Fact]
-    public async Task CompletingACancelledParticipation_IsRejected_ATerminalStatusHasNoPathToCompleted()
+    public async Task CompletingACancelledParticipation_IsACorrection_ThatEarnsAndPaysLikeAnyCompletion()
     {
-        await using SchedulingWorld w = await SchedulingWorld.Create(nameof(CompletingACancelledParticipation_IsRejected_ATerminalStatusHasNoPathToCompleted));
+        await using SchedulingWorld w = await SchedulingWorld.Create(nameof(CompletingACancelledParticipation_IsACorrection_ThatEarnsAndPaysLikeAnyCompletion));
         await w.AddCommissionRule(w.Employee, w.Service, CommissionCalculationType.Percentage, 10m);
         AppointmentDto created = await w.CreateAppointment(SchedulingWorld.Future(10));
-        await w.Appointments.Cancel(w.OrganizationId, w.ActorUserId, true, created.Id, new AppointmentCancelRequest { CancellationReason = "cancelled" });
+        await w.Appointments.Cancel(w.OrganizationId, w.ActorUserId, true, created.Id, SchedulingWorld.BusinessCancel("cancelled"));
 
-        // CHANGED in M1H: the removed appointment-wide completion resurrected Cancelled bookings straight to Completed. The
-        // participation lifecycle has no Cancelled -> Completed path: nothing is paid, earned or reopened.
-        await Assert.ThrowsAsync<BusinessRuleException>(
-            () => w.CompleteParticipations(created.Id, w.CompleteRequest(SchedulingWorld.Future(10), paymentMethod: PaymentMethod.Cash)));
+        // CHANGED in P1 (D12, intentional): one matrix — Cancelled -> Completed is a correction (re-checks the schedule claim,
+        // then the normal completion effects with the new source version). It used to have no path at all.
+        await w.CompleteParticipations(created.Id, w.CompleteRequest(SchedulingWorld.Future(10), paymentMethod: PaymentMethod.Cash));
 
-        Appointment a = await w.LoadAppointment(created.Id);
-        Assert.Equal(AppointmentStatus.Cancelled, a.Status);
-        Booking b = a.Bookings.Single();
-        Assert.Equal((BookingStatus.Cancelled, 1), (b.Status, b.StatusVersion));
-        Assert.Empty(await w.LoadPayments(b.Id.Value));
-        Assert.Empty(await w.LoadCommissionEntries());
+        Booking b = (await w.LoadAppointment(created.Id)).Bookings.Single();
+        Assert.Equal((BookingStatus.Completed, 2), (b.Status, b.StatusVersion));
+        Assert.Null(b.Participations.Single().CancellationInitiator); // metadata matches the status
+        Assert.Equal(PaymentStatus.Completed, Assert.Single(await w.LoadPayments(b.Id.Value)).Status);
+        CommissionEntry entry = Assert.Single(await w.LoadCommissionEntries());
+        Assert.Equal((CommissionEntryStatus.Earned, 2), (entry.Status, entry.SourceVersion));
+        Assert.Equal(AppointmentStatus.Closed, (await w.LoadAppointment(created.Id)).Status);
     }
 
     #endregion

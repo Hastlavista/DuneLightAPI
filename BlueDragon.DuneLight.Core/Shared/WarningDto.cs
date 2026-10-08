@@ -60,10 +60,104 @@ public class WarningRosterOverlapDetails
 
 /// <summary>Phase M1G — GROUP_COMMISSION_RULE_NOT_SUPPORTED: pravilo provizije zaposlenika za uslugu segmenta koje grupna
 /// sesija ne evaluira (unos nije stvoren).</summary>
+/// <summary>P2 (2F) — COMMISSION_SERVICE_RULE_GENERAL_APPLIES: "Od [EffectiveOn] za ovu uslugu vrijedi opće pravilo ([CalculationType]
+/// [Value]). Za isključenje usluge odaberi Bez provizije."</summary>
+public class WarningCommissionGeneralRuleAppliesDetails
+{
+    public Guid ServiceId { get; set; }
+    public Guid EmployeeId { get; set; }
+    public DateOnly EffectiveOn { get; set; }
+    public Guid GeneralRuleId { get; set; }
+    public string CalculationType { get; set; }
+    public decimal Value { get; set; }
+}
+
 public class WarningGroupCommissionRuleDetails
 {
     public Guid SegmentId { get; set; }
     public Guid EmployeeId { get; set; }
     public Guid CommissionRuleId { get; set; }
     public string CalculationType { get; set; }
+}
+
+/// <summary>P2 (Q49) — MEMBERSHIP_LIMIT_WITHOUT_EFFECT: limit plana i limit zbog kojeg nema učinka (krediti perioda ili limit
+/// cijelog plana za isti prozor). ServiceId = null znači limit cijelog plana.</summary>
+public class WarningMembershipLimitDetails
+{
+    public Guid? ServiceId { get; set; }
+    public string Window { get; set; }
+    public int MaxUses { get; set; }
+    public Guid? ComparedWithServiceId { get; set; }
+    public string ComparedWithWindow { get; set; }
+    public int ComparedWithMaxUses { get; set; }
+}
+
+/// <summary>P2 (2C) — MEMBERSHIP_PLAN_MEMBERSHIPS_ENDING: broj članstava koja će završiti zbog deaktivacije (popis:
+/// GET /api/membership-plans/{id}/memberships-ending).</summary>
+public class WarningMembershipsEndingDetails
+{
+    public int Count { get; set; }
+}
+
+/// <summary>P2 — MEMBERSHIP_CHANGE_NOTICE_SHORT: postavljeni rok i preporučeni najkraći rok (14 dana).</summary>
+public class WarningMembershipChangeNoticeDetails
+{
+    public int Days { get; set; }
+    public int RecommendedMinimumDays { get; set; }
+}
+
+/// <summary>P2 — MEMBERSHIP_SCHEDULED_PAUSE_CANCELLED: poništene pauze koje još nisu počele.</summary>
+public class WarningMembershipPausesDetails
+{
+    public List<Guid> PauseIds { get; set; } = new();
+}
+
+/// <summary>CHECKOUT_ITEM_PRICE_CHANGED — stavke sesije čiji iznos više ne odgovara trenutnom dugu sesije.</summary>
+public class WarningCheckoutItemPriceDetails
+{
+    public List<WarningCheckoutItemPrice> Items { get; set; } = new();
+}
+
+public class WarningCheckoutItemPrice
+{
+    public Guid CheckoutItemId { get; set; }
+    public Guid ParticipationId { get; set; }
+    /// <summary>Iznos zapisan na stavci pri dodavanju.</summary>
+    public decimal ItemAmount { get; set; }
+    /// <summary>Trenutni dug sesije (cijena, ili 0 ako je sada pokrivena).</summary>
+    public decimal CurrentDue { get; set; }
+}
+
+/// <summary>P2 (2E) — MEMBERSHIP_BENEFIT_WITHOUT_EFFECT: usluga i poslovnica u kojima fiksna cijena za člana nije niža od cjenika.</summary>
+public class WarningMembershipBenefitDetails
+{
+    public List<WarningMembershipBenefitPrice> Prices { get; set; } = new();
+}
+
+public class WarningMembershipBenefitPrice
+{
+    public Guid ServiceId { get; set; }
+    public Guid CompanyId { get; set; }
+    public decimal ListPrice { get; set; }
+    public decimal MemberPrice { get; set; }
+}
+
+/// <summary>P2 (2D) — pogođeni termini (npr. MEMBERSHIP_VOIDED_SESSIONS_UNCOVERED): sudjelovanje, termin i početak.</summary>
+public class WarningMembershipSessionsDetails
+{
+    public List<WarningMembershipSession> Sessions { get; set; } = new();
+}
+
+public class WarningMembershipSession
+{
+    public Guid ParticipationId { get; set; }
+    public Guid AppointmentId { get; set; }
+    public DateTimeOffset PlannedStart { get; set; }
+}
+
+/// <summary>P2 (Q29) — MEMBERSHIP_PLAN_NO_ACTIVE_COMPANY: odabrane poslovnice plana, nijedna aktivna.
+/// Isti oblik za MEMBERSHIP_PLAN_NOT_VALID_AT_SALE_COMPANY (poslovnice u kojima plan vrijedi).</summary>
+public class WarningMembershipPlanCompaniesDetails
+{
+    public List<Guid> CompanyIds { get; set; } = new();
 }

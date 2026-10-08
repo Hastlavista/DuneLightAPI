@@ -188,9 +188,9 @@ public class GroupCapacityCharacterizationTests
         Assert.Equal(BookingStatus.Cancelled, b.Status);
         Assert.Equal(1, b.StatusVersion);
         Assert.Equal("Klijent uklonjen iz grupe", b.CancellationReason);
-        // CHANGED in M1F (intentional fix of the old pin, which left lateness empty): classified from ITS OWN segment start
-        // via the central BookingCancellationPolicy — 2031 is far outside the default cutoff, so: not late.
-        Assert.False(b.IsLateCancellation);
+        // CHANGED in P1 (D2/D9, intentional): member removal is a SYSTEM cancellation — no late classification, no consequence.
+        Assert.Null(b.IsLateCancellation);
+        Assert.Equal(CancellationInitiator.System, b.Participations.Single().CancellationInitiator);
         AppointmentAuditLog audit = Assert.Single(await w.LoadAuditLog(occurrence.Id.Value), l => l.ChangeType == "BookingStatus");
         Assert.Equal("Confirmed", audit.OldValue);
         Assert.Equal("Cancelled", audit.NewValue);
@@ -302,7 +302,7 @@ public class GroupCapacityCharacterizationTests
     {
         (SchedulingWorld w, _, Appointment occurrence, _) = await Occurrence(nameof(AddBooking_OnACancelledAppointment_IsRejected), capacity: 3, members: 1);
         await using SchedulingWorld _w = w;
-        await w.Appointments.Cancel(w.OrganizationId, w.ActorUserId, true, occurrence.Id.Value, new AppointmentCancelRequest());
+        await w.Appointments.Cancel(w.OrganizationId, w.ActorUserId, true, occurrence.Id.Value, SchedulingWorld.BusinessCancel());
         Client guest = await w.AddClient("Guest", "Client");
 
         await SchedulingAssert.BusinessRule(ErrorCodes.AppointmentNotMovable, () => w.AddGuest(occurrence, guest));

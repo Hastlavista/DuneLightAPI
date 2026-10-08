@@ -1,31 +1,29 @@
 using System;
 using System.Collections.Generic;
 using System.Threading.Tasks;
+using BlueDragon.DuneLight.Core.Enums;
 using BlueDragon.DuneLight.Infrastructure.Domain.Models.Commissions;
 
 namespace BlueDragon.DuneLight.Infrastructure.Handlers.Interfaces;
 
 public interface ICommissionRuleHandler
 {
-    Task<List<CommissionRule>> GetList(Guid organizationId, Guid? employeeId, Core.Enums.CommissionSubjectType? subjectType, bool? isActive);
+    Task<List<CommissionRule>> GetList(
+        Guid organizationId, Guid? employeeId, CommissionRuleKind? kind, CommissionSubjectType? subjectType, bool? isActive);
 
     Task<CommissionRule> GetById(Guid organizationId, Guid id);
 
-    /// <summary>Aktivno pravilo za točno jedan predmet (isključivo jedan od serviceId/productId/packageId
-    /// popunjen) — izvor istine za CommissionLedgerService rezoluciju u trenutku zarade.</summary>
-    Task<CommissionRule> GetActiveForSubject(
-        Guid organizationId, Guid employeeId, Core.Enums.CommissionSubjectType subjectType,
-        Guid? serviceId, Guid? productId, Guid? packageId);
-
-    /// <summary>Sva AKTIVNA pravila jednog Employeea, u jednom upitu — koristi CommissionService.
-    /// GenerateForCheckoutCompletion da razriješi proviziju za SVE Product/Package stavke Checkouta jednim
-    /// upitom umjesto jednog upita po stavci (vidi spec section 15/61 N+1 upozorenje). Employee je uvijek
-    /// niskog broja pravila (jedno po predmetu), pa je "sva aktivna" bounded i jeftino.</summary>
-    Task<List<CommissionRule>> GetAllActiveForEmployee(Guid organizationId, Guid employeeId);
+    /// <summary>P2 (2F, Q28.5, Vagaro) — VERZIJA pravila zaposlenika za (vrsta, predmet) izabrana za lokalni datum: najveći
+    /// EffectiveFrom &lt;= date UKLJUČUJUĆI deaktivirane verzije (deaktivacija nikad ne vraća stariju verziju; pozivatelj provjerava
+    /// CommissionRule.AppliesOn). S razinama. Null = nema verzije. AllServices nema predmeta (subjectId null). Izvor istine za
+    /// CommissionService rezoluciju u trenutku zarade.</summary>
+    Task<CommissionRule> GetVersionOn(
+        Guid organizationId, Guid employeeId, CommissionRuleKind kind, CommissionSubjectType subjectType, Guid? subjectId, DateOnly date);
 
     Task Add(CommissionRule rule);
 
-    Task Update(CommissionRule rule);
+    /// <summary>Sprema izmjenu verzije pravila; kad je <paramref name="tiers"/> zadan, zamjenjuje sve razine verzije.</summary>
+    Task Update(CommissionRule rule, List<CommissionRuleTier> tiers = null);
 
     Task Delete(CommissionRule rule);
 

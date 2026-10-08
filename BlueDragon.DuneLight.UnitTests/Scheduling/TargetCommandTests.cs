@@ -453,11 +453,12 @@ public class TargetCommandTests
     public async Task ParticipationPrice_IsRefusedForHistoricalStates_AndForAGroupParticipation()
     {
         await using SchedulingWorld w = await SchedulingWorld.Create(nameof(ParticipationPrice_IsRefusedForHistoricalStates_AndForAGroupParticipation));
+        await w.GrantUser(w.ActorUserId, Grants.AppointmentsWriteAll); // P1: Business cancellation needs appointments.write.all
         Client cancelled = await w.AddClient("Cancelled", "Client");
         Client noShow = await w.AddClient("NoShow", "Client");
-        AppointmentDto created = await w.CreateAppointment(SchedulingWorld.Future(10), extraClients: new[] { cancelled, noShow });
-        await w.CompleteParticipations(created.Id, w.CompleteRequest(SchedulingWorld.Future(10), paymentMethod: PaymentMethod.Cash));
-        await w.SetBookingStatus(created.Id, cancelled, BookingStatus.Cancelled, "x");
+        AppointmentDto created = await w.CreateAppointment(SchedulingWorld.Past(10), extraClients: new[] { cancelled, noShow });
+        await w.CompleteParticipations(created.Id, w.CompleteRequest(SchedulingWorld.Past(10), paymentMethod: PaymentMethod.Cash));
+        await w.SetBookingStatus(created.Id, cancelled, BookingStatus.Cancelled, "x", initiator: CancellationInitiator.Business); // P1: after start only Business may cancel
         await w.SetBookingStatus(created.Id, noShow, BookingStatus.NoShow);
 
         foreach (Client client in new[] { w.Client, cancelled, noShow })

@@ -352,7 +352,7 @@ public class MultiSegmentGroupTests
         Guid pastA = BookingOf(pastOccurrence, ana).Participations.Single(p => p.AppointmentSegmentId == SegmentOf(pastOccurrence, g.A).Id).Id.Value;
         await w.Bookings.SetParticipationStatus(w.OrganizationId, w.ActorUserId, true, pastA, new BookingSetStatusRequest { Status = BookingStatus.Completed });
         Guid futureAnaA = BookingOf(future, ana).Participations.Single(p => p.AppointmentSegmentId == SegmentOf(future, g.A).Id).Id.Value;
-        await w.Bookings.SetParticipationStatus(w.OrganizationId, w.ActorUserId, true, futureAnaA, new BookingSetStatusRequest { Status = BookingStatus.Cancelled });
+        await w.Bookings.SetParticipationStatus(w.OrganizationId, w.ActorUserId, true, futureAnaA, new BookingSetStatusRequest { Status = BookingStatus.Cancelled, CancellationInitiator = CancellationInitiator.Client });
         await w.Bookings.SetParticipationStatus(w.OrganizationId, w.ActorUserId, true, futureAnaA, new BookingSetStatusRequest { Status = BookingStatus.Confirmed });
         Guid anaBooking = BookingOf(future, ana).Id.Value;
         Guid futureAnaC = BookingOf(future, ana).Participations.Single(p => p.AppointmentSegmentId == SegmentOf(future, g.C).Id).Id.Value;
@@ -379,9 +379,9 @@ public class MultiSegmentGroupTests
     }
 
     [Fact]
-    public async Task RemoveMember_CancelsEveryFutureParticipation_EachWithItsOwnSegmentLateness()
+    public async Task RemoveMember_CancelsEveryFutureParticipation_AsSystem_WithoutClassification()
     {
-        await using SchedulingWorld w = await SchedulingWorld.Create(nameof(RemoveMember_CancelsEveryFutureParticipation_EachWithItsOwnSegmentLateness));
+        await using SchedulingWorld w = await SchedulingWorld.Create(nameof(RemoveMember_CancelsEveryFutureParticipation_AsSystem_WithoutClassification));
         Wellness g = await CreateWellness(w);
         Client ana = await w.AddClient("Ana");
         await Join(w, g.Group, ana, g.A, g.C);
@@ -390,11 +390,11 @@ public class MultiSegmentGroupTests
         // confirmed again: StatusVersion 2), so the history-preserving cancellation path is exercised.
         foreach (BookingSegmentParticipation p in BookingOf(occurrence, ana).Participations)
         {
-            await w.Bookings.SetParticipationStatus(w.OrganizationId, w.ActorUserId, true, p.Id.Value, new BookingSetStatusRequest { Status = BookingStatus.Cancelled });
+            await w.Bookings.SetParticipationStatus(w.OrganizationId, w.ActorUserId, true, p.Id.Value, new BookingSetStatusRequest { Status = BookingStatus.Cancelled, CancellationInitiator = CancellationInitiator.Client });
             await w.Bookings.SetParticipationStatus(w.OrganizationId, w.ActorUserId, true, p.Id.Value, new BookingSetStatusRequest { Status = BookingStatus.Confirmed });
         }
         // Cutoff ends at 10:00: A (09:00) inside the late window, C (11:00) outside.
-        await w.SetCancellationCutoffMinutes((int)(SchedulingWorld.Future(10) - DateTimeOffset.UtcNow).TotalMinutes);
+        await w.SetCancellationWindowMinutes((int)(SchedulingWorld.Future(10) - DateTimeOffset.UtcNow).TotalMinutes);
 
         GroupDetailDto detail = await w.Groups.GetById(w.OrganizationId, g.Group.Id);
         await w.Groups.RemoveMember(w.OrganizationId, w.ActorUserId, g.Group.Id, MemberId(detail, ana));
@@ -403,9 +403,10 @@ public class MultiSegmentGroupTests
         BookingSegmentParticipation a = booking.Participations.Single(p => p.AppointmentSegmentId == SegmentOf(occurrence, g.A).Id);
         BookingSegmentParticipation c = booking.Participations.Single(p => p.AppointmentSegmentId == SegmentOf(occurrence, g.C).Id);
         Assert.Equal(ParticipationStatus.Cancelled, a.Status);
-        Assert.True(a.IsLateCancellation);
         Assert.Equal(ParticipationStatus.Cancelled, c.Status);
-        Assert.False(c.IsLateCancellation);
+        // CHANGED in P1 (D2/D9): member removal is a System cancellation — no classification, no consequence, even inside the window.
+        Assert.All(new[] { a, c }, p => Assert.Equal((CancellationInitiator.System, (bool?)null), (p.CancellationInitiator.Value, p.IsLateCancellation)));
+        Assert.Empty(await w.LoadPolicyConsequences(occurrence.Id.Value));
     }
 
     [Fact]
@@ -450,7 +451,7 @@ public class MultiSegmentGroupTests
 
         Guid waiterBooking = BookingOf(occurrence, waiter).Id.Value;
         Guid holderA = Assert.Single(BookingOf(occurrence, holder).Participations).Id.Value;
-        await w.Bookings.SetParticipationStatus(w.OrganizationId, w.ActorUserId, true, holderA, new BookingSetStatusRequest { Status = BookingStatus.Cancelled });
+        await w.Bookings.SetParticipationStatus(w.OrganizationId, w.ActorUserId, true, holderA, new BookingSetStatusRequest { Status = BookingStatus.Cancelled, CancellationInitiator = CancellationInitiator.Client });
 
         Appointment after = await w.LoadAppointment(occurrence.Id.Value);
         Booking promoted = BookingOf(after, waiter);

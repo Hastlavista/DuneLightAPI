@@ -56,11 +56,26 @@ public class BookingSegmentParticipationSchemaTests
             ["arrived_by"] = ("uuid", "YES"),
             ["cancellation_reason"] = ("text", "YES"),
             ["is_late_cancellation"] = ("boolean", "YES"),
+            // P1 (ADR-0016): structured cancellation / no-show metadata, always matching the status.
+            ["cancellation_initiator"] = ("character varying", "YES"),
+            ["cancelled_at"] = ("timestamp with time zone", "YES"),
+            ["cancelled_by"] = ("uuid", "YES"),
+            ["cancellation_policy_id"] = ("uuid", "YES"),
+            ["cancellation_policy_version"] = ("integer", "YES"),
+            ["applied_cancellation_window_minutes"] = ("integer", "YES"),
+            ["no_show_at"] = ("timestamp with time zone", "YES"),
+            ["no_show_by"] = ("uuid", "YES"),
+            ["no_show_reason"] = ("text", "YES"),
             ["base_amount"] = ("numeric", "YES"),
             ["base_amount_source"] = ("character varying", "YES"),
             ["pricing_mode"] = ("character varying", "YES"), // M1G: historical pricing source used by the resolution
             ["pricing_employee_id"] = ("uuid", "YES"),
             ["adjustment_amount"] = ("numeric", "YES"),
+            // P2 (2E, ADR-0029): applied price adjustment (type, source, rule snapshot) and the evaluation of all candidates.
+            ["adjustment_type"] = ("character varying", "YES"),
+            ["adjustment_source_id"] = ("uuid", "YES"),
+            ["adjustment_rule_snapshot"] = ("jsonb", "YES"),
+            ["adjustment_evaluation"] = ("jsonb", "YES"),
             ["suggested_amount"] = ("numeric", "NO"),
             ["amount"] = ("numeric", "NO"),
             ["is_amount_manually_overridden"] = ("boolean", "NO"),
@@ -91,6 +106,14 @@ public class BookingSegmentParticipationSchemaTests
             ["fk_booking_segment_participations_pricing_employee_id"] = "FOREIGN KEY (pricing_employee_id) REFERENCES dunelight.employees(id) ON DELETE RESTRICT",
             ["ck_booking_segment_participations_pricing_source"] = "CHECK ((((pricing_mode IS NULL) AND (pricing_employee_id IS NULL) AND (base_amount IS NULL)) OR (((pricing_mode)::text = 'Standard'::text) AND (pricing_employee_id IS NULL) AND (base_amount IS NOT NULL)) OR (((pricing_mode)::text = 'Employee'::text) AND (pricing_employee_id IS NOT NULL) AND (base_amount IS NOT NULL))))",
             ["ck_booking_segment_participations_amounts_non_negative"] = "CHECK (((base_amount >= (0)::numeric) AND (suggested_amount >= (0)::numeric) AND (amount >= (0)::numeric)))",
+            // P1: metadata always matches the status; classification + policy snapshot only for a Client cancellation.
+            ["ck_booking_segment_participations_cancellation_initiator"] = "CHECK (((cancellation_initiator IS NULL) OR ((cancellation_initiator)::text = ANY ((ARRAY['Client'::character varying, 'Business'::character varying, 'System'::character varying])::text[]))))",
+            ["ck_booking_segment_participations_cancellation_metadata"] = "CHECK (((((status)::text = 'Cancelled'::text) AND (cancellation_initiator IS NOT NULL) AND (cancelled_at IS NOT NULL)) OR (((status)::text <> 'Cancelled'::text) AND (cancellation_initiator IS NULL) AND (cancelled_at IS NULL) AND (cancelled_by IS NULL) AND (cancellation_reason IS NULL))))",
+            ["ck_booking_segment_participations_client_classification"] = "CHECK (((((cancellation_initiator)::text = 'Client'::text) AND (is_late_cancellation IS NOT NULL) AND (cancellation_policy_id IS NOT NULL) AND (cancellation_policy_version IS NOT NULL) AND (applied_cancellation_window_minutes IS NOT NULL)) OR (((cancellation_initiator IS NULL) OR ((cancellation_initiator)::text <> 'Client'::text)) AND (is_late_cancellation IS NULL) AND (cancellation_policy_id IS NULL) AND (cancellation_policy_version IS NULL) AND (applied_cancellation_window_minutes IS NULL))))",
+            ["ck_booking_segment_participations_no_show_metadata"] = "CHECK (((((status)::text = 'NoShow'::text) AND (no_show_at IS NOT NULL)) OR (((status)::text <> 'NoShow'::text) AND (no_show_at IS NULL) AND (no_show_by IS NULL) AND (no_show_reason IS NULL))))",
+            ["fk_booking_segment_participations_cancellation_policy_id"] = "FOREIGN KEY (cancellation_policy_id) REFERENCES dunelight.cancellation_policies(id) ON DELETE RESTRICT",
+            // P2 (2E, ADR-0029): an applied adjustment always has its source and amount.
+            ["ck_booking_segment_participations_adjustment"] = "CHECK ((((adjustment_type IS NULL) AND (adjustment_source_id IS NULL) AND (adjustment_rule_snapshot IS NULL)) OR (((adjustment_type)::text = ANY ((ARRAY['Membership'::character varying, 'ClientTag'::character varying, 'ClientGroup'::character varying, 'Promo'::character varying])::text[])) AND (adjustment_source_id IS NOT NULL) AND (adjustment_amount IS NOT NULL))))",
         }, await ConstraintsOf("booking_segment_participations"));
     }
 

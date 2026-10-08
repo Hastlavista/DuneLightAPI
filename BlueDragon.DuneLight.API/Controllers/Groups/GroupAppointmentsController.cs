@@ -21,9 +21,9 @@ public class GroupAppointmentsController : ControllerBase
         _appointmentService = appointmentService;
     }
 
-    /// <summary>Appointment-razina "odrađeno" za grupni termin (Scheduled → Completed) — ne dira nijedan
-    /// Booking redak, svaki se razrješava neovisno kroz /attendance (check-in po klijentu). Dopušta zatvaranje
-    /// i s nerazrješenim (Confirmed) Bookinzima, uz upozorenje umjesto blokade.</summary>
+    /// <summary>Close-out grupne sesije (poslovna činjenica ClosedOutAt/By; status termina se izvodi iz sudjelovanja) — ne dira
+    /// nijedno sudjelovanje, svako se razrješava neovisno kroz /attendance. P1 (D9): nema automatskog izostanka —
+    /// nerazriješena (Confirmed) sudjelovanja ostaju nepromijenjena uz upozorenje GROUP_APPOINTMENT_UNRESOLVED_BOOKINGS.</summary>
     [HttpPatch("complete")]
     [RequireGrant(Grants.AppointmentsWriteOwn, Grants.AppointmentsWriteAll)]
     public async Task<ActionResult<AppointmentDto>> Complete(Guid id)

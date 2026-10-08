@@ -78,5 +78,21 @@ docs/
 - Korekcije ne brišu povijest: kompenzacijski zapisi uz `SourceVersion`/`StatusVersion` (ADR-0007).
 - Migracije ne seedaju ništa (ADR-0022). Katalog grantova i capabilityja je u kodu (`Grants.cs`, `CapabilityCatalog.cs`);
   novi grant = nova migracija koja ga dodaje grupama s `grant_groups.system_key = 'admin'` (ADR-0023).
-- P1 (Cancellation policy engine) je dizajniran, NIJE implementiran (ADR-0015 – ADR-0018).
+- P1 (Cancellation policy engine) je implementiran (ADR-0015 – ADR-0018, `docs/p1/`): politika se razrješava samo kroz
+  `ICancellationPolicyResolver`, posljedice piše samo `IParticipationPolicyService`, prijelaz sudjelovanja je jedna matrica
+  u `BookingService` (Individual = Group). Otkazivanje uvijek traži initiator; metapodaci uvijek odgovaraju statusu.
+- P2 (Memberships) je ZAKLJUČEN 2026-10-08 (`docs/p2/`, završni pregled `P2_ZAVRSNI_PREGLED.md`; nova faza samo na nalog): faze 2A (katalog planova, ADR-0025), 2B (članstva, ADR-0026)
+  2C (periodi, zaduženja, obnova, ADR-0027), 2D (pokriće, ADR-0028), 2E (cjenovna pogodnost, ADR-0029) i 2F (provizije, Vagaro
+  model, ADR-0030) implementirane. Odluke su u `P2_DECISION_RECORD.md` (ima prednost pred planom); članarina je zasebna domena, nije paket, a
+  paketi se u P2 ne mijenjaju. Granice perioda računa samo `Utils/MembershipPeriodCalendar`. Pokriće sudjelovanja ide samo kroz
+  `IMembershipCoverageService` (svaka nova ulazna točka sudjelovanja mora pozvati `SyncParticipation`; bez članarine no-op).
+  Automatsku cijenu sudjelovanja s obzirom na članarinu (pokriće, pogodnost) postavlja samo taj servis.
+- Provizije rade kao Vagaro (ADR-0010 + ADR-0030): nema pravila = nema provizije; pravilo za uslugu ima prednost pred općim
+  pravilom zaposlenika, "Bez provizije" je izričit izbor (nula nikad ne znači "vrati se na drugo pravilo"); deaktivacija nikad ne
+  vraća stariju verziju; uz svaku proviziju se sprema objašnjenje izbora pravila. Payroll (razdoblja, tiered, klase...) je
+  zasebna faza nakon P2 (`docs/payroll/`). Pravilo se bira po datumu važenja; zarađena provizija je
+  nepromjenjiv snapshot, storno samo kroz `CommissionService.Reverse` (Reversed + razlog), izvještaj po događajima. Korisnik
+  provizije na prvu prodaju članarine je samo na članstvu; svaka promjena plaćenosti P1 naknade mora pozvati
+  `SyncPolicyFeeCommission`.
+- Grantovi su granularni po poslovnoj radnji (ne po polju); novi grant ide migracijom samo Admin grupama (ADR-0023).
 - Nema `UserRole` ni `role` claima (uklonjeno, ADR-0019). Nijedna autorizacijska odluka ne smije ovisiti o ulozi; workforce `Role` je samo poslovna oznaka.

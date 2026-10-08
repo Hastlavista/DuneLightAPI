@@ -30,11 +30,15 @@ public class BookingDto
     /// <summary>Zbroj aktivnih (ne-voidanih) Paymenta ovog Bookinga — vidi ParticipationSettlement.</summary>
     public decimal PaidAmount { get; set; }
 
-    /// <summary>0 ako je Amount=0 ili je booking paket-pokriven (ClientPackageId), inače Amount-PaidAmount
-    /// (nikad negativno) — vidi ParticipationSettlement.</summary>
+    /// <summary>P1: Σ POZITIVNOG duga sudjelovanja (preplata jednog sudjelovanja ne umanjuje dug drugog; nikad negativno) —
+    /// vidi ParticipationSettlement. Otkazano/izostalo sudjelovanje duguje samo aktivnu naknadu politike. Sirovi
+    /// (neklampani) dug je na Participations[].OutstandingAmount, preplata u SurplusAmount.</summary>
     public decimal OutstandingAmount { get; set; }
 
-    /// <summary>Izvedeno: OutstandingAmount &lt;= 0 (uklj. paket-pokriće i besplatan termin).</summary>
+    /// <summary>P1 (D7): Σ max(PaidAmount − MonetaryDue, 0) sudjelovanja — informativno, NIJE kredit klijenta.</summary>
+    public decimal SurplusAmount { get; set; }
+
+    /// <summary>Izvedeno: svako sudjelovanje ima OutstandingAmount &lt;= 0 (uklj. paket-pokriće i besplatan termin).</summary>
     public bool IsPaid { get; set; }
 
     public Guid? ClientPackageId { get; set; }
@@ -48,8 +52,8 @@ public class BookingDto
     public string Note { get; set; }
     public string CancellationReason { get; set; }
 
-    /// <summary>Klasifikacija trenutka otkazivanja naspram OrganizationSettings.CancellationCutoffMinutes — vidi
-    /// Booking.cs domensku napomenu za točan opseg (null osim za klijentsko/booking-razina otkazivanje).</summary>
+    /// <summary>P1: klasifikacija klijentskog otkazivanja (prozor politike) kad je ista za sva sudjelovanja; null za
+    /// Business/System otkazivanje i za ne-otkazana sudjelovanja. Točne vrijednosti su na Participations.</summary>
     public bool? IsLateCancellation { get; set; }
 
     /// <summary>Phase M0: sudjelovanja Bookinga (izvršne/komercijalne jedinice) — adresa za participation-native naredbe
@@ -68,12 +72,43 @@ public class BookingParticipationDto
     public decimal SuggestedAmount { get; set; }
     public bool IsAmountManuallyOverridden { get; set; }
     public decimal PaidAmount { get; set; }
+
+    /// <summary>P1 (D5): dug izveden iz statusa — Confirmed/Completed: cijena usluge (0 uz paketno pokriće); Cancelled/NoShow:
+    /// naknada AKTIVNE posljedice politike (0 kad je kazna podmirena jedinicom paketa ili posljedice nema).</summary>
+    public decimal MonetaryDue { get; set; }
+
+    /// <summary>P1: MonetaryDue − PaidAmount, ne klampa se (negativno = preplata).</summary>
     public decimal OutstandingAmount { get; set; }
+
+    /// <summary>P1 (D7): max(PaidAmount − MonetaryDue, 0) — informativno, NIJE kredit klijenta.</summary>
+    public decimal SurplusAmount { get; set; }
     public bool IsPaid { get; set; }
+
+    /// <summary>Usluga je pokrivena paketom (aktivna potrošnja izvršenja usluge). Jedinica potrošena kao kazna politike je
+    /// na PolicyConsequence.</summary>
     public bool PackageCovered { get; set; }
     public Guid? ClientPackageId { get; set; }
+
+    /// <summary>P1 (D2/D3) — trenutni metapodaci otkazivanja (samo kad je Status Cancelled).</summary>
+    public CancellationInitiator? CancellationInitiator { get; set; }
+    public DateTimeOffset? CancelledAt { get; set; }
+    public Guid? CancelledBy { get; set; }
     public string CancellationReason { get; set; }
+
+    /// <summary>Samo za klijentsko otkazivanje: kasno (true) / na vrijeme (false); null za Business/System.</summary>
     public bool? IsLateCancellation { get; set; }
+    public Guid? CancellationPolicyId { get; set; }
+    public int? CancellationPolicyVersion { get; set; }
+    public int? AppliedCancellationWindowMinutes { get; set; }
+
+    /// <summary>P1 (D3) — trenutni metapodaci izostanka (samo kad je Status NoShow).</summary>
+    public DateTimeOffset? NoShowAt { get; set; }
+    public Guid? NoShowBy { get; set; }
+    public string NoShowReason { get; set; }
+
+    /// <summary>P1 (D5) — najnovija posljedica politike sudjelovanja (Active, Waived ili Reversed), null ako je nikad nije
+    /// bilo. Puna povijest je u ledgeru posljedica.</summary>
+    public ParticipationPolicyConsequenceDto PolicyConsequence { get; set; }
 
     /// <summary>Phase M1G — POVIJESNI cjenovni snapshot sudjelovanja: razriješena osnovna cijena i razina cjenika, te izvor
     /// cijene (način + zaposlenik) korišten pri razrješavanju. Null kad cijena nije razriješena iz cjenika.</summary>
@@ -81,6 +116,127 @@ public class BookingParticipationDto
     public Catalog.PriceSource? BaseAmountSource { get; set; }
     public SegmentPricingMode? PricingMode { get; set; }
     public Guid? PricingEmployeeId { get; set; }
+
+    /// <summary>P2 (2D) — odluka o pokriću članarinom s razlogom (prikaz recepciji). Null = klijent nema članarinu relevantnu
+    /// za termin (ponašanje kao prije P2).</summary>
+    public ParticipationMembershipCoverageDto MembershipCoverage { get; set; }
+
+    /// <summary>P2 (2E, Q1/§10.4) — primijenjena prilagodba cijene (null = cijena je cjenik ili ručna) i evaluacija svih kandidata
+    /// u trenutku cijene (zašto je pogodnost primijenjena ili nije). Null kad prilagodbe nikad nisu evaluirane (bez članarine).</summary>
+    public ParticipationPriceAdjustmentDto PriceAdjustment { get; set; }
+}
+
+/// <summary>P2 (2E) — prilagodba cijene sesije: tip i izvor primijenjene (null = nijedna), osnovna cijena (cjenik), iznos
+/// prilagodbe (predložena − osnovna) i svi kandidati s ishodom.</summary>
+public class ParticipationPriceAdjustmentDto
+{
+    public PriceAdjustmentType? AppliedType { get; set; }
+    public Guid? AppliedSourceId { get; set; }
+    public decimal? BaseAmount { get; set; }
+    public decimal? AdjustmentAmount { get; set; }
+    public List<PriceAdjustmentCandidateDto> Candidates { get; set; } = new();
+}
+
+public class PriceAdjustmentCandidateDto
+{
+    public PriceAdjustmentType Type { get; set; }
+    public Guid SourceId { get; set; }
+    public PriceAdjustmentOutcome Outcome { get; set; }
+    /// <summary>Uz NotApplicable.</summary>
+    public PriceAdjustmentReason? Reason { get; set; }
+    /// <summary>Cijena koju bi kandidat dao (null uz NotApplicable).</summary>
+    public decimal? ResultingPrice { get; set; }
+    /// <summary>Primijenjeno pravilo (opseg, tip, vrijednost) — snapshot.</summary>
+    public MembershipPriceBenefitScope? RuleScope { get; set; }
+    public MembershipPriceBenefitType? RuleType { get; set; }
+    public decimal? RuleValue { get; set; }
+}
+
+/// <summary>P2 (2D) — objašnjiva odluka o pokriću sudjelovanja članarinom: stanje, razlog, događaj koji ju je zadnji
+/// promijenio i, uz LimitReached, koji limit je pun (prozor, usluga ili cijeli plan, maksimum, iskorišteno).</summary>
+public class ParticipationMembershipCoverageDto
+{
+    public Guid? ClientMembershipId { get; set; }
+    public MembershipCoverageStatus Status { get; set; }
+    public MembershipCoverageReason Reason { get; set; }
+    public MembershipCoverageEvent ChangedByEvent { get; set; }
+    public MembershipUsageWindow? LimitWindow { get; set; }
+    /// <summary>Null uz LimitWindow = limit plana (sve usluge zajedno).</summary>
+    public Guid? LimitServiceId { get; set; }
+    public int? LimitMaxUses { get; set; }
+    public int? LimitUsed { get; set; }
+    /// <summary>Uz BeyondHorizon: početak perioda u kojem se pokriće evaluira.</summary>
+    public DateOnly? ExpectedPeriodStartsOn { get; set; }
+    public DateTimeOffset EvaluatedAt { get; set; }
+
+    /// <summary>P2 (2E) — zadnja AUTOMATSKA promjena cijene zbog pokrića/pogodnosti (stara i nova cijena, događaj, vrijeme).</summary>
+    public decimal? LastPriceChangeOldAmount { get; set; }
+    public decimal? LastPriceChangeNewAmount { get; set; }
+    public MembershipCoverageEvent? LastPriceChangeEvent { get; set; }
+    public DateTimeOffset? LastPriceChangeAt { get; set; }
+    /// <summary>Cijena se NE mijenja automatski: ručni iznos ili već (djelomično) plaćeno.</summary>
+    public PriceProtectionReason? PriceProtectedReason { get; set; }
+    /// <summary>Promjena cijene čeka (sudjelovanje je bilo zaključano drugom naredbom); primjenjuje se pri sljedećoj obradi.</summary>
+    public bool PriceStale { get; set; }
+}
+
+/// <summary>P1 (D4/D5) — nepromjenjiv zapis posljedice politike (snapshot pravila i izračuna u trenutku događaja).</summary>
+public class ParticipationPolicyConsequenceDto
+{
+    public Guid Id { get; set; }
+    public int SourceVersion { get; set; }
+    public PolicyConsequenceEvent Event { get; set; }
+    public CancellationFeeType FeeType { get; set; }
+    public decimal? ConfiguredFeeValue { get; set; }
+    public decimal FeeBaseAmount { get; set; }
+    public decimal CalculatedFeeAmount { get; set; }
+    public bool WasFeeCapped { get; set; }
+    public Guid PolicyId { get; set; }
+    public int PolicyVersion { get; set; }
+    public CancellationPackageAction PackageAction { get; set; }
+    public bool PackageUnitConsumed { get; set; }
+    public Guid? ClientPackageId { get; set; }
+    public PolicyConsequenceStatus Status { get; set; }
+    public DateTimeOffset CreatedAt { get; set; }
+    public Guid? CreatedBy { get; set; }
+    public DateTimeOffset? ReversedAt { get; set; }
+    public Guid? ReversedBy { get; set; }
+    public string ReversalReason { get; set; }
+    public DateTimeOffset? WaivedAt { get; set; }
+    public Guid? WaivedBy { get; set; }
+    public string WaiverReason { get; set; }
+
+    /// <summary>P2 (Q31) — sesija je u trenutku događaja bila pokrivena članarinom: primijenjena akcija politike, članstvo i
+    /// je li kredit perioda propao umjesto naknade (dug 0).</summary>
+    public CancellationMembershipAction? MembershipAction { get; set; }
+    public Guid? ClientMembershipId { get; set; }
+    public bool MembershipCreditForfeited { get; set; }
+}
+
+/// <summary>P1 (D6) — eksplicitni paket za kaznu politike jednog sudjelovanja unutar Booking-wide / appointment-wide naredbe.</summary>
+public class ParticipationPackageSelection
+{
+    [Required]
+    public Guid? ParticipationId { get; set; }
+
+    [Required]
+    public Guid? ClientPackageId { get; set; }
+}
+
+/// <summary>P1 (D12) — korekcija natrag na Confirmed; razlog je obavezan kad korekcija poništava aktivnu posljedicu politike
+/// sa stvarnim učinkom (uz appointments.policy.override).</summary>
+public class ParticipationConfirmRequest
+{
+    [MaxLength(500)]
+    public string CorrectionReason { get; set; }
+}
+
+/// <summary>P1 (D10) — naknadni otpis aktivne posljedice politike (cijela posljedica, razlog obavezan).</summary>
+public class PolicyConsequenceWaiveRequest
+{
+    [Required]
+    [MaxLength(500)]
+    public string WaiverReason { get; set; }
 }
 
 public class AppointmentDto
@@ -161,6 +317,7 @@ public class ClientAppointmentHistoryDto
     public decimal Amount { get; set; }
     public decimal PaidAmount { get; set; }
     public decimal OutstandingAmount { get; set; }
+    public decimal SurplusAmount { get; set; }
     public bool IsPaid { get; set; }
 
     /// <summary>Booking ID zahtjevanog klijenta — NE Appointment.Bookings (to bi otkrilo druge klijente).</summary>
@@ -174,7 +331,7 @@ public class ClientAppointmentHistoryDto
     public bool PackageCoverageReturned { get; set; }
     public string BookingNote { get; set; }
 
-    /// <summary>Popunjeno samo kad je BookingStatus Cancelled/NoShow.</summary>
+    /// <summary>Razlog otkazivanja kad ga sva sudjelovanja dijele (samo otkazana sudjelovanja ga imaju).</summary>
     public string BookingCancellationReason { get; set; }
 }
 
@@ -305,14 +462,41 @@ public class ParticipationPriceChangeRequest
     public decimal? Amount { get; set; }
 }
 
+/// <summary>P1 (D2) — otkazivanje CIJELOG termina je uvijek poslovno (Business): initiator je obavezan i mora biti
+/// Business (Client se odbija), razlog je obavezan. Politika se ne evaluira.</summary>
 public class AppointmentCancelRequest
 {
-    /// <summary>Klijenti kojima se eksplicitno vraća skinuti ulazak iz paketa. Prazna lista = ništa se ne vraća.</summary>
-    public List<Guid> ReturnEntryForClientIds { get; set; } = new();
+    [Required]
+    public CancellationInitiator? CancellationInitiator { get; set; }
 
-    /// <summary>Opcionalan razlog otkazivanja/no-showa — vidi Appointment.CancellationReason.</summary>
     [MaxLength(500)]
     public string CancellationReason { get; set; }
+}
+
+/// <summary>P1 (D3/D10) — izostanak (NoShow): jedno sudjelovanje ili svi aktivni na terminu. NoShow nema initiator; razlog je
+/// opcionalan. ClientPackageId (samo za jedno sudjelovanje) služi odabiru paketa kad politika troši jedinicu.
+/// WaivePolicyConsequence + WaiverReason otpisuju posljedicu odmah (zahtijeva appointments.policy.override).
+/// CorrectionReason je obavezan kad korekcija poništava aktivnu posljedicu sa stvarnim učinkom.</summary>
+public class NoShowRequest
+{
+    [MaxLength(500)]
+    public string NoShowReason { get; set; }
+
+    /// <summary>Samo za izostanak JEDNOG sudjelovanja. Izostanak cijelog termina bira paket po sudjelovanju
+    /// (<see cref="PackageSelections"/>); ClientPackageId se tamo odbija.</summary>
+    public Guid? ClientPackageId { get; set; }
+
+    /// <summary>P1 (D6) — izostanak CIJELOG termina: eksplicitni paket za kaznu po sudjelovanju (samo za sudjelovanja s više
+    /// prihvatljivih brojenih paketa ili kad se želi određeni paket). Svako sudjelovanje mora biti aktivno u tom terminu.</summary>
+    public List<ParticipationPackageSelection> PackageSelections { get; set; } = new();
+
+    public bool WaivePolicyConsequence { get; set; }
+
+    [MaxLength(500)]
+    public string WaiverReason { get; set; }
+
+    [MaxLength(500)]
+    public string CorrectionReason { get; set; }
 }
 
 public class RecurringAppointmentCreateRequest
@@ -418,27 +602,46 @@ public class BookingCreateRequest
 }
 
 /// <summary>Otkazivanje JEDNOG Bookinga (svih njegovih aktivnih sudjelovanja; npr. jedan od dvoje na duo terminu) ili
-/// jednog sudjelovanja — vidi AppointmentsController.CancelBooking i ParticipationsController. Isto oblik kao AppointmentCancelRequest, samo
-/// bez ReturnEntryForClientIds liste (uvijek točno jedan klijent, poznat iz rute).</summary>
+/// jednog sudjelovanja — vidi AppointmentsController.CancelBooking i ParticipationsController.
+/// P1 (D2/D3/D10): initiator je obavezan (Client | Business; System se nikad ne prihvaća). Client: politika se evaluira
+/// (kasno/na vrijeme), razlog opcionalan, otkazivanje mora biti prije početka segmenta. Business: zahtijeva
+/// appointments.write.all i razlog, bez posljedice. ClientPackageId služi samo odabiru paketa kad kasno otkazivanje troši
+/// jedinicu; WaivePolicyConsequence + WaiverReason otpisuju posljedicu odmah (appointments.policy.override).</summary>
 public class BookingCancelRequest
 {
-    /// <summary>Vraća li se već skinuti ulazak iz paketa — isto značenje kao stari
-    /// AppointmentCancelRequest.ReturnEntryForClientIds, sad boolean po jednom Bookingu.</summary>
-    public bool ReturnPackageEntry { get; set; }
+    [Required]
+    public CancellationInitiator? CancellationInitiator { get; set; }
 
     [MaxLength(500)]
     public string CancellationReason { get; set; }
+
+    /// <summary>Samo za otkazivanje JEDNOG sudjelovanja. Booking-wide otkazivanje bira paket po sudjelovanju
+    /// (<see cref="PackageSelections"/>); ClientPackageId se tamo odbija.</summary>
+    public Guid? ClientPackageId { get; set; }
+
+    /// <summary>P1 (D6) — Booking-wide otkazivanje: eksplicitni paket za kaznu po sudjelovanju (segmenti mogu imati
+    /// različite usluge, pa jedan paket ne vrijedi nužno za sve). Svako sudjelovanje mora biti aktivno u tom Bookingu.</summary>
+    public List<ParticipationPackageSelection> PackageSelections { get; set; } = new();
+
+    public bool WaivePolicyConsequence { get; set; }
+
+    [MaxLength(500)]
+    public string WaiverReason { get; set; }
+
+    [MaxLength(500)]
+    public string CorrectionReason { get; set; }
 }
 
-/// <summary>Prijelaz statusa jednog Bookinga (Confirmed→Completed/Cancelled/NoShow, ili poništenje
-/// check-ina natrag na Confirmed) — vidi IBookingService.SetParticipationStatus.</summary>
+/// <summary>Prijelaz statusa jednog sudjelovanja — P1 (D12): jedna matrica za Individual i Group; svaki prijelaz u
+/// drugi status je dopušten uz guardove ciljnog događaja, isti status je pravi no-op. Vidi IBookingService.SetParticipationStatus.</summary>
 public class BookingSetStatusRequest
 {
     [Required]
     public BookingStatus Status { get; set; }
 
-    /// <summary>Ručni odabir paketa kad klijent ima više prihvatljivih paketa (Form=Group check-in). Ako je
-    /// izostavljen i postoji točno jedan prihvatljiv paket, koristi se automatski.</summary>
+    /// <summary>Ručni odabir paketa: Completed (grupni check-in s više prihvatljivih paketa / individualno pokriće) ili
+    /// P1 kazna politike (Cancelled/NoShow) kad politika troši jedinicu, a klijent ima više brojenih paketa. Inače se
+    /// ignorira.</summary>
     public Guid? ClientPackageId { get; set; }
 
     /// <summary>Relevantno samo za Form=Group prijelaz u Completed BEZ paketa (CoverageType=SinglePaid) —
@@ -458,12 +661,6 @@ public class BookingSetStatusRequest
 
     public string Note { get; set; }
 
-    /// <summary>Relevantno samo za Form=Individual prijelaz u Cancelled/NoShow — eksplicitna odluka vraća li
-    /// se već skinuti ulazak iz paketa (isto ponašanje kao staro AppointmentCancelRequest.ReturnEntryForClientIds,
-    /// sada po jednom Bookingu). Za Form=Group vraćanje je uvijek automatsko kod poništenja check-ina — vidi
-    /// domensku napomenu na BookingService.</summary>
-    public bool ReturnPackageEntry { get; set; }
-
     /// <summary>Grupni occurrence, (termin, klijent, segment) adresiranje (prisutnost/check-in gosta): segment prijelaza —
     /// Phase M1H: obavezan na tom putu. Participation-native naredba (ParticipationId) ga ne koristi.</summary>
     public Guid? SegmentId { get; set; }
@@ -472,9 +669,28 @@ public class BookingSetStatusRequest
     /// Confirmed mjestu; zahtijeva groups.capacity.override.</summary>
     public bool OverrideCapacity { get; set; }
 
-    /// <summary>Opcionalan razlog — popunjava se samo kod prijelaza u Cancelled/NoShow.</summary>
+    /// <summary>P1 (D2) — obavezan za Status=Cancelled (Client | Business; System se nikad ne prihvaća), inače se ignorira.</summary>
+    public CancellationInitiator? CancellationInitiator { get; set; }
+
+    /// <summary>Razlog otkazivanja (samo Status=Cancelled): opcionalan za Client, obavezan za Business.</summary>
     [MaxLength(500)]
     public string CancellationReason { get; set; }
+
+    /// <summary>P1 (D3) — opcionalan razlog izostanka (samo Status=NoShow).</summary>
+    [MaxLength(500)]
+    public string NoShowReason { get; set; }
+
+    /// <summary>P1 (D10) — otpis posljedice politike u trenutku događaja (Cancelled/NoShow); traži WaiverReason i
+    /// appointments.policy.override.</summary>
+    public bool WaivePolicyConsequence { get; set; }
+
+    [MaxLength(500)]
+    public string WaiverReason { get; set; }
+
+    /// <summary>P1 (D12) — obavezan kad prijelaz poništava aktivnu posljedicu politike sa stvarnim učinkom (naknada &gt; 0 ili
+    /// potrošena jedinica paketa); uz to se traži appointments.policy.override.</summary>
+    [MaxLength(500)]
+    public string CorrectionReason { get; set; }
 }
 
 /// <summary>

@@ -120,10 +120,10 @@ public class CommissionCharacterizationTests
         await w.AddCommissionRule(w.Employee, w.Service, CommissionCalculationType.Fixed, 5m);
         await w.AddCommissionRule(otherEmployee, w.Service, CommissionCalculationType.Fixed, 5m);
         AppointmentDto toCancel = await w.CreateAppointment(SchedulingWorld.Future(10));
-        AppointmentDto toNoShow = await w.CreateAppointment(SchedulingWorld.Future(10), client: noShow, employee: otherEmployee);
+        AppointmentDto toNoShow = await w.CreateAppointment(SchedulingWorld.Past(10), client: noShow, employee: otherEmployee);
 
-        await w.Appointments.Cancel(w.OrganizationId, w.ActorUserId, true, toCancel.Id, new AppointmentCancelRequest());
-        await w.Appointments.MarkNoShow(w.OrganizationId, w.ActorUserId, true, toNoShow.Id, new AppointmentCancelRequest());
+        await w.Appointments.Cancel(w.OrganizationId, w.ActorUserId, true, toCancel.Id, SchedulingWorld.BusinessCancel());
+        await w.Appointments.MarkNoShow(w.OrganizationId, w.ActorUserId, true, toNoShow.Id, new NoShowRequest());
 
         Assert.Empty(await w.LoadCommissionEntries());
     }
@@ -297,6 +297,7 @@ public class CommissionCharacterizationTests
         var group = await w.CreateGroup(svc, capacity: 6);
         await w.AddGroupMember(group, w.Client);
         Appointment occurrence = await w.GenerateSingleOccurrence(group);
+        await w.MoveToPast(occurrence.Id.Value); // P1: a no-show needs a started segment
         await w.SetBookingStatus(occurrence.Id.Value, w.Client, BookingStatus.NoShow); // nobody actually attended
 
         await w.Appointments.CompleteGroupAppointment(w.OrganizationId, w.ActorUserId, true, occurrence.Id.Value);
@@ -314,7 +315,7 @@ public class CommissionCharacterizationTests
         var group = await w.CreateGroup(svc, capacity: 6);
         Appointment occurrence = await w.GenerateSingleOccurrence(group);
 
-        await w.Appointments.Cancel(w.OrganizationId, w.ActorUserId, true, occurrence.Id.Value, new AppointmentCancelRequest());
+        await w.Appointments.Cancel(w.OrganizationId, w.ActorUserId, true, occurrence.Id.Value, SchedulingWorld.BusinessCancel());
 
         Assert.Empty(await w.LoadCommissionEntries());
     }
