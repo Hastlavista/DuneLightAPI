@@ -91,6 +91,13 @@ public class ClientMembershipService : IClientMembershipService
         return memberships.Select(m => ToDto(m, today, graceDays)).ToList();
     }
 
+    public async Task<List<ClientMembershipDto>> GetStandingStill(Guid organizationId)
+    {
+        DateOnly today = await Today(organizationId);
+        int graceDays = (await _renewalService.GetDebtRules(organizationId)).GraceDays;
+        return (await _handler.GetStandingStill(organizationId)).Select(m => ToDto(m, today, graceDays)).ToList();
+    }
+
     public async Task<List<ClientMembershipDto>> GetEndingDueToPlanDeactivation(Guid organizationId, Guid membershipPlanId)
     {
         MembershipPlan plan = await _planHandler.GetById(organizationId, membershipPlanId)
@@ -356,7 +363,17 @@ public class ClientMembershipService : IClientMembershipService
             membership.CancellationRequestedBy = userId;
             membership.CancellationReason = string.IsNullOrWhiteSpace(request?.Reason) ? null : request.Reason.Trim();
             membership.EndsOn = effectiveOn;
-            membership.EndReason = MembershipEndReason.Cancelled;
+            membership.EndReason = reason == MembershipEndEffectiveReason.CompanyClosure
+                ? MembershipEndReason.CancelledDuringCompanyClosure
+                : MembershipEndReason.Cancelled;
+            // K1-8: stajanje završava s članstvom (sustavna pauza se zatvara na dan završetka); stajanje koje još nije počelo
+            // poništava niže CancelFuturePauses kao i svaku zakazanu pauzu.
+            if (MembershipTimelines.OpenCompanyClosure(membership) is MembershipPause standstill && standstill.StartsOn <= today)
+            {
+                standstill.ActualEndsOn = effectiveOn < standstill.StartsOn ? standstill.StartsOn : effectiveOn;
+                standstill.UpdatedAt = DateTimeOffset.UtcNow;
+                standstill.UpdatedBy = userId;
+            }
             Touch(membership, userId);
 
             // 2B (P2 dnevnik) — zahtjev za otkaz poništava zakazane pauze koje još nisu počele.
@@ -409,6 +426,10 @@ public class ClientMembershipService : IClientMembershipService
         await using (IUnitOfWork uow = await _unitOfWorkFactory.Begin())
         {
             ClientMembership membership = await LockActive(uow, organizationId, id, today);
+            // K1-8: dok članstvo stoji zbog zatvorenih poslovnica (i do kraja tog stajanja) nova pauza nema smisla.
+            if (membership.Pauses.Any(p => p.Source == MembershipPauseSource.CompanyClosure && p.CancelledAt == null && p.EffectiveEndsOn >= today))
+                throw new BusinessRuleException(ErrorCodes.MembershipPauseNotAllowed,
+                    "Članstvo stoji zbog zatvorenih poslovnica; pauza nije dopuštena.");
             MembershipPlanVersion terms = membership.PlanVersion;
             MembershipTimeline timeline = MembershipTimelines.Current(membership);
             MembershipPauseSpan candidate = Candidate(terms, timeline, startsOn, request);
@@ -488,6 +509,12 @@ public class ClientMembershipService : IClientMembershipService
                 ?? throw new NotFoundAppException("MembershipPause", pauseId);
             if (pause.CancelledAt != null || pause.StartsOn > today || pause.EffectiveEndsOn < today)
                 throw new BusinessRuleException(ErrorCodes.MembershipPauseNotPending, "Raniji povratak je moguć samo iz pauze koja je u tijeku.");
+            // K1-8: stajanje zbog zatvorenih poslovnica završava samo ponovna aktivacija poslovnice; nakon nje recepcija kod
+            // kalendarskog plana smije ručno otvoriti period od danas (Q47).
+            if (pause.Source == MembershipPauseSource.CompanyClosure
+                && (pause.IsOpenCompanyClosure || pause.Kind != MembershipPauseKind.SkipPeriods || pause.StartsOn == today))
+                throw new BusinessRuleException(ErrorCodes.MembershipPauseNotPending,
+                    "Članstvo stoji zbog zatvorenih poslovnica — završava ga ponovna aktivacija poslovnice.");
 
             DateTimeOffset now = DateTimeOffset.UtcNow;
             if (pause.StartsOn == today)
@@ -502,7 +529,7 @@ public class ClientMembershipService : IClientMembershipService
                 // Q47 — otvara se period od dana povratka uz puni iznos; bez potvrde samo pregled.
                 MembershipTimeline after = MembershipTimelines.Current(membership) with
                 {
-                    Pauses = MembershipTimelines.PauseSpans(membership)
+                    Pauses = MembershipTimelines.PeriodPauseSpans(membership)
                         .Select(s => s.StartsOn == pause.StartsOn ? s with { EndsOn = today.AddDays(-1) } : s).ToList()
                 };
                 MembershipPeriod opens = MembershipPeriodCalendar.PeriodContaining(after, today);
@@ -844,6 +871,14 @@ public class ClientMembershipService : IClientMembershipService
     /// poništava (2B), pa ne smiju produljiti period ni obvezu; pauza u tijeku se računa (otkaz na kraju produljenog perioda).</summary>
     private static (DateOnly EffectiveOn, MembershipEndEffectiveReason Reason) CancellationEffective(ClientMembership membership, DateOnly today)
     {
+        // K1-8: dok članstvo stoji zbog zatvorenih poslovnica otkaz djeluje odmah — krajem zadnjeg otvorenog perioda ili danas
+        // ako je to kasnije — bez otkaznog roka i preostale obveze (stajanje nije klijentov izbor).
+        if (MembershipTimelines.OpenCompanyClosure(membership) != null)
+        {
+            DateOnly lastOpened = membership.Periods.Select(p => p.EndsOn).DefaultIfEmpty(today).Max();
+            return (lastOpened > today ? lastOpened : today, MembershipEndEffectiveReason.CompanyClosure);
+        }
+
         MembershipTimeline current = MembershipTimelines.Current(membership);
         MembershipTimeline withoutFuturePauses = current with { Pauses = current.Pauses.Where(p => p.StartsOn <= today).ToList() };
         return MembershipLifecycleRules.CancellationEffective(
@@ -943,10 +978,17 @@ public class ClientMembershipService : IClientMembershipService
     private static ClientMembershipDto ToDto(ClientMembership membership, DateOnly today, int graceDays)
     {
         MembershipState state = StateOf(membership, today);
+        // K1-8: stajanje zbog zatvorenih poslovnica (otvoreno, ili zatvoreno koje još traje danas) prikazuje se zasebno od pauze.
+        MembershipPause standstill = membership.Pauses.FirstOrDefault(p => p.Source == MembershipPauseSource.CompanyClosure && p.CancelledAt == null
+            && (p.IsOpenCompanyClosure || (p.StartsOn <= today && p.EffectiveEndsOn >= today)));
+        if (standstill != null && state is MembershipState.Active or MembershipState.Paused or MembershipState.Scheduled)
+            state = MembershipState.StandingStill;
         MembershipTimeline timeline = MembershipTimelines.Current(membership);
         MembershipPeriod? period = state switch
         {
             MembershipState.Ended or MembershipState.Voided => null,
+            // K1-8: dok članstvo stoji nema tekućeg perioda (obnova ga ne otvara).
+            MembershipState.StandingStill => null,
             MembershipState.Scheduled => MembershipPeriodCalendar.Periods(timeline).First(),
             _ => MembershipPeriodCalendar.PeriodContaining(timeline, today)
         };
@@ -960,6 +1002,7 @@ public class ClientMembershipService : IClientMembershipService
             MembershipPlanName = membership.Plan?.Name,
             Terms = MembershipPlanReadModel.ToDto(membership.PlanVersion),
             State = state,
+            StandingStillSince = standstill?.StartsOn,
             Standing = MembershipChargeSettlement.Standing(membership.Charges, today, graceDays),
             OutstandingAmount = membership.Charges.Sum(MembershipChargeSettlement.Outstanding),
             StartsOn = membership.StartsOn,
@@ -1001,6 +1044,7 @@ public class ClientMembershipService : IClientMembershipService
             {
                 Id = p.Id,
                 Kind = p.Kind,
+                Source = p.Source,
                 StartsOn = p.StartsOn,
                 PlannedEndsOn = p.PlannedEndsOn,
                 ActualEndsOn = p.ActualEndsOn,

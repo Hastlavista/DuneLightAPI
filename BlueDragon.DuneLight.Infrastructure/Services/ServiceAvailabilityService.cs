@@ -24,17 +24,66 @@ public class ServiceAvailabilityService : IServiceAvailabilityService
     private readonly ICompanyHandler _companyHandler;
     private readonly IServiceCompanyHandler _serviceCompanyHandler;
     private readonly IOrganizationSettingsHandler _organizationSettingsHandler;
+    private readonly IServiceDefaultResourceHandler _serviceDefaultResourceHandler;
+    private readonly IResourceHandler _resourceHandler;
 
     public ServiceAvailabilityService(
         IServiceHandler serviceHandler,
         ICompanyHandler companyHandler,
         IServiceCompanyHandler serviceCompanyHandler,
-        IOrganizationSettingsHandler organizationSettingsHandler)
+        IOrganizationSettingsHandler organizationSettingsHandler,
+        IServiceDefaultResourceHandler serviceDefaultResourceHandler,
+        IResourceHandler resourceHandler)
     {
         _serviceHandler = serviceHandler;
         _companyHandler = companyHandler;
         _serviceCompanyHandler = serviceCompanyHandler;
         _organizationSettingsHandler = organizationSettingsHandler;
+        _serviceDefaultResourceHandler = serviceDefaultResourceHandler;
+        _resourceHandler = resourceHandler;
+    }
+
+    public async Task<List<ServiceDefaultResourceDto>> GetDefaultResources(Guid organizationId, Guid serviceId, Guid? companyId)
+    {
+        await EnsureServiceExists(organizationId, serviceId);
+        List<ServiceDefaultResource> defaults = await _serviceDefaultResourceHandler.GetForService(organizationId, serviceId);
+        return defaults
+            .Where(x => companyId == null || (x.Resource.CompanyId == companyId && x.Resource.IsActive))
+            .Select(x => new ServiceDefaultResourceDto
+            {
+                ResourceId = x.ResourceId,
+                ResourceName = x.Resource.Name,
+                CompanyId = x.Resource.CompanyId,
+                QuantityRequired = x.QuantityRequired,
+                ResourceIsActive = x.Resource.IsActive
+            })
+            .ToList();
+    }
+
+    public async Task<List<ServiceDefaultResourceDto>> ReplaceDefaultResources(
+        Guid organizationId, Guid userId, Guid serviceId, ReplaceServiceDefaultResourcesRequest request)
+    {
+        await EnsureServiceExists(organizationId, serviceId);
+        List<ServiceDefaultResourceRequest> requested = request?.Resources ?? new List<ServiceDefaultResourceRequest>();
+        if (requested.Select(r => r.ResourceId).Distinct().Count() != requested.Count)
+            throw new ValidationAppException("Isti resurs se smije navesti samo jednom.");
+
+        HashSet<Guid> existingIds = (await _serviceDefaultResourceHandler.GetForService(organizationId, serviceId))
+            .Select(x => x.ResourceId).ToHashSet();
+        foreach (ServiceDefaultResourceRequest item in requested)
+        {
+            Resource resource = await _resourceHandler.GetById(organizationId, item.ResourceId)
+                ?? throw new NotFoundAppException("Resource", item.ResourceId);
+            if (item.QuantityRequired < 1 || item.QuantityRequired > resource.Capacity)
+                throw new ValidationAppException($"Količina resursa '{resource.Name}' mora biti između 1 i kapaciteta ({resource.Capacity}).");
+            // Grandfathering kao kod dostupnosti usluge: samo NOVO dodan zadani resurs mora biti aktivan.
+            if (!existingIds.Contains(item.ResourceId) && !resource.IsActive)
+                throw new BusinessRuleException(ErrorCodes.InactiveResource, $"Resurs '{resource.Name}' nije aktivan.");
+        }
+
+        await _serviceDefaultResourceHandler.ReplaceForService(serviceId,
+            requested.Select(r => (r.ResourceId, r.QuantityRequired)).ToList());
+        return await GetDefaultResources(organizationId, serviceId, companyId: null);
     }
 
     public async Task<List<CompanyDto>> GetAssignedCompanies(Guid organizationId, Guid serviceId)

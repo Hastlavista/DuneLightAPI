@@ -107,6 +107,20 @@ public class BookingSegmentParticipation
     [Column("no_show_reason")]
     public string NoShowReason { get; set; }
 
+    /// <summary>K1-4 — šifra razloga otkazivanja / izostanka i naziv u trenutku događaja (snapshot). Metapodaci odgovaraju
+    /// statusu (DB CHECK): otkazivanje samo uz Cancelled, izostanak samo uz NoShow.</summary>
+    [Column("cancellation_reason_code_id")]
+    public Guid? CancellationReasonCodeId { get; set; }
+
+    [Column("cancellation_reason_code_name")]
+    public string CancellationReasonCodeName { get; set; }
+
+    [Column("no_show_reason_code_id")]
+    public Guid? NoShowReasonCodeId { get; set; }
+
+    [Column("no_show_reason_code_name")]
+    public string NoShowReasonCodeName { get; set; }
+
     [Column("base_amount")]
     public decimal? BaseAmount { get; set; }
 

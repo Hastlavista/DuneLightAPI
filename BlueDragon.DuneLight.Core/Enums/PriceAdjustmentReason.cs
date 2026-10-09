@@ -11,6 +11,8 @@ public enum PriceAdjustmentReason
     NoBenefitForService,
     CompanyNotCovered,
     Paused,
+    /// <summary>K1-8 — članstvo stoji jer su sve poslovnice opsega plana zatvorene.</summary>
+    MembershipStandingCompanyClosed,
     DebtNotCovered,
     /// <summary>Članstvo ne vrijedi na datum sesije.</summary>
     OutsideMembershipPeriod,

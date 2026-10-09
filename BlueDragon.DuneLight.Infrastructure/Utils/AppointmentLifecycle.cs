@@ -47,12 +47,17 @@ public static class AppointmentLifecycle
     /// otkazao sva Confirmed sudjelovanja; pozivatelj sprema termin, a status se zatim IZVODI (<see cref="Refresh"/>).
     /// </summary>
     public static async Task MarkExplicitlyCancelled(
-        IAppointmentAuditLogHandler auditLogHandler, IUnitOfWork uow, Appointment appointment, string reason, Guid userId)
+        IAppointmentAuditLogHandler auditLogHandler, IUnitOfWork uow, Appointment appointment, string reason, Guid userId,
+        (Guid? Id, string Name) reasonCode = default, DateTimeOffset? at = null)
     {
-        DateTimeOffset now = DateTimeOffset.UtcNow;
+        // K1-5: isti trenutak kao kaskada otkazivanja sudjelovanja — po njemu "vrati termin" prepoznaje što je otkazao otkaz termina.
+        DateTimeOffset now = at ?? DateTimeOffset.UtcNow;
         appointment.CancelledAt = now;
         appointment.CancelledBy = userId;
         appointment.CancellationReason = reason;
+        // K1-4: šifra razloga i naziv u trenutku otkaza (snapshot).
+        appointment.CancellationReasonCodeId = reasonCode.Id;
+        appointment.CancellationReasonCodeName = reasonCode.Name;
         appointment.UpdatedAt = now;
         appointment.UpdatedBy = userId;
 
@@ -109,6 +114,8 @@ public static class AppointmentLifecycle
             appointment.CancelledAt = null;
             appointment.CancelledBy = null;
             appointment.CancellationReason = null;
+            appointment.CancellationReasonCodeId = null;
+            appointment.CancellationReasonCodeName = null;
         }
 
         if (derived == oldStatus && !clearsCancellation)

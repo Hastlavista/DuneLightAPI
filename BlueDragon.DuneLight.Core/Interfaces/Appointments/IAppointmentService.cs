@@ -59,6 +59,11 @@ public interface IAppointmentService
 
     Task<AppointmentDto> MarkNoShow(Guid organizationId, Guid userId, bool hasFullScope, Guid id, NoShowRequest request);
 
+    /// <summary>K1-5 (14.1) — vraća eksplicitno otkazan termin u rad: na Confirmed se vraćaju SAMO sudjelovanja otkazana otkazom
+    /// termina (klijentovi raniji otkazi ostaju); sve ili ništa uz ponovnu provjeru preklapanja i kapaciteta; pokriće članarinom i
+    /// cijena se ponovno evaluiraju. Istekli upisi liste čekanja se ne vraćaju (popis u upozorenju).</summary>
+    Task<AppointmentDto> Restore(Guid organizationId, Guid userId, Guid id, AppointmentRestoreRequest request);
+
     /// <summary>Tvrdo brisanje — samo Admin, samo isti dan kad je unesen (provjerava se u servisu).</summary>
     Task Delete(Guid organizationId, Guid userId, Guid id);
 

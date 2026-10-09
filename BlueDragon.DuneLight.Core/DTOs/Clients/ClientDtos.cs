@@ -46,8 +46,13 @@ public class ClientDto
 
 public class ClientCreateRequest
 {
-    [Required]
-    public int MemberNumber { get; set; }
+    /// <summary>K1-3 — null = sustav dodjeljuje sljedeći broj (najveći postojeći + 1). Ručni broj (prijenos iz Excela) mora
+    /// biti slobodan i ≥ 1; broj veći od dosadašnjeg najvećeg za više od 1000 traži ConfirmMemberNumberJump.</summary>
+    [Range(1, int.MaxValue, ErrorMessage = "Broj člana mora biti pozitivan.")]
+    public int? MemberNumber { get; set; }
+
+    /// <summary>K1-3 — svjesna potvrda ručnog broja koji pomiče automatsko brojanje (vidi MEMBER_NUMBER_JUMP_NOT_CONFIRMED).</summary>
+    public bool ConfirmMemberNumberJump { get; set; }
 
     [Required]
     [MaxLength(255)]
@@ -86,8 +91,12 @@ public class ClientCreateRequest
 
 public class ClientUpdateRequest
 {
-    [Required]
-    public int MemberNumber { get; set; }
+    /// <summary>K1-3 — null = broj člana se ne mijenja. Promjena: slobodan broj ≥ 1, uz isto pravilo potvrde kao kod kreiranja.</summary>
+    [Range(1, int.MaxValue, ErrorMessage = "Broj člana mora biti pozitivan.")]
+    public int? MemberNumber { get; set; }
+
+    /// <summary>K1-3 — vidi ClientCreateRequest.ConfirmMemberNumberJump.</summary>
+    public bool ConfirmMemberNumberJump { get; set; }
 
     [Required]
     [MaxLength(255)]

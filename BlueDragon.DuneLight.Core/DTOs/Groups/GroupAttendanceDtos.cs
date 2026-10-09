@@ -58,6 +58,9 @@ public class GroupSegmentAttendanceDto
 public class GroupAttendanceListDto
 {
     public List<GroupSegmentAttendanceDto> Segments { get; set; } = new();
+
+    /// <summary>K1-9 — upozorenja naredbe prisutnosti (npr. PARTICIPATION_NOT_COVERED); samo u odgovoru naredbe.</summary>
+    public List<BlueDragon.DuneLight.Core.Shared.WarningDto> Warnings { get; set; } = new();
 }
 
 public class SetGroupAttendanceRequest
@@ -98,6 +101,9 @@ public class SetGroupAttendanceRequest
     /// <summary>P1 (D3) — opcionalan razlog izostanka (Attended=false).</summary>
     [MaxLength(500)]
     public string NoShowReason { get; set; }
+
+    /// <summary>K1-4 — šifra razloga izostanka (Attended=false).</summary>
+    public Guid? NoShowReasonCodeId { get; set; }
 
     /// <summary>P1 (D12) — razlog korekcije kad prijelaz poništava aktivnu posljedicu sa stvarnim učinkom.</summary>
     [MaxLength(500)]

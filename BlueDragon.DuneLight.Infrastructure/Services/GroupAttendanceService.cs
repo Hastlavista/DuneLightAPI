@@ -51,7 +51,7 @@ public class GroupAttendanceService : IGroupAttendanceService
     {
         await LoadGroupAppointmentOrThrow(organizationId, appointmentId);
 
-        await _bookingService.SetStatusOnSegment(organizationId, userId, hasFullScope, appointmentId, request.ClientId, new BookingSetStatusRequest
+        BookingDto result = await _bookingService.SetStatusOnSegment(organizationId, userId, hasFullScope, appointmentId, request.ClientId, new BookingSetStatusRequest
         {
             Status = request.Attended ? BookingStatus.Completed : BookingStatus.NoShow,
             ClientPackageId = request.ClientPackageId,
@@ -62,13 +62,16 @@ public class GroupAttendanceService : IGroupAttendanceService
             SegmentId = request.SegmentId,
             // P1 (D9/D10/D12): Attended=false je izostanak (NoShow politika); otpis i razlog korekcije prolaze kroz istu jezgru.
             NoShowReason = request.NoShowReason,
+            NoShowReasonCodeId = request.NoShowReasonCodeId,
             WaivePolicyConsequence = request.WaivePolicyConsequence,
             WaiverReason = request.WaiverReason,
             CorrectionReason = request.CorrectionReason
         });
 
         Appointment refreshed = await LoadGroupAppointmentOrThrow(organizationId, appointmentId);
-        return BuildListDto(refreshed, await LoadGroup(organizationId, refreshed));
+        GroupAttendanceListDto dto = BuildListDto(refreshed, await LoadGroup(organizationId, refreshed));
+        dto.Warnings = result.Warnings;
+        return dto;
     }
 
     private async Task<Appointment> LoadGroupAppointmentOrThrow(Guid organizationId, Guid appointmentId)

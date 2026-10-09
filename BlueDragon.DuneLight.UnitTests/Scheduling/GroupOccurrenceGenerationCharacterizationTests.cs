@@ -266,18 +266,23 @@ public class GroupOccurrenceGenerationCharacterizationTests
     }
 
     [Fact]
-    public async Task Generate_SkipsCompanyHolidaysSilently_WithoutFailingAndCountsThemAsSkipped()
+    public async Task Generate_SkipsCompanyHolidaysWithoutOverride_CountsAndListsThem()
     {
-        (SchedulingWorld w, ServiceEntity svc) = await Arrange(nameof(Generate_SkipsCompanyHolidaysSilently_WithoutFailingAndCountsThemAsSkipped));
+        (SchedulingWorld w, ServiceEntity svc) = await Arrange(nameof(Generate_SkipsCompanyHolidaysWithoutOverride_CountsAndListsThem));
         await using SchedulingWorld _ = w;
         await w.AddCompanyHoliday(w.Company, SchedulingWorld.FutureDay);
         GroupDto group = await w.CreateGroup(svc, capacity: 5);
 
         GenerateGroupAppointmentsResult result = await w.GenerateOccurrences(group, SchedulingWorld.FutureDay);
 
-        // Unlike Create/CreateRecurring for individual appointments (holiday = hard error), group generation skips the date.
+        // Unlike Create/CreateRecurring for individual appointments (holiday = error without override), group generation skips
+        // the date. CHANGED in K1 (K1-7, bug d): the skipped date is listed (no longer silent).
         Assert.Equal(0, result.CreatedCount);
         Assert.Equal(1, result.SkippedCount);
+        GroupGenerationSkipDto skipped = Assert.Single(result.Skipped);
+        Assert.Equal(GroupGenerationSkipReason.CompanyHoliday, skipped.Reason);
+        Assert.Equal(DateOnly.FromDateTime(SchedulingWorld.FutureDay.UtcDateTime), skipped.Date);
+        Assert.Equal(group.Slots.Single().Id, skipped.GroupSlotId);
         Assert.Equal(0, await w.CountAppointments());
     }
 

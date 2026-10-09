@@ -195,6 +195,7 @@ public sealed class SchedulingWorld : IAsyncDisposable
             "DELETE FROM dunelight.employee_audit_log WHERE employee_id IN (SELECT id FROM dunelight.employees WHERE organization_id = {0})",
             "DELETE FROM dunelight.roster_audit_log WHERE roster_entry_id IN (SELECT id FROM dunelight.roster_entries WHERE organization_id = {0})",
             "DELETE FROM dunelight.service_companies WHERE service_id IN (SELECT id FROM dunelight.services WHERE organization_id = {0})",
+            "DELETE FROM dunelight.service_default_resources WHERE service_id IN (SELECT id FROM dunelight.services WHERE organization_id = {0})",
             "DELETE FROM dunelight.working_hours_intervals WHERE working_hours_template_id IN (SELECT id FROM dunelight.working_hours_templates WHERE organization_id = {0})",
             "DELETE FROM dunelight.price_list_item_history WHERE price_list_item_id IN (SELECT id FROM dunelight.price_list_items WHERE organization_id = {0})",
             "DELETE FROM dunelight.client_tag_assignments WHERE client_id IN (SELECT id FROM dunelight.clients WHERE organization_id = {0})"

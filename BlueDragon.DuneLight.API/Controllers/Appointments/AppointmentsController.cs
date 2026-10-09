@@ -166,6 +166,15 @@ public class AppointmentsController : ControllerBase
             this.CurrentOrganizationId(), this.CurrentUserId(), this.HasGrant(Grants.AppointmentsWriteAll), id, request));
     }
 
+    /// <summary>K1-5 (14.1) — vraća otkazan termin u rad (samo sudjelovanja otkazana otkazom termina; sve ili ništa). Grant zasad
+    /// appointments.write.all (K2: grant korekcije). Istekli upisi liste čekanja se ne vraćaju — popis je u upozorenju.</summary>
+    [HttpPost("{id:guid}/restore")]
+    [RequireGrant(Grants.AppointmentsWriteAll)]
+    public async Task<ActionResult<AppointmentDto>> Restore(Guid id, [FromBody(EmptyBodyBehavior = Microsoft.AspNetCore.Mvc.ModelBinding.EmptyBodyBehavior.Allow)] AppointmentRestoreRequest request)
+    {
+        return Ok(await _appointmentService.Restore(this.CurrentOrganizationId(), this.CurrentUserId(), id, request));
+    }
+
     [HttpPost("{id:guid}/no-show")]
     [RequireGrant(Grants.AppointmentsWriteOwn, Grants.AppointmentsWriteAll)]
     public async Task<ActionResult<AppointmentDto>> MarkNoShow(Guid id, [FromBody] NoShowRequest request)

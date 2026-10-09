@@ -5,8 +5,9 @@ using BlueDragon.DuneLight.Infrastructure.Domain.Models.Catalog;
 namespace BlueDragon.DuneLight.Infrastructure.Domain.Models.Appointments;
 
 /// <summary>Resurs koji segment termina zauzima, u količini QuantityRequired (&gt; 0, CHECK u bazi). Složeni ključ
-/// (segment, resurs) — isti resurs najviše jednom po segmentu. Buduća invarijanta (NIJE implementirana): zbroj
-/// QuantityRequired preklapajućih aktivnih segmenata &lt;= Resource.Capacity.</summary>
+/// (segment, resurs) — isti resurs najviše jednom po segmentu. Invarijanta (ADR-0008, SchedulingConflictGuard): zbroj
+/// QuantityRequired preklapajućih aktivnih segmenata &lt;= Resource.Capacity (tvrda blokada). K1-6: bez navedenih resursa
+/// segment dobiva zadane resurse usluge (ServiceDefaultResource).</summary>
 [Table("appointment_segment_resources")]
 public class AppointmentSegmentResource
 {

@@ -37,6 +37,12 @@ public interface IClientMembershipHandler
     /// <summary>2C — organizacije koje imaju neponištenih članstava (scheduler obnove).</summary>
     Task<List<Guid>> GetOrganizationsWithActiveMemberships();
 
+    /// <summary>K1-8 — članstva koja stoje (otvorena sustavna pauza CompanyClosure), puni graf.</summary>
+    Task<List<ClientMembership>> GetStandingStill(Guid organizationId);
+
+    /// <summary>K1-8 — ima li organizacija ijednu aktivnu poslovnicu (opseg plana "Sve poslovnice").</summary>
+    Task<bool> AnyActiveCompany(IUnitOfWork uow, Guid organizationId);
+
     /// <summary>2C — članstva organizacije koja nisu poništena ni završila prije danas (kandidati za obnovu).</summary>
     Task<List<Guid>> GetRenewalCandidateIds(Guid organizationId, DateOnly today);
 

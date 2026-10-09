@@ -155,6 +155,38 @@ public class WarningMembershipSession
     public DateTimeOffset PlannedStart { get; set; }
 }
 
+/// <summary>K1-5 — upisi liste čekanja (APPOINTMENT_RESTORED_WAITLIST_NOT_RESTORED).</summary>
+public class WarningWaitlistEntriesDetails
+{
+    public List<WarningWaitlistEntry> Entries { get; set; } = new();
+}
+
+public class WarningWaitlistEntry
+{
+    public Guid WaitlistEntryId { get; set; }
+    public Guid ClientId { get; set; }
+    public Guid AppointmentSegmentId { get; set; }
+    public DateTimeOffset JoinedAt { get; set; }
+}
+
+/// <summary>K1-9 — PARTICIPATION_NOT_COVERED / PARTICIPATION_PACKAGE_AVAILABLE: sesija, dug, prihvatljivi neodabrani paketi
+/// (samo uz PACKAGE_AVAILABLE) i odluka pokrića članarinom kad članarina postoji, ali ne pokriva (null = bez članarine).</summary>
+public class WarningParticipationCoverageDetails
+{
+    public Guid ParticipationId { get; set; }
+    public Guid ClientId { get; set; }
+    public decimal OutstandingAmount { get; set; }
+    public List<WarningEligiblePackage> EligiblePackages { get; set; } = new();
+    public BlueDragon.DuneLight.Core.Enums.MembershipCoverageStatus? MembershipCoverageStatus { get; set; }
+    public BlueDragon.DuneLight.Core.Enums.MembershipCoverageReason? MembershipCoverageReason { get; set; }
+}
+
+public class WarningEligiblePackage
+{
+    public Guid ClientPackageId { get; set; }
+    public string PackageName { get; set; }
+}
+
 /// <summary>P2 (Q29) — MEMBERSHIP_PLAN_NO_ACTIVE_COMPANY: odabrane poslovnice plana, nijedna aktivna.
 /// Isti oblik za MEMBERSHIP_PLAN_NOT_VALID_AT_SALE_COMPANY (poslovnice u kojima plan vrijedi).</summary>
 public class WarningMembershipPlanCompaniesDetails

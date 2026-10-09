@@ -6,5 +6,8 @@ public enum MembershipEndEffectiveReason
     EndOfPeriod,
     NoticePeriod,
     MinimumCommitment,
-    BeforeStart
+    BeforeStart,
+
+    /// <summary>K1-8 — članstvo stoji zbog zatvorenih poslovnica: otkaz djeluje odmah, bez roka i obveze.</summary>
+    CompanyClosure
 }

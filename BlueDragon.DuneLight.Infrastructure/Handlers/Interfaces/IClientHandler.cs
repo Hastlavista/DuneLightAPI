@@ -21,7 +21,9 @@ public interface IClientHandler
     /// <summary>Batch dohvat po ID-evima u jednom upitu — koristi se za validaciju postojanja liste klijenata (izbjegava N+1).</summary>
     Task<List<Client>> GetByIds(Guid organizationId, List<Guid> ids);
 
-    Task Add(Client client);
+    /// <summary>K1-3 — dodaje klijenta pod transakcijskim advisory lockom brojeva članova organizacije; uz
+    /// <paramref name="assignMemberNumber"/> broj člana = najveći postojeći + 1 (1 za prvog klijenta), izračunat pod lockom.</summary>
+    Task Add(Client client, bool assignMemberNumber);
 
     /// <summary>`client` NE SMIJE imati popunjenu Tags navigacijsku kolekciju (koristiti GetByIdLight).</summary>
     Task Update(Client client, List<ClientTagAssignment> newTags);

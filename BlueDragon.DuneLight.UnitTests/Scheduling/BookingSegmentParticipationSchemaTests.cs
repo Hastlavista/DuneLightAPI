@@ -66,6 +66,11 @@ public class BookingSegmentParticipationSchemaTests
             ["no_show_at"] = ("timestamp with time zone", "YES"),
             ["no_show_by"] = ("uuid", "YES"),
             ["no_show_reason"] = ("text", "YES"),
+            // K1-4: reason code + name snapshot.
+            ["cancellation_reason_code_id"] = ("uuid", "YES"),
+            ["cancellation_reason_code_name"] = ("character varying", "YES"),
+            ["no_show_reason_code_id"] = ("uuid", "YES"),
+            ["no_show_reason_code_name"] = ("character varying", "YES"),
             ["base_amount"] = ("numeric", "YES"),
             ["base_amount_source"] = ("character varying", "YES"),
             ["pricing_mode"] = ("character varying", "YES"), // M1G: historical pricing source used by the resolution
@@ -102,6 +107,13 @@ public class BookingSegmentParticipationSchemaTests
             ["ck_booking_segment_participations_status"] = "CHECK (((status)::text = ANY ((ARRAY['Confirmed'::character varying, 'Completed'::character varying, 'Cancelled'::character varying, 'NoShow'::character varying])::text[])))",
             ["ck_booking_segment_participations_status_version"] = "CHECK ((status_version >= 0))",
             ["ck_booking_segment_participations_arrival"] = "CHECK (((arrived_by IS NULL) OR (arrived_at IS NOT NULL)))",
+            // K1-4: reason code + name snapshot only with the matching status; codes are never deleted while referenced.
+            ["ck_booking_segment_participations_cancellation_reason_code"] = "CHECK ((((cancellation_reason_code_id IS NULL) = (cancellation_reason_code_name IS NULL)) AND ((cancellation_reason_code_id IS NULL) OR ((status)::text = 'Cancelled'::text))))",
+            ["ck_booking_segment_participations_no_show_reason_code"] = "CHECK ((((no_show_reason_code_id IS NULL) = (no_show_reason_code_name IS NULL)) AND ((no_show_reason_code_id IS NULL) OR ((status)::text = 'NoShow'::text))))",
+            ["fk_booking_segment_participations_cancellation_reason_code_id"] = "FOREIGN KEY (cancellation_reason_code_id) REFERENCES dunelight.cancellation_reasons(id) ON DELETE RESTRICT",
+            ["fk_booking_segment_participations_no_show_reason_code_id"] = "FOREIGN KEY (no_show_reason_code_id) REFERENCES dunelight.cancellation_reasons(id) ON DELETE RESTRICT",
+            // K1-2: arrival only with Confirmed/Completed (cleared on NoShow/Cancelled, trail in the audit log).
+            ["ck_booking_segment_participations_arrival_status"] = "CHECK (((arrived_at IS NULL) OR ((status)::text = ANY ((ARRAY['Confirmed'::character varying, 'Completed'::character varying])::text[]))))",
             ["ck_booking_segment_participations_base_amount_source"] = "CHECK (((base_amount_source)::text = ANY ((ARRAY['EmployeeCompanySpecific'::character varying, 'EmployeeAllCompanies'::character varying, 'CompanySpecific'::character varying, 'AllCompanies'::character varying, 'Default'::character varying])::text[])))",
             ["fk_booking_segment_participations_pricing_employee_id"] = "FOREIGN KEY (pricing_employee_id) REFERENCES dunelight.employees(id) ON DELETE RESTRICT",
             ["ck_booking_segment_participations_pricing_source"] = "CHECK ((((pricing_mode IS NULL) AND (pricing_employee_id IS NULL) AND (base_amount IS NULL)) OR (((pricing_mode)::text = 'Standard'::text) AND (pricing_employee_id IS NULL) AND (base_amount IS NOT NULL)) OR (((pricing_mode)::text = 'Employee'::text) AND (pricing_employee_id IS NOT NULL) AND (base_amount IS NOT NULL))))",

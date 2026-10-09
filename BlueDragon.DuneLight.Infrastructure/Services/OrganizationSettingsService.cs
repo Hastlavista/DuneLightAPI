@@ -53,8 +53,25 @@ public class OrganizationSettingsService : IOrganizationSettingsService
             MembershipGraceDays = settings?.MembershipGraceDays ?? DefaultMembershipGraceDays,
             MembershipDebtBehavior = settings?.MembershipDebtBehavior ?? DefaultMembershipDebtBehavior,
             MembershipAutoEndAfterUnpaidPeriods = settings?.MembershipAutoEndAfterUnpaidPeriods,
-            MembershipLimitExceededBehavior = settings?.MembershipLimitExceededBehavior ?? MembershipLimitExceededBehavior.FallbackToNextSource
+            MembershipLimitExceededBehavior = settings?.MembershipLimitExceededBehavior ?? MembershipLimitExceededBehavior.FallbackToNextSource,
+            CancellationReasonRequiredClient = settings?.CancellationReasonRequiredClient ?? false,
+            CancellationReasonRequiredBusiness = settings?.CancellationReasonRequiredBusiness ?? false,
+            CancellationReasonRequiredNoShow = settings?.CancellationReasonRequiredNoShow ?? false
         };
+    }
+
+    public async Task<OrganizationSettingsDto> UpdateCancellationReasonRules(
+        Guid organizationId, Guid userId, OrganizationCancellationReasonRulesUpdateRequest request)
+    {
+        if (request == null)
+            throw new ValidationAppException("Zahtjev je obavezan.");
+        await _handler.Upsert(organizationId, userId, settings =>
+        {
+            settings.CancellationReasonRequiredClient = request.RequiredForClientCancellation;
+            settings.CancellationReasonRequiredBusiness = request.RequiredForBusinessCancellation;
+            settings.CancellationReasonRequiredNoShow = request.RequiredForNoShow;
+        });
+        return await GetSettings(organizationId);
     }
 
     /// <summary>P2 (2F, Vagaro) — postavke provizija (samo razina organizacije, Q40); izlažu se pod commissions.manage jer izravno

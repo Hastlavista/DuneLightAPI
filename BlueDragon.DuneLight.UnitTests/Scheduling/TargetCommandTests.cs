@@ -326,16 +326,25 @@ public class TargetCommandTests
     }
 
     [Fact]
-    public async Task CompleteNow_APastPerformedService_IsRecorded_WithoutWorkforceChecks_ButStillValidated()
+    public async Task CompleteNow_APastPerformedService_IsValidatedLikeTheFuture_AndRecordedWithOverride()
     {
-        await using SchedulingWorld w = await SchedulingWorld.Create(nameof(CompleteNow_APastPerformedService_IsRecorded_WithoutWorkforceChecks_ButStillValidated));
+        await using SchedulingWorld w = await SchedulingWorld.Create(nameof(CompleteNow_APastPerformedService_IsValidatedLikeTheFuture_AndRecordedWithOverride));
         Studio s = await SetUp(w);
         await w.AddAbsence(s.Ana, SchedulingWorld.PastDay);
 
-        // Absent and outside working hours (22:00) in the past: still recorded — it already happened.
-        AppointmentDto dto = await Run(w, CompleteNow(w, s.Duo, SchedulingWorld.Past(22), new[] { s.Ana }, clients: Paid(w.Client)));
+        // CHANGED in K1 (K1-1): the past is validated against the workforce like the future — absent / outside hours is refused
+        // without override, even for a user with appointments.write.all.
+        await SchedulingAssert.BusinessRule(ErrorCodes.EmployeeAbsent,
+            () => Run(w, CompleteNow(w, s.Duo, SchedulingWorld.Past(22), new[] { s.Ana }, clients: Paid(w.Client))));
+        await SchedulingAssert.BusinessRule(ErrorCodes.OutsideWorkingHours,
+            () => Run(w, CompleteNow(w, s.Duo, SchedulingWorld.Past(22), new[] { s.Marko }, clients: Paid(w.Client))));
+
+        // Override (appointments.write.all) records it with a warning.
+        AppointmentCompleteNowRequest overridden = CompleteNow(w, s.Duo, SchedulingWorld.Past(22), new[] { s.Ana }, clients: Paid(w.Client));
+        overridden.OverrideAvailability = true;
+        AppointmentDto dto = await Run(w, overridden);
         Assert.Equal(AppointmentStatus.Closed, dto.Status);
-        SchedulingAssert.HasNoWarnings(dto);
+        Assert.Contains(dto.Warnings, x => x.Code == WarningCodes.EmployeeAbsent);
 
         // ... but the structural rules still apply (an inactive client is refused).
         Client inactive = await w.AddClient("Inactive", "Client", isActive: false);

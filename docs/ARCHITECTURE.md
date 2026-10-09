@@ -1,7 +1,7 @@
 # Arhitektura
 
 > Živi dokument. Ažurira se kad se arhitektura promijeni, ne naknadno "kad stignem".
-> Zadnje ažuriranje: 2026-10-08 (P2 Memberships: faze 2A–2F — katalog planova, članstva, periodi/zaduženja/obnova, pokriće članarinom, cjenovna pogodnost, provizije (Vagaro model), ADR-0025 – ADR-0030; prije toga P1 ADR-0015 – ADR-0018)
+> Zadnje ažuriranje: 2026-10-08 (K1 dorade iz povratnih informacija klijenta, ADR-0031; prije toga P2 Memberships: faze 2A–2F — katalog planova, članstva, periodi/zaduženja/obnova, pokriće članarinom, cjenovna pogodnost, provizije (Vagaro model), ADR-0025 – ADR-0030; prije toga P1 ADR-0015 – ADR-0018)
 
 Izvori ovog dokumenta, redom prednosti: **stvarni kod** → ADR-ovi u `docs/decisions/` i zapisi faza (`docs/p1/`) → povijesni izvori izvan repozitorija
 (sažetak dosadašnjeg arhitekta, Decision Log v1, Target Architecture v1, Business Rules vodič starog
@@ -27,7 +27,9 @@ Glavni tokovi:
 Projekt je u fazi **inkrementalne modernizacije** (ADR-0002): završene su faze S1–S3, Timezone foundation, C, D1–D3B3,
 M0–M1H i **P1 — Cancellation / Late Cancellation / NoShow Policy Engine** (2026-10-06, [P1 record](p1/P1_DECISION_RECORD.md)).
 **P2 Memberships** je ZAKLJUČEN 2026-10-08 ([P2 record](p2/P2_DECISION_RECORD.md), [plan](p2/P2_PLAN.md), [završni pregled](p2/P2_ZAVRSNI_PREGLED.md)): dizajn zatvoren 2026-10-07,
-faze 2A–2F implementirane (katalog planova, članstva, periodi i obnova, pokriće, cjenovna pogodnost, provizije); slijedi ručno testiranje. Sljedeća faza samo na nalog: P3 Client Credit Ledger → P4 Notifications → P5 Group occurrence propagacija →
+faze 2A–2F implementirane (katalog planova, članstva, periodi i obnova, pokriće, cjenovna pogodnost, provizije); slijedi ručno testiranje.
+**K1** (dorade iz validacije vodiča s klijentom, [K1 record](k1/K1_DECISION_RECORD.md), [povratne informacije](klijent/POVRATNE_INFORMACIJE_v1.md), ADR-0031)
+implementiran i ZAKLJUČEN 2026-10-08. Prijedlog daljnjeg redoslijeda iz povratnih informacija: K2 Ovlasti → K3 Veze klijenata (prije P4) → … Sljedeća faza samo na nalog: P3 Client Credit Ledger → P4 Notifications → P5 Group occurrence propagacija →
 P6 Workforce/catalog integritet.
 
 ## 2. Glavne komponente
@@ -301,6 +303,18 @@ Pravila koja se ne krše bez nove odluke (ADR):
   `PATCH /api/memberships/{id}/sale-commission-employee`, `POST /api/commissions/entries/{id}/reassign`) implementirane 2026-10-08.
   Zabilježeno za kasnije: popust za članove na proizvode; uz online booking "odbij kad je limit pun" vrijedi i za rezervacije
   klijenta (Q4 t.3).
+- [x] K1 dorade ([K1 record](k1/K1_DECISION_RECORD.md), ADR-0031) — implementirano 2026-10-08 (migracije `20261028000000` –
+  `20261028000003`):
+  - `PATCH/DELETE api/participations/{id}/arrival` (grant `appointments.arrival.mark`);
+  - `api/catalog/cancellation-reasons` (grant `catalog.cancellation-reasons.manage`) i `PUT api/organization/settings/cancellation-reasons`;
+  - `POST api/appointments/{id}/restore`;
+  - `GET/PUT api/catalog/services/{id}/default-resources`;
+  - `GET api/memberships/standing-still`;
+  - automatski broj člana;
+  - popis preskočenog pri generiranju grupa;
+  - upozorenja `PARTICIPATION_NOT_COVERED` / `PARTICIPATION_PACKAGE_AVAILABLE`.
+
+  Za K2: zaseban grant za rad izvan radnog vremena (i kod grupa) i grant korekcije za "vrati termin".
 - [ ] Payroll po Vagaro modelu (zasebna faza nakon P2, [plan §26](p2/P2_PLAN.md), [pitanja](payroll/PAYROLL_QUESTIONS.md)): obračunsko
   razdoblje i zatvaranje, tiered po prometu (nadogradnja općeg pravila, bez migracije), klase, trošak usluge, napojnice, satnica
   ili provizija, ovlasti.
@@ -333,12 +347,13 @@ P1 record je uveden u `docs/p1/`; README je usklađen s kodom.
 - [ ] Propagacija izmjena templatea na već generirane occurrence ("samo ovaj / ovaj i budući", dug E, faza P5).
 - [ ] Politika deaktivacije kataloga (Employee, Room, Resource, Service, Company) s budućim terminima (dug M, faza P6).
 - [ ] Premještanje Appointmenta između Companyja — samo ako proizvod zatraži (`MoveAppointmentToCompany`, dug N).
-- [ ] Waitlist prioritet po tagovima i auto/manual promocija (Target Arch §12) — kod ima samo FIFO.
+- [ ] Waitlist prioritet po tagovima i auto/manual promocija (Target Arch §12) — kod ima samo FIFO. Odgođeno (P-11) dok ne postoji
+  sustav oznaka (što koja oznaka radi: prioritet liste čekanja, pogodnosti…).
 - [ ] Vanjska dostava notifikacija (provider, kanali, podsjetnici).
 - [ ] **Povrat novca iz zatvorenog checkouta** (refund / kredit klijenta) — nije implementiran; dolazi s P3. Do tada ni
   P2 Q51(a) (povrat + poništavanje prodaje članarine prije početka) nije izvediv, samo regularni otkaz (`docs/p2/P2_PLAN.md` §22).
 - [ ] **Platitelj ≠ član** (roditelj plaća djetetu članarinu): stavka zaduženja članarine danas traži istog klijenta kao
-  checkout. Zasebna odluka nakon P2.
+  checkout. **Odlučeno (P-14):** model nositelj + podračuni, nositelj plaća termine, pakete i članarine podračuna — faza K3, prije P4.
 - [ ] **P4 — obavijesti o članarinama:** P2 ne piše outbox događaje članarina (događaj bez handlera se nikad ne označi
   obrađenim). Handleri u P4 moraju moći raditi **iz stanja u bazi** (periodi, zaduženja, oznake, povijest članstva), jer
   povijesni događaji iz P2 neće postojati (P2 dnevnik 2026-10-07).
@@ -363,7 +378,7 @@ P1 record je uveden u `docs/p1/`; README je usklađen s kodom.
 - [ ] H. Provenance otkazivanja kod Group reaktivacije (P1 uvodi initiator; automatska reaktivacija ostaje otvorena).
 - [ ] J. Pauze (breaks) imaju stari ±1 dan upit i ne koriste subject-lock model.
 - [ ] K. Notifikacije su po Participationu (nema grupiranja po Bookingu/Appointmentu).
-- [ ] `ArrivedAt/ArrivedBy` postoje, ali ih ništa ne zapisuje (check-in nije implementiran).
+- [x] `ArrivedAt/ArrivedBy` — zapisuje ih naredba dolaska (K1-2).
 - [ ] Postotna provizija nema zaokruživanje (`CommissionService`).
 - [ ] `GrantResolver` cache (~30 s) nema invalidaciju pri promjeni dozvola (svjesni trade-off).
 - [ ] Nema apstrakcije vremena (237 poziva `DateTimeOffset.UtcNow`): simulacija sata organizacije za testiranje nije moguća; danas
@@ -429,3 +444,4 @@ pokriva samo backend (Angular frontend se dokumentira u vlastitom repozitoriju);
 | [0028](decisions/0028-p2-pokrice-clanarinom.md) | P2: Pokriće sudjelovanja članarinom (ledger, projekcija, limiti, dug) | Prihvaćeno, 2D implementirano |
 | [0029](decisions/0029-p2-cjenovna-pogodnost-i-prilagodbe-cijene.md) | P2: Cjenovna pogodnost članarine i opći mehanizam prilagodbi cijene | Prihvaćeno, 2E implementirano |
 | [0030](decisions/0030-p2-provizije-vagaro-model.md) | P2: Provizije, Vagaro model (proširuje ADR-0010) | Prihvaćeno, 2F implementirano |
+| [0031](decisions/0031-k1-dorade-rasporeda-i-klijenata.md) | K1: dorade rasporeda i klijenata (prošlost, dolazak, razlozi, vraćanje termina, zadani resursi, stajanje članstva) | Prihvaćeno, implementirano |

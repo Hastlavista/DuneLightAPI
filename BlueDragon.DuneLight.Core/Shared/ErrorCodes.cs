@@ -24,6 +24,10 @@ public static class ErrorCodes
     public const string ReferencedCannotDelete = "REFERENCED_CANNOT_DELETE";
     public const string DuplicateName = "DUPLICATE_NAME";
     public const string DuplicateMemberNumber = "DUPLICATE_MEMBER_NUMBER";
+
+    /// <summary>K1-3 — ručni broj člana je veći od dosadašnjeg najvećeg za više od 1000: automatsko brojanje bi nastavilo od
+    /// njega. Ništa nije spremljeno; ponoviti uz ConfirmMemberNumberJump = true. Details: memberNumber, currentMax. 409.</summary>
+    public const string MemberNumberJumpNotConfirmed = "MEMBER_NUMBER_JUMP_NOT_CONFIRMED";
     public const string EmailAlreadyInUse = "EMAIL_ALREADY_IN_USE";
     public const string ClientEmailAlreadyInUse = "CLIENT_EMAIL_ALREADY_IN_USE";
     public const string UserAlreadyLinked = "USER_ALREADY_LINKED";
@@ -99,6 +103,18 @@ public static class ErrorCodes
     /// <summary>Phase M1F — grupa mora zadržati barem jedan predložak segmenta.</summary>
     public const string LastGroupSegmentTemplate = "LAST_GROUP_SEGMENT_TEMPLATE";
     public const string AttendanceBeforeStart = "ATTENDANCE_BEFORE_START";
+
+    /// <summary>K1-5 — "vrati termin" samo za eksplicitno otkazan termin. 409.</summary>
+    public const string AppointmentNotCancelled = "APPOINTMENT_NOT_CANCELLED";
+
+    /// <summary>K1-4 — postavka organizacije traži odabir šifre razloga za ovaj događaj (a postoji barem jedna aktivna). 400.</summary>
+    public const string CancellationReasonRequired = "CANCELLATION_REASON_REQUIRED";
+
+    /// <summary>K1-4 — odabrana šifra razloga nije aktivna ili ne vrijedi za ovaj događaj (otkaz klijenta / studija / izostanak). 409.</summary>
+    public const string CancellationReasonNotApplicable = "CANCELLATION_REASON_NOT_APPLICABLE";
+
+    /// <summary>K1-2 — dolazak se označava samo na Confirmed ili Completed sudjelovanju (ne na otkazanom/izostalom). 409.</summary>
+    public const string ParticipationArrivalNotAllowed = "PARTICIPATION_ARRIVAL_NOT_ALLOWED";
     /// <summary>P1 (D3) — klijentsko otkazivanje u trenutku ili nakon početka segmenta sudjelovanja (Business/System smiju).</summary>
     public const string CancellationAfterStart = "CANCELLATION_AFTER_START";
     /// <summary>P1 (D6) — posljedica politike troši jedinicu paketa, a klijent ima više prihvatljivih brojenih paketa;

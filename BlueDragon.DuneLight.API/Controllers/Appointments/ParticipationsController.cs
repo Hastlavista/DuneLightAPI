@@ -51,6 +51,23 @@ public class ParticipationsController : ControllerBase
             this.CurrentOrganizationId(), this.CurrentUserId(), this.HasGrant(Grants.AppointmentsWriteAll), participationId, request));
     }
 
+    /// <summary>K1-2 — označava dolazak klijenta (metapodatak, ne status; bez financijskog učinka). Confirmed/Completed, i prije
+    /// početka. Upozorenje PARTICIPATION_NOT_COVERED / PARTICIPATION_PACKAGE_AVAILABLE kad sesija ima neplaćen dug.</summary>
+    [HttpPatch("{participationId:guid}/arrival")]
+    [RequireGrant(Grants.AppointmentsArrivalMark)]
+    public async Task<ActionResult<BookingDto>> MarkArrival(Guid participationId)
+    {
+        return Ok(await _bookingService.MarkArrival(this.CurrentOrganizationId(), this.CurrentUserId(), participationId));
+    }
+
+    /// <summary>K1-2 — poništava označeni dolazak (povijest zadržava trag).</summary>
+    [HttpDelete("{participationId:guid}/arrival")]
+    [RequireGrant(Grants.AppointmentsArrivalMark)]
+    public async Task<ActionResult<BookingDto>> ClearArrival(Guid participationId)
+    {
+        return Ok(await _bookingService.ClearArrival(this.CurrentOrganizationId(), this.CurrentUserId(), participationId));
+    }
+
     /// <summary>Opći prijelaz sudjelovanja: check-in/odrađivanje (Completed, uz paket/naplatu/ručnu cijenu kroz tijelo
     /// zahtjeva), Cancelled, NoShow ili korekcija na Confirmed. Sažetak statusa Bookinga (Mixed) nikad nije cilj.</summary>
     [HttpPatch("{participationId:guid}/status")]
@@ -75,6 +92,7 @@ public class ParticipationsController : ControllerBase
                 Status = BookingStatus.Cancelled,
                 CancellationInitiator = request?.CancellationInitiator,
                 CancellationReason = request?.CancellationReason,
+                CancellationReasonCodeId = request?.CancellationReasonCodeId,
                 ClientPackageId = request?.ClientPackageId,
                 WaivePolicyConsequence = request?.WaivePolicyConsequence ?? false,
                 WaiverReason = request?.WaiverReason,
@@ -94,6 +112,7 @@ public class ParticipationsController : ControllerBase
             {
                 Status = BookingStatus.NoShow,
                 NoShowReason = request?.NoShowReason,
+                NoShowReasonCodeId = request?.NoShowReasonCodeId,
                 ClientPackageId = request?.ClientPackageId,
                 WaivePolicyConsequence = request?.WaivePolicyConsequence ?? false,
                 WaiverReason = request?.WaiverReason,

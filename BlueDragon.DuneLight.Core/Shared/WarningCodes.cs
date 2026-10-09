@@ -63,4 +63,15 @@ public static class WarningCodes
     /// članarine ili ručna promjena cijene nakon dodavanja). Stavka se NE mijenja automatski; recepcija je može osvježiti (ukloniti i
     /// ponovno dodati) prije zatvaranja (details: WarningCheckoutItemPriceDetails). Računa se pri čitanju checkouta.</summary>
     public const string CheckoutItemPriceChanged = "CHECKOUT_ITEM_PRICE_CHANGED";
+
+    /// <summary>K1-5 — vraćen termin: upisi liste čekanja istekli zbog otkaza termina NE vraćaju se automatski (details:
+    /// WarningWaitlistEntriesDetails) — popis za recepciju.</summary>
+    public const string AppointmentRestoredWaitlistNotRestored = "APPOINTMENT_RESTORED_WAITLIST_NOT_RESTORED";
+
+    // K1-9 — dolazak i odrada sesije s neplaćenim dugom (details: WarningParticipationCoverageDetails)
+    /// <summary>Sesija nije pokrivena ni paketom ni članarinom, a dug je &gt; 0 (klijent nema prihvatljiv paket; uz članarinu koja ne
+    /// pokriva details nosi razlog pokrića). Plaćena ili besplatna sesija ne upozorava.</summary>
+    public const string ParticipationNotCovered = "PARTICIPATION_NOT_COVERED";
+    /// <summary>Klijent ima prihvatljiv paket za sesiju koji nije odabran/potrošen (details nose pakete) — odabrati ga pri odradi.</summary>
+    public const string ParticipationPackageAvailable = "PARTICIPATION_PACKAGE_AVAILABLE";
 }

@@ -30,11 +30,9 @@ namespace BlueDragon.DuneLight.UnitTests;
 /// </summary>
 public class UniqueEmailTests
 {
-    private static int _memberNumber = 900000;
-
+    // K1-3: broj člana se dodjeljuje automatski.
     private static ClientCreateRequest NewClient(string email) => new()
     {
-        MemberNumber = Interlocked.Increment(ref _memberNumber),
         FirstName = "Email",
         LastName = "Test",
         Email = email
@@ -141,6 +139,8 @@ public class UniqueEmailTests
         Assert.Equal(PostgresErrorCodes.UniqueViolation, pg.SqlState);
         Assert.Equal("ux_clients_organization_email", pg.ConstraintName);
     }
+
+    private static int _memberNumber = 900000;
 
     private static Client RawClient(SchedulingWorld w, string email) => new()
     {

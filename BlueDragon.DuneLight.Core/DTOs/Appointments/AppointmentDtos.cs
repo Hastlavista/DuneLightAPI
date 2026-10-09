@@ -59,6 +59,10 @@ public class BookingDto
     /// <summary>Phase M0: sudjelovanja Bookinga (izvršne/komercijalne jedinice) — adresa za participation-native naredbe
     /// (ParticipationId). Polja Bookinga iznad su IZVEDENI sažeci ovih redaka.</summary>
     public List<BookingParticipationDto> Participations { get; set; } = new();
+
+    /// <summary>K1-9 — neblokirajuća upozorenja naredbe (npr. PARTICIPATION_NOT_COVERED / PARTICIPATION_PACKAGE_AVAILABLE pri
+    /// dolasku i odradi). Samo u odgovoru naredbe, ne u čitanjima.</summary>
+    public List<WarningDto> Warnings { get; set; } = new();
 }
 
 /// <summary>Phase M0: jedno sudjelovanje Bookinga u segmentu termina — životni ciklus, cijena i namirenje.</summary>
@@ -105,6 +109,18 @@ public class BookingParticipationDto
     public DateTimeOffset? NoShowAt { get; set; }
     public Guid? NoShowBy { get; set; }
     public string NoShowReason { get; set; }
+
+    /// <summary>K1-4 — šifra razloga otkazivanja / izostanka i njezin naziv u trenutku događaja (snapshot; preimenovanje ili
+    /// deaktivacija šifre ne mijenja povijest). Samo uz Cancelled odnosno NoShow.</summary>
+    public Guid? CancellationReasonCodeId { get; set; }
+    public string CancellationReasonCodeName { get; set; }
+    public Guid? NoShowReasonCodeId { get; set; }
+    public string NoShowReasonCodeName { get; set; }
+
+    /// <summary>K1-2 — dolazak klijenta (metapodatak, ne status): tko i kada ga je označio. Samo uz Confirmed/Completed; prijelaz
+    /// u NoShow/Cancelled ga briše (trag ostaje u povijesti termina).</summary>
+    public DateTimeOffset? ArrivedAt { get; set; }
+    public Guid? ArrivedBy { get; set; }
 
     /// <summary>P1 (D5) — najnovija posljedica politike sudjelovanja (Active, Waived ili Reversed), null ako je nikad nije
     /// bilo. Puna povijest je u ledgeru posljedica.</summary>
@@ -259,6 +275,10 @@ public class AppointmentDto
 
     /// <summary>Razlog otkazivanja termina (eksplicitno otkazivanje) ili bulk no-showa — metapodatak termina.</summary>
     public string CancellationReason { get; set; }
+
+    /// <summary>K1-4 — šifra razloga eksplicitnog otkazivanja termina i njezin naziv u trenutku otkaza (snapshot).</summary>
+    public Guid? CancellationReasonCodeId { get; set; }
+    public string CancellationReasonCodeName { get; set; }
 
     /// <summary>Phase M1A.1: kada je termin EKSPLICITNO otkazan (trenutno; null ako nije ili je korekcija vratila rad).</summary>
     public DateTimeOffset? CancelledAt { get; set; }
@@ -436,7 +456,7 @@ public class AppointmentCompleteNowRequest
     public string Note { get; set; }
 
     /// <summary>Vidi AppointmentCreateRequest.OverrideAvailability (samo uz appointments.write.all; provjera radne snage
-    /// vrijedi samo za budući početak).</summary>
+    /// vrijedi i za prošli početak, K1-1).</summary>
     public bool OverrideAvailability { get; set; }
 
     [Required]
@@ -471,6 +491,16 @@ public class AppointmentCancelRequest
 
     [MaxLength(500)]
     public string CancellationReason { get; set; }
+
+    /// <summary>K1-4 — šifra razloga (otkaz studija); uz nju slobodni tekst nije obavezan.</summary>
+    public Guid? CancellationReasonCodeId { get; set; }
+}
+
+/// <summary>K1-5 — vraćanje otkazanog termina; razlog je opcionalan (bilježi se u povijesti).</summary>
+public class AppointmentRestoreRequest
+{
+    [MaxLength(500)]
+    public string Reason { get; set; }
 }
 
 /// <summary>P1 (D3/D10) — izostanak (NoShow): jedno sudjelovanje ili svi aktivni na terminu. NoShow nema initiator; razlog je
@@ -481,6 +511,9 @@ public class NoShowRequest
 {
     [MaxLength(500)]
     public string NoShowReason { get; set; }
+
+    /// <summary>K1-4 — šifra razloga izostanka (vrijedi za sva sudjelovanja naredbe).</summary>
+    public Guid? NoShowReasonCodeId { get; set; }
 
     /// <summary>Samo za izostanak JEDNOG sudjelovanja. Izostanak cijelog termina bira paket po sudjelovanju
     /// (<see cref="PackageSelections"/>); ClientPackageId se tamo odbija.</summary>
@@ -541,6 +574,16 @@ public class RecurringConflictDetail
 
     /// <summary>ErrorCodes.RecurringConflictReasonAppointment ili ErrorCodes.RecurringConflictReasonRosterAbsence.</summary>
     public string Reason { get; set; }
+}
+
+/// <summary>K1-6 — sudar resursa u ponavljajućem nizu (details.conflicts uz RESOURCE_CAPACITY_EXCEEDED): datum termina, resurs,
+/// kapacitet i najveća istovremena zauzetost koju bi taj termin dosegao.</summary>
+public class RecurringResourceConflictDetail : RecurringConflictDetail
+{
+    public Guid ResourceId { get; set; }
+    public string ResourceName { get; set; }
+    public int Capacity { get; set; }
+    public int PeakUsage { get; set; }
 }
 
 public class AvailableSlotsQuery
@@ -615,6 +658,9 @@ public class BookingCancelRequest
     [MaxLength(500)]
     public string CancellationReason { get; set; }
 
+    /// <summary>K1-4 — šifra razloga otkazivanja (za otkaz studija zamjenjuje obavezan slobodni tekst).</summary>
+    public Guid? CancellationReasonCodeId { get; set; }
+
     /// <summary>Samo za otkazivanje JEDNOG sudjelovanja. Booking-wide otkazivanje bira paket po sudjelovanju
     /// (<see cref="PackageSelections"/>); ClientPackageId se tamo odbija.</summary>
     public Guid? ClientPackageId { get; set; }
@@ -676,9 +722,15 @@ public class BookingSetStatusRequest
     [MaxLength(500)]
     public string CancellationReason { get; set; }
 
+    /// <summary>K1-4 — šifra razloga otkazivanja (samo Status=Cancelled; Client/Business). Za Business šifra ILI tekst.</summary>
+    public Guid? CancellationReasonCodeId { get; set; }
+
     /// <summary>P1 (D3) — opcionalan razlog izostanka (samo Status=NoShow).</summary>
     [MaxLength(500)]
     public string NoShowReason { get; set; }
+
+    /// <summary>K1-4 — šifra razloga izostanka (samo Status=NoShow).</summary>
+    public Guid? NoShowReasonCodeId { get; set; }
 
     /// <summary>P1 (D10) — otpis posljedice politike u trenutku događaja (Cancelled/NoShow); traži WaiverReason i
     /// appointments.policy.override.</summary>
@@ -719,7 +771,7 @@ public class AppointmentSegmentDto
     public Guid? PricingEmployeeId { get; set; }
     public string PricingEmployeeName { get; set; }
 
-    /// <summary>Dodijeljeni resursi (čitanje; dodjela kroz kreiranje/izmjenu još nije omogućena — kapacitet resursa).</summary>
+    /// <summary>Dodijeljeni resursi segmenta (kapacitet resursa je tvrda blokada).</summary>
     public List<AppointmentSegmentResourceDto> Resources { get; set; } = new();
 }
 
@@ -783,8 +835,9 @@ public class AppointmentSegmentDefinitionRequest
     /// <summary>Opcionalno — mora pripadati CompanyId termina.</summary>
     public Guid? RoomId { get; set; }
 
-    /// <summary>Resursi segmenta (Phase M1D: omogućeni, količina &gt; 0, svaki resurs jednom).</summary>
-    public List<AppointmentSegmentResourceRequest> Resources { get; set; } = new();
+    /// <summary>Resursi segmenta (Phase M1D: omogućeni, količina &gt; 0, svaki resurs jednom). K1-6: null (izostavljeno) =
+    /// zadani resursi usluge u poslovnici termina; poslana lista (i prazna) vrijedi kako je poslana.</summary>
+    public List<AppointmentSegmentResourceRequest> Resources { get; set; }
 }
 
 /// <summary>Segment ciljnog kreiranja/dodavanja: definicija segmenta + sudionici.</summary>
@@ -848,6 +901,10 @@ public class AppointmentSegmentServiceChangeRequest
     public DateTimeOffset? PlannedEnd { get; set; }
 
     public bool OverrideAvailability { get; set; }
+
+    /// <summary>K1-6 (P-7) — null: resursi segmenta se ZAMJENJUJU zadanima nove usluge u poslovnici termina (ista usluga: resursi
+    /// ostaju); poslana lista (i prazna) vrijedi kako je poslana.</summary>
+    public List<AppointmentSegmentResourceRequest> Resources { get; set; }
 }
 
 /// <summary>Phase M1E/M1G — novi SKUP zaposlenika JEDNOG segmenta (bez duplikata). Izvor cijene: rezultat s 1 zaposlenikom →

@@ -31,6 +31,8 @@ public class DatabaseContext : DbContext
     public DbSet<Resource> Resources { get; set; }
     public DbSet<Service> Services { get; set; }
     public DbSet<ServiceCompany> ServiceCompanies { get; set; }
+    public DbSet<ServiceDefaultResource> ServiceDefaultResources { get; set; }
+    public DbSet<CancellationReason> CancellationReasons { get; set; }
     public DbSet<PriceListItem> PriceListItems { get; set; }
     public DbSet<PriceListItemHistory> PriceListItemHistory { get; set; }
     public DbSet<Package> Packages { get; set; }
@@ -363,6 +365,22 @@ public class DatabaseContext : DbContext
             .HasForeignKey(sc => sc.CompanyId)
             .OnDelete(DeleteBehavior.Cascade);
 
+        // K1-6: zadani resursi usluge — konfiguracijski zapis kao ServiceCompany (kaskada s obje strane).
+        modelBuilder.Entity<ServiceDefaultResource>().HasKey(x => x.Id);
+        modelBuilder.Entity<ServiceDefaultResource>()
+            .HasIndex(x => new { x.ServiceId, x.ResourceId })
+            .IsUnique();
+        modelBuilder.Entity<ServiceDefaultResource>()
+            .HasOne(x => x.Service)
+            .WithMany()
+            .HasForeignKey(x => x.ServiceId)
+            .OnDelete(DeleteBehavior.Cascade);
+        modelBuilder.Entity<ServiceDefaultResource>()
+            .HasOne(x => x.Resource)
+            .WithMany()
+            .HasForeignKey(x => x.ResourceId)
+            .OnDelete(DeleteBehavior.Cascade);
+
         modelBuilder.Entity<PriceListItem>().HasKey(p => p.Id);
         modelBuilder.Entity<PriceListItem>()
             .HasIndex(p => new { p.OrganizationId, p.ServiceId, p.PackageId, p.CompanyId });
@@ -598,6 +616,9 @@ public class DatabaseContext : DbContext
         modelBuilder.Entity<MembershipPause>()
             .Property(p => p.Kind)
             .HasConversion(v => v.ToString(), v => Enum.Parse<MembershipPauseKind>(v));
+        modelBuilder.Entity<MembershipPause>()
+            .Property(p => p.Source)
+            .HasConversion(v => v.ToString(), v => Enum.Parse<MembershipPauseSource>(v));
         modelBuilder.Entity<MembershipPause>()
             .Property(p => p.CancellationReason)
             .HasConversion(v => v.ToString(), v => Enum.Parse<MembershipPauseCancellationReason>(v));

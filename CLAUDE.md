@@ -94,5 +94,9 @@ docs/
   nepromjenjiv snapshot, storno samo kroz `CommissionService.Reverse` (Reversed + razlog), izvještaj po događajima. Korisnik
   provizije na prvu prodaju članarine je samo na članstvu; svaka promjena plaćenosti P1 naknade mora pozvati
   `SyncPolicyFeeCommission`.
+- K1 (dorade iz povratnih informacija klijenta) je ZAKLJUČEN 2026-10-08 (K2 samo na nalog) (`docs/k1/`, ADR-0031; povratne informacije i
+  plan faza K2/K3 u `docs/klijent/POVRATNE_INFORMACIJE_v1.md`). Članstvo "stoji" dok su sve poslovnice opsega plana
+  neaktivne: sustavna pauza (`source = CompanyClosure`) koju otvara/zatvara samo obnova; otvorena ne ulazi u matematiku perioda.
+  Razlog otkaza studija = tekst ILI šifra razloga. `Resources = null` na zakazivanju = zadani resursi usluge.
 - Grantovi su granularni po poslovnoj radnji (ne po polju); novi grant ide migracijom samo Admin grupama (ADR-0023).
 - Nema `UserRole` ni `role` claima (uklonjeno, ADR-0019). Nijedna autorizacijska odluka ne smije ovisiti o ulozi; workforce `Role` je samo poslovna oznaka.

@@ -131,7 +131,9 @@ public class GroupSegmentTemplateRequest
     [Range(1, int.MaxValue, ErrorMessage = "Kapacitet mora biti veći od 0.")]
     public int Capacity { get; set; }
 
-    public List<GroupSegmentTemplateResourceRequest> Resources { get; set; } = new();
+    /// <summary>K1-6 — null (izostavljeno): pri kreiranju zadani resursi usluge u poslovnici grupe, pri izmjeni postojeći resursi
+    /// predloška; poslana lista (i prazna) vrijedi kako je poslana.</summary>
+    public List<GroupSegmentTemplateResourceRequest> Resources { get; set; }
 
     /// <summary>Osoblje predloška (skup ravnopravnih zaposlenika, bez duplikata; prazno = sesija bez trenera). Izmjena
     /// predloška je potpuna zamjena definicije, uključivo osoblje.</summary>
@@ -217,21 +219,39 @@ public class GenerateGroupAppointmentsRequest
     [Required]
     public DateTimeOffset ToDate { get; set; }
 
-    /// <summary>Zaobilazi MEKE radne-snage blokade (izvan radnog vremena, odsutnost, praznik, pauza trenera)
-    /// za sve occurrence u ovom rasponu — vidi AppointmentCreateRequest.OverrideAvailability. Nema posebnog
-    /// grant zahtjeva jer je groups.manage već jedini (own/all nepodijeljen) grant ovog endpointa.</summary>
+    /// <summary>Zaobilazi MEKE radne-snage blokade (izvan radnog vremena, odsutnost, pauza trenera) za sve occurrence u ovom
+    /// rasponu — vidi AppointmentCreateRequest.OverrideAvailability. K1-7 (P-5): uz potvrdu se generira i na praznik
+    /// poslovnice (upozorenje COMPANY_CLOSED_HOLIDAY); bez nje se praznik preskače i navodi u Skipped. Nema posebnog grant
+    /// zahtjeva jer je groups.manage već jedini (own/all nepodijeljen) grant ovog endpointa (K2: zaseban grant).</summary>
     public bool OverrideAvailability { get; set; }
 }
 
 public class GenerateGroupAppointmentsResult
 {
     public int CreatedCount { get; set; }
+
+    /// <summary>Preskočeni occurrencei: već generirani + datumi praznika (bez grupa neaktivnih poslovnica).</summary>
     public int SkippedCount { get; set; }
     public List<AppointmentScheduleCellDto> Created { get; set; } = new();
+
+    /// <summary>K1-7 — što nije generirano i zašto: grupe neaktivnih poslovnica i datumi praznika (jedan prikaz).</summary>
+    public List<GroupGenerationSkipDto> Skipped { get; set; } = new();
 
     /// <summary>P2 (Q18) — članovi grupe preskočeni zbog duga članarine uz postavku "blokiraj rezervaciju" (ostaju članovi
     /// grupe); popis za recepciju, po segmentu occurrencea.</summary>
     public List<GroupMembershipSkipDto> MembershipSkips { get; set; } = new();
+}
+
+/// <summary>K1-7 — jedna stavka popisa preskočenog pri generiranju. CompanyInactive: cijela grupa (Slot/Date null);
+/// CompanyHoliday: jedan datum slota (lokalni datum poslovnice).</summary>
+public class GroupGenerationSkipDto
+{
+    public Guid GroupId { get; set; }
+    public string GroupName { get; set; }
+    public Guid CompanyId { get; set; }
+    public Guid? GroupSlotId { get; set; }
+    public DateOnly? Date { get; set; }
+    public GroupGenerationSkipReason Reason { get; set; }
 }
 
 /// <summary>P2 (Q18/Q53) — član grupe preskočen u segmentu occurrencea zbog duga članarine i (kad je riješeno) kako.</summary>

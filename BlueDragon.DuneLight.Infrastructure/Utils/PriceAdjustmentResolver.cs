@@ -108,6 +108,8 @@ public static class MembershipPriceBenefitRules
             return NotApplicable(PriceAdjustmentReason.CoveredByPackage, rule);
         if (!MembershipCoverageRules.CoversCompany(terms, subject.CompanyId))
             return NotApplicable(PriceAdjustmentReason.CompanyNotCovered, rule);
+        if (MembershipCoverageRules.IsStandingStillOn(m, subject.PeriodDate))
+            return NotApplicable(PriceAdjustmentReason.MembershipStandingCompanyClosed, rule);
         if (MembershipTimelines.PauseSpans(m).Any(p => p.StartsOn <= subject.PeriodDate && p.EndsOn >= subject.PeriodDate)
             || MembershipCoverageRules.PeriodOf(m, subject.PeriodDate).Skipped)
             return NotApplicable(PriceAdjustmentReason.Paused, rule);

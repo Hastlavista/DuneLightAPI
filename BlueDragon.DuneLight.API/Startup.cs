@@ -226,6 +226,7 @@ public class Startup
         services.AddScoped<ICompanyService, CompanyService>();
         services.AddScoped<IRoomService, RoomService>();
         services.AddScoped<IResourceService, ResourceService>();
+        services.AddScoped<ICancellationReasonService, CancellationReasonService>();
         services.AddScoped<IServiceCatalogService, ServiceCatalogService>();
         services.AddScoped<IServiceAvailabilityService, ServiceAvailabilityService>();
         services.AddScoped<IPricingService, PricingService>();
@@ -373,10 +374,12 @@ public class Startup
         services.AddSingleton<IMembershipPlanHandler, MembershipPlanHandler>();
         services.AddSingleton<IClientMembershipHandler, ClientMembershipHandler>();
         services.AddSingleton<IResourceHandler, ResourceHandler>();
+        services.AddSingleton<ICancellationReasonHandler, CancellationReasonHandler>();
         services.AddSingleton<IAppointmentSegmentHandler, AppointmentSegmentHandler>();
         services.AddSingleton<IBookingSegmentParticipationHandler, BookingSegmentParticipationHandler>();
         services.AddSingleton<IServiceHandler, ServiceHandler>();
         services.AddSingleton<IServiceCompanyHandler, ServiceCompanyHandler>();
+        services.AddSingleton<IServiceDefaultResourceHandler, ServiceDefaultResourceHandler>();
         services.AddSingleton<IPriceListItemHandler, PriceListItemHandler>();
         services.AddSingleton<IPackageHandler, PackageHandler>();
 

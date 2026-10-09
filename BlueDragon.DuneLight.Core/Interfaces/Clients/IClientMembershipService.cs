@@ -17,6 +17,9 @@ public interface IClientMembershipService
     /// <summary>Pregled 2B — popis članstava kojima izmjena plana nije primijenjena (trajna oznaka), opcionalno za jedan plan.</summary>
     Task<List<ClientMembershipDto>> GetPlanUpdateNotApplied(Guid organizationId, Guid? membershipPlanId);
 
+    /// <summary>K1-8 — članstva koja stoje zbog zatvorenih poslovnica (StandingStillSince), za ručni otkaz ako je zatvaranje trajno.</summary>
+    Task<List<ClientMembershipDto>> GetStandingStill(Guid organizationId);
+
     /// <summary>Datum od kad bi otkaz zatražen danas djelovao (bez promjene).</summary>
     Task<MembershipCancellationPreviewDto> PreviewCancellation(Guid organizationId, Guid id);
 

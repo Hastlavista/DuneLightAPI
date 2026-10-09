@@ -25,6 +25,7 @@ public static class CapabilityCatalog
         ViewManage("catalog.memberships.manage", "catalog", CapabilitySensitivity.Sensitive,
             view: new[] { Grants.CatalogMembershipsView },
             manage: new[] { Grants.CatalogMembershipsManage }),
+        On("catalog.cancellation-reasons.manage", "catalog", CapabilitySensitivity.Normal, Grants.CatalogCancellationReasonsManage),
         ViewManage("catalog.resources.manage", "catalog", CapabilitySensitivity.Normal,
             view: new[] { Grants.CatalogResourcesView },
             manage: new[] { Grants.CatalogResourcesManage }),
@@ -110,6 +111,7 @@ public static class CapabilityCatalog
 
         On("schedule.appointments.policy.override", "schedule", CapabilitySensitivity.Sensitive, Grants.AppointmentsPolicyOverride),
         On("schedule.appointments.membership-block.override", "schedule", CapabilitySensitivity.Sensitive, Grants.AppointmentsMembershipBlockOverride),
+        On("schedule.appointments.arrival.mark", "schedule", CapabilitySensitivity.Normal, Grants.AppointmentsArrivalMark),
         On("schedule.appointments.delete", "schedule", CapabilitySensitivity.HighRisk, Grants.AppointmentsDelete),
         ViewOwnAll("schedule.appointments.manage", "schedule", CapabilitySensitivity.Normal,
             view: Grants.AppointmentsView, own: Grants.AppointmentsWriteOwn, all: Grants.AppointmentsWriteAll),

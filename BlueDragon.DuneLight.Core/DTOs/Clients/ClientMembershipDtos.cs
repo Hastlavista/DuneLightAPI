@@ -22,6 +22,10 @@ public class ClientMembershipDto
     public MembershipPlanVersionDto Terms { get; set; }
 
     public MembershipState State { get; set; }
+
+    /// <summary>K1-8 — članstvo stoji (sve poslovnice opsega plana neaktivne): obnova ne otvara periode ni zaduženja. Null = ne
+    /// stoji; inače datum od kad stoji.</summary>
+    public DateOnly? StandingStillSince { get; set; }
     public DateOnly StartsOn { get; set; }
 
     /// <summary>Tekući period na današnji dan (za Scheduled prvi period); null kad je članstvo završilo ili poništeno.</summary>
@@ -141,8 +145,13 @@ public class MembershipPauseDto
 {
     public Guid Id { get; set; }
     public MembershipPauseKind Kind { get; set; }
+
+    /// <summary>K1-8 — Client ili CompanyClosure (članstvo stoji zbog zatvorenih poslovnica).</summary>
+    public MembershipPauseSource Source { get; set; }
     public DateOnly StartsOn { get; set; }
-    public DateOnly PlannedEndsOn { get; set; }
+
+    /// <summary>Null = otvorena sustavna pauza (poslovnice još zatvorene; kraj se zna tek pri ponovnoj aktivaciji).</summary>
+    public DateOnly? PlannedEndsOn { get; set; }
     public DateOnly? ActualEndsOn { get; set; }
     public string Reason { get; set; }
     public DateTimeOffset? CancelledAt { get; set; }

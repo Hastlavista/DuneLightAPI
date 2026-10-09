@@ -49,6 +49,15 @@ public class OrganizationSettingsController : ControllerBase
         return Ok(await _organizationSettingsService.UpdateMembershipDebtRules(this.CurrentOrganizationId(), this.CurrentUserId(), request));
     }
 
+    /// <summary>K1-4 — obaveznost odabira šifre razloga po događaju (otkaz klijenta / otkaz studija / izostanak); obavezno vrijedi
+    /// samo kad za događaj postoji aktivna šifra.</summary>
+    [HttpPut("cancellation-reasons")]
+    [RequireGrant(Grants.OrganizationSettingsManage)]
+    public async Task<ActionResult<OrganizationSettingsDto>> UpdateCancellationReasonRules([FromBody] OrganizationCancellationReasonRulesUpdateRequest request)
+    {
+        return Ok(await _organizationSettingsService.UpdateCancellationReasonRules(this.CurrentOrganizationId(), this.CurrentUserId(), request));
+    }
+
     /// <summary>P2 (Q4, 2D) — ponašanje kad je limit članarine iskorišten: FallbackToNextSource (default, rezervacija prolazi
     /// i ide na sljedeći izvor) ili Reject (MEMBERSHIP_LIMIT_EXCEEDED).</summary>
     [HttpPut("membership-coverage")]

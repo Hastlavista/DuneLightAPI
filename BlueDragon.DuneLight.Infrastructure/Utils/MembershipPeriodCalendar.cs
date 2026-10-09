@@ -9,10 +9,23 @@ namespace BlueDragon.DuneLight.Infrastructure.Utils;
 public readonly record struct MembershipPeriodTerms(
     MembershipBillingInterval Interval, MembershipRenewalAnchor Anchor, bool PauseExtendsPeriod);
 
-/// <summary>Pauza kakvu vidi matematika perioda: zadnji dan koji stvarno vrijedi (raniji povratak skraćuje planirani).</summary>
-public readonly record struct MembershipPauseSpan(MembershipPauseKind Kind, DateOnly StartsOn, DateOnly EndsOn)
+/// <summary>Pauza kakvu vidi matematika perioda: zadnji dan koji stvarno vrijedi (raniji povratak skraćuje planirani).
+/// K1-8: IsSystem = sustavna pauza "članstvo stoji" (CompanyClosure) — pomiče granice i kad plan ne produljuje pauzom, smije
+/// početi točno na granici perioda i ne troši klijentove limite pauza.</summary>
+public readonly record struct MembershipPauseSpan(MembershipPauseKind Kind, DateOnly StartsOn, DateOnly EndsOn, bool IsSystem = false)
 {
+    /// <summary>K1-8 — kraj otvorene sustavne pauze (kraj još nije poznat).</summary>
+    public static readonly DateOnly OpenEnd = new(2999, 12, 31);
+
     public int Days => EndsOn.DayNumber - StartsOn.DayNumber + 1;
+
+    /// <summary>Broj dana ove pauze koji se preklapaju s drugom pauzom.</summary>
+    public int OverlapDays(MembershipPauseSpan other)
+    {
+        DateOnly from = StartsOn > other.StartsOn ? StartsOn : other.StartsOn;
+        DateOnly to = EndsOn < other.EndsOn ? EndsOn : other.EndsOn;
+        return to < from ? 0 : to.DayNumber - from.DayNumber + 1;
+    }
 }
 
 /// <summary>Jedan period članstva. Skipped = kalendarski period u cijelosti preskočen pauzom (ne otvara se, nema zaduženja).</summary>
@@ -108,6 +121,15 @@ public static class MembershipPeriodCalendar
 
             start = nextStart;
             indexInSegment++;
+
+            // K1-8: stajanje na granici (od datuma kupnje) — preskočeni razmak do kraja stajanja, granice se pomiču za njega.
+            if (terms.Anchor == MembershipRenewalAnchor.PurchaseDate && StandstillAt(timeline.Pauses, nextStart) is MembershipPauseSpan gap)
+            {
+                yield return new MembershipPeriod(sequence, nextStart, gap.EndsOn, Skipped: true);
+                sequence++;
+                shiftDays += gap.EndsOn.DayNumber - nextStart.DayNumber + 1;
+                start = gap.EndsOn.AddDays(1);
+            }
         }
     }
 
@@ -149,13 +171,15 @@ public static class MembershipPeriodCalendar
     }
 
     /// <summary>Days pauza (uz produljenje) pomiče granicu za svoje dane ako je počela prije (pomaknute) granice. Vraća ukupni
-    /// pomak u danima.</summary>
+    /// pomak u danima. K1-8: sustavna pauza (stajanje) ovdje ne pomiče — ona je preskočeni razmak (vidi <see cref="Periods"/>);
+    /// klijentova pauza koja se preklapa sa stajanjem pomiče samo za dane izvan njega (dani se ne broje dvaput).</summary>
     private static int ShiftDays(
         DateOnly nominal, IReadOnlyList<MembershipPauseSpan> pauses, MembershipPeriodTerms terms, int shiftDays, HashSet<int> counted)
     {
         if (!terms.PauseExtendsPeriod)
             return shiftDays;
 
+        List<MembershipPauseSpan> system = pauses.Where(p => p.IsSystem).ToList();
         bool changed = true;
         while (changed)
         {
@@ -164,9 +188,9 @@ public static class MembershipPeriodCalendar
             for (int i = 0; i < pauses.Count; i++)
             {
                 MembershipPauseSpan pause = pauses[i];
-                if (pause.Kind != MembershipPauseKind.Days || counted.Contains(i) || pause.StartsOn >= candidate)
+                if (pause.IsSystem || pause.Kind != MembershipPauseKind.Days || counted.Contains(i) || pause.StartsOn >= candidate)
                     continue;
-                shiftDays += pause.Days;
+                shiftDays += pause.Days - system.Sum(s => pause.OverlapDays(s));
                 counted.Add(i);
                 changed = true;
             }
@@ -174,6 +198,13 @@ public static class MembershipPeriodCalendar
 
         return shiftDays;
     }
+
+    /// <summary>K1-8 — zatvoreno stajanje plana od datuma kupnje koje počinje na (ili prije) granice: razmak se preskače, a
+    /// sljedeći period počinje dan nakon njega (tekući period ostaje kakav jest).</summary>
+    private static MembershipPauseSpan? StandstillAt(IReadOnlyList<MembershipPauseSpan> pauses, DateOnly boundary) => pauses
+        .Where(p => p.IsSystem && p.Kind == MembershipPauseKind.Days && p.StartsOn <= boundary && p.EndsOn >= boundary)
+        .Select(p => (MembershipPauseSpan?)p)
+        .FirstOrDefault();
 
     /// <summary>Kalendarski period: preskočen u cijelosti, ili (raniji povratak, Q47) otvoren od dana povratka.</summary>
     private static IEnumerable<MembershipPeriod> Split(

@@ -93,4 +93,23 @@ public class ServicesController : ControllerBase
     {
         return Ok(await _serviceAvailabilityService.ReplaceAssignedCompanies(this.CurrentOrganizationId(), this.CurrentUserId(), serviceId, request));
     }
+
+    /// <summary>K1-6 (P-7) — zadani resursi usluge. Uz companyId samo aktivni resursi te poslovnice: ono što će zakazivanje bez
+    /// navedenih resursa zauzeti (frontend ih unaprijed prikazuje u formi termina, pa je dostupno i uz appointments.write.*).</summary>
+    [HttpGet("{serviceId:guid}/default-resources")]
+    [RequireGrant(Grants.CatalogServicesView, Grants.AppointmentsWriteOwn, Grants.AppointmentsWriteAll)]
+    public async Task<ActionResult<List<ServiceDefaultResourceDto>>> GetDefaultResources(Guid serviceId, [FromQuery] Guid? companyId)
+    {
+        return Ok(await _serviceAvailabilityService.GetDefaultResources(this.CurrentOrganizationId(), serviceId, companyId));
+    }
+
+    /// <summary>K1-6 — zamjenjuje zadane resurse usluge (količina 1..kapacitet; novi resurs mora biti aktivan). Ne mijenja
+    /// postojeće termine ni predloške grupa.</summary>
+    [HttpPut("{serviceId:guid}/default-resources")]
+    [RequireGrant(Grants.CatalogServicesManage)]
+    public async Task<ActionResult<List<ServiceDefaultResourceDto>>> ReplaceDefaultResources(
+        Guid serviceId, [FromBody] ReplaceServiceDefaultResourcesRequest request)
+    {
+        return Ok(await _serviceAvailabilityService.ReplaceDefaultResources(this.CurrentOrganizationId(), this.CurrentUserId(), serviceId, request));
+    }
 }

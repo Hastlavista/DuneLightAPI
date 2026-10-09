@@ -68,7 +68,14 @@ public partial class AppointmentService
                 ? new List<WarningDto>()
                 : await EnsureWorkforceAvailability(
                     organizationId, employees, appointment.CompanyId, segment.PlannedStart, end, request.OverrideAvailability && hasFullScope);
-            return (new SegmentTarget(segment.PlannedStart, end, request.ServiceId, employees, segment.RoomId, resources, Reprice: true,
+
+            // K1-6: bez poslanih resursa nova usluga donosi svoje zadane resurse (zamjena, ne zbrajanje).
+            IReadOnlyList<ResourceClaim> targetResources = resources;
+            List<AppointmentSegmentResourceRequest> requested = request.Resources
+                ?? (request.ServiceId == segment.ServiceId ? null : await DefaultResourcesOf(organizationId, request.ServiceId, appointment.CompanyId));
+            if (requested != null)
+                targetResources = await ValidatedResourceClaims(organizationId, appointment.CompanyId, requested);
+            return (new SegmentTarget(segment.PlannedStart, end, request.ServiceId, employees, segment.RoomId, targetResources, Reprice: true,
                 $"service:{request.ServiceId}"), warnings);
         });
 
@@ -137,18 +144,25 @@ public partial class AppointmentService
         RewriteSegment(organizationId, userId, hasFullScope, segmentId, async (appointment, segment, _) =>
         {
             List<AppointmentSegmentResourceRequest> requested = request.Resources ?? new List<AppointmentSegmentResourceRequest>();
-            if (requested.Any(r => r.QuantityRequired <= 0))
-                throw new ValidationAppException("Količina resursa mora biti veća od 0.");
-            if (requested.Select(r => r.ResourceId).Distinct().Count() != requested.Count)
-                throw new ValidationAppException("Isti resurs se na segmentu smije navesti samo jednom.");
-            foreach (AppointmentSegmentResourceRequest resource in requested)
-                await EnsureResourceUsable(organizationId, appointment.CompanyId, resource.ResourceId);
+            List<ResourceClaim> claims = await ValidatedResourceClaims(organizationId, appointment.CompanyId, requested);
 
             return (new SegmentTarget(segment.PlannedStart, segment.PlannedEnd, segment.ServiceId,
-                segment.Employees.Select(e => e.EmployeeId).ToList(), segment.RoomId,
-                requested.Select(r => new ResourceClaim(r.ResourceId, r.QuantityRequired)).ToList(), Reprice: false,
+                segment.Employees.Select(e => e.EmployeeId).ToList(), segment.RoomId, claims, Reprice: false,
                 $"resources:{string.Join(",", requested.Select(r => $"{r.ResourceId}x{r.QuantityRequired}"))}"), new List<WarningDto>());
         });
+
+    /// <summary>Resursi segmenta: količina &gt; 0, svaki resurs jednom, aktivan i u poslovnici termina.</summary>
+    private async Task<List<ResourceClaim>> ValidatedResourceClaims(
+        Guid organizationId, Guid companyId, List<AppointmentSegmentResourceRequest> requested)
+    {
+        if (requested.Any(r => r.QuantityRequired <= 0))
+            throw new ValidationAppException("Količina resursa mora biti veća od 0.");
+        if (requested.Select(r => r.ResourceId).Distinct().Count() != requested.Count)
+            throw new ValidationAppException("Isti resurs se na segmentu smije navesti samo jednom.");
+        foreach (AppointmentSegmentResourceRequest resource in requested)
+            await EnsureResourceUsable(organizationId, companyId, resource.ResourceId);
+        return requested.Select(r => new ResourceClaim(r.ResourceId, r.QuantityRequired)).ToList();
+    }
 
     /// <summary>Zajednički tok prepisivanja JEDNOG segmenta (vidi klasnu napomenu).</summary>
     private async Task<AppointmentDto> RewriteSegment(

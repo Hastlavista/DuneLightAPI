@@ -92,7 +92,8 @@ public class ClientService : IClientService
     {
         ValidateDateOfBirth(request.DateOfBirth);
         ValidateGdprConsent(request.GdprConsentGiven, request.GdprConsentDate);
-        await EnsureMemberNumberIsFree(organizationId, request.MemberNumber, excludeId: null);
+        if (request.MemberNumber.HasValue)
+            await EnsureManualMemberNumberAllowed(organizationId, request.MemberNumber.Value, excludeId: null, request.ConfirmMemberNumberJump);
         string email = EmailNormalizer.Normalize(request.Email);
         await EnsureEmailIsFree(organizationId, email, excludeId: null);
         // Create nema prethodnu vrijednost — svaki zadani HomeCompany/HomeTrainer se tretira kao nova dodjela
@@ -105,7 +106,7 @@ public class ClientService : IClientService
         {
             Id = Guid.NewGuid(),
             OrganizationId = organizationId,
-            MemberNumber = request.MemberNumber,
+            MemberNumber = request.MemberNumber ?? 0,
             FirstName = request.FirstName,
             LastName = request.LastName,
             DateOfBirth = request.DateOfBirth,
@@ -127,11 +128,16 @@ public class ClientService : IClientService
 
         try
         {
-            await _clientHandler.Add(client);
+            // K1-3: bez ručnog broja handler dodjeljuje sljedeći pod lockom organizacije.
+            await _clientHandler.Add(client, assignMemberNumber: !request.MemberNumber.HasValue);
         }
         catch (DbUpdateException ex) when (IsEmailUniqueViolation(ex))
         {
             throw EmailTaken(email);
+        }
+        catch (DbUpdateException ex) when (IsMemberNumberUniqueViolation(ex))
+        {
+            throw MemberNumberTaken(client.MemberNumber);
         }
 
         return await GetById(organizationId, client.Id.GetValueOrDefault());
@@ -146,7 +152,9 @@ public class ClientService : IClientService
         EnsureNotAnonymized(existing);
         ValidateDateOfBirth(request.DateOfBirth);
         ValidateGdprConsent(request.GdprConsentGiven, request.GdprConsentDate);
-        await EnsureMemberNumberIsFree(organizationId, request.MemberNumber, excludeId: id);
+        int memberNumber = request.MemberNumber ?? existing.MemberNumber;
+        if (memberNumber != existing.MemberNumber)
+            await EnsureManualMemberNumberAllowed(organizationId, memberNumber, excludeId: id, request.ConfirmMemberNumberJump);
         string email = EmailNormalizer.Normalize(request.Email);
         await EnsureEmailIsFree(organizationId, email, excludeId: id);
         // Nepromijenjena dodjela ostaje "grandfathered" i smije upućivati na sad-neaktivnu Company/Employee;
@@ -155,7 +163,7 @@ public class ClientService : IClientService
         await EnsureHomeTrainerValid(organizationId, request.HomeTrainerId, existing.HomeTrainerId);
         await EnsureTagsExist(organizationId, request.TagIds);
 
-        existing.MemberNumber = request.MemberNumber;
+        existing.MemberNumber = memberNumber;
         existing.FirstName = request.FirstName;
         existing.LastName = request.LastName;
         existing.DateOfBirth = request.DateOfBirth;
@@ -180,6 +188,10 @@ public class ClientService : IClientService
         catch (DbUpdateException ex) when (IsEmailUniqueViolation(ex))
         {
             throw EmailTaken(email);
+        }
+        catch (DbUpdateException ex) when (IsMemberNumberUniqueViolation(ex))
+        {
+            throw MemberNumberTaken(memberNumber);
         }
 
         return await GetById(organizationId, id);
@@ -306,12 +318,34 @@ public class ClientService : IClientService
             throw new BusinessRuleException(ErrorCodes.ClientAnonymized, "Klijent je anonimiziran i više se ne može uređivati.");
     }
 
-    private async Task EnsureMemberNumberIsFree(Guid organizationId, int memberNumber, Guid? excludeId)
+    /// <summary>K1-3 — ručni broj (prijenos iz Excela): ≥ 1 i slobodan; broj veći od dosadašnjeg najvećeg za više od
+    /// <see cref="MemberNumberJumpThreshold"/> traži svjesnu potvrdu jer automatsko brojanje nastavlja od njega.</summary>
+    private async Task EnsureManualMemberNumberAllowed(Guid organizationId, int memberNumber, Guid? excludeId, bool confirmJump)
     {
+        if (memberNumber < 1)
+            throw new ValidationAppException("Broj člana mora biti pozitivan.");
+
         bool taken = await _clientHandler.IsMemberNumberTaken(organizationId, memberNumber, excludeId);
         if (taken)
-            throw new BusinessRuleException(ErrorCodes.DuplicateMemberNumber, $"Broj člana {memberNumber} je već zauzet.");
+            throw MemberNumberTaken(memberNumber);
+
+        int currentMax = await _clientHandler.GetNextMemberNumber(organizationId) - 1;
+        if (!confirmJump && memberNumber > currentMax + MemberNumberJumpThreshold)
+            throw new BusinessRuleException(ErrorCodes.MemberNumberJumpNotConfirmed,
+                $"Broj člana {memberNumber} je znatno veći od dosadašnjeg najvećeg ({currentMax}); automatsko brojanje bi nastavilo od {memberNumber + 1}. Potvrdite ako je to namjera.",
+                new { memberNumber, currentMax });
     }
+
+    private const int MemberNumberJumpThreshold = 1000;
+
+    private static BusinessRuleException MemberNumberTaken(int memberNumber) =>
+        new(ErrorCodes.DuplicateMemberNumber, $"Broj člana {memberNumber} je već zauzet.");
+
+    /// <summary>K1-3 — utrka dva upisa istog broja (provjera iznad je prošla za oba) → isti kod kao provjera, ne 500.</summary>
+    private static bool IsMemberNumberUniqueViolation(DbUpdateException ex) =>
+        ex.InnerException is PostgresException { SqlState: PostgresErrorCodes.UniqueViolation, ConstraintName: ClientMemberNumberUniqueIndex };
+
+    private const string ClientMemberNumberUniqueIndex = "ux_clients_org_member_number";
 
     /// <summary>ADR-0020 — email klijenta je jedinstven unutar organizacije, trimano i bez obzira na velika/mala slova.
     /// Klijent bez emaila (null) je uvijek dopušten.</summary>

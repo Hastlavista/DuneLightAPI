@@ -390,16 +390,18 @@ public class AppointmentWorkforceAvailabilityCharacterizationTests
     }
 
     [Fact]
-    public async Task CompleteNew_ForAPastStart_SkipsWorkforceAvailabilityEntirely()
+    public async Task CompleteNew_ForAPastStart_ChecksWorkforceAvailabilityLikeTheFuture()
     {
-        await using SchedulingWorld w = await SchedulingWorld.Create(nameof(CompleteNew_ForAPastStart_SkipsWorkforceAvailabilityEntirely));
+        await using SchedulingWorld w = await SchedulingWorld.Create(nameof(CompleteNew_ForAPastStart_ChecksWorkforceAvailabilityLikeTheFuture));
         await w.AddAbsence(w.Employee, SchedulingWorld.PastDay);
 
-        // Logging work already done is recording reality, not planning: absence AND outside-hours are both ignored.
-        AppointmentDto dto = await w.CompleteNew(w.CompleteRequest(SchedulingWorld.Past(22)));
+        // CHANGED in K1 (K1-1, ADR-0008): logging past work is validated against the workforce like planning — refused without
+        // override, recorded with a warning with it.
+        await SchedulingAssert.BusinessRule(ErrorCodes.EmployeeAbsent, () => w.CompleteNew(w.CompleteRequest(SchedulingWorld.Past(22))));
 
+        AppointmentDto dto = await w.CompleteNew(w.CompleteRequest(SchedulingWorld.Past(22), overrideAvailability: true));
         Assert.Equal(AppointmentStatus.Closed, dto.Status);
-        SchedulingAssert.HasNoWarnings(dto);
+        Assert.Contains(dto.Warnings, x => x.Code == WarningCodes.EmployeeAbsent);
     }
 
     [Fact]

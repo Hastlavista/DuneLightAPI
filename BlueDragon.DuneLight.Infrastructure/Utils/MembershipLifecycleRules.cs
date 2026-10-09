@@ -100,13 +100,20 @@ public static class MembershipLifecycleRules
     public static MembershipPauseUsage PauseUsage(MembershipTimeline timeline, DateOnly date)
     {
         (DateOnly windowStart, DateOnly windowEnd) = PauseWindow(timeline.MembershipStartsOn ?? timeline.StartsOn, date);
-        int usedDays = timeline.Pauses
+        // K1-8: dani i periodi pod sustavnom pauzom (stajanje zbog zatvorenih poslovnica) ne troše klijentov limit — ni dani ni
+        // broj (klijentova pauza u cijelosti pod stajanjem se ne broji).
+        List<MembershipPauseSpan> system = timeline.Pauses.Where(p => p.IsSystem).ToList();
+        List<MembershipPauseSpan> client = timeline.Pauses.Where(p => !p.IsSystem).ToList();
+        int usedDays = client
             .Where(p => p.Kind == MembershipPauseKind.Days)
-            .Sum(p => OverlapDays(p.StartsOn, p.EndsOn, windowStart, windowEnd));
+            .Sum(p => OverlapDays(p.StartsOn, p.EndsOn, windowStart, windowEnd)
+                      - system.Sum(s => p.OverlapDays(s) == 0 ? 0 : OverlapDays(
+                          p.StartsOn > s.StartsOn ? p.StartsOn : s.StartsOn, p.EndsOn < s.EndsOn ? p.EndsOn : s.EndsOn, windowStart, windowEnd)));
         int usedPeriods = MembershipPeriodCalendar.Periods(timeline)
             .TakeWhile(p => p.StartsOn <= windowEnd)
-            .Count(p => p.Skipped && p.StartsOn >= windowStart);
-        int usedPauses = timeline.Pauses.Count(p => p.StartsOn >= windowStart && p.StartsOn <= windowEnd);
+            .Count(p => p.Skipped && p.StartsOn >= windowStart && !system.Any(s => s.StartsOn <= p.StartsOn && s.EndsOn >= p.StartsOn));
+        int usedPauses = client.Count(p => p.StartsOn >= windowStart && p.StartsOn <= windowEnd
+                                           && !system.Any(s => s.StartsOn <= p.StartsOn && s.EndsOn >= p.EndsOn));
         return new MembershipPauseUsage(windowStart, windowEnd, usedDays, usedPeriods, usedPauses);
     }
 

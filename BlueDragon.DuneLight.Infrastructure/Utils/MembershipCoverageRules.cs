@@ -104,6 +104,9 @@ public static class MembershipCoverageRules
         if (!CoversCompany(terms, subject.CompanyId))
             return MembershipCoverageReason.CompanyNotCovered;
 
+        // K1-8: stajanje zbog zatvorenih poslovnica ima zaseban razlog (prikaz), mehanika je ista kao pauza.
+        if (IsStandingStillOn(membership, subject.PeriodDate))
+            return MembershipCoverageReason.MembershipStandingCompanyClosed;
         if (MembershipTimelines.PauseSpans(membership).Any(p => p.StartsOn <= subject.PeriodDate && p.EndsOn >= subject.PeriodDate)
             || PeriodOf(membership, subject.PeriodDate).Skipped)
             return MembershipCoverageReason.Paused;
@@ -204,10 +207,14 @@ public static class MembershipCoverageRules
         }
     }
 
+    /// <summary>K1-8 — dan pod sustavnom pauzom (stajanje zbog zatvorenih poslovnica), otvorenom ili zatvorenom.</summary>
+    public static bool IsStandingStillOn(ClientMembership membership, DateOnly date) =>
+        MembershipTimelines.PauseSpans(membership).Any(p => p.IsSystem && p.StartsOn <= date && p.EndsOn >= date);
+
     /// <summary>Razlog storna claima kad članstvo više ne pokriva sudjelovanje.</summary>
     public static MembershipUsageReleaseReason ReleaseReasonFor(MembershipCoverageReason reason) => reason switch
     {
-        MembershipCoverageReason.Paused => MembershipUsageReleaseReason.Paused,
+        MembershipCoverageReason.Paused or MembershipCoverageReason.MembershipStandingCompanyClosed => MembershipUsageReleaseReason.Paused,
         MembershipCoverageReason.AfterMembershipEnd => MembershipUsageReleaseReason.AfterMembershipEnd,
         MembershipCoverageReason.DebtNotCovered => MembershipUsageReleaseReason.DebtNotCovered,
         _ => MembershipUsageReleaseReason.TermsChanged

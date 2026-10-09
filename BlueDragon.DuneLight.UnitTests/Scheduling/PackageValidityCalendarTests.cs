@@ -59,7 +59,9 @@ public class PackageValidityCalendarTests
     {
         try
         {
-            await w.CompleteNew(w.CompleteRequest(startsAt, company: company, clientPackageId: package.Id));
+            // K1-1: "Upiši odrađeno" validira radno vrijeme i za prošlost; granični UTC trenuci ovih testova padaju izvan radnog
+            // vremena poslovnice, a test je o valjanosti paketa — override (appointments.write.all) je postavka, ne ponašanje.
+            await w.CompleteNew(w.CompleteRequest(startsAt, company: company, clientPackageId: package.Id, overrideAvailability: true));
             return true;
         }
         catch (BusinessRuleException ex) when (ex.Code == ErrorCodes.PackageNotEligible)

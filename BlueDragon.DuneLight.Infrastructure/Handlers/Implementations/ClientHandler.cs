@@ -8,6 +8,7 @@ using BlueDragon.DuneLight.Infrastructure.Domain.Models.Clients;
 using BlueDragon.DuneLight.Infrastructure.Domain.Settings;
 using BlueDragon.DuneLight.Infrastructure.Handlers.Interfaces;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Storage;
 
 namespace BlueDragon.DuneLight.Infrastructure.Handlers.Implementations;
 
@@ -90,11 +91,22 @@ public class ClientHandler : IClientHandler
             .ToListAsync();
     }
 
-    public async Task Add(Client client)
+    public async Task Add(Client client, bool assignMemberNumber)
     {
         await using DatabaseContext context = DatabaseContext.GenerateContext(_databaseSettings.ConnectionString);
+        await using IDbContextTransaction transaction = await context.Database.BeginTransactionAsync();
+
+        // K1-3: serijalizira dodjelu brojeva članova unutar organizacije (dva istovremena automatska broja ne dobivaju isti).
+        await context.Database.ExecuteSqlInterpolatedAsync(
+            $"SELECT pg_advisory_xact_lock(hashtextextended({"client-member-number:" + client.OrganizationId}, 0))");
+        if (assignMemberNumber)
+            client.MemberNumber = (await context.Clients
+                .Where(c => c.OrganizationId == client.OrganizationId)
+                .MaxAsync(c => (int?)c.MemberNumber) ?? 0) + 1;
+
         context.Clients.Add(client);
         await context.SaveChangesAsync();
+        await transaction.CommitAsync();
     }
 
     public async Task Update(Client client, List<ClientTagAssignment> newTags)

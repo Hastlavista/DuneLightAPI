@@ -38,6 +38,13 @@ public interface IBookingService
     /// razrješavanja cjenika se ne mijenja; namirenje se izvodi iz novog iznosa (iznos ispod već naplaćenog se odbija).</summary>
     Task<BookingDto> SetParticipationPrice(Guid organizationId, Guid userId, bool hasFullScope, Guid participationId, ParticipationPriceChangeRequest request);
 
+    /// <summary>K1-2 — označava dolazak klijenta (Confirmed/Completed, i prije početka; bez financijskog učinka). K1-9: upozorenje
+    /// kad sesija nije pokrivena, a ima dug.</summary>
+    Task<BookingDto> MarkArrival(Guid organizationId, Guid userId, Guid participationId);
+
+    /// <summary>K1-2 — poništava označeni dolazak; povijest zadržava trag.</summary>
+    Task<BookingDto> ClearArrival(Guid organizationId, Guid userId, Guid participationId);
+
     /// <summary>P1 (D10) — naknadni otpis AKTIVNE posljedice politike sudjelovanja: u jednoj transakciji vraća jedinicu paketa
     /// potrošenu kao kaznu, zapis prelazi u Waived (razlog obavezan, nepovratno) i piše audit PolicyConsequenceWaived. Novac se
     /// ne pomiče, klasifikacija se ne mijenja. Traži normalan pristup sudjelovanju + appointments.policy.override.</summary>

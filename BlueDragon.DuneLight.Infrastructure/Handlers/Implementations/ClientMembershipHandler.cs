@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
+using BlueDragon.DuneLight.Core.Enums;
 using BlueDragon.DuneLight.Infrastructure.Domain.Contexts;
 using BlueDragon.DuneLight.Infrastructure.Domain.Models.Clients;
 using BlueDragon.DuneLight.Infrastructure.Domain.Settings;
@@ -45,6 +46,19 @@ public class ClientMembershipHandler : IClientMembershipHandler
             .OrderBy(m => m.PlanUpdateSkippedAt)
             .ToListAsync();
     }
+
+    public async Task<List<ClientMembership>> GetStandingStill(Guid organizationId)
+    {
+        await using DatabaseContext context = DatabaseContext.GenerateContext(_databaseSettings.ConnectionString);
+        return await WithGraph(context.ClientMemberships.AsNoTracking())
+            .Where(m => m.OrganizationId == organizationId && m.VoidedAt == null
+                        && m.Pauses.Any(p => p.Source == MembershipPauseSource.CompanyClosure && p.CancelledAt == null && p.ActualEndsOn == null))
+            .OrderBy(m => m.StartsOn)
+            .ToListAsync();
+    }
+
+    public async Task<bool> AnyActiveCompany(IUnitOfWork uow, Guid organizationId) =>
+        await uow.Context.Companies.AnyAsync(c => c.OrganizationId == organizationId && c.IsActive);
 
     public async Task<ClientMembership> GetForUpdate(IUnitOfWork uow, Guid organizationId, Guid id)
     {

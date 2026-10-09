@@ -26,4 +26,13 @@ public interface IServiceAvailabilityService
     /// ne smije zbog toga vidjeti prazan padajući izbornik za obavezno polje. Isključuje neaktivne usluge, za razliku
     /// od GetAssignedServices (koji čuva grandfathered/neaktivne dodjele za admin ekran usluga).</summary>
     Task<List<AppointmentServiceOptionDto>> GetBookableServices(Guid organizationId, Guid companyId);
+
+    /// <summary>K1-6 (P-7) — zadani resursi usluge; uz <paramref name="companyId"/> samo AKTIVNI resursi te poslovnice (ono što
+    /// će zakazivanje bez navedenih resursa zauzeti — frontend ih unaprijed prikazuje).</summary>
+    Task<List<ServiceDefaultResourceDto>> GetDefaultResources(Guid organizationId, Guid serviceId, Guid? companyId);
+
+    /// <summary>K1-6 — zamjenjuje zadane resurse usluge: resurs organizacije, svaki jednom, količina 1..kapacitet; NOVO dodan
+    /// resurs mora biti aktivan. Ne mijenja postojeće termine ni predloške grupa (P5).</summary>
+    Task<List<ServiceDefaultResourceDto>> ReplaceDefaultResources(
+        Guid organizationId, Guid userId, Guid serviceId, ReplaceServiceDefaultResourcesRequest request);
 }

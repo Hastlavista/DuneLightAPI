@@ -25,6 +25,24 @@ public static class ParticipationEventMetadata
         participation.NoShowAt = null;
         participation.NoShowBy = null;
         participation.NoShowReason = null;
+        participation.CancellationReasonCodeId = null;
+        participation.CancellationReasonCodeName = null;
+        participation.NoShowReasonCodeId = null;
+        participation.NoShowReasonCodeName = null;
+    }
+
+    /// <summary>K1-4 — šifra razloga otkazivanja i naziv u trenutku događaja (snapshot); uz SetCancelled.</summary>
+    public static void SetCancellationReasonCode(BookingSegmentParticipation participation, (Guid? Id, string Name) code)
+    {
+        participation.CancellationReasonCodeId = code.Id;
+        participation.CancellationReasonCodeName = code.Name;
+    }
+
+    /// <summary>K1-4 — šifra razloga izostanka i naziv u trenutku događaja (snapshot); uz SetNoShow.</summary>
+    public static void SetNoShowReasonCode(BookingSegmentParticipation participation, (Guid? Id, string Name) code)
+    {
+        participation.NoShowReasonCodeId = code.Id;
+        participation.NoShowReasonCodeName = code.Name;
     }
 
     /// <summary>Otkazivanje (bilo koji initiator): tko, kada (jedan serverski timestamp događaja) i zašto.</summary>

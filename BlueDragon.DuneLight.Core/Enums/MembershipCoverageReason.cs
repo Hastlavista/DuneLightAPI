@@ -12,6 +12,8 @@ public enum MembershipCoverageReason
     ServiceNotCovered,
     CompanyNotCovered,
     Paused,
+    /// <summary>K1-8 — članstvo stoji jer su sve poslovnice opsega plana zatvorene (sustavna pauza, ne klijentova).</summary>
+    MembershipStandingCompanyClosed,
     /// <summary>Termin je nakon (zakazanog) kraja članstva (Q27).</summary>
     AfterMembershipEnd,
     /// <summary>Termin je prije početka članstva (npr. nakon promjene vremena).</summary>

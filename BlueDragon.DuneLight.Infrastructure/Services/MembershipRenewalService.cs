@@ -85,12 +85,16 @@ public class MembershipRenewalService : IMembershipRenewalService
         return processed;
     }
 
-    public Task CatchUp(IUnitOfWork uow, ClientMembership membership, DateOnly today, MembershipDebtRules rules, Guid? userId)
+    public async Task CatchUp(IUnitOfWork uow, ClientMembership membership, DateOnly today, MembershipDebtRules rules, Guid? userId)
     {
         if (membership.VoidedAt != null)
-            return Task.CompletedTask;
+            return;
 
         DateOnly horizon = today > membership.StartsOn ? today : membership.StartsOn;
+        // K1-8 (bug b): članstvo "stoji" dok su sve poslovnice opsega plana neaktivne; ponovna aktivacija ga pokreće od danas.
+        bool scopeActive = await ScopeHasActiveCompany(uow, membership);
+        if (scopeActive && MembershipTimelines.OpenCompanyClosure(membership) is MembershipPause standstill)
+            EndCompanyClosure(uow, membership, standstill, today, userId);
         SyncCurrentPeriodEnd(membership);
 
         for (int guard = 0; guard < 600; guard++)
@@ -105,13 +109,81 @@ public class MembershipRenewalService : IMembershipRenewalService
             if (next == null || (membership.EndsOn.HasValue && next.Value.StartsOn > membership.EndsOn.Value))
                 break;
 
+            // K1-8: dok članstvo stoji obnova ne otvara periode ni zaduženja; na granici obnove, kad su sve poslovnice opsega
+            // neaktivne, stajanje počinje (sustavna pauza od te granice, tekući period ostaje kakav jest).
+            if (MembershipTimelines.OpenCompanyClosure(membership) != null)
+                break;
+            if (latest != null && !scopeActive)
+            {
+                StartCompanyClosure(uow, membership, next.Value.StartsOn, userId);
+                break;
+            }
+
             if (latest != null && !Renew(uow, membership, next.Value, today, rules, userId))
                 break;
 
             OpenPeriod(uow, membership, MembershipTimelines.Current(membership), next.Value.StartsOn, userId);
         }
+    }
 
-        return Task.CompletedTask;
+    /// <summary>K1-8 — ima li opseg poslovnica verzije plana koja vrijedi za članstvo barem jednu aktivnu poslovnicu ("Sve
+    /// poslovnice" = bilo koja aktivna poslovnica organizacije).</summary>
+    private async Task<bool> ScopeHasActiveCompany(IUnitOfWork uow, ClientMembership membership) =>
+        membership.PlanVersion.CompanyScope == MembershipCompanyScope.AllCompanies
+            ? await _handler.AnyActiveCompany(uow, membership.OrganizationId)
+            : membership.PlanVersion.Companies.Any(c => c.Company?.IsActive == true);
+
+    /// <summary>K1-8 — početak stajanja: sustavna pauza od granice obnove, bez kraja (kalendarski plan: preskočeni periodi; od
+    /// datuma kupnje: dani koji pomiču granice). Ne troši klijentove limite pauza.</summary>
+    private void StartCompanyClosure(IUnitOfWork uow, ClientMembership membership, DateOnly boundary, Guid? userId)
+    {
+        MembershipPause pause = new()
+        {
+            Id = Guid.NewGuid(),
+            OrganizationId = membership.OrganizationId,
+            ClientMembershipId = membership.Id,
+            Source = MembershipPauseSource.CompanyClosure,
+            Kind = MembershipPlanReadModel.PeriodTerms(membership.PlanVersion).Anchor == MembershipRenewalAnchor.CalendarMonth
+                ? MembershipPauseKind.SkipPeriods
+                : MembershipPauseKind.Days,
+            StartsOn = boundary,
+            PlannedEndsOn = null,
+            Reason = "Sve poslovnice plana su neaktivne.",
+            CreatedAt = DateTimeOffset.UtcNow,
+            CreatedBy = userId
+        };
+        membership.Pauses.Add(pause);
+        uow.Context.MembershipPauses.Add(pause);
+        Touch(membership, userId);
+        _handler.AddAudit(uow, Audit(membership, userId, "CompanyClosureStarted", null, $"{pause.Id};{boundary:yyyy-MM-dd}"));
+    }
+
+    /// <summary>K1-8 — kraj stajanja na dan ponovne aktivacije (today), bez naknadnog zaduživanja propuštenih perioda. Od datuma
+    /// kupnje: novi period počinje danas. Kalendarski: nastavlja od 1. sljedećeg mjeseca bez zaduženja za ostatak tekućeg (osim
+    /// kad je danas 1. u mjesecu); recepcija može ručno otvoriti period od danas kroz Q47 (raniji povratak). Stajanje istog dana
+    /// kad je počelo se poništava.</summary>
+    private void EndCompanyClosure(IUnitOfWork uow, ClientMembership membership, MembershipPause pause, DateOnly today, Guid? userId)
+    {
+        DateOnly lastDay = pause.Kind == MembershipPauseKind.Days || today.Day == 1
+            ? today.AddDays(-1)
+            : new DateOnly(today.Year, today.Month, DateTime.DaysInMonth(today.Year, today.Month));
+        DateTimeOffset now = DateTimeOffset.UtcNow;
+        if (lastDay < pause.StartsOn)
+        {
+            pause.CancelledAt = now;
+            pause.CancelledBy = userId;
+            pause.CancellationReason = MembershipPauseCancellationReason.Withdrawn;
+        }
+        else
+        {
+            pause.ActualEndsOn = lastDay;
+        }
+
+        pause.UpdatedAt = now;
+        pause.UpdatedBy = userId;
+        Touch(membership, userId);
+        _handler.AddAudit(uow, Audit(membership, userId, "CompanyClosureEnded", $"{pause.Id};{pause.StartsOn:yyyy-MM-dd}",
+            pause.ActualEndsOn.HasValue ? $"{pause.ActualEndsOn:yyyy-MM-dd}" : "Withdrawn"));
     }
 
     /// <summary>Granica obnove. Vraća false kad članstvo završava (ne otvara se novi period); true kad se period otvara (s

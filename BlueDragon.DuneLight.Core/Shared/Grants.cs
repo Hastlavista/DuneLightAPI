@@ -28,6 +28,9 @@ public static class Grants
     public const string CatalogRoomsManage = "catalog.rooms.manage";
     public const string CatalogResourcesView = "catalog.resources.view";
     public const string CatalogResourcesManage = "catalog.resources.manage";
+
+    /// <summary>K1-4 — upravljanje šifrarnikom razloga otkazivanja/izostanka (pregled šifri imaju svi koji otkazuju).</summary>
+    public const string CatalogCancellationReasonsManage = "catalog.cancellation-reasons.manage";
     public const string CatalogCancellationPoliciesView = "catalog.cancellation-policies.view";
     public const string CatalogCancellationPoliciesManage = "catalog.cancellation-policies.manage";
     public const string CatalogMembershipsView = "catalog.memberships.view";
@@ -61,6 +64,9 @@ public static class Grants
     /// <summary>P2 (Q54) — rezervacija člana u dugu unatoč postavci "blokiraj rezervaciju" (Q15.4/Q18.3); takvo sudjelovanje je
     /// bez pokrića.</summary>
     public const string AppointmentsMembershipBlockOverride = "appointments.membership-block.override";
+
+    /// <summary>K1-2 — označavanje i poništavanje dolaska klijenta na bilo kojem terminu, bez prava uređivanja termina.</summary>
+    public const string AppointmentsArrivalMark = "appointments.arrival.mark";
 
     public const string ScheduleBreaksView = "schedule.breaks.view";
     public const string ScheduleBreaksWriteOwn = "schedule.breaks.write.own";
@@ -149,6 +155,7 @@ public static class Grants
         new(CatalogRoomsManage, "Upravljanje prostorijama", "catalog", "Uređivanje prostorija po poslovnici."),
         new(CatalogResourcesView, "Pregled resursa", "catalog", "Pregled resursa (oprema/mjesta s kapacitetom) po poslovnici."),
         new(CatalogResourcesManage, "Upravljanje resursima", "catalog", "Uređivanje resursa (oprema/mjesta s kapacitetom) po poslovnici."),
+        new(CatalogCancellationReasonsManage, "Upravljanje razlozima otkazivanja", "catalog", "Šifrarnik razloga otkazivanja i izostanka (naziv, aktivnost, za koje događaje vrijedi)."),
         new(CatalogCancellationPoliciesView, "Pregled politika otkazivanja", "catalog", "Pregled politika otkazivanja, njihovih verzija i dodjela."),
         new(CatalogCancellationPoliciesManage, "Upravljanje politikama otkazivanja", "catalog", "Kreiranje politika otkazivanja i verzija, dodjele po poslovnici/usluzi i zadana politika organizacije."),
         new(CatalogMembershipsView, "Pregled planova članarina", "catalog", "Pregled planova članarina i njihovih verzija uvjeta."),
@@ -178,6 +185,7 @@ public static class Grants
         new(AppointmentsDelete, "Brisanje termina", "appointments", "Trajno brisanje termina (isti dan)."),
         new(AppointmentsPolicyOverride, "Iznimka od politike otkazivanja", "appointments", "Otpis naknade/kazne kasnog otkazivanja ili izostanka i korekcija koja poništava takvu posljedicu."),
         new(AppointmentsMembershipBlockOverride, "Rezervacija unatoč blokadi duga članarine", "appointments", "Rezervacija člana čija je članarina u dugu uz postavku \"blokiraj rezervaciju\"; sesija je bez pokrića."),
+        new(AppointmentsArrivalMark, "Označavanje dolaska", "appointments", "Označavanje i poništavanje dolaska klijenta na terminu (bez prava uređivanja termina; bez financijskog učinka)."),
 
         new(ScheduleBreaksView, "Pregled pauza", "schedule-breaks", "Pregled pauza na rasporedu (transparentno, kao raspored termina)."),
         new(ScheduleBreaksWriteOwn, "Vlastite pauze", "schedule-breaks", "Kreiranje/uređivanje/brisanje vlastitih pauza."),

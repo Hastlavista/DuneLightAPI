@@ -30,8 +30,13 @@ public class MembershipPause
     [Column("starts_on")]
     public DateOnly StartsOn { get; set; }
 
+    /// <summary>K1-8 — tko je zadao pauzu (Client / CompanyClosure).</summary>
+    [Column("source")]
+    public MembershipPauseSource Source { get; set; } = MembershipPauseSource.Client;
+
+    /// <summary>Null samo za otvorenu sustavnu pauzu (CompanyClosure dok su poslovnice zatvorene; DB CHECK).</summary>
     [Column("planned_ends_on")]
-    public DateOnly PlannedEndsOn { get; set; }
+    public DateOnly? PlannedEndsOn { get; set; }
 
     [Column("actual_ends_on")]
     public DateOnly? ActualEndsOn { get; set; }
@@ -62,7 +67,12 @@ public class MembershipPause
 
     public ClientMembership Membership { get; set; }
 
-    /// <summary>Zadnji dan pauze koji stvarno vrijedi (raniji povratak skraćuje planirani).</summary>
+    /// <summary>Zadnji dan pauze koji stvarno vrijedi (raniji povratak skraćuje planirani). Otvorena sustavna pauza vrijedi
+    /// do <see cref="Utils.MembershipPauseSpan.OpenEnd"/>.</summary>
     [NotMapped]
-    public DateOnly EffectiveEndsOn => ActualEndsOn ?? PlannedEndsOn;
+    public DateOnly EffectiveEndsOn => ActualEndsOn ?? PlannedEndsOn ?? Utils.MembershipPauseSpan.OpenEnd;
+
+    /// <summary>K1-8 — otvorena sustavna pauza: članstvo trenutno stoji (kraj još nije poznat).</summary>
+    [NotMapped]
+    public bool IsOpenCompanyClosure => Source == MembershipPauseSource.CompanyClosure && CancelledAt == null && ActualEndsOn == null;
 }

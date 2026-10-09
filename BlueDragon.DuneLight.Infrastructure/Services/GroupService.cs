@@ -425,7 +425,11 @@ public class GroupService : IGroupService
             ?? throw new NotFoundAppException("GroupSegmentTemplate", templateId);
 
         DateTimeOffset now = DateTimeOffset.UtcNow;
-        // Phase M1H: izmjena predloška je POTPUNA zamjena njegove definicije (uključivo osoblje i izvor cijene).
+        // Phase M1H: izmjena predloška je POTPUNA zamjena njegove definicije (uključivo osoblje i izvor cijene). K1-6: izostavljeni
+        // resursi (null) zadržavaju postojeće resurse predloška — zadani resursi usluge se kopiraju samo pri kreiranju.
+        request.Resources ??= existing.Resources
+            .Select(r => new GroupSegmentTemplateResourceRequest { ResourceId = r.ResourceId, QuantityRequired = r.QuantityRequired })
+            .ToList();
         GroupSegmentTemplate updated = await BuildTemplate(organizationId, groupId, group.CompanyId, request, now);
         EnsureAnchorTemplate(group.SegmentTemplates.Where(t => t.Id != templateId).Append(updated).ToList());
 
@@ -512,8 +516,12 @@ public class GroupService : IGroupService
         if (request.Capacity < 1)
             throw new ValidationAppException("Kapacitet predloška mora biti veći od 0.");
 
-        List<(Guid ResourceId, int Quantity)> resources = (request.Resources ?? new List<GroupSegmentTemplateResourceRequest>())
-            .Select(r => (r.ResourceId, r.QuantityRequired)).ToList();
+        // K1-6 (P-7): izostavljeni resursi (null) = zadani resursi usluge u poslovnici grupe, kopirani u predložak pri kreiranju
+        // (kasnija promjena zadanih ne mijenja predložak — P5).
+        List<(Guid ResourceId, int Quantity)> resources = request.Resources != null
+            ? request.Resources.Select(r => (r.ResourceId, r.QuantityRequired)).ToList()
+            : (await _serviceAvailabilityService.GetDefaultResources(organizationId, request.ServiceId, companyId))
+                .Select(r => (r.ResourceId, r.QuantityRequired)).ToList();
         List<Guid> employees = request.EmployeeIds?.ToList() ?? new List<Guid>();
         if (employees.Distinct().Count() != employees.Count)
             throw new ValidationAppException("Isti zaposlenik se na predlošku smije navesti samo jednom.");
@@ -1128,6 +1136,9 @@ public class GroupService : IGroupService
         /// <summary>Sidro occurrencea = početak predloška s pomakom 0 = početak termina (identitet (slot, početak)).</summary>
         public DateTimeOffset StartsAt { get; init; }
 
+        /// <summary>K1-7 — datum je praznik poslovnice (generira se samo uz OverrideAvailability, uz upozorenje).</summary>
+        public bool IsHoliday { get; init; }
+
         public List<CandidateSegment> Segments { get; init; } = new();
     }
 
@@ -1203,12 +1214,29 @@ public class GroupService : IGroupService
             if (group == null)
                 throw new NotFoundAppException("Group", request.GroupId.Value);
 
+            // K1-7 (bug a): izričito tražena grupa neaktivne poslovnice je greška, ne tiho ništa.
+            if (group.IsActive && group.Company?.IsActive != true)
+                throw new BusinessRuleException(ErrorCodes.InactiveCompany, "Poslovnica grupe nije aktivna — termini se ne generiraju.");
+
             candidateGroups = group.IsActive ? new List<Group> { group } : new List<Group>();
         }
         else
         {
             candidateGroups = await _groupHandler.GetAll(organizationId, isActive: true);
         }
+
+        // K1-7 (bug a): grupe neaktivnih poslovnica se preskaču i navode u odgovoru.
+        List<GroupGenerationSkipDto> skippedItems = candidateGroups
+            .Where(g => g.Company?.IsActive != true)
+            .Select(g => new GroupGenerationSkipDto
+            {
+                GroupId = g.Id.GetValueOrDefault(),
+                GroupName = g.Name,
+                CompanyId = g.CompanyId,
+                Reason = GroupGenerationSkipReason.CompanyInactive
+            })
+            .ToList();
+        candidateGroups = candidateGroups.Where(g => g.Company?.IsActive == true).ToList();
 
         // Raspon su kalendarski datumi kako ih je klijent napisao; vrijeme slota (+ pomak predloška) je lokalno vrijeme u
         // efektivnoj zoni poslovnice grupe (zidni sat, i preko DST prijelaza) — ne offset zahtjeva ni hosta.
@@ -1243,9 +1271,21 @@ public class GroupService : IGroupService
                     if (date.DayOfWeek != slot.DayOfWeek)
                         continue;
 
-                    if (holidaysForCompanies.Any(h => h.CompanyId == group.CompanyId && h.Date == date))
+                    // K1-7 (P-5, bug d): praznik bez potvrde se preskače i navodi; uz OverrideAvailability se generira
+                    // uz upozorenje (isti override kao individualni termin).
+                    bool holiday = holidaysForCompanies.Any(h => h.CompanyId == group.CompanyId && h.Date == date);
+                    if (holiday && !request.OverrideAvailability)
                     {
                         skipped++;
+                        skippedItems.Add(new GroupGenerationSkipDto
+                        {
+                            GroupId = group.Id.GetValueOrDefault(),
+                            GroupName = group.Name,
+                            CompanyId = group.CompanyId,
+                            GroupSlotId = slot.Id,
+                            Date = date,
+                            Reason = GroupGenerationSkipReason.CompanyHoliday
+                        });
                         continue;
                     }
 
@@ -1264,6 +1304,7 @@ public class GroupService : IGroupService
                         Group = group,
                         Slot = slot,
                         StartsAt = startsAt,
+                        IsHoliday = holiday,
                         Segments = group.SegmentTemplates
                             .OrderBy(t => t.StartOffsetMinutes).ThenBy(t => t.Id)
                             .Select(t =>
@@ -1372,6 +1413,9 @@ public class GroupService : IGroupService
                 });
 
             warningsByCandidate.TryGetValue((slot.Id.GetValueOrDefault(), candidate.StartsAt), out List<WarningDto> occurrenceWarnings);
+            occurrenceWarnings ??= new List<WarningDto>();
+            if (candidate.IsHoliday && occurrenceWarnings.All(x => x.Code != WarningCodes.CompanyClosedHoliday))
+                occurrenceWarnings.Add(new WarningDto(WarningCodes.CompanyClosedHoliday));
             AppointmentRange range = AppointmentRange.Of(appointment);
 
             createdDtos.Add(new AppointmentScheduleCellDto
@@ -1389,7 +1433,7 @@ public class GroupService : IGroupService
                 GroupName = group.Name,
                 AttendanceCount = 0,
                 ExpectedCount = group.Members.Count(m => m.IsActive),
-                Warnings = occurrenceWarnings ?? new List<WarningDto>()
+                Warnings = occurrenceWarnings
             });
         }
 
@@ -1433,6 +1477,7 @@ public class GroupService : IGroupService
             CreatedCount = toCreate.Count,
             SkippedCount = skipped,
             Created = createdDtos.OrderBy(a => a.PlannedStart).ToList(),
+            Skipped = skippedItems.OrderBy(s => s.Date).ThenBy(s => s.GroupName).ToList(),
             MembershipSkips = membershipSkips.Select(s => GroupMembershipSkips.ToDto(s, toCreate.SelectMany(a => a.Segments).Single(x => x.Id == s.AppointmentSegmentId).PlannedStart)).ToList()
         };
     }
@@ -1564,7 +1609,7 @@ public class GroupService : IGroupService
 
                 WorkingHoursTemplate companyTemplate = companyTemplatesById[candidate.Group.CompanyId];
 
-                // Praznik je već obrađen ranije (tiho preskakanje kandidata na dan praznika).
+                // Praznik je već obrađen ranije (K1-7: bez potvrde preskočen i naveden, uz potvrdu upozorenje na occurrenceu).
                 bool withinHours = absenceHit || IsWithinWorkingHours(
                     employeeTemplate, companyTemplate, rosterEntriesForOccurrence, localDate, calendar.LocalTimeOfDay(segment.Start), segment.DurationMinutes);
 

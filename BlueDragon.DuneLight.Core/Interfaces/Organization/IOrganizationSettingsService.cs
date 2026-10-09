@@ -23,6 +23,9 @@ public interface IOrganizationSettingsService
     /// <summary>P2 (Q4, 2D) — ponašanje kad je limit članarine iskorišten.</summary>
     Task<OrganizationSettingsDto> UpdateMembershipCoverageRules(Guid organizationId, Guid userId, OrganizationMembershipCoverageUpdateRequest request);
 
+    /// <summary>K1-4 — obaveznost odabira šifre razloga otkazivanja/izostanka po događaju.</summary>
+    Task<OrganizationSettingsDto> UpdateCancellationReasonRules(Guid organizationId, Guid userId, OrganizationCancellationReasonRulesUpdateRequest request);
+
     /// <summary>P2 (2F) — postavke provizija organizacije (osnovica, Q38); API pod commissions.manage.</summary>
     Task<OrganizationCommissionSettingsDto> GetCommissionSettings(Guid organizationId);
     Task<OrganizationCommissionSettingsDto> UpdateCommissionSettings(Guid organizationId, Guid userId, OrganizationCommissionSettingsDto request);

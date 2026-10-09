@@ -54,6 +54,7 @@ public class BookingService : IBookingService, IParticipationLifecycleService
     private readonly IUnitOfWorkFactory _unitOfWorkFactory;
     private readonly IGrantResolver _grantResolver;
     private readonly IMembershipCoverageService _membershipCoverage;
+    private readonly ICancellationReasonService _cancellationReasonService;
 
     public BookingService(
         IAppointmentHandler appointmentHandler,
@@ -74,8 +75,10 @@ public class BookingService : IBookingService, IParticipationLifecycleService
         INotificationHandler notificationHandler,
         IUnitOfWorkFactory unitOfWorkFactory,
         IGrantResolver grantResolver,
-        IMembershipCoverageService membershipCoverage)
+        IMembershipCoverageService membershipCoverage,
+        ICancellationReasonService cancellationReasonService)
     {
+        _cancellationReasonService = cancellationReasonService;
         _grantResolver = grantResolver;
         _membershipCoverage = membershipCoverage;
         _appointmentHandler = appointmentHandler;
@@ -245,6 +248,7 @@ public class BookingService : IBookingService, IParticipationLifecycleService
             Status = BookingStatus.Cancelled,
             CancellationInitiator = request?.CancellationInitiator,
             CancellationReason = request?.CancellationReason,
+            CancellationReasonCodeId = request?.CancellationReasonCodeId,
             WaivePolicyConsequence = request?.WaivePolicyConsequence ?? false,
             WaiverReason = request?.WaiverReason,
             CorrectionReason = request?.CorrectionReason
@@ -389,6 +393,105 @@ public class BookingService : IBookingService, IParticipationLifecycleService
         return ToDto(refreshed, appointment.Form);
     }
 
+    /// <summary>K1-2 — označava dolazak klijenta (metapodatak, ne status; bez financijskog učinka). Dopušteno na Confirmed i
+    /// Completed, i prije početka; ponovno označavanje ne mijenja prvi zapis. Grant appointments.arrival.mark (bilo koji termin,
+    /// bez prava uređivanja termina). K1-9: sesija s neplaćenim dugom vraća upozorenje.</summary>
+    public async Task<BookingDto> MarkArrival(Guid organizationId, Guid userId, Guid participationId)
+    {
+        (Appointment appointment, Guid clientId) = await MutateArrival(organizationId, participationId, async (uow, appointmentId, booking, participation) =>
+        {
+            if (!ParticipationOccupancy.Occupies(participation.Status))
+                throw new BusinessRuleException(ErrorCodes.ParticipationArrivalNotAllowed,
+                    "Dolazak se označava samo na aktivnom (Confirmed) ili odrađenom (Completed) sudjelovanju.");
+            if (participation.ArrivedAt.HasValue)
+                return;
+
+            participation.ArrivedAt = DateTimeOffset.UtcNow;
+            participation.ArrivedBy = userId;
+            await _auditLogHandler.Add(uow, ArrivalAudit(appointmentId, booking, participation, userId,
+                oldValue: null, newValue: participation.ArrivedAt.Value.ToString("O")));
+        });
+
+        Booking refreshed = await _appointmentHandler.GetBooking(organizationId, appointment.Id.GetValueOrDefault(), clientId);
+        BookingDto dto = ToDto(refreshed, appointment.Form);
+        dto.Warnings.AddRange(await ParticipationCoverageWarnings.For(
+            _clientPackageService, organizationId, appointment, clientId, dto.Participations.Single(p => p.Id == participationId)));
+        return dto;
+    }
+
+    /// <summary>K1-2 — poništava označeni dolazak (pogrešan klik); povijest zadržava oba zapisa. Bez dolaska je no-op.</summary>
+    public async Task<BookingDto> ClearArrival(Guid organizationId, Guid userId, Guid participationId)
+    {
+        (Appointment appointment, Guid clientId) = await MutateArrival(organizationId, participationId, async (uow, appointmentId, booking, participation) =>
+        {
+            if (participation.ArrivedAt.HasValue)
+                await ClearArrivalInTransaction(uow, appointmentId, booking, participation, userId, "Cleared:Manual");
+        });
+
+        Booking refreshed = await _appointmentHandler.GetBooking(organizationId, appointment.Id.GetValueOrDefault(), clientId);
+        return ToDto(refreshed, appointment.Form);
+    }
+
+    /// <summary>K1-2 — zajednički okvir naredbi dolaska: isti redoslijed zaključavanja kao prijelaz (termin, pa sudjelovanje).</summary>
+    private async Task<(Appointment Appointment, Guid ClientId)> MutateArrival(
+        Guid organizationId, Guid participationId, Func<IUnitOfWork, Guid, Booking, BookingSegmentParticipation, Task> mutate)
+    {
+        Guid appointmentId = await _participationHandler.GetAppointmentIdOf(organizationId, participationId)
+            ?? throw new NotFoundAppException("Participation", participationId);
+        Appointment appointment = await _appointmentHandler.GetWithBookingsForMutation(organizationId, appointmentId)
+            ?? throw new NotFoundAppException("Appointment", appointmentId);
+        Guid clientId;
+
+        try
+        {
+            await using IUnitOfWork uow = await _unitOfWorkFactory.Begin();
+            if (await _appointmentHandler.GetForUpdate(uow, organizationId, appointmentId) == null)
+                throw new NotFoundAppException("Appointment", appointmentId);
+            Booking booking = await _participationHandler.GetBookingWithLockedParticipation(uow, organizationId, participationId)
+                ?? throw new NotFoundAppException("Participation", participationId);
+            BookingSegmentParticipation participation = BookingParticipations.ById(booking, participationId);
+            clientId = booking.ClientId;
+
+            await mutate(uow, appointmentId, booking, participation);
+            booking.UpdatedAt = DateTimeOffset.UtcNow;
+            await _appointmentHandler.UpdateBooking(uow, booking);
+            await uow.CommitAsync();
+        }
+        catch (DbUpdateConcurrencyException)
+        {
+            throw new BusinessRuleException(
+                ErrorCodes.ConcurrencyConflict, "Podaci su upravo promijenjeni od strane drugog zahtjeva — pokušajte ponovno.");
+        }
+
+        return (appointment, clientId);
+    }
+
+    /// <summary>K1-2 — briše dolazak i trajno zapisuje u povijest što je obrisano (tko/kada je bio označen) i zašto
+    /// (Cleared:Manual, Cleared:NoShow, Cleared:Cancelled).</summary>
+    private async Task ClearArrivalInTransaction(
+        IUnitOfWork uow, Guid appointmentId, Booking booking, BookingSegmentParticipation participation, Guid userId, string reason)
+    {
+        string old = $"{participation.ArrivedAt.Value:O}|{participation.ArrivedBy}";
+        participation.ArrivedAt = null;
+        participation.ArrivedBy = null;
+        await _auditLogHandler.Add(uow, ArrivalAudit(appointmentId, booking, participation, userId, old, reason));
+    }
+
+    private static AppointmentAuditLog ArrivalAudit(
+        Guid appointmentId, Booking booking, BookingSegmentParticipation participation, Guid userId, string oldValue, string newValue) => new()
+    {
+        Id = Guid.NewGuid(),
+        AppointmentId = appointmentId,
+        BookingId = booking.Id,
+        BookingSegmentParticipationId = participation.Id,
+        ChangeType = "Arrival",
+        OldValue = oldValue,
+        NewValue = newValue,
+        StatusVersion = participation.StatusVersion,
+        ChangedAt = DateTimeOffset.UtcNow,
+        ChangedBy = userId
+    };
+
     /// <summary>P1 (D10) — naknadni otpis aktivne posljedice politike (vidi IBookingService). Normalan pristup sudjelovanju:
     /// appointments.write.all ili own (segment sudjelovanja); za grupni occurrence i groups.attendance.all/own. Ovlast
     /// appointments.policy.override nikad ne širi own opseg.</summary>
@@ -462,7 +565,8 @@ public class BookingService : IBookingService, IParticipationLifecycleService
                 case CancellationInitiator.System:
                     throw new ValidationAppException("Initiator System postavlja isključivo sustav — zahtjev smije biti Client ili Business.");
                 case CancellationInitiator.Business:
-                    if (string.IsNullOrWhiteSpace(request.CancellationReason))
+                    // K1-4: razlog = slobodni tekst ILI šifra razloga.
+                    if (string.IsNullOrWhiteSpace(request.CancellationReason) && request.CancellationReasonCodeId == null)
                         throw new ValidationAppException("Poslovno (Business) otkazivanje zahtijeva razlog.");
                     grants = await _grantResolver.Resolve(organizationId, userId);
                     if (!grants.Has(Grants.AppointmentsWriteAll))
@@ -575,7 +679,12 @@ public class BookingService : IBookingService, IParticipationLifecycleService
         }
 
         Booking refreshed = await _appointmentHandler.GetBooking(organizationId, appointmentId, preloaded.ClientId);
-        return ToDto(refreshed, appointment.Form);
+        BookingDto dto = ToDto(refreshed, appointment.Form);
+        // K1-9: odrada sesije s neplaćenim dugom (nije pokrivena ni paketom ni članarinom) upozorava recepciju.
+        if (request.Status == BookingStatus.Completed)
+            dto.Warnings.AddRange(await ParticipationCoverageWarnings.For(
+                _clientPackageService, organizationId, appointment, preloaded.ClientId, dto.Participations.Single(p => p.Id == participationId)));
+        return dto;
     }
 
     /// <summary>Gost izvan popisa članova koji se čekira izravno kroz SetStatusOnSegment bez prethodnog AddGroupGuest poziva (isto
@@ -673,7 +782,13 @@ public class BookingService : IBookingService, IParticipationLifecycleService
         }
 
         Booking refreshed = await _appointmentHandler.GetBooking(organizationId, appointmentId, clientId);
-        return ToDto(refreshed, appointment.Form);
+        BookingDto dto = ToDto(refreshed, appointment.Form);
+        // K1-9: isto upozorenje kao odrada postojećeg sudjelovanja.
+        if (request.Status == BookingStatus.Completed)
+            foreach (BookingParticipationDto participation in dto.Participations.Where(p => p.AppointmentSegmentId == segment.Id))
+                dto.Warnings.AddRange(await ParticipationCoverageWarnings.For(
+                    _clientPackageService, organizationId, appointment, clientId, participation));
+        return dto;
     }
 
     /// <summary>P1 — opcije jednog prijelaza: jedan serverski timestamp događaja (klasifikacija, metapodaci, posljedica);
@@ -773,6 +888,10 @@ public class BookingService : IBookingService, IParticipationLifecycleService
 
         // (2) Metapodaci uvijek odgovaraju statusu — stari se brišu prije novog događaja. (3) StatusVersion + 1 jednom.
         ParticipationEventMetadata.Clear(participation);
+        // K1-2: dolazak postoji samo uz Confirmed/Completed (DB CHECK); izostanak/otkaz ga briše, a povijest trajno bilježi tko ga
+        // je i kada označio i da je obrisan zbog prijelaza (trag za prigovore na naknadu).
+        if (!ParticipationOccupancy.Occupies(target) && participation.ArrivedAt.HasValue)
+            await ClearArrivalInTransaction(uow, appointmentId, booking, participation, userId, $"Cleared:{target}");
         ParticipationLifecycle.TrySetStatus(participation, target);
 
         // P2 (2D): ulazak u zauzimajuće stanje (ponovna aktivacija, check-in) — claim PRIJE efekata completiona, da članarina
@@ -795,6 +914,11 @@ public class BookingService : IBookingService, IParticipationLifecycleService
                 CancellationInitiator initiator = request.CancellationInitiator
                     ?? throw new ValidationAppException("Initiator otkazivanja je obavezan (Client ili Business).");
                 ParticipationEventMetadata.SetCancelled(participation, initiator, eventAt, userId, request.CancellationReason);
+                // K1-4: šifra razloga (System je postavlja samo sustav — bez šifre i bez obaveznosti).
+                if (initiator != CancellationInitiator.System)
+                    ParticipationEventMetadata.SetCancellationReasonCode(participation, await _cancellationReasonService.ResolveForEvent(
+                        organizationId, request.CancellationReasonCodeId,
+                        initiator == CancellationInitiator.Client ? CancellationReasonEvent.ClientCancellation : CancellationReasonEvent.BusinessCancellation));
                 // D2: politika se evaluira SAMO za klijentsko otkazivanje.
                 if (initiator == CancellationInitiator.Client)
                     await _participationPolicyService.ApplyClientCancellation(
@@ -803,6 +927,8 @@ public class BookingService : IBookingService, IParticipationLifecycleService
             case ParticipationStatus.NoShow:
                 // D2: izostanak nema initiator — valjani izostanak JEST klijentovo nedolaženje i uvijek evaluira politiku.
                 ParticipationEventMetadata.SetNoShow(participation, eventAt, userId, request.NoShowReason);
+                ParticipationEventMetadata.SetNoShowReasonCode(participation, await _cancellationReasonService.ResolveForEvent(
+                    organizationId, request.NoShowReasonCodeId, CancellationReasonEvent.NoShow));
                 await _participationPolicyService.ApplyNoShow(
                     uow, organizationId, userId, appointment, booking, participation, eventAt, policyOptions);
                 break;

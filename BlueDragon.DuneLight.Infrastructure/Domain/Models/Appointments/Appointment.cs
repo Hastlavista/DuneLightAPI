@@ -45,6 +45,14 @@ public class Appointment
     [Column("cancellation_reason")]
     public string CancellationReason { get; set; }
 
+    /// <summary>K1-4 — šifra razloga eksplicitnog otkazivanja termina i naziv u trenutku otkaza (snapshot); briše se zajedno s
+    /// CancellationReason.</summary>
+    [Column("cancellation_reason_code_id")]
+    public Guid? CancellationReasonCodeId { get; set; }
+
+    [Column("cancellation_reason_code_name")]
+    public string CancellationReasonCodeName { get; set; }
+
     /// <summary>Phase M1A.1 — TRENUTNA eksplicitna otkazanost TERMINA (AppointmentService.Cancel/MarkNoShow na razini
     /// termina): kada/tko. Razlikuje "sesija je otkazana" od "svi klijenti su pojedinačno otkazali" (to drugo ostavlja
     /// termin Scheduled). Ulaz je u AppointmentLifecycle.Derive; nikad se ne izvodi iz statusa sudjelovanja. Korekcija

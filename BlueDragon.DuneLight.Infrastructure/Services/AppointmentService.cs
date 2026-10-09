@@ -65,6 +65,8 @@ public partial class AppointmentService : IAppointmentService
 
     private readonly IGrantResolver _grantResolver;
     private readonly IMembershipCoverageService _membershipCoverage;
+    private readonly ICancellationReasonService _cancellationReasonService;
+    private readonly IWaitlistHandler _waitlistHandler;
 
     public AppointmentService(
         IAppointmentHandler appointmentHandler,
@@ -95,8 +97,12 @@ public partial class AppointmentService : IAppointmentService
         IUnitOfWorkFactory unitOfWorkFactory,
         IOrganizationCalendarService organizationCalendarService,
         IGrantResolver grantResolver,
-        IMembershipCoverageService membershipCoverage)
+        IMembershipCoverageService membershipCoverage,
+        ICancellationReasonService cancellationReasonService,
+        IWaitlistHandler waitlistHandler)
     {
+        _cancellationReasonService = cancellationReasonService;
+        _waitlistHandler = waitlistHandler;
         _organizationCalendarService = organizationCalendarService;
         _grantResolver = grantResolver;
         _membershipCoverage = membershipCoverage;
@@ -175,6 +181,13 @@ public partial class AppointmentService : IAppointmentService
             throw new ValidationAppException("Klijent se u istom segmentu smije pojaviti samo jednom.");
     }
 
+    /// <summary>K1-6 (P-7) — zadani resursi usluge u poslovnici termina (samo aktivni resursi te poslovnice), kad zahtjev resurse
+    /// ne navodi.</summary>
+    private async Task<List<AppointmentSegmentResourceRequest>> DefaultResourcesOf(Guid organizationId, Guid serviceId, Guid companyId) =>
+        (await _serviceAvailabilityService.GetDefaultResources(organizationId, serviceId, companyId))
+            .Select(r => new AppointmentSegmentResourceRequest { ResourceId = r.ResourceId, QuantityRequired = r.QuantityRequired })
+            .ToList();
+
     /// <summary>Strukturna validacija i cijena JEDNOG segmenta (usluga, poslovnica, zaposlenici, prostorija, klijenti);
     /// cijena se razrješava po usluzi segmenta na početak segmenta, uz ručni iznos sudionika.</summary>
     private async Task<ValidatedSegment> ValidateSegment(
@@ -187,7 +200,7 @@ public partial class AppointmentService : IAppointmentService
             await EnsureStructuralEligibility(organizationId, service, companyId, employeeId);
         Room room = await EnsureRoomExists(organizationId, companyId, segment.RoomId);
         List<SegmentResourcePlan> resources = new List<SegmentResourcePlan>();
-        foreach (AppointmentSegmentResourceRequest resource in segment.Resources ?? new List<AppointmentSegmentResourceRequest>())
+        foreach (AppointmentSegmentResourceRequest resource in segment.Resources ?? await DefaultResourcesOf(organizationId, segment.ServiceId, companyId))
         {
             await EnsureResourceUsable(organizationId, companyId, resource.ResourceId);
             resources.Add(new SegmentResourcePlan(resource.ResourceId, resource.QuantityRequired));
@@ -235,7 +248,8 @@ public partial class AppointmentService : IAppointmentService
     /// izvor cijene, preklapanja, kapacitet prostorije/resursa); sudjelovanja nastaju Confirmed i zatim se ODRAĐUJU kroz
     /// jedinu jezgru prijelaza sudjelovanja (IParticipationLifecycleService — StatusVersion, cijena, paket ILI novac,
     /// provizija po zaposleniku, audit, izvođenje statusa termina) — sve u JEDNOJ transakciji (sve ili ništa).
-    /// Prošlost je dopuštena (evidentiranje stvarnosti): radna snaga se provjerava samo za budući početak, tvrde invarijante uvijek.
+    /// Prošlost je dopuštena (evidentiranje stvarnosti), ali se validira kao i budućnost (K1-1): radna snaga uz override,
+    /// tvrde invarijante uvijek.
     /// </summary>
     public async Task<AppointmentDto> CompleteNow(Guid organizationId, Guid userId, bool hasFullScope, AppointmentCompleteNowRequest request)
     {
@@ -269,10 +283,11 @@ public partial class AppointmentService : IAppointmentService
         ValidatedSegment validated = await ValidateSegment(organizationId, request.CompanyId, segmentRequest, PricingMode.WithManualOverride);
         SegmentPlan plan = validated.Plan;
 
+        // K1-1: radna snaga se provjerava i za prošli početak (ADR-0008 "prošli termini su dopušteni, ali se validiraju") —
+        // isto kao za budući: greška, ili upozorenje uz OverrideAvailability i appointments.write.all.
         List<WarningDto> warnings = new List<WarningDto>();
-        if (plan.PlannedStart > DateTimeOffset.UtcNow)
-            warnings.AddRange(await EnsureWorkforceAvailability(
-                organizationId, plan.EmployeeIds, request.CompanyId, plan.PlannedStart, plan.PlannedEnd, overrideAvailability));
+        warnings.AddRange(await EnsureWorkforceAvailability(
+            organizationId, plan.EmployeeIds, request.CompanyId, plan.PlannedStart, plan.PlannedEnd, overrideAvailability));
 
         Appointment appointment = AppointmentFactory.CreateIndividual(
             organizationId, request.CompanyId, request.Note, recurrenceGroupId: null, userId, DateTimeOffset.UtcNow,
@@ -316,6 +331,11 @@ public partial class AppointmentService : IAppointmentService
         }
 
         AppointmentDto dto = await GetByIdInternal(organizationId, appointmentId);
+        // K1-9: odrađena sesija s neplaćenim dugom (bez paketa i pokrića članarinom) upozorava recepciju.
+        foreach (BookingDto booking in dto.Bookings)
+            foreach (BookingParticipationDto participation in booking.Participations)
+                warnings.AddRange(await ParticipationCoverageWarnings.For(
+                    _clientPackageService, organizationId, appointment, booking.ClientId, participation));
         dto.Warnings = warnings;
         return dto;
     }
@@ -432,22 +452,26 @@ public partial class AppointmentService : IAppointmentService
     /// <summary>Otkazuje CIJELI termin — svi aktivni (Confirmed) sudionici prelaze u Cancelled, a termin se eksplicitno
     /// otkazuje. P1 (D2): otkazivanje termina je uvijek poslovno (initiator Business obavezan, Client se odbija) uz razlog;
     /// politika se ne evaluira. Za otkazivanje SAMO jednog klijenta koristi se Booking-wide ili participation naredba.</summary>
-    public Task<AppointmentDto> Cancel(Guid organizationId, Guid userId, bool hasFullScope, Guid id, AppointmentCancelRequest request)
+    public async Task<AppointmentDto> Cancel(Guid organizationId, Guid userId, bool hasFullScope, Guid id, AppointmentCancelRequest request)
     {
         if (request?.CancellationInitiator == null)
             throw new ValidationAppException("Initiator otkazivanja je obavezan (otkazivanje termina je uvijek Business).");
         if (request.CancellationInitiator != CancellationInitiator.Business)
             throw new ValidationAppException(
                 "Otkazivanje cijelog termina je uvijek poslovno (Business) — klijentsko otkazivanje ide po Bookingu ili sudjelovanju.");
-        if (string.IsNullOrWhiteSpace(request.CancellationReason))
+        // K1-4: razlog = slobodni tekst ILI šifra razloga (otkaz studija).
+        if (string.IsNullOrWhiteSpace(request.CancellationReason) && request.CancellationReasonCodeId == null)
             throw new ValidationAppException("Poslovno (Business) otkazivanje zahtijeva razlog.");
+        (Guid? Id, string Name) code = await _cancellationReasonService.ResolveForEvent(
+            organizationId, request.CancellationReasonCodeId, CancellationReasonEvent.BusinessCancellation);
 
-        return ChangeToTerminalStatus(organizationId, userId, hasFullScope, id, new BookingSetStatusRequest
+        return await ChangeToTerminalStatus(organizationId, userId, hasFullScope, id, new BookingSetStatusRequest
         {
             Status = BookingStatus.Cancelled,
             CancellationInitiator = CancellationInitiator.Business,
-            CancellationReason = request.CancellationReason
-        }, request.CancellationReason);
+            CancellationReason = request.CancellationReason,
+            CancellationReasonCodeId = code.Id
+        }, request.CancellationReason, appointmentCancellationCode: code);
     }
 
     /// <summary>Bulk no-show — svi aktivni sudionici prelaze u NoShow (termin se izvodi u Closed; termin kao okvir NIKAD nije
@@ -462,10 +486,142 @@ public partial class AppointmentService : IAppointmentService
         {
             Status = BookingStatus.NoShow,
             NoShowReason = request?.NoShowReason,
+            NoShowReasonCodeId = request?.NoShowReasonCodeId,
             WaivePolicyConsequence = request?.WaivePolicyConsequence ?? false,
             WaiverReason = request?.WaiverReason
         }, appointmentCancellationReason: null, request?.ClientPackageId, request?.PackageSelections);
     }
+
+    /// <summary>K1-5 (14.1) — vidi IAppointmentService.Restore. Sudjelovanja otkazana otkazom termina su ona s initiatorom
+    /// Business i istim trenutkom otkaza kao termin (MarkExplicitlyCancelled i kaskada dijele timestamp). Business otkaz nema
+    /// posljedicu politike, pa korekcija ne traži appointments.policy.override. Termin se zatim sam vraća u Scheduled
+    /// (AppointmentLifecycle.Refresh briše eksplicitnu otkazanost uz "AppointmentCancellationCleared").</summary>
+    public async Task<AppointmentDto> Restore(Guid organizationId, Guid userId, Guid id, AppointmentRestoreRequest request)
+    {
+        Appointment snapshot = await _appointmentHandler.GetWithBookingsForMutation(organizationId, id)
+            ?? throw new NotFoundAppException("Appointment", id);
+        if (!snapshot.IsExplicitlyCancelled)
+            throw new BusinessRuleException(ErrorCodes.AppointmentNotCancelled, "Termin nije otkazan.");
+
+        List<Guid> restoredIds = RestorableParticipations(snapshot).Select(x => x.Participation.Id.GetValueOrDefault()).ToList();
+        string reason = string.IsNullOrWhiteSpace(request?.Reason) ? null : request.Reason.Trim();
+
+        // Ciljno stanje svakog segmenta (zaposlenici + svi klijenti koji će ga zauzimati + prostorija + resursi) — ista tvrda
+        // provjera kao reaktivacija sudjelovanja; segment isključuje sam sebe.
+        List<HardOverlapTarget> targets = new();
+        foreach (AppointmentSegment segment in snapshot.Segments)
+        {
+            List<Guid> occupyingClientIds = snapshot.Bookings
+                .Where(b => b.Participations.Any(p => p.AppointmentSegmentId == segment.Id
+                    && (ParticipationOccupancy.Occupies(p.Status) || restoredIds.Contains(p.Id.GetValueOrDefault()))))
+                .Select(b => b.ClientId)
+                .ToList();
+            List<Client> clients = occupyingClientIds.Count == 0 ? new List<Client>() : await _clientHandler.GetByIds(organizationId, occupyingClientIds);
+            targets.Add(new HardOverlapTarget(segment.Id, segment.PlannedStart, segment.PlannedEnd,
+                segment.Employees.Select(e => e.EmployeeId).ToList(), clients,
+                segment.RoomId.HasValue ? new Room { Id = segment.RoomId } : null,
+                await _schedulingOccupancyHandler.GetSegmentResources(segment.Id.GetValueOrDefault())));
+        }
+
+        try
+        {
+            await using IUnitOfWork uow = await _unitOfWorkFactory.Begin();
+            await EnsureNoHardOverlap(uow, organizationId, targets);
+
+            Appointment appointment = await _appointmentHandler.GetForUpdateWithBookings(uow, organizationId, id)
+                ?? throw new NotFoundAppException("Appointment", id);
+            List<(Booking Booking, BookingSegmentParticipation Participation)> restorable = RestorableParticipations(appointment);
+            if (!appointment.IsExplicitlyCancelled
+                || !restorable.Select(x => x.Participation.Id.GetValueOrDefault()).ToHashSet().SetEquals(restoredIds))
+                throw new BusinessRuleException(
+                    ErrorCodes.ConcurrencyConflict, "Podaci su upravo promijenjeni od strane drugog zahtjeva — pokušajte ponovno.");
+
+            await _participationHandler.LockForUpdate(
+                uow, organizationId, appointment.Bookings.SelectMany(b => b.Participations).Select(p => p.Id.GetValueOrDefault()));
+            await _auditLogHandler.Add(uow, new AppointmentAuditLog
+            {
+                Id = Guid.NewGuid(),
+                AppointmentId = id,
+                ChangeType = "AppointmentRestored",
+                OldValue = appointment.CancelledAt?.ToString("O"),
+                NewValue = reason,
+                ChangedAt = DateTimeOffset.UtcNow,
+                ChangedBy = userId
+            });
+
+            // Korekcija Cancelled → Confirmed kroz jedinu jezgru prijelaza: pokriće članarinom (kao nova rezervacija, uključujući
+            // limite) i cijena po pokriću se ponovno evaluiraju; razlog promjene je na sudjelovanju.
+            DateTimeOffset eventAt = DateTimeOffset.UtcNow;
+            foreach ((Booking booking, BookingSegmentParticipation participation) in restorable.OrderBy(x => x.Participation.Id))
+                await _participationLifecycleService.ApplyCascadeTransitionInTransaction(uow, organizationId, userId, appointment, booking,
+                    participation, new BookingSetStatusRequest { Status = BookingStatus.Confirmed, CorrectionReason = reason }, eventAt);
+
+            await AppointmentLifecycle.Refresh(_appointmentHandler, _auditLogHandler, uow, organizationId, id, userId);
+            await uow.CommitAsync();
+        }
+        catch (DbUpdateConcurrencyException)
+        {
+            throw new BusinessRuleException(
+                ErrorCodes.ConcurrencyConflict, "Podaci su upravo promijenjeni od strane drugog zahtjeva — pokušajte ponovno.");
+        }
+
+        AppointmentDto dto = await GetByIdInternal(organizationId, id);
+        List<Domain.Models.Groups.WaitlistEntry> expired = (await _waitlistHandler.GetForAppointment(organizationId, id))
+            .Where(e => e.Status == WaitlistEntryStatus.Expired && e.ExpiredReason == WaitlistExpiredReasons.AppointmentCancelled)
+            .OrderBy(e => e.JoinedAt)
+            .ToList();
+        if (expired.Count > 0)
+            dto.Warnings.Add(new WarningDto(WarningCodes.AppointmentRestoredWaitlistNotRestored, new WarningWaitlistEntriesDetails
+            {
+                Entries = expired.Select(e => new WarningWaitlistEntry
+                {
+                    WaitlistEntryId = e.Id.GetValueOrDefault(), ClientId = e.ClientId, AppointmentSegmentId = e.AppointmentSegmentId, JoinedAt = e.JoinedAt
+                }).ToList()
+            }));
+        return dto;
+    }
+
+    /// <summary>K1-6 — kapacitet resursa niza po terminu (termini niza su na različite dane, pa se ne preklapaju međusobno; svaki
+    /// se provjerava prema postojećem stanju pod lockom resursa). RESOURCE_CAPACITY_EXCEEDED s popisom svih sudara.</summary>
+    private async Task EnsureRecurringResourceCapacity(
+        IUnitOfWork uow, Guid organizationId, IReadOnlyList<AppointmentSegment> segments, IReadOnlyList<SegmentResourcePlan> resources)
+    {
+        await _schedulingOccupancyHandler.LockSchedulingSubjects(
+            uow, Array.Empty<Guid>(), Array.Empty<Guid>(), resourceIds: resources.Select(r => r.ResourceId));
+
+        List<RecurringResourceConflictDetail> conflicts = new();
+        foreach (AppointmentSegment segment in segments.OrderBy(s => s.PlannedStart))
+        {
+            SegmentClaim claim = new(null, segment.PlannedStart, segment.PlannedEnd, Array.Empty<Guid>(), Array.Empty<Guid>())
+            {
+                Resources = resources.Select(r => new ResourceClaim(r.ResourceId, r.QuantityRequired)).ToList()
+            };
+            foreach (CapacityViolation violation in await SchedulingConflictGuard.FindCapacityViolations(
+                         _schedulingOccupancyHandler, uow, organizationId, new[] { claim }))
+                conflicts.Add(new RecurringResourceConflictDetail
+                {
+                    Date = segment.PlannedStart,
+                    Reason = ErrorCodes.ResourceCapacityExceeded,
+                    ResourceId = violation.SubjectId,
+                    ResourceName = violation.SubjectName,
+                    Capacity = violation.Capacity,
+                    PeakUsage = violation.Evaluation.PeakUsage
+                });
+        }
+
+        if (conflicts.Count > 0)
+            throw new BusinessRuleException(ErrorCodes.ResourceCapacityExceeded,
+                "Neki termini u nizu premašili bi kapacitet resursa.", new { conflicts });
+    }
+
+    /// <summary>K1-5 — sudjelovanja koja je otkazao otkaz termina: Cancelled, initiator Business, isti trenutak kao otkaz termina.</summary>
+    private static List<(Booking Booking, BookingSegmentParticipation Participation)> RestorableParticipations(Appointment appointment) =>
+        appointment.Bookings
+            .SelectMany(b => b.Participations.Select(p => (Booking: b, Participation: p)))
+            .Where(x => x.Participation.Status == ParticipationStatus.Cancelled
+                        && x.Participation.CancellationInitiator == CancellationInitiator.Business
+                        && x.Participation.CancelledAt == appointment.CancelledAt)
+            .ToList();
 
     public async Task Delete(Guid organizationId, Guid userId, Guid id)
     {
@@ -504,6 +660,10 @@ public partial class AppointmentService : IAppointmentService
 
         await EnsureStructuralEligibility(organizationId, service, request.CompanyId, request.EmployeeId);
         Room room = await EnsureRoomExists(organizationId, request.CompanyId, request.RoomId);
+        // K1-6 (P-7): niz nema vlastiti popis resursa — svaki termin zauzima zadane resurse usluge u poslovnici.
+        List<SegmentResourcePlan> defaultResources = (await DefaultResourcesOf(organizationId, request.ServiceId, request.CompanyId))
+            .Select(r => new SegmentResourcePlan(r.ResourceId, r.QuantityRequired))
+            .ToList();
 
         // Phase M1C: cijeli niz se validira i upisuje u JEDNOJ transakciji koja najprije zaključa subjekte rasporeda
         // (zaposlenik + klijenti) — batch provjere niže tada vide sve što je konkurentno commitano prije njih.
@@ -532,13 +692,19 @@ public partial class AppointmentService : IAppointmentService
             // — request nema Amount — svaki occurrence po svojoj predloženoj cijeni).
             SegmentPlan plan = new SegmentPlan(
                 request.ServiceId, occurrence, occurrence.AddMinutes(service.DefaultDurationMinutes), new[] { request.EmployeeId }, request.RoomId,
-                clients.Select(c => new ParticipantPlan(c.Id.GetValueOrDefault(), BookingPricing.AtSuggested(resolvedPrice))).ToList());
+                clients.Select(c => new ParticipantPlan(c.Id.GetValueOrDefault(), BookingPricing.AtSuggested(resolvedPrice))).ToList(),
+                defaultResources);
             Appointment appointment = AppointmentFactory.CreateIndividual(
                 organizationId, request.CompanyId, request.Note, recurrenceGroupId, userId, DateTimeOffset.UtcNow,
                 new[] { plan });
 
             toCreate.Add(appointment);
         }
+
+        // K1-6: kapacitet zadanih resursa za cijeli niz — tvrda blokada. Kao RECURRING_CONFLICT, greška navodi SVE datume koji se
+        // sudaraju (uz resurs, kapacitet i najveću zauzetost tog termina), da recepcija zna koji termin premjestiti.
+        if (defaultResources.Count > 0)
+            await EnsureRecurringResourceCapacity(uow, organizationId, toCreate.Select(a => a.Segments.Single()).ToList(), defaultResources);
 
         await _appointmentHandler.AddRange(uow, toCreate);
         // P2 (2D, §11.4): pokriće occurrence po occurrence, redom po vremenu (limit koji presuši usred serije → ostatak na
@@ -901,7 +1067,8 @@ public partial class AppointmentService : IAppointmentService
     /// nije počeo → ATTENDANCE_BEFORE_START, ništa se ne mijenja). Status termina se zatim izvodi.</summary>
     private async Task<AppointmentDto> ChangeToTerminalStatus(
         Guid organizationId, Guid userId, bool hasFullScope, Guid id, BookingSetStatusRequest transition, string appointmentCancellationReason,
-        Guid? singleClientPackageId = null, IReadOnlyCollection<ParticipationPackageSelection> packageSelections = null)
+        Guid? singleClientPackageId = null, IReadOnlyCollection<ParticipationPackageSelection> packageSelections = null,
+        (Guid? Id, string Name) appointmentCancellationCode = default)
     {
         try
         {
@@ -948,7 +1115,8 @@ public partial class AppointmentService : IAppointmentService
             // izostanka (P1) je na sudjelovanjima (NoShowReason).
             if (!isNoShow)
             {
-                await AppointmentLifecycle.MarkExplicitlyCancelled(_auditLogHandler, uow, appointment, appointmentCancellationReason, userId);
+                await AppointmentLifecycle.MarkExplicitlyCancelled(_auditLogHandler, uow, appointment, appointmentCancellationReason, userId,
+                    appointmentCancellationCode, eventAt);
                 await _appointmentHandler.UpdateScalar(uow, appointment);
             }
 
@@ -1149,9 +1317,8 @@ public partial class AppointmentService : IAppointmentService
     /// <summary>Zamjenjuje staro BuildWorkingHoursWarning — sada TVRDA blokada (throw) za sve četiri "meke"
     /// radne-snage kategorije (odsutnost/pauza/praznik/izvan-radnog-vremena) OSIM kad je overrideAvailability=true
     /// (već provjereno kod pozivatelja da ima appointments.write.all), kad se umjesto bacanja vraća WarningDto
-    /// lista (vidljivost bez blokade — isto ponašanje kao prije ovog zahvata). Koriste svi upisi rasporeda osim
-    /// CompleteNow za početak u prošlosti (retroaktivno evidentiranje odrađenog, ne planiranje unaprijed; provjereno kod
-    /// pozivatelja). Prijelaz sudjelovanja u Completed ništa ne raspoređuje pa ne provjerava radnu snagu.</summary>
+    /// lista (vidljivost bez blokade — isto ponašanje kao prije ovog zahvata). Koriste svi upisi rasporeda, uključujući
+    /// CompleteNow za početak u prošlosti (K1-1). Prijelaz sudjelovanja u Completed ništa ne raspoređuje pa ne provjerava radnu snagu.</summary>
     /// <remarks>Phase M1B: po SEGMENTU (njegov raspon) i za svakog zaposlenika segmenta.</remarks>
     private async Task<List<WarningDto>> EnsureWorkforceAvailability(
         Guid organizationId, IReadOnlyList<Guid> employeeIds, Guid companyId, DateTimeOffset plannedStart, DateTimeOffset plannedEnd,
@@ -1352,6 +1519,8 @@ public partial class AppointmentService : IAppointmentService
             Status = a.Status,
             Note = a.Note,
             CancellationReason = a.CancellationReason,
+            CancellationReasonCodeId = a.CancellationReasonCodeId,
+            CancellationReasonCodeName = a.CancellationReasonCodeName,
             CancelledAt = a.CancelledAt,
             ClosedOutAt = a.ClosedOutAt,
             GroupId = a.GroupId,

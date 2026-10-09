@@ -8,7 +8,8 @@ namespace BlueDragon.DuneLight.Infrastructure.Domain.Models.Catalog;
 /// Resurs poslovnice — konačan, višekratno upotrebljiv kapacitet (npr. masažni stolovi, reformeri, bicikli, mjesta u
 /// sauni). Generički model bez tipa resursa. Pripada točno jednoj Company (CompanyId se nakon kreiranja ne mijenja) i
 /// njezinoj Organization; nema vlastitu vremensku zonu — buduće zakazivanje nasljeđuje efektivnu zonu poslovnice.
-/// Za sada samo katalog: zakazivanje ga još ne koristi (rezervacije količina dolaze s segmentima termina).
+/// Segmenti termina i predlošci grupa ga zauzimaju u količini (kapacitet je tvrda blokada, ADR-0008); usluga može imati
+/// zadane resurse (K1-6, ServiceDefaultResource).
 /// </summary>
 [Table("resources")]
 public class Resource

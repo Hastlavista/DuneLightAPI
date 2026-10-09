@@ -61,6 +61,17 @@ public class OrganizationSettings
     [Column("commission_late_cancellation")]
     public CommissionLateCancellationMode CommissionLateCancellation { get; set; } = CommissionLateCancellationMode.Never;
 
+    /// <summary>K1-4 — odabir šifre razloga je obavezan za događaj (vrijedi samo kad za događaj postoji aktivna šifra). Default
+    /// false (opcionalno).</summary>
+    [Column("cancellation_reason_required_client")]
+    public bool CancellationReasonRequiredClient { get; set; }
+
+    [Column("cancellation_reason_required_business")]
+    public bool CancellationReasonRequiredBusiness { get; set; }
+
+    [Column("cancellation_reason_required_no_show")]
+    public bool CancellationReasonRequiredNoShow { get; set; }
+
     [Column("created_at")]
     public DateTimeOffset CreatedAt { get; set; }
 

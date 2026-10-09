@@ -42,6 +42,15 @@ public class ClientMembershipsController : ControllerBase
         return Ok(await _membershipService.GetPlanUpdateNotApplied(this.CurrentOrganizationId(), membershipPlanId));
     }
 
+    /// <summary>K1-8 — članstva koja stoje jer su sve poslovnice opsega plana neaktivne (obnova ne otvara periode ni zaduženja),
+    /// s datumom od kad stoje — za ručni otkaz ako je zatvaranje trajno.</summary>
+    [HttpGet("memberships/standing-still")]
+    [RequireGrant(Grants.ClientsMembershipsView)]
+    public async Task<ActionResult<List<ClientMembershipDto>>> GetStandingStill()
+    {
+        return Ok(await _membershipService.GetStandingStill(this.CurrentOrganizationId()));
+    }
+
     [HttpGet("memberships/{id:guid}")]
     [RequireGrant(Grants.ClientsMembershipsView)]
     public async Task<ActionResult<ClientMembershipDto>> GetById(Guid id)

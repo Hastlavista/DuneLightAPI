@@ -30,8 +30,22 @@ public class OrganizationSettingsDto
     /// <summary>P2 (Q4, 2D) — ponašanje kad je limit članarine iskorišten (default FallbackToNextSource).</summary>
     public Enums.MembershipLimitExceededBehavior MembershipLimitExceededBehavior { get; set; }
 
+    /// <summary>K1-4 — je li odabir šifre razloga obavezan za otkaz klijenta / otkaz studija / izostanak (default false;
+    /// obavezno vrijedi samo kad za događaj postoji aktivna šifra).</summary>
+    public bool CancellationReasonRequiredClient { get; set; }
+    public bool CancellationReasonRequiredBusiness { get; set; }
+    public bool CancellationReasonRequiredNoShow { get; set; }
+
     /// <summary>Neblokirajuća upozorenja naredbe koja je vratila odgovor (npr. kratak rok najave izmjene plana).</summary>
     public List<WarningDto> Warnings { get; set; } = new();
+}
+
+/// <summary>K1-4 — obaveznost odabira šifre razloga po događaju.</summary>
+public class OrganizationCancellationReasonRulesUpdateRequest
+{
+    public bool RequiredForClientCancellation { get; set; }
+    public bool RequiredForBusinessCancellation { get; set; }
+    public bool RequiredForNoShow { get; set; }
 }
 
 /// <summary>P2 (Q15, 2C) — pravila duga članarina.</summary>

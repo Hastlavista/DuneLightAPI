@@ -13,18 +13,31 @@ namespace BlueDragon.DuneLight.Infrastructure.Utils;
 /// </summary>
 public static class MembershipTimelines
 {
-    /// <summary>Neotkazane pauze sa zadnjim stvarnim danom.</summary>
+    /// <summary>Neotkazane pauze sa zadnjim stvarnim danom (otvorena sustavna pauza do OpenEnd) — za stanje i pokriće (termin u
+    /// pauzi, uključujući stajanje, nije pokriven).</summary>
     public static List<MembershipPauseSpan> PauseSpans(ClientMembership membership) => membership.Pauses
         .Where(p => p.CancelledAt == null)
         .OrderBy(p => p.StartsOn)
-        .Select(p => new MembershipPauseSpan(p.Kind, p.StartsOn, p.EffectiveEndsOn))
+        .Select(p => new MembershipPauseSpan(p.Kind, p.StartsOn, p.EffectiveEndsOn, p.Source == MembershipPauseSource.CompanyClosure))
         .ToList();
+
+    /// <summary>K1-8 — pauze koje ulaze u matematiku perioda: bez OTVORENE sustavne pauze (njezin kraj nije poznat; dok traje
+    /// obnova ne otvara periode, a zatvorena pomiče granice tako da novi period počinje dan nakon nje).</summary>
+    public static List<MembershipPauseSpan> PeriodPauseSpans(ClientMembership membership) => membership.Pauses
+        .Where(p => p.CancelledAt == null && !p.IsOpenCompanyClosure)
+        .OrderBy(p => p.StartsOn)
+        .Select(p => new MembershipPauseSpan(p.Kind, p.StartsOn, p.EffectiveEndsOn, p.Source == MembershipPauseSource.CompanyClosure))
+        .ToList();
+
+    /// <summary>K1-8 — otvorena sustavna pauza (članstvo trenutno stoji) ili null.</summary>
+    public static MembershipPause OpenCompanyClosure(ClientMembership membership) =>
+        membership.Pauses.SingleOrDefault(p => p.IsOpenCompanyClosure);
 
     /// <summary>Vremenska linija trenutnih uvjeta (od sidra trenutnih uvjeta, 2C), bez zakazane promjene. Pauze koje su
     /// završile prije sidra već su ugrađene u granicu promjene uvjeta, pa se ne računaju ponovno.</summary>
     public static MembershipTimeline Current(ClientMembership membership) => new(
         membership.TermsAnchorOn, MembershipPlanReadModel.PeriodTerms(membership.PlanVersion),
-        PauseSpans(membership).Where(p => p.EndsOn >= membership.TermsAnchorOn).ToList())
+        PeriodPauseSpans(membership).Where(p => p.EndsOn >= membership.TermsAnchorOn).ToList())
     {
         MembershipStartsOn = membership.StartsOn
     };
