@@ -59,7 +59,7 @@ public class WorkingHoursTemplatesController : ControllerBase
     [HttpGet("availability")]
     [RequireGrant(Grants.RosterTemplatesView, Grants.RosterTemplatesManage, Grants.AppointmentsWriteOwn, Grants.AppointmentsWriteAll)]
     public async Task<ActionResult<AvailabilityDto>> GetAvailability(
-        [FromQuery] Guid employeeId, [FromQuery] Guid companyId, [FromQuery] DateTimeOffset date)
+        [FromQuery] Guid employeeId, [FromQuery] Guid companyId, [FromQuery] DateOnly date)
     {
         return Ok(await _workingHoursTemplateService.GetAvailability(this.CurrentOrganizationId(), employeeId, companyId, date));
     }

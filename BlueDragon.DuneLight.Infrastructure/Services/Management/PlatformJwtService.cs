@@ -17,7 +17,7 @@ public class PlatformJwtService : IPlatformJwtService
         _platformJwtSettings = platformJwtSettings;
     }
 
-    public (string Token, DateTime Expiration) GenerateToken(Guid platformAccountId, string email)
+    public (string Token, DateTimeOffset Expiration) GenerateToken(Guid platformAccountId, string email)
     {
         SymmetricSecurityKey securityKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(_platformJwtSettings.SecretKey));
         SigningCredentials credentials = new SigningCredentials(securityKey, SecurityAlgorithms.HmacSha256);
@@ -29,12 +29,13 @@ public class PlatformJwtService : IPlatformJwtService
             new Claim(JwtRegisteredClaimNames.Jti, Guid.NewGuid().ToString()),
         ];
 
-        DateTime expiration = DateTime.UtcNow.AddHours(_platformJwtSettings.ExpirationHours);
+        // T1-7: istek tokena je instant (DateTimeOffset, UTC) po SISTEMSKOM satu — simulirani poslovni sat ne utječe na tokene.
+        DateTimeOffset expiration = TimeProvider.System.GetUtcNow().AddHours(_platformJwtSettings.ExpirationHours);
         JwtSecurityToken token = new JwtSecurityToken(
             issuer: _platformJwtSettings.Issuer,
             audience: _platformJwtSettings.Audience,
             claims: claims,
-            expires: expiration,
+            expires: expiration.UtcDateTime,
             signingCredentials: credentials);
 
         return (new JwtSecurityTokenHandler().WriteToken(token), expiration);

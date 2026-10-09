@@ -8,7 +8,8 @@ namespace BlueDragon.DuneLight.Infrastructure.Handlers.Interfaces;
 
 public interface IClientPackageHandler
 {
-    Task Add(ClientPackage clientPackage);
+    /// <summary>T1-9: <paramref name="audit"/> (povijest klijenta, npr. upis unatrag) se upisuje u istom SaveChanges kao i paket.</summary>
+    Task Add(ClientPackage clientPackage, ClientAuditLog audit = null);
     Task<ClientPackage> GetById(Guid organizationId, Guid id);
 
     /// <summary>Kao <see cref="GetById(Guid, Guid)"/>, ali unutar zajedničke transakcije — vidi IUnitOfWork.</summary>

@@ -14,10 +14,12 @@ namespace BlueDragon.DuneLight.Infrastructure.Services;
 public class EngagementTypeService : IEngagementTypeService
 {
     private readonly IEngagementTypeHandler _engagementTypeHandler;
+    private readonly TimeProvider _timeProvider;
 
-    public EngagementTypeService(IEngagementTypeHandler engagementTypeHandler)
+    public EngagementTypeService(IEngagementTypeHandler engagementTypeHandler, TimeProvider timeProvider)
     {
         _engagementTypeHandler = engagementTypeHandler;
+        _timeProvider = timeProvider;
     }
 
     public async Task<PagedResult<EngagementTypeDto>> GetPaged(Guid organizationId, PagedRequest request)
@@ -46,7 +48,7 @@ public class EngagementTypeService : IEngagementTypeService
             Name = request.Name,
             SortOrder = request.SortOrder,
             IsActive = true,
-            CreatedAt = DateTimeOffset.UtcNow,
+            CreatedAt = _timeProvider.GetUtcNow(),
             CreatedBy = userId
         };
 
@@ -64,7 +66,7 @@ public class EngagementTypeService : IEngagementTypeService
 
         engagementType.Name = request.Name;
         engagementType.SortOrder = request.SortOrder;
-        engagementType.UpdatedAt = DateTimeOffset.UtcNow;
+        engagementType.UpdatedAt = _timeProvider.GetUtcNow();
         engagementType.UpdatedBy = userId;
 
         await _engagementTypeHandler.Update(engagementType);
@@ -81,7 +83,7 @@ public class EngagementTypeService : IEngagementTypeService
             await EnsureNameIsUnique(organizationId, engagementType.Name, excludeId: id);
 
         engagementType.IsActive = isActive;
-        engagementType.UpdatedAt = DateTimeOffset.UtcNow;
+        engagementType.UpdatedAt = _timeProvider.GetUtcNow();
         engagementType.UpdatedBy = userId;
 
         await _engagementTypeHandler.Update(engagementType);

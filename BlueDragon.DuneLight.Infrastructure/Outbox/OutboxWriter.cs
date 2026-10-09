@@ -13,7 +13,8 @@ public class OutboxWriter : IOutboxWriter
     {
         string payload = JsonSerializer.Serialize(@event, OutboxJsonOptions.Instance);
         Guid id = Guid.NewGuid();
-        DateTimeOffset now = DateTimeOffset.UtcNow;
+        // T1: available_at/created_at su tehnički (obrada outboxa) — sistemski sat; occurred_at je poslovni (pozivatelj).
+        DateTimeOffset now = TimeProvider.System.GetUtcNow();
 
         // ON CONFLICT DO NOTHING cilja ux_outbox_messages_idempotency (djelomični unique indeks, vidi migraciju)
         // — isti obrazac kao ProductStockHandler.GetOrCreateForUpdate. Bez IdempotencyKey nema konflikt-cilja pa

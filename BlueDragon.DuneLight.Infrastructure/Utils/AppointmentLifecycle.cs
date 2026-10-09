@@ -48,10 +48,9 @@ public static class AppointmentLifecycle
     /// </summary>
     public static async Task MarkExplicitlyCancelled(
         IAppointmentAuditLogHandler auditLogHandler, IUnitOfWork uow, Appointment appointment, string reason, Guid userId,
-        (Guid? Id, string Name) reasonCode = default, DateTimeOffset? at = null)
+        DateTimeOffset now, (Guid? Id, string Name) reasonCode = default)
     {
         // K1-5: isti trenutak kao kaskada otkazivanja sudjelovanja — po njemu "vrati termin" prepoznaje što je otkazao otkaz termina.
-        DateTimeOffset now = at ?? DateTimeOffset.UtcNow;
         appointment.CancelledAt = now;
         appointment.CancelledBy = userId;
         appointment.CancellationReason = reason;
@@ -84,7 +83,7 @@ public static class AppointmentLifecycle
     /// </summary>
     public static async Task<AppointmentStatus?> Refresh(
         IAppointmentHandler appointmentHandler, IAppointmentAuditLogHandler auditLogHandler, IUnitOfWork uow,
-        Guid organizationId, Guid appointmentId, Guid userId)
+        Guid organizationId, Guid appointmentId, Guid userId, DateTimeOffset now)
     {
         Appointment appointment = await appointmentHandler.GetForUpdate(uow, organizationId, appointmentId);
         if (appointment == null)
@@ -96,7 +95,6 @@ public static class AppointmentLifecycle
 
         AppointmentStatus derived = Derive(participations.Select(p => p.Status), appointment.IsExplicitlyCancelled);
         AppointmentStatus oldStatus = appointment.Status;
-        DateTimeOffset now = DateTimeOffset.UtcNow;
         bool clearsCancellation = derived == AppointmentStatus.Scheduled && appointment.IsExplicitlyCancelled;
 
         if (clearsCancellation)

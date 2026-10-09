@@ -17,7 +17,7 @@ public class ErrorResponse
 public class ErrorDetail
 {
     /// <summary>Oblik details ovisi o code: kod VALIDATION_ERROR je IDictionary&lt;string, string[]&gt; (polje-po-polje), za druge kodove je slobodniji oblik (npr. RECURRING_CONFLICT nosi { conflicts: [...] }).</summary>
-    public ErrorDetail(string code, string message, object details = null)
+    public ErrorDetail(string code, string message, object? details = null)
     {
         Code = code;
         Message = message;
@@ -26,5 +26,5 @@ public class ErrorDetail
 
     public string Code { get; set; }
     public string Message { get; set; }
-    public object Details { get; set; }
+    public object? Details { get; set; }
 }

@@ -22,7 +22,7 @@ public class GrantGroupAssignedUserCountTests
 
     private static DatabaseSettings Settings => new() { ConnectionString = LocalConnectionString };
 
-    private static GrantGroupHandler CreateHandler() => new(Settings);
+    private static GrantGroupHandler CreateHandler() => new(Settings, TestClock.Source);
 
     /// <summary>Creates an isolated organization for one test, with a cleanup callback that removes every row the
     /// test created (grant groups, grant-group grants, user-grant-groups, users, organization) — never anything
@@ -37,7 +37,7 @@ public class GrantGroupAssignedUserCountTests
             Id = organizationId,
             Name = $"AssignedUserCountTest-{testName}",
             Slug = $"assigned-user-count-test-{organizationId:N}",
-            CreatedAt = DateTimeOffset.UtcNow
+            CreatedAt = TestClock.UtcNow
         });
         await context.SaveChangesAsync();
 
@@ -77,7 +77,7 @@ public class GrantGroupAssignedUserCountTests
             PasswordHash = "test-hash",
             ApiKey = $"test-api-key-{userId:N}",
             IsActive = isActive,
-            CreatedAt = DateTimeOffset.UtcNow
+            CreatedAt = TestClock.UtcNow
         });
         await context.SaveChangesAsync();
         return userId;
@@ -92,7 +92,7 @@ public class GrantGroupAssignedUserCountTests
             Id = groupId,
             OrganizationId = organizationId,
             Name = name,
-            CreatedAt = DateTimeOffset.UtcNow
+            CreatedAt = TestClock.UtcNow
         });
         await context.SaveChangesAsync();
         return groupId;

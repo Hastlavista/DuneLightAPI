@@ -1,6 +1,7 @@
 using System;
 using System.Net;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using System.Threading.Tasks;
 using BlueDragon.DuneLight.Core.Shared;
 using BlueDragon.DuneLight.Core.Shared.Exceptions;
@@ -23,7 +24,9 @@ public class ExceptionHandlingMiddleware
     {
         _next = next;
         _logger = logger;
+        // T1: enumi u details (npr. ForbiddenDetails.Reason) kao nazivi, isto kao MVC odgovori.
         _jsonOptions = new JsonSerializerOptions(JsonSerializerDefaults.Web);
+        _jsonOptions.Converters.Add(new JsonStringEnumConverter());
     }
 
     public async Task InvokeAsync(HttpContext context)
@@ -53,7 +56,7 @@ public class ExceptionHandlingMiddleware
         }
         catch (ForbiddenAppException ex)
         {
-            await WriteError(context, HttpStatusCode.Forbidden, ex.Code, ex.Message);
+            await WriteError(context, HttpStatusCode.Forbidden, ex.Code, ex.Message, ex.Details);
         }
         catch (UnauthorizedAppException ex)
         {

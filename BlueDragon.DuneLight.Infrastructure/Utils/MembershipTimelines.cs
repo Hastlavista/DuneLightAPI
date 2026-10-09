@@ -97,7 +97,8 @@ public static class MembershipTimelines
     }
 
     public static ClientMembershipAuditLog Audit(
-        ClientMembership membership, Guid userId, string changeType, string oldValue, string newValue, string reason = null) => new()
+        ClientMembership membership, Guid userId, string changeType, string oldValue, string newValue, DateTimeOffset now,
+        string reason = null) => new()
     {
         Id = Guid.NewGuid(),
         OrganizationId = membership.OrganizationId,
@@ -106,7 +107,7 @@ public static class MembershipTimelines
         OldValue = oldValue,
         NewValue = newValue,
         Reason = reason,
-        ChangedAt = DateTimeOffset.UtcNow,
+        ChangedAt = now,
         ChangedBy = userId
     };
 }

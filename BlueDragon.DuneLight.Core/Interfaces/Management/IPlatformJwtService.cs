@@ -6,5 +6,5 @@ namespace BlueDragon.DuneLight.Core.Interfaces.Management;
 /// (no organizationId/role: PlatformAccount has neither).</summary>
 public interface IPlatformJwtService
 {
-    (string Token, DateTime Expiration) GenerateToken(Guid platformAccountId, string email);
+    (string Token, DateTimeOffset Expiration) GenerateToken(Guid platformAccountId, string email);
 }

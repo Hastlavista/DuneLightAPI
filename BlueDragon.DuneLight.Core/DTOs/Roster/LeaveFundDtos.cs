@@ -41,8 +41,8 @@ public class LeaveFundDto
 {
     public Guid Id { get; set; }
     public int FundYear { get; set; }
-    public DateTimeOffset OpenedAt { get; set; }
-    public DateTimeOffset ExpiresAt { get; set; }
+    public DateOnly OpenedAt { get; set; }
+    public DateOnly ExpiresAt { get; set; }
     public int AllocatedDays { get; set; }
     public int UsedDays { get; set; }
     public int RemainingDays => AllocatedDays - UsedDays;
@@ -54,7 +54,7 @@ public class EmployeeLeaveFundsDto
 {
     public Guid EmployeeId { get; set; }
     public string EmployeeName { get; set; }
-    public EmployeeLeaveSettingsDto Settings { get; set; }
+    public EmployeeLeaveSettingsDto? Settings { get; set; }
     public List<LeaveFundDto> Funds { get; set; } = new();
 }
 

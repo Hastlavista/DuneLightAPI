@@ -42,7 +42,7 @@ public class AppointmentSegmentPersistenceTests
         PlannedStart = start,
         PlannedEnd = end,
         RoomId = roomId,
-        CreatedAt = DateTimeOffset.UtcNow
+        CreatedAt = TestClock.UtcNow
     };
 
     private static async Task<Guid> AnAppointment(SchedulingWorld w, int hour = 10) => (await w.CreateAppointment(Z(hour))).Id;
@@ -489,7 +489,7 @@ public class AppointmentSegmentPersistenceTests
         {
             RecurrenceType = RecurrenceType.Weekly, ServiceId = w.Service.Id.Value, EmployeeId = w.Employee.Id.Value,
             CompanyId = w.Company.Id.Value, ClientIds = new List<Guid> { w.Client.Id.Value },
-            FirstOccurrenceStartsAt = Z(12), EndDate = Z(12).AddDays(14)
+            FirstOccurrenceStartsAt = Z(12), EndDate = SchedulingWorld.Day(Z(12).AddDays(14))
         });
         ServiceEntity groupService = await w.AddGroupService();
         GroupDto group = await w.CreateGroup(groupService, capacity: 5, room: room);

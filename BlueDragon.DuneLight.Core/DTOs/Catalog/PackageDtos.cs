@@ -8,7 +8,7 @@ namespace BlueDragon.DuneLight.Core.DTOs.Catalog;
 public class PackageServiceItemDto
 {
     public Guid ServiceId { get; set; }
-    public string ServiceName { get; set; }
+    public string? ServiceName { get; set; }
 
     /// <summary>Relevantno samo kod PerService načina trošenja. Null = neograničeno za ovu uslugu.</summary>
     public int? EntryCount { get; set; }
@@ -27,7 +27,7 @@ public class PackageDto
 {
     public Guid Id { get; set; }
     public string Name { get; set; }
-    public string Description { get; set; }
+    public string? Description { get; set; }
     public PackageEntryMode EntryMode { get; set; }
     public int? TotalEntryCount { get; set; }
     public PackageValidityType ValidityType { get; set; }
@@ -50,7 +50,7 @@ public class PackageCreateRequest
     [MaxLength(255)]
     public string Name { get; set; }
 
-    public string Description { get; set; }
+    public string? Description { get; set; }
 
     [Required]
     public PackageEntryMode EntryMode { get; set; }
@@ -84,7 +84,7 @@ public class PackageUpdateRequest
     [MaxLength(255)]
     public string Name { get; set; }
 
-    public string Description { get; set; }
+    public string? Description { get; set; }
 
     [Required]
     public PackageEntryMode EntryMode { get; set; }

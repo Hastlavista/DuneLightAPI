@@ -18,7 +18,7 @@ public class CancellationPolicyDto
     /// <summary>Zadana politika organizacije (zadnja razina razrješavanja). Točno jedna po organizaciji.</summary>
     public bool IsOrganizationDefault { get; set; }
 
-    public CancellationPolicyVersionDto LatestVersion { get; set; }
+    public CancellationPolicyVersionDto? LatestVersion { get; set; }
 
     /// <summary>Puna povijest verzija (najnovija prva) — samo u detalju profila.</summary>
     public List<CancellationPolicyVersionDto> Versions { get; set; } = new();
@@ -101,11 +101,11 @@ public class CancellationPolicyAssignmentDto
 {
     public Guid Id { get; set; }
     public Guid? CompanyId { get; set; }
-    public string CompanyName { get; set; }
+    public string? CompanyName { get; set; }
     public Guid? ServiceId { get; set; }
-    public string ServiceName { get; set; }
+    public string? ServiceName { get; set; }
     public Guid CancellationPolicyId { get; set; }
-    public string CancellationPolicyName { get; set; }
+    public string? CancellationPolicyName { get; set; }
     public DateTimeOffset CreatedAt { get; set; }
     public Guid? CreatedBy { get; set; }
     public DateTimeOffset? UpdatedAt { get; set; }

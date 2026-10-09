@@ -32,5 +32,11 @@ public interface IPriceListItemHandler
         Guid organizationId, PricingSubjectType subjectType, Guid subjectId, Guid? companyId, Guid? employeeId);
 
     /// <summary>Sve aktivne stavke BEZ zaposlenika važeće na dani datum za tvrtku ILI "sve tvrtke" — za pregledni cjenik.</summary>
-    Task<List<PriceListItem>> GetActiveForCompany(Guid organizationId, Guid? companyId, DateTimeOffset date);
+    Task<List<PriceListItem>> GetActiveForCompany(Guid organizationId, Guid? companyId, DateOnly date);
+
+    /// <summary>T1-8 — zakazana (Confirmed) sudjelovanja usluge s početkom segmenta u [from, to) (to null = bez gornje granice),
+    /// opcionalno samo poslovnice termina i zaposlenika izvora cijene: poslovnica termina i početak segmenta (dan cjenika računa
+    /// pozivatelj u zoni poslovnice).</summary>
+    Task<List<(Guid CompanyId, DateTimeOffset PlannedStart)>> GetScheduledServiceStarts(
+        Guid organizationId, Guid serviceId, Guid? companyId, Guid? pricingEmployeeId, DateTimeOffset from, DateTimeOffset? to);
 }

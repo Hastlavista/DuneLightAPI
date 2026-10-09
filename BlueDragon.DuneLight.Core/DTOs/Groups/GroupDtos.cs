@@ -11,7 +11,7 @@ public class GroupSlotDto
 {
     public Guid Id { get; set; }
     public DayOfWeek DayOfWeek { get; set; }
-    public TimeSpan StartTime { get; set; }
+    public TimeOnly StartTime { get; set; }
     public bool IsActive { get; set; }
 }
 
@@ -21,7 +21,7 @@ public class GroupSlotCreateRequest
     public DayOfWeek DayOfWeek { get; set; }
 
     [Required]
-    public TimeSpan StartTime { get; set; }
+    public TimeOnly StartTime { get; set; }
 }
 
 public class GroupSlotUpdateRequest
@@ -30,14 +30,14 @@ public class GroupSlotUpdateRequest
     public DayOfWeek DayOfWeek { get; set; }
 
     [Required]
-    public TimeSpan StartTime { get; set; }
+    public TimeOnly StartTime { get; set; }
 }
 
 public class GroupMemberDto
 {
     public Guid Id { get; set; }
     public Guid ClientId { get; set; }
-    public string ClientName { get; set; }
+    public string? ClientName { get; set; }
     public DateTimeOffset JoinedAt { get; set; }
     public bool IsActive { get; set; }
 
@@ -73,7 +73,7 @@ public class GroupMemberSegmentTemplatesRequest
 public class GroupSegmentTemplateResourceDto
 {
     public Guid ResourceId { get; set; }
-    public string ResourceName { get; set; }
+    public string? ResourceName { get; set; }
     public int QuantityRequired { get; set; }
 }
 
@@ -82,11 +82,11 @@ public class GroupSegmentTemplateDto
 {
     public Guid Id { get; set; }
     public Guid ServiceId { get; set; }
-    public string ServiceName { get; set; }
+    public string? ServiceName { get; set; }
     public int StartOffsetMinutes { get; set; }
     public int DurationMinutes { get; set; }
     public Guid? RoomId { get; set; }
-    public string RoomName { get; set; }
+    public string? RoomName { get; set; }
 
     /// <summary>MEKI poslovni broj mjesta segmenta (prekoračenje samo eksplicitno uz groups.capacity.override).</summary>
     public int Capacity { get; set; }
@@ -133,7 +133,7 @@ public class GroupSegmentTemplateRequest
 
     /// <summary>K1-6 — null (izostavljeno): pri kreiranju zadani resursi usluge u poslovnici grupe, pri izmjeni postojeći resursi
     /// predloška; poslana lista (i prazna) vrijedi kako je poslana.</summary>
-    public List<GroupSegmentTemplateResourceRequest> Resources { get; set; }
+    public List<GroupSegmentTemplateResourceRequest>? Resources { get; set; }
 
     /// <summary>Osoblje predloška (skup ravnopravnih zaposlenika, bez duplikata; prazno = sesija bez trenera). Izmjena
     /// predloška je potpuna zamjena definicije, uključivo osoblje.</summary>
@@ -151,12 +151,12 @@ public class GroupDto
     public string Name { get; set; }
 
     public Guid CompanyId { get; set; }
-    public string CompanyName { get; set; }
+    public string? CompanyName { get; set; }
 
     /// <summary>Phase M1F — autoritativna izvršna definicija grupe.</summary>
     public List<GroupSegmentTemplateDto> SegmentTemplates { get; set; } = new();
     public bool IsActive { get; set; }
-    public string Note { get; set; }
+    public string? Note { get; set; }
     public List<GroupSlotDto> Slots { get; set; } = new();
     public int ActiveMemberCount { get; set; }
 
@@ -185,7 +185,7 @@ public class GroupCreateRequest
     [Required]
     public Guid CompanyId { get; set; }
 
-    public string Note { get; set; }
+    public string? Note { get; set; }
 
     /// <summary>Barem jedan slot je obavezan pri kreiranju grupe.</summary>
     public List<GroupSlotCreateRequest> Slots { get; set; } = new();
@@ -205,7 +205,7 @@ public class GroupUpdateRequest
     [Required]
     public Guid CompanyId { get; set; }
 
-    public string Note { get; set; }
+    public string? Note { get; set; }
 }
 
 /// <summary>GroupId=null generira za sve aktivne grupe. Idempotentno — ponovno pokretanje za isti raspon ne stvara duplikate.</summary>
@@ -214,10 +214,10 @@ public class GenerateGroupAppointmentsRequest
     public Guid? GroupId { get; set; }
 
     [Required]
-    public DateTimeOffset FromDate { get; set; }
+    public DateOnly FromDate { get; set; }
 
     [Required]
-    public DateTimeOffset ToDate { get; set; }
+    public DateOnly ToDate { get; set; }
 
     /// <summary>Zaobilazi MEKE radne-snage blokade (izvan radnog vremena, odsutnost, pauza trenera) za sve occurrence u ovom
     /// rasponu — vidi AppointmentCreateRequest.OverrideAvailability. K1-7 (P-5): uz potvrdu se generira i na praznik
@@ -241,6 +241,10 @@ public class GenerateGroupAppointmentsResult
     /// <summary>P2 (Q18) — članovi grupe preskočeni zbog duga članarine uz postavku "blokiraj rezervaciju" (ostaju članovi
     /// grupe); popis za recepciju, po segmentu occurrencea.</summary>
     public List<GroupMembershipSkipDto> MembershipSkips { get; set; } = new();
+
+    /// <summary>T1-8 — zbirna upozorenja generiranja (PRICE_NOT_DEFINED_OCCURRENCES: broj termina i datumi s cijenom iz zadane
+    /// cijene usluge). Inače prazno.</summary>
+    public List<WarningDto> Warnings { get; set; } = new();
 }
 
 /// <summary>K1-7 — jedna stavka popisa preskočenog pri generiranju. CompanyInactive: cijela grupa (Slot/Date null);
@@ -276,11 +280,11 @@ public class GroupMembershipSkipDto
 public class ClientGroupMembershipDto
 {
     public Guid GroupId { get; set; }
-    public string GroupName { get; set; }
+    public string? GroupName { get; set; }
 
     /// <summary>Phase M1H — usluge predložaka koje je klijent odabrao (redom početka), ne "usluga grupe".</summary>
     public List<string> ServiceNames { get; set; } = new();
-    public string CompanyName { get; set; }
+    public string? CompanyName { get; set; }
 
     /// <summary>Samo aktivni slotovi (raspored koji trenutno vrijedi) — za razliku od GroupDto.Slots, ovdje nema
     /// potrebe za upravljanjem uklonjenim slotovima, prikazuje se samo trenutni raspored klijentu.</summary>

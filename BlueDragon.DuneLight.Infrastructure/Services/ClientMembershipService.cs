@@ -37,6 +37,7 @@ public class ClientMembershipService : IClientMembershipService
     private readonly IMembershipCoverageService _coverage;
     private readonly IGroupMembershipSkipService _membershipSkips;
     private readonly ICommissionLedgerService _commissionLedger;
+    private readonly TimeProvider _timeProvider;
 
     public ClientMembershipService(
         IClientMembershipHandler handler,
@@ -49,7 +50,8 @@ public class ClientMembershipService : IClientMembershipService
         IUnitOfWorkFactory unitOfWorkFactory,
         IMembershipCoverageService coverage,
         IGroupMembershipSkipService membershipSkips,
-        ICommissionLedgerService commissionLedger)
+        ICommissionLedgerService commissionLedger,
+        TimeProvider timeProvider)
     {
         _membershipSkips = membershipSkips;
         _commissionLedger = commissionLedger;
@@ -62,6 +64,7 @@ public class ClientMembershipService : IClientMembershipService
         _renewalService = renewalService;
         _unitOfWorkFactory = unitOfWorkFactory;
         _coverage = coverage;
+        _timeProvider = timeProvider;
     }
 
     #region Čitanje
@@ -151,7 +154,7 @@ public class ClientMembershipService : IClientMembershipService
             // Q16/Q42 — otpisuje se preostali dug; plaćeni dio ostaje plaćen. Otpisano zaduženje je konačno.
             decimal writtenOff = MembershipChargeSettlement.Outstanding(charge);
             charge.Lifecycle = MembershipChargeLifecycle.WrittenOff;
-            charge.WrittenOffAt = DateTimeOffset.UtcNow;
+            charge.WrittenOffAt = _timeProvider.GetUtcNow();
             charge.WrittenOffBy = userId;
             charge.WriteOffReason = reason;
             _handler.AddAudit(uow, new ClientMembershipAuditLog
@@ -163,7 +166,7 @@ public class ClientMembershipService : IClientMembershipService
                 OldValue = charge.Id.ToString(),
                 NewValue = writtenOff.ToString(System.Globalization.CultureInfo.InvariantCulture),
                 Reason = reason,
-                ChangedAt = DateTimeOffset.UtcNow,
+                ChangedAt = _timeProvider.GetUtcNow(),
                 ChangedBy = userId
             });
             await uow.Context.SaveChangesAsync();
@@ -252,7 +255,7 @@ public class ClientMembershipService : IClientMembershipService
                 MembershipTimelines.Scope(membershipId, plan.Name, startsOn, null, version),
                 await _handler.GetCoverageCandidates(uow, organizationId, clientId));
 
-            DateTimeOffset now = DateTimeOffset.UtcNow;
+            DateTimeOffset now = _timeProvider.GetUtcNow();
             ClientMembership membership = new()
             {
                 Id = membershipId,
@@ -273,7 +276,7 @@ public class ClientMembershipService : IClientMembershipService
             };
             uow.Context.ClientMemberships.Add(membership);
             _handler.AddAudit(uow, MembershipTimelines.Audit(membership, userId, "MembershipSold", null,
-                $"plan={planId};version={version.Version};startsOn={startsOn:yyyy-MM-dd};soldCompany={soldCompanyId}"));
+                $"plan={planId};version={version.Version};startsOn={startsOn:yyyy-MM-dd};soldCompany={soldCompanyId}", now));
             await uow.Context.SaveChangesAsync();
 
             // 2C (Q20/Q45.1) — prvi period i njegovo zaduženje nastaju pri prodaji (i kad članstvo počinje kasnije), dospijeće je
@@ -281,7 +284,7 @@ public class ClientMembershipService : IClientMembershipService
             ClientMembership tracked = await _handler.GetForUpdate(uow, organizationId, membershipId);
             await _renewalService.CatchUp(uow, tracked, today, await _renewalService.GetDebtRules(organizationId), userId);
             if (version.StartFee > 0m)
-                AddStartFeeCharge(uow, tracked, version.StartFee, userId);
+                AddStartFeeCharge(uow, tracked, version.StartFee, userId, now);
             await uow.Context.SaveChangesAsync();
             // 2D: postojeće buduće rezervacije klijenta dobivaju pokriće redom po vremenu do limita (već plaćene ne — AlreadyPaid).
             await _coverage.ReconcileMembership(uow, organizationId, membershipId, MembershipCoverageEvent.MembershipSale, userId);
@@ -291,7 +294,7 @@ public class ClientMembershipService : IClientMembershipService
         return await WithWarnings(organizationId, membershipId, warnings);
     }
 
-    private static void AddStartFeeCharge(IUnitOfWork uow, ClientMembership membership, decimal amount, Guid userId)
+    private static void AddStartFeeCharge(IUnitOfWork uow, ClientMembership membership, decimal amount, Guid userId, DateTimeOffset now)
     {
         MembershipCharge charge = new()
         {
@@ -305,7 +308,7 @@ public class ClientMembershipService : IClientMembershipService
             DueOn = membership.StartsOn,
             Lifecycle = MembershipChargeLifecycle.Open,
             SettlementStatus = MembershipChargeSettlementStatus.Unpaid,
-            CreatedAt = DateTimeOffset.UtcNow,
+            CreatedAt = now,
             CreatedBy = userId
         };
         membership.Charges.Add(charge);
@@ -359,7 +362,7 @@ public class ClientMembershipService : IClientMembershipService
                 throw new BusinessRuleException(ErrorCodes.MembershipEndAlreadyScheduled, $"Članstvo već završava {membership.EndsOn:dd.MM.yyyy.}.");
 
             (DateOnly effectiveOn, MembershipEndEffectiveReason reason) = CancellationEffective(membership, today);
-            membership.CancellationRequestedAt = DateTimeOffset.UtcNow;
+            membership.CancellationRequestedAt = _timeProvider.GetUtcNow();
             membership.CancellationRequestedBy = userId;
             membership.CancellationReason = string.IsNullOrWhiteSpace(request?.Reason) ? null : request.Reason.Trim();
             membership.EndsOn = effectiveOn;
@@ -371,16 +374,16 @@ public class ClientMembershipService : IClientMembershipService
             if (MembershipTimelines.OpenCompanyClosure(membership) is MembershipPause standstill && standstill.StartsOn <= today)
             {
                 standstill.ActualEndsOn = effectiveOn < standstill.StartsOn ? standstill.StartsOn : effectiveOn;
-                standstill.UpdatedAt = DateTimeOffset.UtcNow;
+                standstill.UpdatedAt = _timeProvider.GetUtcNow();
                 standstill.UpdatedBy = userId;
             }
-            Touch(membership, userId);
+            Touch(membership, userId, _timeProvider.GetUtcNow());
 
             // 2B (P2 dnevnik) — zahtjev za otkaz poništava zakazane pauze koje još nisu počele.
             CancelFuturePauses(uow, membership, userId, today, after: today, MembershipPauseCancellationReason.MembershipCancellation, warnings);
             DropPendingAfterEnd(uow, membership, userId);
             _handler.AddAudit(uow, MembershipTimelines.Audit(membership, userId, "CancellationRequested", null,
-                $"{effectiveOn:yyyy-MM-dd};{reason}", membership.CancellationReason));
+                $"{effectiveOn:yyyy-MM-dd};{reason}", _timeProvider.GetUtcNow(), membership.CancellationReason));
             await uow.Context.SaveChangesAsync();
             // 2D (Q27): termini nakon datuma kraja gube pokriće (AfterMembershipEnd), bez automatskog otkazivanja.
             await _coverage.ReconcileMembership(uow, organizationId, membership.Id, MembershipCoverageEvent.MembershipChanged, userId);
@@ -405,8 +408,8 @@ public class ClientMembershipService : IClientMembershipService
             membership.CancellationRequestedAt = null;
             membership.CancellationRequestedBy = null;
             membership.CancellationReason = null;
-            Touch(membership, userId);
-            _handler.AddAudit(uow, MembershipTimelines.Audit(membership, userId, "CancellationWithdrawn", old, null));
+            Touch(membership, userId, _timeProvider.GetUtcNow());
+            _handler.AddAudit(uow, MembershipTimelines.Audit(membership, userId, "CancellationWithdrawn", old, null, _timeProvider.GetUtcNow()));
             await uow.Context.SaveChangesAsync();
             await _coverage.ReconcileMembership(uow, organizationId, membership.Id, MembershipCoverageEvent.MembershipChanged, userId);
             await uow.CommitAsync();
@@ -443,7 +446,7 @@ public class ClientMembershipService : IClientMembershipService
             if (MembershipChargeSettlement.Standing(membership.Charges, today, rules.GraceDays) == MembershipStanding.Delinquent)
                 throw new BusinessRuleException(ErrorCodes.MembershipDelinquent, "Članstvo ima dug nakon isteka grace perioda; pauza nije dopuštena.");
 
-            DateTimeOffset now = DateTimeOffset.UtcNow;
+            DateTimeOffset now = _timeProvider.GetUtcNow();
             MembershipPause pause = new()
             {
                 Id = Guid.NewGuid(),
@@ -458,9 +461,9 @@ public class ClientMembershipService : IClientMembershipService
             };
             membership.Pauses.Add(pause);
             uow.Context.MembershipPauses.Add(pause);
-            Touch(membership, userId);
+            Touch(membership, userId, now);
             _handler.AddAudit(uow, MembershipTimelines.Audit(membership, userId, "PauseScheduled", null,
-                $"{pause.Id};{pause.Kind};{pause.StartsOn:yyyy-MM-dd}..{pause.PlannedEndsOn:yyyy-MM-dd}", pause.Reason));
+                $"{pause.Id};{pause.Kind};{pause.StartsOn:yyyy-MM-dd}..{pause.PlannedEndsOn:yyyy-MM-dd}", now, pause.Reason));
             await _renewalService.CatchUp(uow, membership, today, rules, userId); // pauza produljuje tekući period
             await uow.Context.SaveChangesAsync();
             // 2D (Q5.5): termini u pauzi gube pokriće (storno claima), bez automatskog otkazivanja; granice perioda se pomiču.
@@ -516,12 +519,12 @@ public class ClientMembershipService : IClientMembershipService
                 throw new BusinessRuleException(ErrorCodes.MembershipPauseNotPending,
                     "Članstvo stoji zbog zatvorenih poslovnica — završava ga ponovna aktivacija poslovnice.");
 
-            DateTimeOffset now = DateTimeOffset.UtcNow;
+            DateTimeOffset now = _timeProvider.GetUtcNow();
             if (pause.StartsOn == today)
             {
                 // Povratak na prvi dan pauze: pauza se ne koristi — poništava se bez trošenja limita.
                 CancelPause(pause, userId, now, MembershipPauseCancellationReason.Withdrawn);
-                _handler.AddAudit(uow, MembershipTimelines.Audit(membership, userId, "PauseWithdrawn", pause.Id.ToString(), null));
+                _handler.AddAudit(uow, MembershipTimelines.Audit(membership, userId, "PauseWithdrawn", pause.Id.ToString(), null, now));
                 result.Applied = true;
             }
             else if (pause.Kind == MembershipPauseKind.SkipPeriods)
@@ -541,7 +544,7 @@ public class ClientMembershipService : IClientMembershipService
                     pause.UpdatedAt = now;
                     pause.UpdatedBy = userId;
                     _handler.AddAudit(uow, MembershipTimelines.Audit(membership, userId, "PauseEndedEarly", $"{pause.PlannedEndsOn:yyyy-MM-dd}",
-                        $"{pause.ActualEndsOn:yyyy-MM-dd};opens={opens.StartsOn:yyyy-MM-dd}..{opens.EndsOn:yyyy-MM-dd}"));
+                        $"{pause.ActualEndsOn:yyyy-MM-dd};opens={opens.StartsOn:yyyy-MM-dd}..{opens.EndsOn:yyyy-MM-dd}", now));
                     result.Applied = true;
                 }
             }
@@ -556,13 +559,13 @@ public class ClientMembershipService : IClientMembershipService
                 if (cancelledPeriod.HasValue)
                     membership.EndsOn = MembershipPeriodCalendar.Periods(MembershipTimelines.Current(membership)).First(p => p.Sequence == cancelledPeriod.Value).EndsOn;
                 _handler.AddAudit(uow, MembershipTimelines.Audit(membership, userId, "PauseEndedEarly", $"{pause.PlannedEndsOn:yyyy-MM-dd}",
-                    $"{pause.ActualEndsOn:yyyy-MM-dd}"));
+                    $"{pause.ActualEndsOn:yyyy-MM-dd}", now));
                 result.Applied = true;
             }
 
             if (result.Applied)
             {
-                Touch(membership, userId);
+                Touch(membership, userId, now);
                 // Days: tekući period se skraćuje; kalendarski (Q47): otvara se period od dana povratka s punim zaduženjem.
                 await _renewalService.CatchUp(uow, membership, today, await _renewalService.GetDebtRules(organizationId), userId);
                 await uow.Context.SaveChangesAsync();
@@ -587,9 +590,9 @@ public class ClientMembershipService : IClientMembershipService
             if (pause.CancelledAt != null || pause.StartsOn <= today)
                 throw new BusinessRuleException(ErrorCodes.MembershipPauseNotPending, "Otkazati se može samo pauza koja još nije počela.");
 
-            CancelPause(pause, userId, DateTimeOffset.UtcNow, MembershipPauseCancellationReason.Withdrawn);
-            Touch(membership, userId);
-            _handler.AddAudit(uow, MembershipTimelines.Audit(membership, userId, "PauseWithdrawn", pause.Id.ToString(), null));
+            CancelPause(pause, userId, _timeProvider.GetUtcNow(), MembershipPauseCancellationReason.Withdrawn);
+            Touch(membership, userId, _timeProvider.GetUtcNow());
+            _handler.AddAudit(uow, MembershipTimelines.Audit(membership, userId, "PauseWithdrawn", pause.Id.ToString(), null, _timeProvider.GetUtcNow()));
             await _renewalService.CatchUp(uow, membership, today, await _renewalService.GetDebtRules(organizationId), userId);
             await uow.Context.SaveChangesAsync();
             await _coverage.ReconcileMembership(uow, organizationId, membership.Id, MembershipCoverageEvent.MembershipChanged, userId);
@@ -648,9 +651,9 @@ public class ClientMembershipService : IClientMembershipService
             membership.PendingPlanVersionId = version.Id;
             membership.PendingEffectiveOn = effectiveOn;
             membership.PendingSource = MembershipPendingChangeSource.ClientPlanChange;
-            Touch(membership, userId);
+            Touch(membership, userId, _timeProvider.GetUtcNow());
             _handler.AddAudit(uow, MembershipTimelines.Audit(membership, userId, "PlanChangeScheduled", old,
-                $"plan={planId};version={version.Version};effectiveOn={effectiveOn:yyyy-MM-dd}"));
+                $"plan={planId};version={version.Version};effectiveOn={effectiveOn:yyyy-MM-dd}", _timeProvider.GetUtcNow()));
             await uow.Context.SaveChangesAsync();
             // 2D: od datuma promjene vrijede novi uvjeti (usluge, poslovnice, limiti, granice perioda).
             await _coverage.ReconcileMembership(uow, organizationId, membership.Id, MembershipCoverageEvent.MembershipChanged, userId);
@@ -671,8 +674,8 @@ public class ClientMembershipService : IClientMembershipService
 
             string old = $"{membership.PendingPlanVersionId}@{membership.PendingEffectiveOn:yyyy-MM-dd}";
             ClearPending(membership);
-            Touch(membership, userId);
-            _handler.AddAudit(uow, MembershipTimelines.Audit(membership, userId, "PlanChangeWithdrawn", old, null));
+            Touch(membership, userId, _timeProvider.GetUtcNow());
+            _handler.AddAudit(uow, MembershipTimelines.Audit(membership, userId, "PlanChangeWithdrawn", old, null, _timeProvider.GetUtcNow()));
             await RestoreDisplacedPlanUpdate(uow, organizationId, userId, membership, today);
             await uow.Context.SaveChangesAsync();
             await _coverage.ReconcileMembership(uow, organizationId, membership.Id, MembershipCoverageEvent.MembershipChanged, userId);
@@ -708,16 +711,16 @@ public class ClientMembershipService : IClientMembershipService
             (await _handler.GetCoverageCandidates(uow, organizationId, membership.ClientId)).SelectMany(MembershipTimelines.Scopes));
         if (conflict != null)
         {
-            MembershipTimelines.MarkPlanUpdateNotApplied(membership, displaced.Id, ErrorCodes.MembershipOverlappingCoverage, DateTimeOffset.UtcNow);
+            MembershipTimelines.MarkPlanUpdateNotApplied(membership, displaced.Id, ErrorCodes.MembershipOverlappingCoverage, _timeProvider.GetUtcNow());
             _handler.AddAudit(uow, MembershipTimelines.Audit(membership, userId, "PlanUpdateNotApplied", null, displaced.Id.ToString(),
-                ErrorCodes.MembershipOverlappingCoverage));
+                _timeProvider.GetUtcNow(), ErrorCodes.MembershipOverlappingCoverage));
             return;
         }
 
         membership.PendingPlanVersionId = displaced.Id;
         membership.PendingEffectiveOn = effectiveOn;
         membership.PendingSource = MembershipPendingChangeSource.PlanUpdate;
-        _handler.AddAudit(uow, MembershipTimelines.Audit(membership, userId, "PlanUpdateRestored", null, $"{displaced.Id}@{effectiveOn:yyyy-MM-dd}"));
+        _handler.AddAudit(uow, MembershipTimelines.Audit(membership, userId, "PlanUpdateRestored", null, $"{displaced.Id}@{effectiveOn:yyyy-MM-dd}", _timeProvider.GetUtcNow()));
     }
 
     #endregion
@@ -744,19 +747,19 @@ public class ClientMembershipService : IClientMembershipService
             string old = membership.EndsOn == null ? null : $"{membership.EndsOn:yyyy-MM-dd};{membership.EndReason}";
             membership.EndsOn = endsOn;
             membership.EndReason = MembershipEndReason.EndOverride;
-            Touch(membership, userId);
+            Touch(membership, userId, _timeProvider.GetUtcNow());
 
             // Zakazane pauze nakon izlaska se poništavaju; pauza u tijeku završava s članstvom.
             CancelFuturePauses(uow, membership, userId, today, after: endsOn, MembershipPauseCancellationReason.MembershipEnded, warnings);
             foreach (MembershipPause running in membership.Pauses.Where(p => p.CancelledAt == null && p.StartsOn <= endsOn && p.EffectiveEndsOn > endsOn))
             {
                 running.ActualEndsOn = endsOn;
-                running.UpdatedAt = DateTimeOffset.UtcNow;
+                running.UpdatedAt = _timeProvider.GetUtcNow();
                 running.UpdatedBy = userId;
             }
 
             DropPendingAfterEnd(uow, membership, userId);
-            _handler.AddAudit(uow, MembershipTimelines.Audit(membership, userId, "EndOverridden", old, $"{endsOn:yyyy-MM-dd}", reason));
+            _handler.AddAudit(uow, MembershipTimelines.Audit(membership, userId, "EndOverridden", old, $"{endsOn:yyyy-MM-dd}", _timeProvider.GetUtcNow(), reason));
             await uow.Context.SaveChangesAsync();
             // 2B/2D: claimovi nakon izlaska se oslobađaju (AfterMembershipEnd), bez automatskog otkazivanja termina.
             await _coverage.ReconcileMembership(uow, organizationId, membership.Id, MembershipCoverageEvent.MembershipChanged, userId);
@@ -808,7 +811,7 @@ public class ClientMembershipService : IClientMembershipService
                     "Članarina je već korištena (sesija je počela ili je kredit potrošen); poništavanje nije moguće — koristite otkaz.",
                     new { usedSessions = usage });
 
-            DateTimeOffset now = DateTimeOffset.UtcNow;
+            DateTimeOffset now = _timeProvider.GetUtcNow();
             membership.VoidedAt = now;
             membership.VoidedBy = userId;
             membership.VoidReason = reason;
@@ -821,9 +824,9 @@ public class ClientMembershipService : IClientMembershipService
                 charge.VoidedBy = userId;
                 charge.VoidReason = reason;
             }
-            Touch(membership, userId);
+            Touch(membership, userId, now);
             CancelFuturePauses(uow, membership, userId, today, after: today, MembershipPauseCancellationReason.MembershipVoided, warnings);
-            _handler.AddAudit(uow, MembershipTimelines.Audit(membership, userId, "SaleVoided", null, null, reason));
+            _handler.AddAudit(uow, MembershipTimelines.Audit(membership, userId, "SaleVoided", null, null, now, reason));
             await uow.Context.SaveChangesAsync();
             List<WarningMembershipSession> uncovered = await _coverage.ReleaseForVoid(uow, organizationId, membership.Id, userId);
             if (uncovered.Count > 0)
@@ -839,7 +842,7 @@ public class ClientMembershipService : IClientMembershipService
     #region Pomoćno
 
     private async Task<DateOnly> Today(Guid organizationId) =>
-        (await _organizationCalendarService.GetCalendar(organizationId)).LocalDate(DateTimeOffset.UtcNow);
+        (await _organizationCalendarService.GetCalendar(organizationId)).LocalDate(_timeProvider.GetUtcNow());
 
     /// <summary>Zaključano članstvo koje nije poništeno ni završilo.</summary>
     private async Task<ClientMembership> LockActive(IUnitOfWork uow, Guid organizationId, Guid id, DateOnly today)
@@ -912,11 +915,11 @@ public class ClientMembershipService : IClientMembershipService
         if (cancelled.Count == 0)
             return;
 
-        DateTimeOffset now = DateTimeOffset.UtcNow;
+        DateTimeOffset now = _timeProvider.GetUtcNow();
         foreach (MembershipPause pause in cancelled)
         {
             CancelPause(pause, userId, now, reason);
-            _handler.AddAudit(uow, MembershipTimelines.Audit(membership, userId, "ScheduledPauseCancelled", pause.Id.ToString(), null, reason.ToString()));
+            _handler.AddAudit(uow, MembershipTimelines.Audit(membership, userId, "ScheduledPauseCancelled", pause.Id.ToString(), null, now, reason.ToString()));
         }
 
         warnings.Add(new WarningDto(WarningCodes.MembershipScheduledPauseCancelled, new WarningMembershipPausesDetails
@@ -943,7 +946,7 @@ public class ClientMembershipService : IClientMembershipService
 
         string old = $"{membership.PendingSource}:{membership.PendingPlanVersionId}@{effectiveOn:yyyy-MM-dd}";
         ClearPending(membership);
-        _handler.AddAudit(uow, MembershipTimelines.Audit(membership, userId, "PendingChangeDropped", old, null));
+        _handler.AddAudit(uow, MembershipTimelines.Audit(membership, userId, "PendingChangeDropped", old, null, _timeProvider.GetUtcNow()));
     }
 
     private static void ClearPending(ClientMembership membership)
@@ -962,9 +965,9 @@ public class ClientMembershipService : IClientMembershipService
         .Select(p => (int?)p.Sequence)
         .FirstOrDefault();
 
-    private static void Touch(ClientMembership membership, Guid userId)
+    private static void Touch(ClientMembership membership, Guid userId, DateTimeOffset now)
     {
-        membership.UpdatedAt = DateTimeOffset.UtcNow;
+        membership.UpdatedAt = now;
         membership.UpdatedBy = userId;
     }
 

@@ -596,7 +596,7 @@ public class MultiSegmentAppointmentTests
         Spa spa = await SetUp(w);
         AppointmentDto created = await CreateMassageThenPhysio(w, spa);
         // The cutoff ends between the massage (09:00) and the physio (10:00).
-        await w.SetCancellationWindowMinutes((int)(SchedulingWorld.Future(9, 30) - DateTimeOffset.UtcNow).TotalMinutes);
+        await w.SetCancellationWindowMinutes((int)(SchedulingWorld.Future(9, 30) - TestClock.UtcNow).TotalMinutes);
 
         BookingDto booking = await w.Bookings.CancelBooking(w.OrganizationId, w.ActorUserId, true, created.Id, w.Client.Id.Value, SchedulingWorld.ClientCancel());
 
@@ -613,7 +613,7 @@ public class MultiSegmentAppointmentTests
         await using SchedulingWorld w = await SchedulingWorld.Create(nameof(LateCancellation_ForASingleParticipation_UsesItsOwnSegmentStart));
         Spa spa = await SetUp(w);
         AppointmentDto created = await CreateMassageThenPhysio(w, spa);
-        await w.SetCancellationWindowMinutes((int)(SchedulingWorld.Future(9, 30) - DateTimeOffset.UtcNow).TotalMinutes);
+        await w.SetCancellationWindowMinutes((int)(SchedulingWorld.Future(9, 30) - TestClock.UtcNow).TotalMinutes);
 
         BookingDto booking = await SetParticipation(w, ParticipationOn(created, w.Client, SegmentOf(created, spa.Physio.Id.Value).Id).Id, BookingStatus.Cancelled);
 
@@ -624,7 +624,7 @@ public class MultiSegmentAppointmentTests
     /// <summary>Organization cutoff that ends at 09:30 on the test day: a segment starting 09:00 is inside the late window, any
     /// segment starting 10:00 or later is outside it.</summary>
     private static Task CutoffEndingAt0930(SchedulingWorld w) =>
-        w.SetCancellationWindowMinutes((int)(SchedulingWorld.Future(9, 30) - DateTimeOffset.UtcNow).TotalMinutes);
+        w.SetCancellationWindowMinutes((int)(SchedulingWorld.Future(9, 30) - TestClock.UtcNow).TotalMinutes);
 
     [Fact]
     public async Task BookingWideClientCancel_ClassifiesEachParticipationFromItsOwnSegmentStart()
@@ -733,12 +733,13 @@ public class MultiSegmentAppointmentTests
         Guid massage = SegmentOf(created, spa.Massage.Id.Value).Id;
         Guid physio = SegmentOf(created, spa.Physio.Id.Value).Id;
 
-        await SchedulingAssert.BusinessRule(ErrorCodes.NotOwner, () => w.Appointments.ChangeSegmentTime(w.OrganizationId, spa.A.UserId, false, physio,
+        // CHANGED in T1: 403 OutOfScope (bilo 409 NOT_OWNER)
+        await SchedulingAssert.OutOfScope(() => w.Appointments.ChangeSegmentTime(w.OrganizationId, spa.A.UserId, false, physio,
             new AppointmentSegmentTimeChangeRequest { PlannedStart = SchedulingWorld.Future(12) }));
-        await SchedulingAssert.BusinessRule(ErrorCodes.NotOwner,
-            () => SetParticipation(w, ParticipationOn(created, w.Client, physio).Id, BookingStatus.Cancelled, fullScope: false, userId: spa.A.UserId));
-        await SchedulingAssert.BusinessRule(ErrorCodes.NotOwner,
-            () => w.Appointments.RemoveParticipation(w.OrganizationId, spa.A.UserId, false, ParticipationOn(created, w.Client, physio).Id));
+        // CHANGED in T1: 403 OutOfScope (bilo 409 NOT_OWNER)
+        await SchedulingAssert.OutOfScope(() => SetParticipation(w, ParticipationOn(created, w.Client, physio).Id, BookingStatus.Cancelled, fullScope: false, userId: spa.A.UserId));
+        // CHANGED in T1: 403 OutOfScope (bilo 409 NOT_OWNER)
+        await SchedulingAssert.OutOfScope(() => w.Appointments.RemoveParticipation(w.OrganizationId, spa.A.UserId, false, ParticipationOn(created, w.Client, physio).Id));
 
         AppointmentDto moved = await w.Appointments.ChangeSegmentTime(w.OrganizationId, spa.A.UserId, false, massage,
             new AppointmentSegmentTimeChangeRequest { PlannedStart = SchedulingWorld.Future(8, 30) });
@@ -754,7 +755,8 @@ public class MultiSegmentAppointmentTests
         Spa spa = await SetUp(w);
         AppointmentDto created = await CreateMassageThenPhysio(w, spa);
 
-        await SchedulingAssert.BusinessRule(ErrorCodes.NotOwner, () => w.Bookings.CancelBooking(
+        // CHANGED in T1: 403 OutOfScope (bilo 409 NOT_OWNER)
+        await SchedulingAssert.OutOfScope(() => w.Bookings.CancelBooking(
             w.OrganizationId, spa.A.UserId, false, created.Id, w.Client.Id.Value, SchedulingWorld.ClientCancel()));
 
         Assert.All(await w.LoadParticipations(created.Id, w.Client), p => Assert.Equal(ParticipationStatus.Confirmed, p.Status));
@@ -770,10 +772,10 @@ public class MultiSegmentAppointmentTests
             Seg(spa.Massage, SchedulingWorld.Future(9), spa.A, w.Client),
             Seg(spa.Physio, SchedulingWorld.Future(10), spa.A, w.Client));
 
-        await SchedulingAssert.BusinessRule(ErrorCodes.NotOwner,
-            () => w.Appointments.Cancel(w.OrganizationId, spa.A.UserId, false, created.Id, SchedulingWorld.BusinessCancel()));
-        await SchedulingAssert.BusinessRule(ErrorCodes.NotOwner,
-            () => w.Appointments.MarkNoShow(w.OrganizationId, spa.A.UserId, false, created.Id, new NoShowRequest()));
+        // CHANGED in T1: 403 OutOfScope (bilo 409 NOT_OWNER)
+        await SchedulingAssert.OutOfScope(() => w.Appointments.Cancel(w.OrganizationId, spa.A.UserId, false, created.Id, SchedulingWorld.BusinessCancel()));
+        // CHANGED in T1: 403 OutOfScope (bilo 409 NOT_OWNER)
+        await SchedulingAssert.OutOfScope(() => w.Appointments.MarkNoShow(w.OrganizationId, spa.A.UserId, false, created.Id, new NoShowRequest()));
         Assert.Equal(AppointmentStatus.Scheduled, (await w.LoadAppointment(created.Id)).Status);
 
         // The same caller owns every affected segment, so the Booking-wide cancel is allowed.
@@ -788,7 +790,8 @@ public class MultiSegmentAppointmentTests
         Spa spa = await SetUp(w);
         AppointmentDto created = await Create(w, Seg(spa.Massage, SchedulingWorld.Future(9), spa.A, w.Client));
 
-        await SchedulingAssert.BusinessRule(ErrorCodes.NotOwner, () => w.Appointments.AddSegment(w.OrganizationId, spa.A.UserId, false, created.Id,
+        // CHANGED in T1: 403 OutOfScope (bilo 409 NOT_OWNER)
+        await SchedulingAssert.OutOfScope(() => w.Appointments.AddSegment(w.OrganizationId, spa.A.UserId, false, created.Id,
             new AppointmentSegmentAddRequest
             {
                 ServiceId = spa.Physio.Id.Value,

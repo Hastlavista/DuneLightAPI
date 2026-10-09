@@ -52,7 +52,7 @@ public class GroupGenerationTests
         await w.SetCompanyActive(w.Company, false);
 
         GenerateGroupAppointmentsResult result = await w.Groups.GenerateAppointments(w.OrganizationId, w.ActorUserId,
-            new GenerateGroupAppointmentsRequest { FromDate = SchedulingWorld.FutureDay, ToDate = SchedulingWorld.FutureDay });
+            new GenerateGroupAppointmentsRequest { FromDate = SchedulingWorld.Day(SchedulingWorld.FutureDay), ToDate = SchedulingWorld.Day(SchedulingWorld.FutureDay) });
 
         Assert.Equal(0, result.CreatedCount);
         GroupGenerationSkipDto skipped = Assert.Single(result.Skipped);

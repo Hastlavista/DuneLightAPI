@@ -15,8 +15,8 @@ public interface ILeaveFundHandler
     Task<LeaveFund> GetOrCreateForYear(
         IUnitOfWork uow, Guid organizationId, Guid employeeId, EmployeeLeaveSettings settings, int fundYear, Guid userId);
 
-    /// <summary>Fondovi zaposlenika koji još nisu istekli (ExpiresAt >= asOf) i imaju preostalog kapaciteta, poredani od najstarijeg — vidi LeaveFundAllocator.</summary>
-    Task<List<LeaveFund>> GetEligible(IUnitOfWork uow, Guid organizationId, Guid employeeId, DateTimeOffset asOf);
+    /// <summary>Fondovi zaposlenika koji još nisu istekli (ExpiresAt >= asOf, T1-7: oba DateOnly — fond vrijedi zaključno s danom isteka) i imaju preostalog kapaciteta, poredani od najstarijeg — vidi LeaveFundAllocator.</summary>
+    Task<List<LeaveFund>> GetEligible(IUnitOfWork uow, Guid organizationId, Guid employeeId, DateOnly asOf);
 
     Task Update(IUnitOfWork uow, LeaveFund fund);
 

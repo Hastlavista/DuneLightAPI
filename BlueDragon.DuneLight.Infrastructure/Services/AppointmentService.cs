@@ -67,6 +67,7 @@ public partial class AppointmentService : IAppointmentService
     private readonly IMembershipCoverageService _membershipCoverage;
     private readonly ICancellationReasonService _cancellationReasonService;
     private readonly IWaitlistHandler _waitlistHandler;
+    private readonly TimeProvider _timeProvider;
 
     public AppointmentService(
         IAppointmentHandler appointmentHandler,
@@ -99,9 +100,11 @@ public partial class AppointmentService : IAppointmentService
         IGrantResolver grantResolver,
         IMembershipCoverageService membershipCoverage,
         ICancellationReasonService cancellationReasonService,
-        IWaitlistHandler waitlistHandler)
+        IWaitlistHandler waitlistHandler,
+        TimeProvider timeProvider)
     {
         _cancellationReasonService = cancellationReasonService;
+        _timeProvider = timeProvider;
         _waitlistHandler = waitlistHandler;
         _organizationCalendarService = organizationCalendarService;
         _grantResolver = grantResolver;
@@ -143,7 +146,8 @@ public partial class AppointmentService : IAppointmentService
     }
 
     /// <summary>Validiran segment ciljnog zahtjeva: plan za konstrukcijsku jezgru + ono što trebaju provjere zauzetosti.</summary>
-    private sealed record ValidatedSegment(SegmentPlan Plan, ServiceEntity Service, Room Room, List<Client> Clients);
+    /// T1-8: PriceWarnings = PRICE_NOT_DEFINED kad sudionici segmenta dobivaju cijenu iz zadane cijene uz rupu u cjeniku.
+    private sealed record ValidatedSegment(SegmentPlan Plan, ServiceEntity Service, Room Room, List<Client> Clients, List<WarningDto> PriceWarnings);
 
     /// <summary>Phase M1E — ograničenja proizvoda nad ciljnim ugovorom: 1..N segmenata (višesegmentni termini su omogućeni;
     /// MULTI_SEGMENT_NOT_ENABLED je uklonjen), svaki segment ograničen kao u <see cref="EnsureSegmentProductLimits"/>.</summary>
@@ -219,10 +223,15 @@ public partial class AppointmentService : IAppointmentService
                 : BookingPricing.FromResolution(resolvedPrice, p.Amount)))
             .ToList();
 
+        // T1-8: rupa u cjeniku se prijavljuje samo kad cijenu stvarno dobiva sudjelovanje.
+        List<WarningDto> priceWarnings = new();
+        if (participants.Count > 0)
+            PriceWarnings.AddNotDefined(priceWarnings, resolvedPrice);
+
         return new ValidatedSegment(
             new SegmentPlan(segment.ServiceId, segment.PlannedStart, plannedEnd, employeeIds, segment.RoomId, participants, resources,
                 PricingSource: pricingSource),
-            service, room, clients);
+            service, room, clients, priceWarnings);
     }
 
     /// <summary>Phase M1G — skup zaposlenika segmenta: bez duplikata (odbija se, ne spaja tiho); prazan samo gdje tok to
@@ -290,7 +299,7 @@ public partial class AppointmentService : IAppointmentService
             organizationId, plan.EmployeeIds, request.CompanyId, plan.PlannedStart, plan.PlannedEnd, overrideAvailability));
 
         Appointment appointment = AppointmentFactory.CreateIndividual(
-            organizationId, request.CompanyId, request.Note, recurrenceGroupId: null, userId, DateTimeOffset.UtcNow,
+            organizationId, request.CompanyId, request.Note, recurrenceGroupId: null, userId, _timeProvider.GetUtcNow(),
             new[] { plan });
         Guid appointmentId = appointment.Id.GetValueOrDefault();
         AppointmentSegment segment = appointment.Segments.Single();
@@ -307,7 +316,7 @@ public partial class AppointmentService : IAppointmentService
 
             await _appointmentHandler.Add(uow, appointment);
             // K2: override radnog vremena koji je stvarno nešto zaobišao bilježi se (tko, kada, što).
-            await AvailabilityOverride.Audit(_auditLogHandler, uow, appointmentId, warnings, userId);
+            await AvailabilityOverride.Audit(_auditLogHandler, uow, appointmentId, warnings, userId, _timeProvider.GetUtcNow());
 
             // Odrađivanje kroz jedinu jezgru prijelaza sudjelovanja, stabilnim redoslijedom (po klijentu).
             foreach (AppointmentCompletedClientRequest client in clientRequests.OrderBy(c => c.ClientId))
@@ -338,6 +347,7 @@ public partial class AppointmentService : IAppointmentService
             foreach (BookingParticipationDto participation in booking.Participations)
                 warnings.AddRange(await ParticipationCoverageWarnings.For(
                     _clientPackageService, organizationId, appointment, booking.ClientId, participation));
+        warnings.AddRange(validated.PriceWarnings);
         dto.Warnings = warnings;
         return dto;
     }
@@ -355,7 +365,7 @@ public partial class AppointmentService : IAppointmentService
             Appointment locked = await _appointmentHandler.GetForUpdate(uow, organizationId, id)
                 ?? throw new NotFoundAppException("Appointment", id);
             locked.Note = request?.Note;
-            locked.UpdatedAt = DateTimeOffset.UtcNow;
+            locked.UpdatedAt = _timeProvider.GetUtcNow();
             locked.UpdatedBy = userId;
             await _appointmentHandler.UpdateScalar(uow, locked);
             await uow.CommitAsync();
@@ -399,7 +409,7 @@ public partial class AppointmentService : IAppointmentService
 
             if (appointment.ClosedOutAt == null)
             {
-                DateTimeOffset now = DateTimeOffset.UtcNow;
+                DateTimeOffset now = _timeProvider.GetUtcNow();
                 appointment.ClosedOutAt = now;
                 appointment.ClosedOutBy = userId;
                 appointment.UpdatedAt = now;
@@ -435,7 +445,7 @@ public partial class AppointmentService : IAppointmentService
                 await MarkClosed(uow, appointment, userId);
 
             // Status se ne postavlja — izvodi se (no-op kad je već usklađen).
-            await AppointmentLifecycle.Refresh(_appointmentHandler, _auditLogHandler, uow, organizationId, id, userId);
+            await AppointmentLifecycle.Refresh(_appointmentHandler, _auditLogHandler, uow, organizationId, id, userId, _timeProvider.GetUtcNow());
 
             await uow.CommitAsync();
         }
@@ -495,7 +505,7 @@ public partial class AppointmentService : IAppointmentService
                 CorrectionScope(grants, appointment.Form), appointment.Segments, NotOwnerMessage);
 
             OrganizationCalendar calendar = await _organizationCalendarService.GetCompanyCalendar(organizationId, appointment.CompanyId);
-            DateTimeOffset now = DateTimeOffset.UtcNow;
+            DateTimeOffset now = _timeProvider.GetUtcNow();
             if (!AppointmentClosure.IsClosed(appointment, calendar, now))
                 throw new BusinessRuleException(ErrorCodes.AppointmentNotClosed, "Termin nije zatvoren.");
             AppointmentClosure.EnsureReopenAllowed(
@@ -537,13 +547,15 @@ public partial class AppointmentService : IAppointmentService
             return true;
         if (grants.Has(Grants.AppointmentsWriteOwn) || (isGroup && grants.Has(Grants.GroupsAttendanceOwn)))
             return false;
-        throw new ForbiddenAppException("Nemate pristup ovom terminu.");
+        throw ForbiddenAppException.MissingAnyGrant("Nemate pristup ovom terminu.", isGroup
+            ? new[] { Grants.AppointmentsWriteOwn, Grants.AppointmentsWriteAll, Grants.GroupsAttendanceOwn, Grants.GroupsAttendanceAll }
+            : new[] { Grants.AppointmentsWriteOwn, Grants.AppointmentsWriteAll });
     }
 
     /// <summary>K2 — ručno zatvaranje (ClosedAt/By) uz audit "AppointmentClosed"; pozivatelj drži lock termina.</summary>
     private async Task MarkClosed(IUnitOfWork uow, Appointment appointment, Guid userId)
     {
-        DateTimeOffset now = DateTimeOffset.UtcNow;
+        DateTimeOffset now = _timeProvider.GetUtcNow();
         appointment.ClosedAt = now;
         appointment.ClosedBy = userId;
         appointment.UpdatedAt = now;
@@ -619,7 +631,8 @@ public partial class AppointmentService : IAppointmentService
             throw new BusinessRuleException(ErrorCodes.AppointmentNotCancelled, "Termin nije otkazan.");
         GrantContext grants = await _grantResolver.Resolve(organizationId, userId);
         if (!grants.Has(Grants.AppointmentsCorrectionsCancelled))
-            throw new ForbiddenAppException("Vraćanje otkazanog termina zahtijeva ovlast appointments.corrections.cancelled.");
+            throw ForbiddenAppException.MissingGrant(
+                "Vraćanje otkazanog termina zahtijeva ovlast appointments.corrections.cancelled.", Grants.AppointmentsCorrectionsCancelled);
         await AppointmentOwnership.EnsureCallerOwnsSegments(_employeeHandler, organizationId, userId,
             CorrectionScope(grants, snapshot.Form), snapshot.Segments, NotOwnerMessage);
 
@@ -672,19 +685,19 @@ public partial class AppointmentService : IAppointmentService
                 ChangeType = "AppointmentRestored",
                 OldValue = appointment.CancelledAt?.ToString("O"),
                 NewValue = reason,
-                ChangedAt = DateTimeOffset.UtcNow,
+                ChangedAt = _timeProvider.GetUtcNow(),
                 ChangedBy = userId
             });
-            await AvailabilityOverride.Audit(_auditLogHandler, uow, id, availabilityWarnings, userId);
+            await AvailabilityOverride.Audit(_auditLogHandler, uow, id, availabilityWarnings, userId, _timeProvider.GetUtcNow());
 
             // Korekcija Cancelled → Confirmed kroz jedinu jezgru prijelaza: pokriće članarinom (kao nova rezervacija, uključujući
             // limite) i cijena po pokriću se ponovno evaluiraju; razlog promjene je na sudjelovanju.
-            DateTimeOffset eventAt = DateTimeOffset.UtcNow;
+            DateTimeOffset eventAt = _timeProvider.GetUtcNow();
             foreach ((Booking booking, BookingSegmentParticipation participation) in restorable.OrderBy(x => x.Participation.Id))
                 await _participationLifecycleService.ApplyCascadeTransitionInTransaction(uow, organizationId, userId, appointment, booking,
                     participation, new BookingSetStatusRequest { Status = BookingStatus.Confirmed, CorrectionReason = reason }, eventAt);
 
-            await AppointmentLifecycle.Refresh(_appointmentHandler, _auditLogHandler, uow, organizationId, id, userId);
+            await AppointmentLifecycle.Refresh(_appointmentHandler, _auditLogHandler, uow, organizationId, id, userId, eventAt);
             await uow.CommitAsync();
         }
         catch (DbUpdateConcurrencyException)
@@ -760,7 +773,7 @@ public partial class AppointmentService : IAppointmentService
 
         // "Isti dan" je kalendarski dan poslovnice termina (efektivna zona), ne UTC dan (F-19 / timezone foundation).
         OrganizationCalendar calendar = await _organizationCalendarService.GetCompanyCalendar(organizationId, appointment.CompanyId);
-        if (calendar.LocalDate(appointment.CreatedAt) != calendar.LocalDate(DateTimeOffset.UtcNow))
+        if (calendar.LocalDate(appointment.CreatedAt) != calendar.LocalDate(_timeProvider.GetUtcNow()))
             throw new BusinessRuleException(ErrorCodes.SameDayOnly, "Termin se može trajno obrisati samo istog dana kad je unesen — u suprotnom ga otkažite.");
 
         // Phase D3B1: fizičko brisanje samo ako su sva sudjelovanja netaknuta (pravilo i brisanje: ParticipationHistory kroz
@@ -777,13 +790,14 @@ public partial class AppointmentService : IAppointmentService
 
     public async Task<List<AppointmentDto>> CreateRecurring(Guid organizationId, Guid userId, bool hasFullScope, RecurringAppointmentCreateRequest request)
     {
-        if (request.EndDate < request.FirstOccurrenceStartsAt)
+        // Isto lokalno vrijeme u efektivnoj zoni poslovnice svaki dan/tjedan, i preko DST prijelaza. T1-7: EndDate je zadnji
+        // dan niza (uključivo) u zoni poslovnice — pojava ulazi u niz kad je njezin lokalni datum <= EndDate.
+        OrganizationCalendar calendar = await _organizationCalendarService.GetCompanyCalendar(organizationId, request.CompanyId);
+        if (request.EndDate < calendar.LocalDate(request.FirstOccurrenceStartsAt))
             throw new ValidationAppException("Datum kraja ne smije biti prije prvog termina.");
 
         ServiceEntity service = await LoadServiceOrThrow(organizationId, request.ServiceId);
         bool overrideAvailability = await AvailabilityOverride.Resolve(_grantResolver, organizationId, userId, request.OverrideAvailability);
-        // Isto lokalno vrijeme u efektivnoj zoni poslovnice svaki dan/tjedan, i preko DST prijelaza.
-        OrganizationCalendar calendar = await _organizationCalendarService.GetCompanyCalendar(organizationId, request.CompanyId);
         List<DateTimeOffset> occurrences = calendar.RepeatAtLocalTime(
             request.FirstOccurrenceStartsAt, request.EndDate, request.RecurrenceType == RecurrenceType.Daily ? 1 : 7);
 
@@ -812,10 +826,14 @@ public partial class AppointmentService : IAppointmentService
 
         Guid recurrenceGroupId = Guid.NewGuid();
         List<Appointment> toCreate = new List<Appointment>();
+        // T1-8: cijena po occurrenceu — PRICE_NOT_DEFINED u odgovoru tog termina.
+        Dictionary<DateTimeOffset, ResolvePriceResponse> pricesByOccurrence = new();
 
         foreach (DateTimeOffset occurrence in occurrences)
         {
             ResolvePriceResponse resolvedPrice = await ResolveServicePrice(organizationId, request.ServiceId, request.CompanyId, request.EmployeeId, occurrence);
+            if (clients.Count > 0)
+                pricesByOccurrence[occurrence] = resolvedPrice;
 
             // Phase M1B: svaki occurrence kroz konstrukcijsku jezgru (jedan segment; /recurring namjerno ignorira ručni iznos
             // — request nema Amount — svaki occurrence po svojoj predloženoj cijeni).
@@ -824,7 +842,7 @@ public partial class AppointmentService : IAppointmentService
                 clients.Select(c => new ParticipantPlan(c.Id.GetValueOrDefault(), BookingPricing.AtSuggested(resolvedPrice))).ToList(),
                 defaultResources);
             Appointment appointment = AppointmentFactory.CreateIndividual(
-                organizationId, request.CompanyId, request.Note, recurrenceGroupId, userId, DateTimeOffset.UtcNow,
+                organizationId, request.CompanyId, request.Note, recurrenceGroupId, userId, _timeProvider.GetUtcNow(),
                 new[] { plan });
 
             toCreate.Add(appointment);
@@ -839,7 +857,7 @@ public partial class AppointmentService : IAppointmentService
         // K2: override radnog vremena po occurrenceu (samo gdje je nešto zaobišao).
         foreach (Appointment appointment in toCreate)
             if (warningsByOccurrence.TryGetValue(AppointmentRange.Of(appointment).PlannedStart, out List<WarningDto> overridden))
-                await AvailabilityOverride.Audit(_auditLogHandler, uow, appointment.Id.GetValueOrDefault(), overridden, userId);
+                await AvailabilityOverride.Audit(_auditLogHandler, uow, appointment.Id.GetValueOrDefault(), overridden, userId, _timeProvider.GetUtcNow());
         // P2 (2D, §11.4): pokriće occurrence po occurrence, redom po vremenu (limit koji presuši usred serije → ostatak na
         // sljedeći izvor; uz postavku "odbij" odbija se cijela serija).
         foreach (Appointment appointment in toCreate)
@@ -852,6 +870,8 @@ public partial class AppointmentService : IAppointmentService
             AppointmentDto dto = await GetByIdInternal(organizationId, appointment.Id.GetValueOrDefault());
             if (warningsByOccurrence.TryGetValue(AppointmentRange.Of(appointment).PlannedStart, out List<WarningDto> occurrenceWarnings))
                 dto.Warnings = occurrenceWarnings;
+            if (pricesByOccurrence.TryGetValue(AppointmentRange.Of(appointment).PlannedStart, out ResolvePriceResponse occurrencePrice))
+                PriceWarnings.AddNotDefined(dto.Warnings, occurrencePrice);
             created.Add(dto);
         }
 
@@ -1044,16 +1064,16 @@ public partial class AppointmentService : IAppointmentService
         Dictionary<Guid, OrganizationCalendar> calendars =
             await _organizationCalendarService.GetCompanyCalendars(organizationId, items.Select(a => a.CompanyId).Distinct());
         return PagedResult<AppointmentDto>.Create(
-            items.Select(a => ToDto(a, calendars[a.CompanyId])).ToList(), totalCount, request.Page, request.PageSize);
+            items.Select(a => ToDto(a, calendars[a.CompanyId], _timeProvider.GetUtcNow())).ToList(), totalCount, request.Page, request.PageSize);
     }
 
     public async Task<List<EmployeeAvailableSlotsDto>> GetAvailableSlots(Guid organizationId, AvailableSlotsQuery query)
     {
-        // Traženi dan je kalendarski datum kako ga je klijent napisao; "danas", granice dana i sva lokalna vremena
+        // Traženi dan je kalendarski datum (T1-7: DateOnly); "danas", granice dana i sva lokalna vremena
         // (radno vrijeme, zauzeti intervali) su u efektivnoj zoni poslovnice — ne ovise o hostu ni o offsetu učitanih vrijednosti.
         OrganizationCalendar calendar = await _organizationCalendarService.GetCompanyCalendar(organizationId, query.CompanyId);
-        DateTimeOffset now = DateTimeOffset.UtcNow;
-        DateOnly requestedDay = CalendarDates.FromWallDate(query.Date);
+        DateTimeOffset now = _timeProvider.GetUtcNow();
+        DateOnly requestedDay = query.Date;
         DateOnly today = calendar.LocalDate(now);
 
         if (requestedDay < today)
@@ -1152,7 +1172,7 @@ public partial class AppointmentService : IAppointmentService
             segments.Add(await ValidateSegment(organizationId, request.CompanyId, segment, PricingMode.WithManualOverride));
 
         Appointment appointment = AppointmentFactory.CreateIndividual(
-            organizationId, request.CompanyId, request.Note, recurrenceGroupId, userId, DateTimeOffset.UtcNow,
+            organizationId, request.CompanyId, request.Note, recurrenceGroupId, userId, _timeProvider.GetUtcNow(),
             segments.Select(s => s.Plan).ToList());
         Guid appointmentId = appointment.Id.GetValueOrDefault();
 
@@ -1173,13 +1193,17 @@ public partial class AppointmentService : IAppointmentService
                     segment.Clients, segment.Room, ResourcesOf(segment.Plan)))
                 .ToList());
             await _appointmentHandler.Add(uow, appointment);
-            await AvailabilityOverride.Audit(_auditLogHandler, uow, appointmentId, warnings, userId);
+            await AvailabilityOverride.Audit(_auditLogHandler, uow, appointmentId, warnings, userId, _timeProvider.GetUtcNow());
             await SyncMembershipCoverage(uow, organizationId, userId, appointment);
             await uow.CommitAsync();
         }
 
         AppointmentDto dto = await GetByIdInternal(organizationId, appointmentId);
         dto.Warnings = warnings;
+        // T1-8: rupa u cjeniku (po segmentu, bez ponavljanja).
+        foreach (WarningDto priceWarning in segments.SelectMany(s => s.PriceWarnings))
+            if (priceWarning.Details is WarningPriceNotDefinedDetails details)
+                PriceWarnings.AddNotDefinedDetails(dto.Warnings, details);
         return dto;
     }
 
@@ -1240,7 +1264,7 @@ public partial class AppointmentService : IAppointmentService
                 throw new BusinessRuleException(
                     ErrorCodes.NoActiveParticipations, "Termin nema aktivnih sudjelovanja koja bi se mogla označiti kao izostanak.");
 
-            DateTimeOffset eventAt = DateTimeOffset.UtcNow;
+            DateTimeOffset eventAt = _timeProvider.GetUtcNow();
 
             // P1 (D3): appointment-wide izostanak je atomaran — ako ijedan aktivni segment još nije počeo, ništa se ne mijenja.
             if (isNoShow && active.Any(x => ExecutionContextResolver.ForParticipation(appointment, x.Booking, x.Participation).StartsAt > eventAt))
@@ -1253,7 +1277,7 @@ public partial class AppointmentService : IAppointmentService
             if (!isNoShow)
             {
                 await AppointmentLifecycle.MarkExplicitlyCancelled(_auditLogHandler, uow, appointment, appointmentCancellationReason, userId,
-                    appointmentCancellationCode, eventAt);
+                    eventAt, appointmentCancellationCode);
                 await _appointmentHandler.UpdateScalar(uow, appointment);
             }
 
@@ -1275,7 +1299,7 @@ public partial class AppointmentService : IAppointmentService
 
             // Phase M1A.1: status se IZVODI iz sudjelovanja + eksplicitne otkazanosti: otkazan termin bez izvršenog rada
             // (uključujući prazan termin) → Cancelled; bilo koji Completed/NoShow (uključujući bulk no-show) → Closed.
-            await AppointmentLifecycle.Refresh(_appointmentHandler, _auditLogHandler, uow, organizationId, id, userId);
+            await AppointmentLifecycle.Refresh(_appointmentHandler, _auditLogHandler, uow, organizationId, id, userId, eventAt);
 
             // Aktivni rad termina je otkazan/izostao — preostali Waiting retci više nisu smisleni, ne promovira se.
             if (appointment.Form == AppointmentForm.Group)
@@ -1400,14 +1424,8 @@ public partial class AppointmentService : IAppointmentService
     private Task<ResolvePriceResponse> ResolveServicePrice(
         Guid organizationId, Guid serviceId, Guid companyId, Guid? pricingEmployeeId, DateTimeOffset date)
     {
-        return _pricingService.ResolvePrice(organizationId, new ResolvePriceRequest
-        {
-            SubjectType = PricingSubjectType.Service,
-            SubjectId = serviceId,
-            CompanyId = companyId,
-            EmployeeId = pricingEmployeeId,
-            Date = date
-        });
+        // T1-7: dan cjenika = lokalni datum početka u zoni poslovnice termina (vidi IPricingService.ResolveForServiceStart).
+        return _pricingService.ResolveForServiceStart(organizationId, serviceId, companyId, pricingEmployeeId, date);
     }
 
     /// <summary>Ciljno stanje jednog segmenta za tvrdu provjeru: <paramref name="SegmentId"/> = postojeći segment koji se
@@ -1551,7 +1569,7 @@ public partial class AppointmentService : IAppointmentService
                 bool overlapsBusy = busy.Any(b => SchedulingInterval.Overlaps(candidateStart, candidateEnd, b.Start, b.End));
 
                 if (!overlapsBusy)
-                    slots.Add(new AvailableSlotDto { Start = candidateStart, End = candidateEnd });
+                    slots.Add(new AvailableSlotDto { Start = WorkingHoursCalculator.ToTimeOnly(candidateStart), End = WorkingHoursCalculator.ToTimeOnly(candidateEnd) });
 
                 candidateStart += AvailableSlotStep;
             }
@@ -1572,7 +1590,7 @@ public partial class AppointmentService : IAppointmentService
         if (appointment == null)
             throw new NotFoundAppException("Appointment", id);
 
-        return ToDto(appointment, await _organizationCalendarService.GetCompanyCalendar(organizationId, appointment.CompanyId));
+        return ToDto(appointment, await _organizationCalendarService.GetCompanyCalendar(organizationId, appointment.CompanyId), _timeProvider.GetUtcNow());
     }
 
     private static AppointmentScheduleCellDto ToScheduleCellDto(Appointment a)
@@ -1640,7 +1658,7 @@ public partial class AppointmentService : IAppointmentService
         };
     }
 
-    private static AppointmentDto ToDto(Appointment a, OrganizationCalendar calendar)
+    private static AppointmentDto ToDto(Appointment a, OrganizationCalendar calendar, DateTimeOffset now)
     {
         // Phase M1B: termin = izvedeni raspon + segmenti + Bookinzi; plosnata polja su privremena jednosegmentna projekcija.
         AppointmentRange range = AppointmentRange.Of(a);
@@ -1661,7 +1679,7 @@ public partial class AppointmentService : IAppointmentService
             CancellationReasonCodeName = a.CancellationReasonCodeName,
             CancelledAt = a.CancelledAt,
             ClosedOutAt = a.ClosedOutAt,
-            IsClosed = AppointmentClosure.IsClosed(a, calendar, DateTimeOffset.UtcNow),
+            IsClosed = AppointmentClosure.IsClosed(a, calendar, now),
             ClosedAt = a.ClosedAt,
             ClosedBy = a.ClosedBy,
             AutoClosesAt = autoClosesAt,

@@ -67,8 +67,8 @@ public class ClientMembershipHttpContractTests : IClassFixture<MultiSegmentHttpC
         AssertError(HttpStatusCode.Forbidden, ErrorCodes.Forbidden, await Send(HttpMethod.Get, clientUrl, seller));
         Assert.Equal(HttpStatusCode.OK, (await Send(HttpMethod.Get, $"/api/memberships/{id}", viewer)).Status);
 
-        string start = DateTime.UtcNow.Date.AddDays(3).ToString("yyyy-MM-dd");
-        string end = DateTime.UtcNow.Date.AddDays(5).ToString("yyyy-MM-dd");
+        string start = TestClock.UtcNow.UtcDateTime.Date.AddDays(3).ToString("yyyy-MM-dd");
+        string end = TestClock.UtcNow.UtcDateTime.Date.AddDays(5).ToString("yyyy-MM-dd");
         AssertError(HttpStatusCode.Forbidden, ErrorCodes.Forbidden, await Send(HttpMethod.Post, $"/api/memberships/{id}/pauses", canceller, new { startsOn = start, endsOn = end }));
         var paused = await Send(HttpMethod.Post, $"/api/memberships/{id}/pauses", pauser, new { startsOn = start, endsOn = end });
         Assert.Equal("Days", paused.Body.GetProperty("pauses")[0].GetProperty("kind").GetString());
@@ -79,7 +79,7 @@ public class ClientMembershipHttpContractTests : IClassFixture<MultiSegmentHttpC
         Assert.Equal("Cancelled", cancelled.Body.GetProperty("endReason").GetString());
         Assert.Equal(HttpStatusCode.OK, (await Send(HttpMethod.Delete, $"/api/memberships/{id}/cancellation", canceller)).Status);
 
-        string endsOn = DateTime.UtcNow.Date.AddDays(7).ToString("yyyy-MM-dd");
+        string endsOn = TestClock.UtcNow.UtcDateTime.Date.AddDays(7).ToString("yyyy-MM-dd");
         AssertError(HttpStatusCode.Forbidden, ErrorCodes.Forbidden, await Send(HttpMethod.Post, $"/api/memberships/{id}/end", canceller, new { endsOn, reason = "x" }));
         var ended = await Send(HttpMethod.Post, $"/api/memberships/{id}/end", ender, new { endsOn, reason = "Ozljeda" });
         Assert.Equal(("EndOverride", endsOn), (ended.Body.GetProperty("endReason").GetString(), ended.Body.GetProperty("endsOn").GetString()));

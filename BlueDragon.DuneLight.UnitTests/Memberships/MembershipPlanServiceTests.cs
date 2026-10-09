@@ -202,7 +202,7 @@ public class MembershipPlanServiceTests
         {
             Id = Guid.NewGuid(), OrganizationId = w.OrganizationId, MembershipPlanId = plan.Id, Version = 2, Price = 1m,
             BillingInterval = MembershipBillingInterval.Yearly, RenewalAnchor = MembershipRenewalAnchor.CalendarMonth,
-            CompanyScope = MembershipCompanyScope.AllCompanies, CreatedAt = DateTimeOffset.UtcNow
+            CompanyScope = MembershipCompanyScope.AllCompanies, CreatedAt = TestClock.UtcNow
         });
         await Assert.ThrowsAsync<DbUpdateException>(() => db.SaveChangesAsync());
     }
@@ -219,7 +219,7 @@ public class MembershipPlanServiceTests
             Id = Guid.NewGuid(), OrganizationId = w.OrganizationId, MembershipPlanId = plan.Id, Version = 2, Price = 1m,
             BillingInterval = MembershipBillingInterval.Monthly, RenewalAnchor = MembershipRenewalAnchor.PurchaseDate,
             CompanyScope = MembershipCompanyScope.AllCompanies, PauseAllowed = true, MaxPausesPer12Months = 2,
-            CreatedAt = DateTimeOffset.UtcNow
+            CreatedAt = TestClock.UtcNow
         });
         await Assert.ThrowsAsync<DbUpdateException>(() => db.SaveChangesAsync());
     }

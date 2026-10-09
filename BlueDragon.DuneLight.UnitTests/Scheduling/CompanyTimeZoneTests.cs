@@ -42,6 +42,9 @@ public class CompanyTimeZoneTests
     /// <summary>A calendar date as a client would send it (only the wall date matters).</summary>
     private static DateTimeOffset Day(int y, int mo, int d) => new(y, mo, d, 0, 0, 0, TimeSpan.FromHours(1));
 
+    /// <summary>T1-7: kalendarski dan za DateOnly ugovore.</summary>
+    private static DateOnly D(int y, int mo, int d) => new(y, mo, d);
+
     private static Task<SchedulingWorld> ZagrebWorld(string name) => SchedulingWorld.Create(name, Zagreb);
 
     private static async Task SetTimeZone(SchedulingWorld w, Company company, string timeZone)
@@ -235,13 +238,14 @@ public class CompanyTimeZoneTests
         await w.CreateAppointment(Z(2031, 3, 3, 15)); // 10:00 EST
 
         EmployeeAvailableSlotsDto slots = Assert.Single(await w.Appointments.GetAvailableSlots(w.OrganizationId,
-            new AvailableSlotsQuery { ServiceId = w.Service.Id.Value, CompanyId = w.Company.Id.Value, Date = Day(2031, 3, 3) }));
-        TimeSpan[] starts = slots.Slots.Select(s => s.Start).ToArray();
+            new AvailableSlotsQuery { ServiceId = w.Service.Id.Value, CompanyId = w.Company.Id.Value, Date = D(2031, 3, 3) }));
+        TimeOnly[] starts = slots.Slots.Select(s => s.Start).ToArray();
 
-        Assert.Equal(new TimeSpan(8, 0, 0), starts.First());
-        Assert.Equal(new TimeSpan(19, 30, 0), starts.Last());
-        Assert.DoesNotContain(new TimeSpan(10, 0, 0), starts);
-        Assert.Contains(new TimeSpan(10, 30, 0), starts);
+        // CHANGED in T1: lokalna vremena slotova su TimeOnly, ne TimeSpan.
+        Assert.Equal(new TimeOnly(8, 0), starts.First());
+        Assert.Equal(new TimeOnly(19, 30), starts.Last());
+        Assert.DoesNotContain(new TimeOnly(10, 0), starts);
+        Assert.Contains(new TimeOnly(10, 30), starts);
     }
 
     [Fact]
@@ -258,7 +262,7 @@ public class CompanyTimeZoneTests
             CompanyId = w.Company.Id.Value,
             ClientIds = new List<Guid> { w.Client.Id.Value },
             FirstOccurrenceStartsAt = Z(2031, 3, 3, 15), // Monday 10:00 EST
-            EndDate = Z(2031, 3, 17, 20)
+            EndDate = D(2031, 3, 17) // CHANGED in T1: zadnji dan niza (DateOnly, uključivo)
         });
 
         // US DST starts Sun 2031-03-09: 10:00 EDT = 14:00Z (Zagreb is still on CET, so its zone would not shift).
@@ -279,7 +283,7 @@ public class CompanyTimeZoneTests
                 CompanyId = w.Company.Id.Value,
                 FirstOccurrenceStartsAt = Z(2031, 3, 24, 11), // Monday 12:00 CET
                 DurationMinutes = 30,
-                EndDate = Z(2031, 4, 7, 20)
+                EndDate = D(2031, 4, 7) // CHANGED in T1: zadnji dan niza (DateOnly, uključivo)
             });
 
         // Zagreb switches to CEST on Sun 2031-03-30: 12:00 CEST = 10:00Z.
@@ -301,7 +305,7 @@ public class CompanyTimeZoneTests
                 CompanyId = w.Company.Id.Value,
                 FirstOccurrenceStartsAt = Z(2031, 3, 8, 17), // Saturday 12:00 EST
                 DurationMinutes = 30,
-                EndDate = Z(2031, 3, 10, 20)
+                EndDate = D(2031, 3, 10) // CHANGED in T1: zadnji dan niza (DateOnly, uključivo)
             });
 
         Assert.Equal(new[] { Z(2031, 3, 8, 17), Z(2031, 3, 9, 16), Z(2031, 3, 10, 16) },
@@ -332,11 +336,11 @@ public class CompanyTimeZoneTests
         AppointmentDto nextDay = await w.CreateAppointment(Z(2031, 3, 4, 14)); // 09:00 EST on the 4th
 
         OperationalDashboardDto dashboard = await w.Resolve<IOperationalDashboardService>()
-            .GetDashboard(w.OrganizationId, w.Company.Id.Value, Day(2031, 3, 3));
+            .GetDashboard(w.OrganizationId, w.Company.Id.Value, D(2031, 3, 3));
 
         Assert.Equal(new[] { morning.Id, evening.Id }, dashboard.Schedule.OrderBy(s => s.StartsAt).Select(s => s.AppointmentId).ToArray());
         Assert.DoesNotContain(dashboard.Schedule, s => s.AppointmentId == nextDay.Id);
-        Assert.Equal(Z(2031, 3, 3, 0), dashboard.Date);
+        Assert.Equal(D(2031, 3, 3), dashboard.Date); // CHANGED in T1: dan dashboarda je DateOnly (bilo ponoć UTC kao instant)
     }
 
     [Fact]
@@ -350,7 +354,7 @@ public class CompanyTimeZoneTests
         AppointmentDto after = await w.CreateAppointment(w.CreateRequest(Z(2031, 3, 30, 22, 0), overrideAvailability: true)); // 00:00 CEST on the 31st
 
         OperationalDashboardDto dashboard = await w.Resolve<IOperationalDashboardService>()
-            .GetDashboard(w.OrganizationId, w.Company.Id.Value, Day(2031, 3, 30));
+            .GetDashboard(w.OrganizationId, w.Company.Id.Value, D(2031, 3, 30));
 
         Assert.Equal(new[] { first.Id, last.Id }, dashboard.Schedule.OrderBy(s => s.StartsAt).Select(s => s.AppointmentId).ToArray());
         Assert.DoesNotContain(dashboard.Schedule, s => s.AppointmentId == before.Id || s.AppointmentId == after.Id);

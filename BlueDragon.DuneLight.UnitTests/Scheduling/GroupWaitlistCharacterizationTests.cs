@@ -149,8 +149,8 @@ public class GroupWaitlistCharacterizationTests
         Employee other = await w.AddEmployee("Other");
         Client waiter = await w.AddClient("Waiter", "Client");
 
-        await SchedulingAssert.BusinessRule(ErrorCodes.NotOwner,
-            () => w.Waitlist.Join(w.OrganizationId, other.UserId, false, occurrence.Id.Value,
+        // CHANGED in T1: 403 OutOfScope (bilo 409 NOT_OWNER)
+        await SchedulingAssert.OutOfScope(() => w.Waitlist.Join(w.OrganizationId, other.UserId, false, occurrence.Id.Value,
                 new WaitlistJoinRequest { ClientId = waiter.Id.Value, SegmentId = Assert.Single(occurrence.Segments).Id }));
     }
 

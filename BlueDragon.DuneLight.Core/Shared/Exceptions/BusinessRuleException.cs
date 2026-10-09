@@ -8,7 +8,7 @@ namespace BlueDragon.DuneLight.Core.Shared.Exceptions;
 /// </summary>
 public class BusinessRuleException : Exception
 {
-    public BusinessRuleException(string code, string message, object details = null) : base(message)
+    public BusinessRuleException(string code, string message, object? details = null) : base(message)
     {
         Code = code;
         Details = details;
@@ -17,5 +17,5 @@ public class BusinessRuleException : Exception
     public string Code { get; }
 
     /// <summary>Opcionalan strukturirani prilog uz kod/poruku (npr. RECURRING_CONFLICT nosi { conflicts: [...] }). Null za sva ostala poslovna pravila.</summary>
-    public object Details { get; }
+    public object? Details { get; }
 }

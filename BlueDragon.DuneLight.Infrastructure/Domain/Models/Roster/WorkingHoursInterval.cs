@@ -27,10 +27,10 @@ public class WorkingHoursInterval
     public DayOfWeek DayOfWeek { get; set; }
 
     [Column("start_time")]
-    public TimeSpan StartTime { get; set; }
+    public TimeOnly StartTime { get; set; }
 
     [Column("end_time")]
-    public TimeSpan EndTime { get; set; }
+    public TimeOnly EndTime { get; set; }
 
     public WorkingHoursTemplate WorkingHoursTemplate { get; set; }
 }

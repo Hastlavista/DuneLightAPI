@@ -16,11 +16,13 @@ public class PackageService : IPackageService
 {
     private readonly IPackageHandler _packageHandler;
     private readonly IServiceHandler _serviceHandler;
+    private readonly TimeProvider _timeProvider;
 
-    public PackageService(IPackageHandler packageHandler, IServiceHandler serviceHandler)
+    public PackageService(IPackageHandler packageHandler, IServiceHandler serviceHandler, TimeProvider timeProvider)
     {
         _packageHandler = packageHandler;
         _serviceHandler = serviceHandler;
+        _timeProvider = timeProvider;
     }
 
     public async Task<PagedResult<PackageDto>> GetPaged(Guid organizationId, PagedRequest request)
@@ -59,7 +61,7 @@ public class PackageService : IPackageService
             DefaultPrice = request.DefaultPrice,
             SortOrder = request.SortOrder,
             IsActive = true,
-            CreatedAt = DateTimeOffset.UtcNow,
+            CreatedAt = _timeProvider.GetUtcNow(),
             CreatedBy = userId
         };
 
@@ -92,7 +94,7 @@ public class PackageService : IPackageService
         package.ValidityFixedDate = request.ValidityType == PackageValidityType.FixedDate ? request.ValidityFixedDate : null;
         package.DefaultPrice = request.DefaultPrice;
         package.SortOrder = request.SortOrder;
-        package.UpdatedAt = DateTimeOffset.UtcNow;
+        package.UpdatedAt = _timeProvider.GetUtcNow();
         package.UpdatedBy = userId;
 
         List<PackageServiceItem> serviceItems = BuildServiceItems(request.EntryMode, request.Services);
@@ -111,7 +113,7 @@ public class PackageService : IPackageService
             await EnsureNameIsUnique(organizationId, package.Name, excludeId: id);
 
         package.IsActive = isActive;
-        package.UpdatedAt = DateTimeOffset.UtcNow;
+        package.UpdatedAt = _timeProvider.GetUtcNow();
         package.UpdatedBy = userId;
 
         await _packageHandler.Update(package, package.Services);

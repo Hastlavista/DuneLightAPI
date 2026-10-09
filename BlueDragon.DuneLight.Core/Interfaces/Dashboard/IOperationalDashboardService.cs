@@ -13,10 +13,10 @@ namespace BlueDragon.DuneLight.Core.Interfaces.Dashboard;
 public interface IOperationalDashboardService
 {
     /// <summary>
-    /// `date` = odabrani kalendarski dan kako ga je klijent napisao (bitan je samo datum, ne offset); izostavljeno =
+    /// `date` = odabrani kalendarski dan (T1-7: DateOnly, "yyyy-MM-dd"); izostavljeno =
     /// "danas" u efektivnoj zoni poslovnice (Company.TimeZone ?? Organization.TimeZone). Granice dana su lokalne
     /// ponoći te zone pretvorene u UTC instante (dan može imati 23/25 sati na DST prijelazu). Company mora pripadati organizationId (inače NotFoundAppException) —
     /// deaktivirana Company i dalje vraća podatke (Company.IsActive se samo prenosi u DTO, vidi spec section 4).
     /// </summary>
-    Task<OperationalDashboardDto> GetDashboard(Guid organizationId, Guid companyId, DateTimeOffset? date);
+    Task<OperationalDashboardDto> GetDashboard(Guid organizationId, Guid companyId, DateOnly? date);
 }

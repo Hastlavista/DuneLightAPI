@@ -24,20 +24,20 @@ public class EmployeeDto
     public Guid Id { get; set; }
     public string FirstName { get; set; }
     public string LastName { get; set; }
-    public string Phone { get; set; }
-    public string Email { get; set; }
-    public DateTimeOffset? DateOfBirth { get; set; }
-    public string Address { get; set; }
-    public string Oib { get; set; }
-    public string Note { get; set; }
+    public string? Phone { get; set; }
+    public string? Email { get; set; }
+    public DateOnly? DateOfBirth { get; set; }
+    public string? Address { get; set; }
+    public string? Oib { get; set; }
+    public string? Note { get; set; }
 
     /// <summary>Slobodni tekst — čisto informativna bilješka o dogovoru oko naknade. Aplikacija je ne parsira niti koristi.</summary>
-    public string CompensationNote { get; set; }
+    public string? CompensationNote { get; set; }
 
-    public string ColorHex { get; set; }
+    public string? ColorHex { get; set; }
     public int SortOrder { get; set; }
-    public DateTimeOffset EmploymentStartDate { get; set; }
-    public DateTimeOffset? EmploymentEndDate { get; set; }
+    public DateOnly EmploymentStartDate { get; set; }
+    public DateOnly? EmploymentEndDate { get; set; }
     public Guid EngagementTypeId { get; set; }
     public string EngagementTypeName { get; set; }
     public bool IsActive { get; set; }
@@ -56,7 +56,7 @@ public class EmployeeDto
     public Guid? UpdatedBy { get; set; }
 
     /// <summary>Transient upozorenje (npr. ima buduće termine) — nije perzistirano, popunjava se samo u odgovoru na (de)aktivaciju.</summary>
-    public WarningDto Warning { get; set; }
+    public WarningDto? Warning { get; set; }
 }
 
 public class EmployeeCreateRequest
@@ -70,32 +70,32 @@ public class EmployeeCreateRequest
     public string LastName { get; set; }
 
     [MaxLength(50)]
-    public string Phone { get; set; }
+    public string? Phone { get; set; }
 
     [EmailAddress]
     [MaxLength(255)]
-    public string Email { get; set; }
+    public string? Email { get; set; }
 
-    public DateTimeOffset? DateOfBirth { get; set; }
+    public DateOnly? DateOfBirth { get; set; }
 
-    public string Address { get; set; }
+    public string? Address { get; set; }
 
     [RegularExpression(@"^\d{11}$", ErrorMessage = "OIB mora sadržavati točno 11 znamenki.")]
-    public string Oib { get; set; }
+    public string? Oib { get; set; }
 
-    public string Note { get; set; }
+    public string? Note { get; set; }
 
-    public string CompensationNote { get; set; }
+    public string? CompensationNote { get; set; }
 
     [MaxLength(7)]
-    public string ColorHex { get; set; }
+    public string? ColorHex { get; set; }
 
     public int SortOrder { get; set; }
 
     [Required]
-    public DateTimeOffset EmploymentStartDate { get; set; }
+    public DateOnly EmploymentStartDate { get; set; }
 
-    public DateTimeOffset? EmploymentEndDate { get; set; }
+    public DateOnly? EmploymentEndDate { get; set; }
 
     [Required]
     public Guid EngagementTypeId { get; set; }
@@ -125,32 +125,32 @@ public class EmployeeUpdateRequest
     public string LastName { get; set; }
 
     [MaxLength(50)]
-    public string Phone { get; set; }
+    public string? Phone { get; set; }
 
     [EmailAddress]
     [MaxLength(255)]
-    public string Email { get; set; }
+    public string? Email { get; set; }
 
-    public DateTimeOffset? DateOfBirth { get; set; }
+    public DateOnly? DateOfBirth { get; set; }
 
-    public string Address { get; set; }
+    public string? Address { get; set; }
 
     [RegularExpression(@"^\d{11}$", ErrorMessage = "OIB mora sadržavati točno 11 znamenki.")]
-    public string Oib { get; set; }
+    public string? Oib { get; set; }
 
-    public string Note { get; set; }
+    public string? Note { get; set; }
 
-    public string CompensationNote { get; set; }
+    public string? CompensationNote { get; set; }
 
     [MaxLength(7)]
-    public string ColorHex { get; set; }
+    public string? ColorHex { get; set; }
 
     public int SortOrder { get; set; }
 
     [Required]
-    public DateTimeOffset EmploymentStartDate { get; set; }
+    public DateOnly EmploymentStartDate { get; set; }
 
-    public DateTimeOffset? EmploymentEndDate { get; set; }
+    public DateOnly? EmploymentEndDate { get; set; }
 
     [Required]
     public Guid EngagementTypeId { get; set; }
@@ -181,33 +181,33 @@ public class EmployeeWithLoginCreateRequest
     public string LastName { get; set; }
 
     [MaxLength(50)]
-    public string Phone { get; set; }
+    public string? Phone { get; set; }
 
     [Required]
     [EmailAddress]
     [MaxLength(255)]
     public string Email { get; set; }
 
-    public DateTimeOffset? DateOfBirth { get; set; }
+    public DateOnly? DateOfBirth { get; set; }
 
-    public string Address { get; set; }
+    public string? Address { get; set; }
 
     [RegularExpression(@"^\d{11}$", ErrorMessage = "OIB mora sadržavati točno 11 znamenki.")]
-    public string Oib { get; set; }
+    public string? Oib { get; set; }
 
-    public string Note { get; set; }
+    public string? Note { get; set; }
 
-    public string CompensationNote { get; set; }
+    public string? CompensationNote { get; set; }
 
     [MaxLength(7)]
-    public string ColorHex { get; set; }
+    public string? ColorHex { get; set; }
 
     public int SortOrder { get; set; }
 
     [Required]
-    public DateTimeOffset EmploymentStartDate { get; set; }
+    public DateOnly EmploymentStartDate { get; set; }
 
-    public DateTimeOffset? EmploymentEndDate { get; set; }
+    public DateOnly? EmploymentEndDate { get; set; }
 
     [Required]
     public Guid EngagementTypeId { get; set; }
@@ -230,7 +230,7 @@ public class EmployeeWithLoginCreateRequest
     public bool MustChangeCredentialsOnFirstLogin { get; set; }
 
     /// <summary>Opcionalan inicijalni PIN — korisnik ga kasnije može promijeniti kroz `POST /api/public/Auth/ChangePin`.</summary>
-    public string Pin { get; set; }
+    public string? Pin { get; set; }
 
     /// <summary>Barem jedna GrantGroup je obavezna (osim za Ownera, koji se ne kreira ovim endpointom — vidi Register).</summary>
     [Required]
@@ -265,8 +265,8 @@ public class EmployeeMeDto
     public bool HasProfile { get; set; }
 
     public Guid? EmployeeId { get; set; }
-    public string FirstName { get; set; }
-    public string LastName { get; set; }
+    public string? FirstName { get; set; }
+    public string? LastName { get; set; }
 
     /// <summary>Efektivna, agregirana unija grant-key-eva iz svih GrantGroup dodjela ovog
     /// korisnika — isti izvor kao GrantResolver koristi za autorizaciju (GrantGroupHandler.ResolveEffective),
@@ -281,7 +281,7 @@ public class EmployeeMeDto
     /// pa je dostupno i kad HasProfile je false.</summary>
     public bool HasPinSet { get; set; }
 
-    public string ColorHex { get; set; }
+    public string? ColorHex { get; set; }
     public List<EmployeeCompanyDto> Companies { get; set; } = new();
 }
 
@@ -291,7 +291,7 @@ public class EmployeeDirectoryDto
     public Guid Id { get; set; }
     public string FirstName { get; set; }
     public string LastName { get; set; }
-    public string ColorHex { get; set; }
+    public string? ColorHex { get; set; }
     public bool IsActive { get; set; }
     public List<string> Companies { get; set; } = new();
 }

@@ -96,7 +96,7 @@ public class CancellationPolicyHttpContractTests : IClassFixture<MultiSegmentHtt
     public async Task Cancel_RequiresAndBindsTheInitiator_WaiveNeedsTheOverride_ConfirmTakesTheCorrectionReasonInTheBody()
     {
         await using SchedulingWorld w = await SchedulingWorld.Create(nameof(Cancel_RequiresAndBindsTheInitiator_WaiveNeedsTheOverride_ConfirmTakesTheCorrectionReasonInTheBody));
-        await w.PublishDefaultPolicyVersion((int)(SchedulingWorld.Future(10) - DateTimeOffset.UtcNow).TotalMinutes + 60,
+        await w.PublishDefaultPolicyVersion((int)(SchedulingWorld.Future(10) - TestClock.UtcNow).TotalMinutes + 60,
             CancellationFeeType.Fixed, 10m);
         AppointmentDto appointment = await w.CreateAppointment(SchedulingWorld.Future(10));
         Guid participationId = appointment.Bookings.Single().Participations.Single().Id;

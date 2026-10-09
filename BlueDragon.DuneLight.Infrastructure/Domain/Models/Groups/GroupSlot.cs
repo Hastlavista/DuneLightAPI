@@ -25,7 +25,7 @@ public class GroupSlot
     public DayOfWeek DayOfWeek { get; set; }
 
     [Column("start_time")]
-    public TimeSpan StartTime { get; set; }
+    public TimeOnly StartTime { get; set; }
 
     [Column("is_active")]
     public bool IsActive { get; set; }

@@ -27,18 +27,18 @@ public class RosterDayCellEntryDto
     public Guid RosterEntryId { get; set; }
     public Guid RosterTypeId { get; set; }
     public string RosterTypeName { get; set; }
-    public string RosterTypeColorHex { get; set; }
+    public string? RosterTypeColorHex { get; set; }
     public bool IsAbsence { get; set; }
     public decimal? Hours { get; set; }
 
     /// <summary>"07:00-12:00" za oblik rad; null za odsutnost (cijeli dan).</summary>
-    public string TimeRange { get; set; }
+    public string? TimeRange { get; set; }
 }
 
 public class RosterPlannedIntervalDto
 {
-    public TimeSpan Start { get; set; }
-    public TimeSpan End { get; set; }
+    public TimeOnly Start { get; set; }
+    public TimeOnly End { get; set; }
 }
 
 public class RosterDayCellDto
@@ -60,7 +60,7 @@ public class RosterDayCellDto
 /// "Assumed" i ulaze u TotalWorkHours/WorkHoursByType.</summary>
 public class RosterPlannedDayDto
 {
-    public DateTimeOffset Date { get; set; }
+    public DateOnly Date { get; set; }
 
     /// <summary>Prazno = predložak kaže "slobodan dan" za taj datum.</summary>
     public List<RosterPlannedIntervalDto> Intervals { get; set; } = new();
@@ -89,8 +89,8 @@ public class RosterPersonalReviewDto
 {
     public Guid EmployeeId { get; set; }
     public string EmployeeName { get; set; }
-    public DateTimeOffset From { get; set; }
-    public DateTimeOffset To { get; set; }
+    public DateOnly From { get; set; }
+    public DateOnly To { get; set; }
     public List<RosterEntryDto> Entries { get; set; } = new();
     public List<RosterWorkHoursSumDto> WorkHoursByType { get; set; } = new();
     public decimal TotalWorkHours { get; set; }

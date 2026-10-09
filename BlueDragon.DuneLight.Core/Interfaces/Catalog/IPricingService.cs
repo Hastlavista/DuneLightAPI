@@ -17,8 +17,18 @@ public interface IPricingService
     Task Delete(Guid organizationId, Guid id);
 
     /// <summary>Trenutno važeći cjenik za tvrtku (pregledni prikaz).</summary>
-    Task<List<EffectivePriceDto>> GetEffectivePriceList(Guid organizationId, Guid? companyId, DateTimeOffset date);
+    Task<List<EffectivePriceDto>> GetEffectivePriceList(Guid organizationId, Guid? companyId, DateOnly? date);
 
     /// <summary>Razriješena cijena za (usluga/paket, tvrtka, datum).</summary>
     Task<ResolvePriceResponse> ResolvePrice(Guid organizationId, ResolvePriceRequest request);
+
+    /// <summary>T1-7: cijena usluge za termin/segment koji počinje u <paramref name="serviceStartsAt"/> — JEDINO mjesto koje
+    /// određuje dan cjenika termina: lokalni datum početka u efektivnoj zoni poslovnice termina (termin preko ponoći pripada
+    /// danu početka; promjena cijene unutar dana namjerno nije podržana).</summary>
+    Task<ResolvePriceResponse> ResolveForServiceStart(
+        Guid organizationId, Guid serviceId, Guid companyId, Guid? pricingEmployeeId, DateTimeOffset serviceStartsAt);
+
+    /// <summary>T1-8: dan cjenika termina/segmenta koji počinje u <paramref name="serviceStartsAt"/> (isto pravilo kao
+    /// <see cref="ResolveForServiceStart"/>) — koristi ga promjena vremena segmenta da odluči čita li se cjenik ponovno.</summary>
+    Task<DateOnly> PriceListDay(Guid organizationId, Guid companyId, DateTimeOffset serviceStartsAt);
 }

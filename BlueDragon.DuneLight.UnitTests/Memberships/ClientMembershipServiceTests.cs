@@ -29,7 +29,7 @@ public class ClientMembershipServiceTests
 {
     private static IClientMembershipService Memberships(SchedulingWorld w) => w.Resolve<IClientMembershipService>();
     private static IMembershipPlanService Plans(SchedulingWorld w) => w.Resolve<IMembershipPlanService>();
-    private static DateOnly Today => DateOnly.FromDateTime(DateTime.UtcNow);
+    private static DateOnly Today => DateOnly.FromDateTime(TestClock.UtcNow.UtcDateTime);
 
     private static MembershipPlanVersionPublishRequest Terms(
         IEnumerable<ServiceEntity> services, MembershipRenewalAnchor anchor = MembershipRenewalAnchor.PurchaseDate,
@@ -318,7 +318,7 @@ public class ClientMembershipServiceTests
             db.MembershipPauses.Add(new MembershipPause
             {
                 Id = Guid.NewGuid(), OrganizationId = w.OrganizationId, ClientMembershipId = sold.Id, Kind = MembershipPauseKind.Days,
-                StartsOn = Today.AddDays(-2), PlannedEndsOn = Today.AddDays(7), CreatedAt = DateTimeOffset.UtcNow
+                StartsOn = Today.AddDays(-2), PlannedEndsOn = Today.AddDays(7), CreatedAt = TestClock.UtcNow
             });
             await db.SaveChangesAsync();
         }

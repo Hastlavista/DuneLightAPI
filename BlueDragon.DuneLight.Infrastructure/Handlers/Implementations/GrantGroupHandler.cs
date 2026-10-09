@@ -16,10 +16,12 @@ namespace BlueDragon.DuneLight.Infrastructure.Handlers.Implementations;
 public class GrantGroupHandler : IGrantGroupHandler
 {
     private readonly DatabaseSettings _databaseSettings;
+    private readonly TimeProvider _timeProvider;
 
-    public GrantGroupHandler(DatabaseSettings databaseSettings)
+    public GrantGroupHandler(DatabaseSettings databaseSettings, TimeProvider timeProvider)
     {
         _databaseSettings = databaseSettings;
+        _timeProvider = timeProvider;
     }
 
     public async Task<List<GrantGroup>> GetAll(Guid organizationId)
@@ -54,7 +56,7 @@ public class GrantGroupHandler : IGrantGroupHandler
             OrganizationId = organizationId,
             Name = SystemGrantGroups.AdminDisplayName,
             SystemKey = SystemGrantGroups.Admin,
-            CreatedAt = DateTimeOffset.UtcNow,
+            CreatedAt = _timeProvider.GetUtcNow(),
             Grants = Grants.Catalog.Select(g => new GrantGroupGrant { GrantKey = g.Key }).ToList()
         };
 

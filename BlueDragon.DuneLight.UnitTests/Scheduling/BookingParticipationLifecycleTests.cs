@@ -273,7 +273,7 @@ public class BookingParticipationLifecycleTests
 
     public static IEnumerable<object[]> ConfirmedWithHistory() => new[]
     {
-        new object[] { "arrived", (Action<BookingSegmentParticipation>)(p => { p.ArrivedAt = DateTimeOffset.UtcNow; p.ArrivedBy = Guid.NewGuid(); }) },
+        new object[] { "arrived", (Action<BookingSegmentParticipation>)(p => { p.ArrivedAt = TestClock.UtcNow; p.ArrivedBy = Guid.NewGuid(); }) },
         new object[] { "version", (Action<BookingSegmentParticipation>)(p => p.StatusVersion = 1) },
         // P1: stale cancellation metadata on a Confirmed participation can no longer be persisted (metadata always matches
         // the status, DB CHECK) — those shapes are pinned in memory by UntouchedDefinition_IsExactlyTheLockedRule.
@@ -284,8 +284,8 @@ public class BookingParticipationLifecycleTests
     {
         p => p.CancellationReason = "left over",
         p => p.IsLateCancellation = false,
-        p => p.CancelledAt = DateTimeOffset.UtcNow,
-        p => p.NoShowAt = DateTimeOffset.UtcNow,
+        p => p.CancelledAt = TestClock.UtcNow,
+        p => p.NoShowAt = TestClock.UtcNow,
         p => p.PolicyConsequences.Add(new ParticipationPolicyConsequence { Status = PolicyConsequenceStatus.Reversed })
     };
 

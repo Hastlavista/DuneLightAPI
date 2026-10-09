@@ -290,7 +290,7 @@ public class BookingNoShowAndCancellationCharacterizationTests
     {
         await using SchedulingWorld w = await SchedulingWorld.Create(nameof(IndividualCancel_ClassifiesLateCancellationAgainstTheOrganizationCutoff_UsingTheRealClock));
         await w.SetCancellationWindowMinutes(60);
-        DateTimeOffset now = DateTimeOffset.UtcNow;
+        DateTimeOffset now = TestClock.UtcNow;
         Client lateClient = await w.AddClient("Late", "Client");
         Employee otherEmployee = await w.AddEmployee("Other");
         // Relative-to-now start times (the only tests that depend on the wall clock): 30 min ahead is inside the 60-min

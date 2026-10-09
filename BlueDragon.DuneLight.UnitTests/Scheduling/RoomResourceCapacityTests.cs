@@ -50,7 +50,7 @@ public class RoomResourceCapacityTests
     {
         await using DatabaseContext db = w.NewDb();
         Appointment a = await db.Appointments.SingleAsync(x => x.Id == appointmentId);
-        a.CancelledAt = DateTimeOffset.UtcNow;
+        a.CancelledAt = TestClock.UtcNow;
         await db.SaveChangesAsync();
     }
 

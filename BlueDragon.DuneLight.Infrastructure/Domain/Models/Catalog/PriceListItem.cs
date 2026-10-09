@@ -36,10 +36,10 @@ public class PriceListItem
     public decimal Price { get; set; }
 
     [Column("valid_from")]
-    public DateTimeOffset ValidFrom { get; set; }
+    public DateOnly ValidFrom { get; set; }
 
     [Column("valid_to")]
-    public DateTimeOffset? ValidTo { get; set; }
+    public DateOnly? ValidTo { get; set; }
 
     [Column("is_active")]
     public bool IsActive { get; set; }

@@ -26,7 +26,7 @@ public class RosterEntriesController : ControllerBase
     [RequireGrant(Grants.RosterEntriesView)]
     public async Task<ActionResult<PagedResult<RosterEntryDto>>> GetPaged(
         [FromQuery] PagedRequest request, [FromQuery] Guid? employeeId, [FromQuery] Guid? rosterTypeId,
-        [FromQuery] DateTimeOffset? from, [FromQuery] DateTimeOffset? to)
+        [FromQuery] DateOnly? from, [FromQuery] DateOnly? to)
     {
         return Ok(await _rosterEntryService.GetPaged(this.CurrentOrganizationId(), request, employeeId, rosterTypeId, from, to));
     }

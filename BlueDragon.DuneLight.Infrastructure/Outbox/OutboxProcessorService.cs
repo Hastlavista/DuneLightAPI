@@ -6,6 +6,7 @@ using System.Threading.Tasks;
 using BlueDragon.DuneLight.Infrastructure.Domain.Settings;
 using BlueDragon.DuneLight.Infrastructure.Handlers.Interfaces;
 using BlueDragon.DuneLight.Infrastructure.UnitOfWork;
+using BlueDragon.DuneLight.Infrastructure.Time;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 
@@ -115,6 +116,8 @@ public class OutboxProcessorService : BackgroundService
                 throw new InvalidOperationException($"Nepoznat outbox event tip '{message.Type}'.");
 
             await using IUnitOfWork uow = await _unitOfWorkFactory.Begin();
+            // T1: zapisi handlera (npr. Notification.CreatedAt) nastaju po poslovnom satu organizacije poruke.
+            using IDisposable clock = OrganizationClockContext.Use(message.OrganizationId);
             await handler.Handle(uow, message.OrganizationId, message.Payload, stoppingToken);
 
             // Uvjetovano markiranje (WHERE status='Processing' AND locked_by=ClaimToken) KAO POSLJEDNJA mutacija
@@ -168,7 +171,7 @@ public class OutboxProcessorService : BackgroundService
                 ? 60
                 : schedule[Math.Min(message.AttemptCount - 1, schedule.Length - 1)];
 
-            DateTimeOffset availableAt = DateTimeOffset.UtcNow.AddSeconds(backoffSeconds);
+            DateTimeOffset availableAt = TimeProvider.System.GetUtcNow().AddSeconds(backoffSeconds);
             affected = await _outboxHandler.MarkForRetry(message.Id, message.ClaimToken, availableAt, error, cancellationToken);
         }
 

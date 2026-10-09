@@ -24,6 +24,9 @@ public interface ICompanyHandler
     /// <summary>Vlastite zone (Company.TimeZone) traženih poslovnica organizacije — NULL vrijednost znači
     /// "nasljeđuje organizaciju"; poslovnice koje ne pripadaju organizaciji nisu u rezultatu.</summary>
     Task<Dictionary<Guid, string>> GetTimeZoneOverrides(Guid organizationId, List<Guid> ids);
+
+    /// <summary>T1 — vlastite zone svih poslovnica organizacije koje je imaju (bez NULL-a).</summary>
+    Task<Dictionary<Guid, string>> GetAllTimeZoneOverrides(Guid organizationId);
     Task Add(Company company);
     Task Update(Company company);
     Task Delete(Company company);

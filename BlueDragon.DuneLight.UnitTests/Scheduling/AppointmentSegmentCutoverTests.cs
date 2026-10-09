@@ -101,7 +101,7 @@ public class AppointmentSegmentCutoverTests
             RecurrenceType = RecurrenceType.Weekly, ServiceId = w.Service.Id.Value, EmployeeId = w.Employee.Id.Value,
             CompanyId = w.Company.Id.Value, ClientIds = new List<Guid> { w.Client.Id.Value },
             FirstOccurrenceStartsAt = new DateTimeOffset(2031, 3, 24, 9, 0, 0, TimeSpan.Zero), // Monday 10:00 CET
-            EndDate = new DateTimeOffset(2031, 4, 7, 12, 0, 0, TimeSpan.Zero)
+            EndDate = new DateOnly(2031, 4, 7)
         });
 
         List<DateTimeOffset> starts = new();
@@ -147,7 +147,7 @@ public class AppointmentSegmentCutoverTests
         Task<GenerateGroupAppointmentsResult>[] runs = Enumerable.Range(0, 4)
             .Select(_ => Task.Run(() => w.Groups.GenerateAppointments(w.OrganizationId, w.ActorUserId, new GenerateGroupAppointmentsRequest
             {
-                GroupId = group.Id, FromDate = SchedulingWorld.FutureDay, ToDate = SchedulingWorld.FutureDay.AddDays(21)
+                GroupId = group.Id, FromDate = SchedulingWorld.Day(SchedulingWorld.FutureDay), ToDate = SchedulingWorld.Day(SchedulingWorld.FutureDay.AddDays(21))
             })))
             .ToArray();
         foreach (Task<GenerateGroupAppointmentsResult> run in runs)
@@ -216,8 +216,8 @@ public class AppointmentSegmentCutoverTests
         Guid segmentId = created.Segments[0].Id;
         AppointmentSegmentTimeChangeRequest move = new() { PlannedStart = Z(11) };
 
-        await SchedulingAssert.BusinessRule(ErrorCodes.NotOwner,
-            () => w.Appointments.ChangeSegmentTime(w.OrganizationId, w.Employee.UserId, false, segmentId, move));
+        // CHANGED in T1: 403 OutOfScope (bilo 409 NOT_OWNER)
+        await SchedulingAssert.OutOfScope(() => w.Appointments.ChangeSegmentTime(w.OrganizationId, w.Employee.UserId, false, segmentId, move));
         AppointmentDto moved = await w.Appointments.ChangeSegmentTime(w.OrganizationId, other.UserId, false, segmentId, move);
 
         Assert.Equal(Z(11), moved.StartsAt);
@@ -234,8 +234,8 @@ public class AppointmentSegmentCutoverTests
         Guid segmentId = Assert.Single(occurrence.Segments).Id.Value;
         AppointmentSegmentTimeChangeRequest move = new() { PlannedStart = Z(15) };
 
-        await SchedulingAssert.BusinessRule(ErrorCodes.NotOwner,
-            () => w.Appointments.ChangeSegmentTime(w.OrganizationId, w.Employee.UserId, false, segmentId, move));
+        // CHANGED in T1: 403 OutOfScope (bilo 409 NOT_OWNER)
+        await SchedulingAssert.OutOfScope(() => w.Appointments.ChangeSegmentTime(w.OrganizationId, w.Employee.UserId, false, segmentId, move));
         // M1H: the segment command moves only the time — a trainerless segment stays trainerless (no implicit employee).
         AppointmentDto moved = await w.Appointments.ChangeSegmentTime(w.OrganizationId, w.ActorUserId, true, segmentId, move);
 
@@ -250,7 +250,7 @@ public class AppointmentSegmentCutoverTests
         await using SchedulingWorld w = await SchedulingWorld.Create(nameof(ExecutionContext_AndLateCancellation_FollowTheSegmentStart));
         await w.SetCancellationWindowMinutes(120);
         AppointmentDto created = await w.CreateAppointment(Z(10));
-        DateTimeOffset now = DateTimeOffset.UtcNow;
+        DateTimeOffset now = TestClock.UtcNow;
         DateTimeOffset soon = new DateTimeOffset(now.Year, now.Month, now.Day, now.Hour, now.Minute, 0, TimeSpan.Zero).AddMinutes(30);
         await UpdateSegmentInDb(w, created.Id, s => { s.PlannedStart = soon; s.PlannedEnd = soon.AddMinutes(30); });
 

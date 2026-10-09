@@ -38,10 +38,10 @@ public class RosterEntry
     public DateOnly? DateTo { get; set; }
 
     [Column("start_time")]
-    public TimeSpan? StartTime { get; set; }
+    public TimeOnly? StartTime { get; set; }
 
     [Column("end_time")]
-    public TimeSpan? EndTime { get; set; }
+    public TimeOnly? EndTime { get; set; }
 
     [Column("duration_hours")]
     public decimal? DurationHours { get; set; }

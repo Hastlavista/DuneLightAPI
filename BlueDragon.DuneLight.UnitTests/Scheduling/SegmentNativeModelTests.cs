@@ -257,8 +257,8 @@ public class SegmentNativeModelTests
         BookingSetStatusRequest cancel = new() { Status = BookingStatus.Cancelled, CancellationInitiator = CancellationInitiator.Client, CancellationReason = "r" };
 
         // The employee of segment B may not touch the participation on segment A...
-        await SchedulingAssert.BusinessRule(ErrorCodes.NotOwner,
-            () => w.Bookings.SetParticipationStatus(w.OrganizationId, employeeB.UserId, false, participationA, cancel));
+        // CHANGED in T1: 403 OutOfScope (bilo 409 NOT_OWNER)
+        await SchedulingAssert.OutOfScope(() => w.Bookings.SetParticipationStatus(w.OrganizationId, employeeB.UserId, false, participationA, cancel));
         // ...but may act on the participation on its own segment.
         await w.Bookings.SetParticipationStatus(w.OrganizationId, employeeB.UserId, false, participationB, cancel);
 
@@ -275,8 +275,8 @@ public class SegmentNativeModelTests
         await AddSecondSegment(w, created.Id, SchedulingWorld.Future(12));
 
         // Assigned to segment A only: cancelling the whole appointment touches segment B too → needs `all`.
-        await SchedulingAssert.BusinessRule(ErrorCodes.NotOwner,
-            () => w.Appointments.Cancel(w.OrganizationId, w.Employee.UserId, false, created.Id, SchedulingWorld.BusinessCancel()));
+        // CHANGED in T1: 403 OutOfScope (bilo 409 NOT_OWNER)
+        await SchedulingAssert.OutOfScope(() => w.Appointments.Cancel(w.OrganizationId, w.Employee.UserId, false, created.Id, SchedulingWorld.BusinessCancel()));
 
         Assert.Equal(AppointmentStatus.Scheduled, (await w.LoadAppointment(created.Id)).Status);
     }

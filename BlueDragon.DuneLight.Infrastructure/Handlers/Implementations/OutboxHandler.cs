@@ -32,7 +32,7 @@ public class OutboxHandler : IOutboxHandler
     /// RAZLIČIT token, tako da terminalne mutacije starog pokušaja ne mogu prepisati novo vlasništvo.</summary>
     public async Task<List<ClaimedOutboxMessage>> ClaimBatch(IUnitOfWork uow, int batchSize, TimeSpan leaseDuration, CancellationToken cancellationToken)
     {
-        DateTimeOffset now = DateTimeOffset.UtcNow;
+        DateTimeOffset now = TimeProvider.System.GetUtcNow();
 
         List<OutboxMessage> claimed = await uow.Context.OutboxMessages
             .FromSqlInterpolated($@"
@@ -74,7 +74,7 @@ public class OutboxHandler : IOutboxHandler
     {
         return await uow.Context.Database.ExecuteSqlInterpolatedAsync($@"
             UPDATE dunelight.outbox_messages
-            SET status = 'Processed', processed_at = {DateTimeOffset.UtcNow}, locked_at = NULL, locked_until = NULL, locked_by = NULL
+            SET status = 'Processed', processed_at = {TimeProvider.System.GetUtcNow()}, locked_at = NULL, locked_until = NULL, locked_by = NULL
             WHERE id = {id} AND status = 'Processing' AND locked_by = {claimToken}", cancellationToken);
     }
 

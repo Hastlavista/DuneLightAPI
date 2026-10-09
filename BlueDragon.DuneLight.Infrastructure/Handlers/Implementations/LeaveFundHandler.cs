@@ -15,10 +15,12 @@ namespace BlueDragon.DuneLight.Infrastructure.Handlers.Implementations;
 public class LeaveFundHandler : ILeaveFundHandler
 {
     private readonly DatabaseSettings _databaseSettings;
+    private readonly TimeProvider _timeProvider;
 
-    public LeaveFundHandler(DatabaseSettings databaseSettings)
+    public LeaveFundHandler(DatabaseSettings databaseSettings, TimeProvider timeProvider)
     {
         _databaseSettings = databaseSettings;
+        _timeProvider = timeProvider;
     }
 
     public async Task<List<LeaveFund>> GetForEmployee(Guid organizationId, Guid employeeId)
@@ -49,7 +51,7 @@ public class LeaveFundHandler : ILeaveFundHandler
             ExpiresAt = LeaveFundYearCalculator.ResolveExpiresAt(settings, fundYear),
             AllocatedDays = settings.AnnualDays,
             UsedDays = 0,
-            CreatedAt = DateTimeOffset.UtcNow,
+            CreatedAt = _timeProvider.GetUtcNow(),
             CreatedBy = userId
         };
 
@@ -58,13 +60,13 @@ public class LeaveFundHandler : ILeaveFundHandler
         return fund;
     }
 
-    public async Task<List<LeaveFund>> GetEligible(IUnitOfWork uow, Guid organizationId, Guid employeeId, DateTimeOffset asOf)
+    public async Task<List<LeaveFund>> GetEligible(IUnitOfWork uow, Guid organizationId, Guid employeeId, DateOnly asOf)
     {
         return await uow.Context.LeaveFunds
             .Where(f =>
                 f.OrganizationId == organizationId &&
                 f.EmployeeId == employeeId &&
-                f.ExpiresAt >= asOf &&
+                f.ExpiresAt > asOf && // T1-7: na dan ExpiresAt fond je već istekao (kao prije T1, kad je ExpiresAt bio početak tog dana)
                 f.AllocatedDays > f.UsedDays)
             .OrderBy(f => f.FundYear)
             .ToListAsync();
@@ -116,7 +118,7 @@ public class LeaveFundHandler : ILeaveFundHandler
                 ExpiresAt = LeaveFundYearCalculator.ResolveExpiresAt(settings, fundYear),
                 AllocatedDays = allocatedDays,
                 UsedDays = 0,
-                CreatedAt = DateTimeOffset.UtcNow,
+                CreatedAt = _timeProvider.GetUtcNow(),
                 CreatedBy = userId
             };
             context.LeaveFunds.Add(existing);
@@ -124,7 +126,7 @@ public class LeaveFundHandler : ILeaveFundHandler
         else
         {
             existing.AllocatedDays = allocatedDays;
-            existing.UpdatedAt = DateTimeOffset.UtcNow;
+            existing.UpdatedAt = _timeProvider.GetUtcNow();
             existing.UpdatedBy = userId;
         }
 

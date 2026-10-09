@@ -25,6 +25,7 @@ public class MembershipRenewalService : IMembershipRenewalService
     private readonly ILogger<MembershipRenewalService> _logger;
     private readonly IMembershipCoverageService _coverage;
     private readonly IGroupMembershipSkipService _membershipSkips;
+    private readonly TimeProvider _timeProvider;
 
     public MembershipRenewalService(
         IClientMembershipHandler handler,
@@ -33,7 +34,8 @@ public class MembershipRenewalService : IMembershipRenewalService
         IUnitOfWorkFactory unitOfWorkFactory,
         ILogger<MembershipRenewalService> logger,
         IMembershipCoverageService coverage,
-        IGroupMembershipSkipService membershipSkips)
+        IGroupMembershipSkipService membershipSkips,
+        TimeProvider timeProvider)
     {
         _membershipSkips = membershipSkips;
         _handler = handler;
@@ -42,6 +44,7 @@ public class MembershipRenewalService : IMembershipRenewalService
         _unitOfWorkFactory = unitOfWorkFactory;
         _logger = logger;
         _coverage = coverage;
+        _timeProvider = timeProvider;
     }
 
     public async Task<MembershipDebtRules> GetDebtRules(Guid organizationId)
@@ -50,9 +53,9 @@ public class MembershipRenewalService : IMembershipRenewalService
         return new MembershipDebtRules(settings.MembershipGraceDays, settings.MembershipDebtBehavior, settings.MembershipAutoEndAfterUnpaidPeriods);
     }
 
-    public async Task<int> RunForOrganization(Guid organizationId, DateOnly? today = null)
+    public async Task<int> RunForOrganization(Guid organizationId)
     {
-        DateOnly day = today ?? (await _organizationCalendarService.GetCalendar(organizationId)).LocalDate(DateTimeOffset.UtcNow);
+        DateOnly day = (await _organizationCalendarService.GetCalendar(organizationId)).LocalDate(_timeProvider.GetUtcNow());
         MembershipDebtRules rules = await GetDebtRules(organizationId);
         int processed = 0;
         foreach (Guid id in await _handler.GetRenewalCandidateIds(organizationId, day))
@@ -149,13 +152,13 @@ public class MembershipRenewalService : IMembershipRenewalService
             StartsOn = boundary,
             PlannedEndsOn = null,
             Reason = "Sve poslovnice plana su neaktivne.",
-            CreatedAt = DateTimeOffset.UtcNow,
+            CreatedAt = _timeProvider.GetUtcNow(),
             CreatedBy = userId
         };
         membership.Pauses.Add(pause);
         uow.Context.MembershipPauses.Add(pause);
-        Touch(membership, userId);
-        _handler.AddAudit(uow, Audit(membership, userId, "CompanyClosureStarted", null, $"{pause.Id};{boundary:yyyy-MM-dd}"));
+        Touch(membership, userId, _timeProvider.GetUtcNow());
+        _handler.AddAudit(uow, Audit(membership, userId, "CompanyClosureStarted", null, $"{pause.Id};{boundary:yyyy-MM-dd}", _timeProvider.GetUtcNow()));
     }
 
     /// <summary>K1-8 — kraj stajanja na dan ponovne aktivacije (today), bez naknadnog zaduživanja propuštenih perioda. Od datuma
@@ -167,7 +170,7 @@ public class MembershipRenewalService : IMembershipRenewalService
         DateOnly lastDay = pause.Kind == MembershipPauseKind.Days || today.Day == 1
             ? today.AddDays(-1)
             : new DateOnly(today.Year, today.Month, DateTime.DaysInMonth(today.Year, today.Month));
-        DateTimeOffset now = DateTimeOffset.UtcNow;
+        DateTimeOffset now = _timeProvider.GetUtcNow();
         if (lastDay < pause.StartsOn)
         {
             pause.CancelledAt = now;
@@ -181,9 +184,9 @@ public class MembershipRenewalService : IMembershipRenewalService
 
         pause.UpdatedAt = now;
         pause.UpdatedBy = userId;
-        Touch(membership, userId);
+        Touch(membership, userId, now);
         _handler.AddAudit(uow, Audit(membership, userId, "CompanyClosureEnded", $"{pause.Id};{pause.StartsOn:yyyy-MM-dd}",
-            pause.ActualEndsOn.HasValue ? $"{pause.ActualEndsOn:yyyy-MM-dd}" : "Withdrawn"));
+            pause.ActualEndsOn.HasValue ? $"{pause.ActualEndsOn:yyyy-MM-dd}" : "Withdrawn", now));
     }
 
     /// <summary>Granica obnove. Vraća false kad članstvo završava (ne otvara se novi period); true kad se period otvara (s
@@ -206,8 +209,8 @@ public class MembershipRenewalService : IMembershipRenewalService
                 // 2C — prelazak na plan deaktiviran prije stupanja na snagu se ne primjenjuje; članstvo ostaje na starom planu.
                 Guid notApplied = membership.PendingPlanVersionId.Value;
                 ClearPending(membership);
-                MembershipTimelines.MarkPlanUpdateNotApplied(membership, notApplied, ErrorCodes.MembershipPlanInactive, DateTimeOffset.UtcNow);
-                _handler.AddAudit(uow, Audit(membership, userId, "PlanChangeNotApplied", notApplied.ToString(), null, ErrorCodes.MembershipPlanInactive));
+                MembershipTimelines.MarkPlanUpdateNotApplied(membership, notApplied, ErrorCodes.MembershipPlanInactive, _timeProvider.GetUtcNow());
+                _handler.AddAudit(uow, Audit(membership, userId, "PlanChangeNotApplied", notApplied.ToString(), null, _timeProvider.GetUtcNow(), ErrorCodes.MembershipPlanInactive));
             }
             else
             {
@@ -264,15 +267,15 @@ public class MembershipRenewalService : IMembershipRenewalService
             MembershipTimelines.ClearPlanUpdateNotApplied(membership);
         }
 
-        Touch(membership, userId);
+        Touch(membership, userId, _timeProvider.GetUtcNow());
         _handler.AddAudit(uow, Audit(membership, userId, "TermsApplied", old,
-            $"{membership.MembershipPlanId}:{membership.PlanVersionId}@{boundary:yyyy-MM-dd}", source.ToString()));
+            $"{membership.MembershipPlanId}:{membership.PlanVersionId}@{boundary:yyyy-MM-dd}", _timeProvider.GetUtcNow(), source.ToString()));
     }
 
     private void OpenPeriod(IUnitOfWork uow, ClientMembership membership, MembershipTimeline timeline, DateOnly startsOn, Guid? userId)
     {
         MembershipPeriod period = MembershipPeriodCalendar.Periods(timeline).First(p => p.StartsOn == startsOn);
-        DateTimeOffset now = DateTimeOffset.UtcNow;
+        DateTimeOffset now = _timeProvider.GetUtcNow();
         ClientMembershipPeriod row = new()
         {
             Id = Guid.NewGuid(),
@@ -310,7 +313,7 @@ public class MembershipRenewalService : IMembershipRenewalService
             uow.Context.MembershipCharges.Add(charge);
         }
 
-        _handler.AddAudit(uow, Audit(membership, userId, "PeriodOpened", null, $"{row.StartsOn:yyyy-MM-dd}..{row.EndsOn:yyyy-MM-dd};{row.Price}"));
+        _handler.AddAudit(uow, Audit(membership, userId, "PeriodOpened", null, $"{row.StartsOn:yyyy-MM-dd}..{row.EndsOn:yyyy-MM-dd};{row.Price}", now));
     }
 
     /// <summary>Kraj tekućeg (zadnjeg otvorenog) perioda prati izračun — pauza produljuje ili skraćuje period.</summary>
@@ -333,8 +336,8 @@ public class MembershipRenewalService : IMembershipRenewalService
     {
         membership.EndsOn = endsOn;
         membership.EndReason = reason;
-        Touch(membership, userId);
-        _handler.AddAudit(uow, Audit(membership, userId, "MembershipEnded", null, $"{endsOn:yyyy-MM-dd}", reason.ToString()));
+        Touch(membership, userId, _timeProvider.GetUtcNow());
+        _handler.AddAudit(uow, Audit(membership, userId, "MembershipEnded", null, $"{endsOn:yyyy-MM-dd}", _timeProvider.GetUtcNow(), reason.ToString()));
     }
 
     private static void ClearPending(ClientMembership membership)
@@ -345,15 +348,15 @@ public class MembershipRenewalService : IMembershipRenewalService
         membership.PendingSource = null;
     }
 
-    private static void Touch(ClientMembership membership, Guid? userId)
+    private static void Touch(ClientMembership membership, Guid? userId, DateTimeOffset now)
     {
-        membership.UpdatedAt = DateTimeOffset.UtcNow;
+        membership.UpdatedAt = now;
         membership.UpdatedBy = userId;
     }
 
-    private static ClientMembershipAuditLog Audit(ClientMembership membership, Guid? userId, string type, string oldValue, string newValue, string reason = null)
+    private static ClientMembershipAuditLog Audit(ClientMembership membership, Guid? userId, string type, string oldValue, string newValue, DateTimeOffset now, string reason = null)
     {
-        ClientMembershipAuditLog entry = MembershipTimelines.Audit(membership, userId.GetValueOrDefault(), type, oldValue, newValue, reason);
+        ClientMembershipAuditLog entry = MembershipTimelines.Audit(membership, userId.GetValueOrDefault(), type, oldValue, newValue, now, reason);
         entry.ChangedBy = userId;
         return entry;
     }

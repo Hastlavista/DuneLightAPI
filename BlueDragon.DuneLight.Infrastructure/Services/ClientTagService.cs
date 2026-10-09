@@ -14,10 +14,12 @@ namespace BlueDragon.DuneLight.Infrastructure.Services;
 public class ClientTagService : IClientTagService
 {
     private readonly IClientTagHandler _clientTagHandler;
+    private readonly TimeProvider _timeProvider;
 
-    public ClientTagService(IClientTagHandler clientTagHandler)
+    public ClientTagService(IClientTagHandler clientTagHandler, TimeProvider timeProvider)
     {
         _clientTagHandler = clientTagHandler;
+        _timeProvider = timeProvider;
     }
 
     public async Task<PagedResult<ClientTagDto>> GetPaged(Guid organizationId, PagedRequest request)
@@ -47,7 +49,7 @@ public class ClientTagService : IClientTagService
             ColorHex = request.ColorHex,
             SortOrder = request.SortOrder,
             IsActive = true,
-            CreatedAt = DateTimeOffset.UtcNow,
+            CreatedAt = _timeProvider.GetUtcNow(),
             CreatedBy = userId
         };
 
@@ -66,7 +68,7 @@ public class ClientTagService : IClientTagService
         tag.Name = request.Name;
         tag.ColorHex = request.ColorHex;
         tag.SortOrder = request.SortOrder;
-        tag.UpdatedAt = DateTimeOffset.UtcNow;
+        tag.UpdatedAt = _timeProvider.GetUtcNow();
         tag.UpdatedBy = userId;
 
         await _clientTagHandler.Update(tag);
@@ -83,7 +85,7 @@ public class ClientTagService : IClientTagService
             await EnsureNameIsUnique(organizationId, tag.Name, excludeId: id);
 
         tag.IsActive = isActive;
-        tag.UpdatedAt = DateTimeOffset.UtcNow;
+        tag.UpdatedAt = _timeProvider.GetUtcNow();
         tag.UpdatedBy = userId;
 
         await _clientTagHandler.Update(tag);

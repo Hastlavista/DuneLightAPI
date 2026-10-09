@@ -41,7 +41,7 @@ public class MultiSegmentGroupTests
         {
             Name = $"Wellness-{Guid.NewGuid():N}",
             CompanyId = w.Company.Id.Value,
-            Slots = new List<GroupSlotCreateRequest> { new() { DayOfWeek = SchedulingWorld.FutureDay.DayOfWeek, StartTime = slot ?? TimeSpan.FromHours(9) } },
+            Slots = new List<GroupSlotCreateRequest> { new() { DayOfWeek = SchedulingWorld.FutureDay.DayOfWeek, StartTime = TimeOnly.FromTimeSpan(slot ?? TimeSpan.FromHours(9)) } },
             SegmentTemplates = new List<GroupSegmentTemplateRequest>
             {
                 new() { ServiceId = yoga.Id.Value, StartOffsetMinutes = 0, Capacity = capA, RoomId = roomA?.Id, EmployeeIds = withTrainer ? new List<Guid> { w.Employee.Id.Value } : new List<Guid>() },
@@ -200,7 +200,7 @@ public class MultiSegmentGroupTests
         {
             Name = $"Parallel-{Guid.NewGuid():N}",
             CompanyId = w.Company.Id.Value,
-            Slots = new List<GroupSlotCreateRequest> { new() { DayOfWeek = SchedulingWorld.FutureDay.DayOfWeek, StartTime = TimeSpan.FromHours(9) } },
+            Slots = new List<GroupSlotCreateRequest> { new() { DayOfWeek = SchedulingWorld.FutureDay.DayOfWeek, StartTime = new TimeOnly(9, 0) } },
             SegmentTemplates = new List<GroupSegmentTemplateRequest>
             {
                 new() { ServiceId = yoga.Id.Value, StartOffsetMinutes = 0, Capacity = 5, EmployeeIds = withTrainer ? new List<Guid> { w.Employee.Id.Value } : new List<Guid>() },
@@ -309,7 +309,7 @@ public class MultiSegmentGroupTests
         {
             Name = $"Mats-{Guid.NewGuid():N}",
             CompanyId = w.Company.Id.Value,
-            Slots = new List<GroupSlotCreateRequest> { new() { DayOfWeek = SchedulingWorld.FutureDay.DayOfWeek, StartTime = TimeSpan.FromHours(9) } },
+            Slots = new List<GroupSlotCreateRequest> { new() { DayOfWeek = SchedulingWorld.FutureDay.DayOfWeek, StartTime = new TimeOnly(9, 0) } },
             SegmentTemplates = new List<GroupSegmentTemplateRequest>
             {
                 new() { ServiceId = yoga.Id.Value, StartOffsetMinutes = 0, Capacity = 5,
@@ -394,7 +394,7 @@ public class MultiSegmentGroupTests
             await w.Bookings.SetParticipationStatus(w.OrganizationId, w.ActorUserId, true, p.Id.Value, new BookingSetStatusRequest { Status = BookingStatus.Confirmed });
         }
         // Cutoff ends at 10:00: A (09:00) inside the late window, C (11:00) outside.
-        await w.SetCancellationWindowMinutes((int)(SchedulingWorld.Future(10) - DateTimeOffset.UtcNow).TotalMinutes);
+        await w.SetCancellationWindowMinutes((int)(SchedulingWorld.Future(10) - TestClock.UtcNow).TotalMinutes);
 
         GroupDetailDto detail = await w.Groups.GetById(w.OrganizationId, g.Group.Id);
         await w.Groups.RemoveMember(w.OrganizationId, w.ActorUserId, g.Group.Id, MemberId(detail, ana));
@@ -510,7 +510,7 @@ public class MultiSegmentGroupTests
                 db.WaitlistEntries.Add(new WaitlistEntry
                 {
                     Id = Guid.NewGuid(), OrganizationId = w.OrganizationId, AppointmentId = occurrence.Id.Value, AppointmentSegmentId = segment.Id.Value,
-                    ClientId = waiter.Id.Value, Status = WaitlistEntryStatus.Waiting, JoinedAt = DateTimeOffset.UtcNow, CreatedAt = DateTimeOffset.UtcNow
+                    ClientId = waiter.Id.Value, Status = WaitlistEntryStatus.Waiting, JoinedAt = TestClock.UtcNow, CreatedAt = TestClock.UtcNow
                 });
             await db.SaveChangesAsync();
         }
@@ -550,7 +550,7 @@ public class MultiSegmentGroupTests
         await SchedulingAssert.Validation(() => w.Groups.Create(w.OrganizationId, w.ActorUserId, new GroupCreateRequest
         {
             Name = "No anchor", CompanyId = w.Company.Id.Value,
-            Slots = new List<GroupSlotCreateRequest> { new() { DayOfWeek = DayOfWeek.Monday, StartTime = TimeSpan.FromHours(9) } },
+            Slots = new List<GroupSlotCreateRequest> { new() { DayOfWeek = DayOfWeek.Monday, StartTime = new TimeOnly(9, 0) } },
             SegmentTemplates = new List<GroupSegmentTemplateRequest> { new() { ServiceId = yoga.Id.Value, StartOffsetMinutes = 15, Capacity = 3 } }
         }));
 

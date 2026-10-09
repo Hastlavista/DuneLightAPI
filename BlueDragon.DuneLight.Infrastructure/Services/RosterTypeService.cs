@@ -14,10 +14,12 @@ namespace BlueDragon.DuneLight.Infrastructure.Services;
 public class RosterTypeService : IRosterTypeService
 {
     private readonly IRosterTypeHandler _rosterTypeHandler;
+    private readonly TimeProvider _timeProvider;
 
-    public RosterTypeService(IRosterTypeHandler rosterTypeHandler)
+    public RosterTypeService(IRosterTypeHandler rosterTypeHandler, TimeProvider timeProvider)
     {
         _rosterTypeHandler = rosterTypeHandler;
+        _timeProvider = timeProvider;
     }
 
     public async Task<PagedResult<RosterTypeDto>> GetPaged(Guid organizationId, PagedRequest request)
@@ -52,7 +54,7 @@ public class RosterTypeService : IRosterTypeService
             DeductsFromLeaveFund = request.DeductsFromLeaveFund,
             SortOrder = request.SortOrder,
             IsActive = true,
-            CreatedAt = DateTimeOffset.UtcNow,
+            CreatedAt = _timeProvider.GetUtcNow(),
             CreatedBy = userId
         };
 
@@ -76,7 +78,7 @@ public class RosterTypeService : IRosterTypeService
         rosterType.RequiresTime = request.RequiresTime;
         rosterType.DeductsFromLeaveFund = request.DeductsFromLeaveFund;
         rosterType.SortOrder = request.SortOrder;
-        rosterType.UpdatedAt = DateTimeOffset.UtcNow;
+        rosterType.UpdatedAt = _timeProvider.GetUtcNow();
         rosterType.UpdatedBy = userId;
 
         await _rosterTypeHandler.Update(rosterType);
@@ -93,7 +95,7 @@ public class RosterTypeService : IRosterTypeService
             await EnsureNameIsUnique(organizationId, rosterType.Name, excludeId: id);
 
         rosterType.IsActive = isActive;
-        rosterType.UpdatedAt = DateTimeOffset.UtcNow;
+        rosterType.UpdatedAt = _timeProvider.GetUtcNow();
         rosterType.UpdatedBy = userId;
 
         await _rosterTypeHandler.Update(rosterType);

@@ -322,7 +322,7 @@ public class K2PermissionsTests
         await Refused(Grants.AppointmentsAvailabilityOverride, () => w.Groups.GenerateAppointments(w.OrganizationId, manager,
             new Core.DTOs.Groups.GenerateGroupAppointmentsRequest
             {
-                GroupId = group.Id, FromDate = SchedulingWorld.FutureDay, ToDate = SchedulingWorld.FutureDay, OverrideAvailability = true
+                GroupId = group.Id, FromDate = SchedulingWorld.Day(SchedulingWorld.FutureDay), ToDate = SchedulingWorld.Day(SchedulingWorld.FutureDay), OverrideAvailability = true
             }));
 
         var result = await w.GenerateOccurrences(group, SchedulingWorld.FutureDay, overrideAvailability: true); // akter ima grant
@@ -364,8 +364,8 @@ public class K2PermissionsTests
         await using SchedulingWorld w = await SchedulingWorld.Create(nameof(RosterEntry_StartingBeforeToday_NeedsWritePast_TodayAndFutureDoNot));
         RosterType absence = await w.AddRosterType("Bolovanje", isAbsence: true);
         IRosterEntryService roster = w.Resolve<IRosterEntryService>();
-        DateTimeOffset today = new(DateTime.UtcNow.Date, TimeSpan.Zero);
-        RosterEntryCreateRequest Request(DateTimeOffset day) => new()
+        DateOnly today = SchedulingWorld.Day(TestClock.UtcNow);
+        RosterEntryCreateRequest Request(DateOnly day) => new()
         {
             EmployeeId = w.Employee.Id.Value, RosterTypeId = absence.Id.Value, DateFrom = day, DateTo = day
         };

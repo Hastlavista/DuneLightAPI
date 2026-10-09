@@ -14,10 +14,12 @@ namespace BlueDragon.DuneLight.Infrastructure.Handlers.Implementations;
 public class WorkingHoursTemplateHandler : IWorkingHoursTemplateHandler
 {
     private readonly DatabaseSettings _databaseSettings;
+    private readonly TimeProvider _timeProvider;
 
-    public WorkingHoursTemplateHandler(DatabaseSettings databaseSettings)
+    public WorkingHoursTemplateHandler(DatabaseSettings databaseSettings, TimeProvider timeProvider)
     {
         _databaseSettings = databaseSettings;
+        _timeProvider = timeProvider;
     }
 
     public async Task<WorkingHoursTemplate> GetForEmployee(Guid organizationId, Guid employeeId)
@@ -83,7 +85,7 @@ public class WorkingHoursTemplateHandler : IWorkingHoursTemplateHandler
                 CompanyId = companyId,
                 CycleType = cycleType,
                 AnchorDate = anchorDate,
-                CreatedAt = DateTimeOffset.UtcNow,
+                CreatedAt = _timeProvider.GetUtcNow(),
                 CreatedBy = userId
             });
         }
@@ -91,7 +93,7 @@ public class WorkingHoursTemplateHandler : IWorkingHoursTemplateHandler
         {
             existing.CycleType = cycleType;
             existing.AnchorDate = anchorDate;
-            existing.UpdatedAt = DateTimeOffset.UtcNow;
+            existing.UpdatedAt = _timeProvider.GetUtcNow();
             existing.UpdatedBy = userId;
             context.WorkingHoursIntervals.RemoveRange(existing.Intervals);
         }

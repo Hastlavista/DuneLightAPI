@@ -20,9 +20,11 @@ public class WaitlistPromotedNotificationHandler : IOutboxMessageHandler
     private const int TerminalSourceVersion = 0;
 
     private readonly INotificationHandler _notificationHandler;
+    private readonly TimeProvider _timeProvider;
 
-    public WaitlistPromotedNotificationHandler(INotificationHandler notificationHandler)
+    public WaitlistPromotedNotificationHandler(INotificationHandler notificationHandler, TimeProvider timeProvider)
     {
+        _timeProvider = timeProvider;
         _notificationHandler = notificationHandler;
     }
 
@@ -69,7 +71,7 @@ public class WaitlistPromotedNotificationHandler : IOutboxMessageHandler
             Status = status,
             Data = data,
             OccurredAt = @event.OccurredAt,
-            CreatedAt = DateTimeOffset.UtcNow
+            CreatedAt = _timeProvider.GetUtcNow()
         });
     }
 }

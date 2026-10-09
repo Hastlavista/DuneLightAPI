@@ -35,6 +35,9 @@ public class OrganizationCalendarService : IOrganizationCalendarService
         return calendars[companyId];
     }
 
+    public Task<OrganizationCalendar> GetCompanyOrOrganizationCalendar(Guid organizationId, Guid? companyId) =>
+        companyId.HasValue ? GetCompanyCalendar(organizationId, companyId.Value) : GetCalendar(organizationId);
+
     public async Task<Dictionary<Guid, OrganizationCalendar>> GetCompanyCalendars(Guid organizationId, IEnumerable<Guid> companyIds)
     {
         List<Guid> ids = companyIds.Distinct().ToList();

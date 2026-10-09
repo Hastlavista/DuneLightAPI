@@ -51,6 +51,7 @@ public static class CapabilityCatalog
         ViewManage("clients.packages.manage", "clients", CapabilitySensitivity.Normal,
             view: new[] { Grants.ClientsPackagesView },
             manage: new[] { Grants.ClientsPackagesManage }),
+        On("clients.packages.write.past", "clients", CapabilitySensitivity.Sensitive, Grants.ClientsPackagesWritePast),
         On("clients.status.manage", "clients", CapabilitySensitivity.Sensitive, Grants.ClientsStatusManage),
         ViewManage("clients.tags.manage", "clients", CapabilitySensitivity.Normal,
             view: new[] { Grants.ClientsTagsView },
@@ -128,7 +129,7 @@ public static class CapabilityCatalog
     private static readonly Dictionary<string, CapabilityDefinition> ByKey = All.ToDictionary(c => c.Key);
 
     /// <summary>NULL ako capability s tim ključem ne postoji.</summary>
-    public static CapabilityDefinition Find(string key) => key != null && ByKey.TryGetValue(key, out CapabilityDefinition definition) ? definition : null;
+    public static CapabilityDefinition? Find(string? key) => key != null && ByKey.TryGetValue(key, out CapabilityDefinition? definition) ? definition : null;
 
     private static CapabilityDefinition On(string key, string category, CapabilitySensitivity sensitivity, string grant) =>
         new(key, category, CapabilityScopeModel.None, sensitivity,

@@ -109,7 +109,7 @@ public class ScheduleBreakOverlapCharacterizationTests
                 CompanyId = w.Company.Id.Value,
                 FirstOccurrenceStartsAt = SchedulingWorld.Future(10, 15),
                 DurationMinutes = 30,
-                EndDate = SchedulingWorld.Future(10, 15).AddDays(2)
+                EndDate = SchedulingWorld.Day(SchedulingWorld.Future(10, 15).AddDays(2))
             }));
 
         Assert.Equal(new List<string> { ErrorCodes.RecurringConflictReasonAppointment }, SchedulingAssert.ConflictReasons(ex));
@@ -131,7 +131,7 @@ public class ScheduleBreakOverlapCharacterizationTests
             CompanyId = w.Company.Id.Value,
             FirstOccurrenceStartsAt = SchedulingWorld.Future(10, 30),
             DurationMinutes = 30,
-            EndDate = SchedulingWorld.Future(10, 30).AddDays(1)
+            EndDate = SchedulingWorld.Day(SchedulingWorld.Future(10, 30).AddDays(1))
         });
 
         Assert.Equal(2, created.Count);

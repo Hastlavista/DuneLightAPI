@@ -13,5 +13,5 @@ public class ManagementUserListItemDto
     public string OrganizationName { get; set; }
     public bool IsActive { get; set; }
     public DateTimeOffset? CreatedAt { get; set; }
-    public string EmployeeName { get; set; }
+    public string? EmployeeName { get; set; }
 }

@@ -135,7 +135,7 @@ public class MultiSegmentGroupHttpContractTests : IClassFixture<MultiSegmentHttp
         Assert.Equal(HttpStatusCode.OK, (await Send(HttpMethod.Post, $"/api/groups/{x.GroupId}/members", x.Manager,
             new { clientId = holder.Id, segmentTemplateIds = new[] { x.A } })).Status);
         var generated = await Send(HttpMethod.Post, "/api/groups/generate-appointments", x.Manager,
-            new { groupId = x.GroupId, fromDate = SchedulingWorld.FutureDay, toDate = SchedulingWorld.FutureDay });
+            new { groupId = x.GroupId, fromDate = SchedulingWorld.Day(SchedulingWorld.FutureDay), toDate = SchedulingWorld.Day(SchedulingWorld.FutureDay) }); // CHANGED in T1: "yyyy-MM-dd"
         Assert.Equal(HttpStatusCode.OK, generated.Status);
         Guid appointmentId = generated.Body.GetProperty("created")[0].GetProperty("id").GetGuid();
         Appointment occurrence = await w.LoadAppointment(appointmentId);
@@ -186,7 +186,7 @@ public class MultiSegmentGroupHttpContractTests : IClassFixture<MultiSegmentHttp
 
         // Guest check-in (attendance) on an occurrence that has started: the segment is required and only it is recorded.
         var generated = await Send(HttpMethod.Post, "/api/groups/generate-appointments", x.Manager,
-            new { groupId = x.GroupId, fromDate = SchedulingWorld.FutureDay, toDate = SchedulingWorld.FutureDay });
+            new { groupId = x.GroupId, fromDate = SchedulingWorld.Day(SchedulingWorld.FutureDay), toDate = SchedulingWorld.Day(SchedulingWorld.FutureDay) }); // CHANGED in T1: "yyyy-MM-dd"
         Guid appointmentId = generated.Body.GetProperty("created")[0].GetProperty("id").GetGuid();
         await using (DatabaseContext db = w.NewDb())
             await db.AppointmentSegments.Where(s => s.AppointmentId == appointmentId).ExecuteUpdateAsync(u => u

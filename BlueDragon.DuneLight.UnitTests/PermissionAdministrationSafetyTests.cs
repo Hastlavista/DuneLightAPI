@@ -21,7 +21,7 @@ public class PermissionAdministrationSafetyTests
 {
     private const string LocalConnectionString = "Host=localhost;Database=postgres;Password=root1234;Username=postgres";
 
-    private static GrantGroupHandler CreateHandler() => new(new DatabaseSettings { ConnectionString = LocalConnectionString });
+    private static GrantGroupHandler CreateHandler() => new(new DatabaseSettings { ConnectionString = LocalConnectionString }, TestClock.Source);
 
     private static async Task<(Guid OrganizationId, Func<Task> Cleanup)> CreateIsolatedOrganization(string testName)
     {
@@ -33,7 +33,7 @@ public class PermissionAdministrationSafetyTests
             Id = organizationId,
             Name = $"PermissionAdminSafetyTest-{testName}",
             Slug = $"permission-admin-safety-test-{organizationId:N}",
-            CreatedAt = DateTimeOffset.UtcNow
+            CreatedAt = TestClock.UtcNow
         });
         await context.SaveChangesAsync();
 
@@ -73,7 +73,7 @@ public class PermissionAdministrationSafetyTests
             PasswordHash = "test-hash",
             ApiKey = $"test-api-key-{userId:N}",
             IsActive = isActive,
-            CreatedAt = DateTimeOffset.UtcNow
+            CreatedAt = TestClock.UtcNow
         });
         await context.SaveChangesAsync();
         return userId;
@@ -88,7 +88,7 @@ public class PermissionAdministrationSafetyTests
             Id = groupId,
             OrganizationId = organizationId,
             Name = name,
-            CreatedAt = DateTimeOffset.UtcNow,
+            CreatedAt = TestClock.UtcNow,
             Grants = grantKeys.Select(k => new GrantGroupGrant { GrantKey = k }).ToList()
         });
         await context.SaveChangesAsync();

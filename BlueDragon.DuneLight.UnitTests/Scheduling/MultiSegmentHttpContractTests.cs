@@ -9,6 +9,7 @@ using System.Text;
 using System.Text.Json;
 using System.Threading.Tasks;
 using BlueDragon.DuneLight.API;
+using BlueDragon.DuneLight.Infrastructure.Time;
 using BlueDragon.DuneLight.Infrastructure.Outbox;
 using BlueDragon.DuneLight.Infrastructure.Services.Management;
 using BlueDragon.DuneLight.Core.DTOs.Appointments;
@@ -55,6 +56,9 @@ public class MultiSegmentHttpContractTests : IClassFixture<MultiSegmentHttpContr
     public sealed class ApiHost : IAsyncLifetime
     {
         private IHost _host;
+
+        /// <summary>T1-7: servisi hosta (npr. Swagger generator za provjeru formata date/time u shemi).</summary>
+        public IServiceProvider Services => _host.Services;
         public HttpClient Client { get; private set; }
 
         public async Task InitializeAsync()
@@ -97,6 +101,9 @@ public class MultiSegmentHttpContractTests : IClassFixture<MultiSegmentHttpContr
                                               d.ImplementationType == typeof(PlatformAccountBootstrapper)))
                                  .ToList())
                         services.Remove(background);
+
+                    // T1: HTTP host gleda isti fiksni testni sat kao test (BusinessTimeProvider nad TestClock izvorom).
+                    services.AddSingleton(sp => new BusinessTimeProvider(sp.GetRequiredService<IClockOffsetStore>(), TestClock.Source));
                 })
                 .Build();
             await _host.StartAsync();
@@ -200,7 +207,7 @@ public class MultiSegmentHttpContractTests : IClassFixture<MultiSegmentHttpContr
         {
             db.GrantGroups.Add(new GrantGroup
             {
-                Id = groupId, OrganizationId = w.OrganizationId, Name = $"http-{groupId:N}", CreatedAt = DateTimeOffset.UtcNow,
+                Id = groupId, OrganizationId = w.OrganizationId, Name = $"http-{groupId:N}", CreatedAt = TestClock.UtcNow,
                 Grants = grants.Select(g => new GrantGroupGrant { GrantGroupId = groupId, GrantKey = g }).ToList()
             });
             db.UserGrantGroups.Add(new UserGrantGroup { UserId = userId, GrantGroupId = groupId });
@@ -378,13 +385,13 @@ public class MultiSegmentHttpContractTests : IClassFixture<MultiSegmentHttpContr
         Guid physio = a.SegmentOf(a.Physio);
 
         // Employee A (write.own) is not assigned to the physio segment.
-        AssertError(HttpStatusCode.Conflict, ErrorCodes.NotOwner,
+        AssertError(HttpStatusCode.Forbidden, ErrorCodes.NotOwner, // CHANGED in T1: 409 -> 403 OutOfScope
             await Send(HttpMethod.Patch, $"/api/segments/{physio}/time", a.WriteOwnAsA, new { plannedStart = SchedulingWorld.Future(15) }));
         // ...but owns the massage segment.
         var own = await Send(HttpMethod.Patch, $"/api/segments/{massage}/time", a.WriteOwnAsA, new { plannedStart = SchedulingWorld.Future(8) });
         Assert.Equal(HttpStatusCode.OK, own.Status);
         // Whole-appointment cancel: write.all only.
-        AssertError(HttpStatusCode.Conflict, ErrorCodes.NotOwner,
+        AssertError(HttpStatusCode.Forbidden, ErrorCodes.NotOwner, // CHANGED in T1: 409 -> 403 OutOfScope
             await Send(HttpMethod.Post, $"/api/appointments/{a.Appointment.Id}/cancel", a.WriteOwnAsA, new { cancellationInitiator = "Business", cancellationReason = "x" }));
     }
 

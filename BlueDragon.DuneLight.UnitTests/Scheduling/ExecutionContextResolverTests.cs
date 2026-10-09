@@ -105,9 +105,9 @@ public class ExecutionContextResolverTests
         AppointmentSegment segment = Only(appointment);
         Guid newService = Guid.NewGuid(), newEmployee = Guid.NewGuid();
         DateTimeOffset newStart = StartsAt.AddHours(4);
-        SegmentMutator.ChangeService(segment, newService, DateTimeOffset.UtcNow);
-        SegmentMutator.AssignEmployees(segment, new[] { newEmployee }, DateTimeOffset.UtcNow);
-        SegmentMutator.ChangeTime(segment, newStart, newStart.AddMinutes(45), DateTimeOffset.UtcNow);
+        SegmentMutator.ChangeService(segment, newService, TestClock.UtcNow);
+        SegmentMutator.AssignEmployees(segment, new[] { newEmployee }, TestClock.UtcNow);
+        SegmentMutator.ChangeTime(segment, newStart, newStart.AddMinutes(45), TestClock.UtcNow);
 
         SegmentExecutionContext execution = ExecutionContextResolver.ForSegment(appointment, segment);
 

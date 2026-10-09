@@ -75,11 +75,12 @@ public class CommissionEntryHandler : ICommissionEntryHandler
             .SingleOrDefaultAsync(e => e.OrganizationId == organizationId && e.Id == id);
     }
 
-    public async Task<(List<CommissionEntry> Items, int TotalCount)> GetPaged(Guid organizationId, CommissionEntryQuery query)
+    public async Task<(List<CommissionEntry> Items, int TotalCount)> GetPaged(
+        Guid organizationId, CommissionEntryQuery query, DateTimeOffset periodStart, DateTimeOffset periodEnd)
     {
         await using DatabaseContext context = DatabaseContext.GenerateContext(_databaseSettings.ConnectionString);
 
-        IQueryable<CommissionEntry> filtered = Filter(context, organizationId, query.EmployeeId, query.CompanyId, query.From, query.To);
+        IQueryable<CommissionEntry> filtered = Filter(context, organizationId, query.EmployeeId, query.CompanyId, periodStart, periodEnd);
 
         int totalCount = await filtered.CountAsync();
 
@@ -99,11 +100,12 @@ public class CommissionEntryHandler : ICommissionEntryHandler
     /// provizija niskog volumena (vidi spec section 58) i ovo izbjegava krhkost EF Core prijevoda ugniježđenih
     /// uvjetnih Sum() izraza preko GroupBy s navigation-property ključem. P2 (2F): po događajima — zarada se broji u razdoblju
     /// nastanka (bez obzira na kasniji storno), storno u razdoblju storna (bez obzira kad je provizija nastala).</summary>
-    public async Task<List<EmployeeCommissionSummaryDto>> GetSummaryByEmployee(Guid organizationId, CommissionSummaryQuery query)
+    public async Task<List<EmployeeCommissionSummaryDto>> GetSummaryByEmployee(
+        Guid organizationId, CommissionSummaryQuery query, DateTimeOffset periodStart, DateTimeOffset periodEnd)
     {
         await using DatabaseContext context = DatabaseContext.GenerateContext(_databaseSettings.ConnectionString);
 
-        List<CommissionEntry> entries = await Filter(context, organizationId, query.EmployeeId, query.CompanyId, query.From, query.To)
+        List<CommissionEntry> entries = await Filter(context, organizationId, query.EmployeeId, query.CompanyId, periodStart, periodEnd)
             .Include(e => e.Employee)
             .ToListAsync();
 
@@ -111,8 +113,8 @@ public class CommissionEntryHandler : ICommissionEntryHandler
             .GroupBy(e => e.EmployeeId)
             .Select(g =>
             {
-                decimal earned = g.Where(e => e.EarnedAt >= query.From && e.EarnedAt < query.To).Sum(e => e.CommissionAmount);
-                decimal reversed = g.Where(e => e.ReversedAt >= query.From && e.ReversedAt < query.To).Sum(e => e.CommissionAmount);
+                decimal earned = g.Where(e => e.EarnedAt >= periodStart && e.EarnedAt < periodEnd).Sum(e => e.CommissionAmount);
+                decimal reversed = g.Where(e => e.ReversedAt >= periodStart && e.ReversedAt < periodEnd).Sum(e => e.CommissionAmount);
                 Employee employee = g.First().Employee;
                 return new EmployeeCommissionSummaryDto
                 {

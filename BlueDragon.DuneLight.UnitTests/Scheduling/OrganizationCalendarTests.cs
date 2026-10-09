@@ -123,23 +123,30 @@ public class OrganizationCalendarTests
     {
         DateTimeOffset first = Zagreb.ToInstant(new DateOnly(2031, 3, 24), new TimeSpan(10, 0, 0)); // Monday, CET
 
-        List<DateTimeOffset> weekly = Zagreb.RepeatAtLocalTime(first, Z(2031, 4, 7, 12), stepDays: 7);
+        // CHANGED in T1: kraj niza je zadnji DAN (DateOnly, uključivo), ne instant.
+        List<DateTimeOffset> weekly = Zagreb.RepeatAtLocalTime(first, new DateOnly(2031, 4, 7), stepDays: 7);
 
         Assert.Equal(new[] { Z(2031, 3, 24, 9), Z(2031, 3, 31, 8), Z(2031, 4, 7, 8) }, weekly);
         Assert.All(weekly, o => Assert.Equal(new TimeSpan(10, 0, 0), Zagreb.LocalTimeOfDay(o)));
     }
 
     [Fact]
-    public void RepeatAtLocalTime_StopsAtTheEndInstant_AndStartsExactlyAtFirst()
+    public void RepeatAtLocalTime_StopsAfterTheLastLocalDate_AndStartsExactlyAtFirst()
     {
+        // CHANGED in T1: kraj niza je zadnji lokalni DAN (DateOnly, uključivo) umjesto instanta.
         DateTimeOffset first = new(2031, 3, 3, 10, 0, 0, TimeSpan.FromHours(1)); // same instant as 09:00Z
 
-        List<DateTimeOffset> daily = Zagreb.RepeatAtLocalTime(first, Z(2031, 3, 5, 9), stepDays: 1);
+        List<DateTimeOffset> daily = Zagreb.RepeatAtLocalTime(first, new DateOnly(2031, 3, 5), stepDays: 1);
 
         Assert.Equal(3, daily.Count);
         Assert.Equal(first, daily[0]);
-        Assert.Equal(Z(2031, 3, 5, 9), daily[2]); // end is inclusive
-        Assert.Throws<ArgumentOutOfRangeException>(() => Zagreb.RepeatAtLocalTime(first, first, 0));
+        Assert.Equal(Z(2031, 3, 5, 9), daily[2]); // last date is inclusive
+        Assert.Throws<ArgumentOutOfRangeException>(() => Zagreb.RepeatAtLocalTime(first, new DateOnly(2031, 3, 3), 0));
+
+        // Pojava kasno navečer: 23:30 lokalno 5.3. je 22:30Z — i dalje pripada zadnjem danu 5.3.
+        DateTimeOffset lateFirst = Zagreb.ToInstant(new DateOnly(2031, 3, 3), new TimeSpan(23, 30, 0));
+        Assert.Equal(3, Zagreb.RepeatAtLocalTime(lateFirst, new DateOnly(2031, 3, 5), stepDays: 1).Count);
+        Assert.Empty(Zagreb.RepeatAtLocalTime(lateFirst, new DateOnly(2031, 3, 2), stepDays: 1));
     }
 
     #endregion

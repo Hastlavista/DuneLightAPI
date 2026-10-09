@@ -59,6 +59,7 @@ public class CommissionService : ICommissionRuleService, ICommissionService, ICo
     private readonly IClientMembershipHandler _membershipHandler;
     private readonly ICheckoutAuditLogHandler _checkoutAuditLogHandler;
     private readonly IUnitOfWorkFactory _unitOfWorkFactory;
+    private readonly TimeProvider _timeProvider;
 
     public CommissionService(
         ICommissionRuleHandler ruleHandler,
@@ -73,7 +74,8 @@ public class CommissionService : ICommissionRuleService, ICommissionService, ICo
         IAppointmentHandler appointmentHandler,
         IClientMembershipHandler membershipHandler,
         ICheckoutAuditLogHandler checkoutAuditLogHandler,
-        IUnitOfWorkFactory unitOfWorkFactory)
+        IUnitOfWorkFactory unitOfWorkFactory,
+        TimeProvider timeProvider)
     {
         _ruleHandler = ruleHandler;
         _entryHandler = entryHandler;
@@ -88,6 +90,7 @@ public class CommissionService : ICommissionRuleService, ICommissionService, ICo
         _membershipHandler = membershipHandler;
         _checkoutAuditLogHandler = checkoutAuditLogHandler;
         _unitOfWorkFactory = unitOfWorkFactory;
+        _timeProvider = timeProvider;
     }
 
     #region Rule CRUD
@@ -120,7 +123,7 @@ public class CommissionService : ICommissionRuleService, ICommissionService, ICo
         (CommissionCalculationType? calculationType, decimal? value, List<CommissionRuleTier> tiers) =
             ValidateAmounts(organizationId, ruleId, request.SubjectType, request.CalculationType, request.Value, request.Tiers);
 
-        DateTimeOffset now = DateTimeOffset.UtcNow;
+        DateTimeOffset now = _timeProvider.GetUtcNow();
         CommissionRule rule = new CommissionRule
         {
             Id = ruleId,
@@ -168,7 +171,7 @@ public class CommissionService : ICommissionRuleService, ICommissionService, ICo
 
         rule.CalculationType = calculationType;
         rule.Value = value;
-        rule.UpdatedAt = DateTimeOffset.UtcNow;
+        rule.UpdatedAt = _timeProvider.GetUtcNow();
         rule.UpdatedBy = userId;
 
         await _ruleHandler.Update(rule, tiers);
@@ -191,8 +194,8 @@ public class CommissionService : ICommissionRuleService, ICommissionService, ICo
                 organizationId, rule.SubjectType, rule.ServiceId, rule.ProductId, rule.PackageId, rule.MembershipPlanId, rule.CalculationType);
 
         rule.IsActive = isActive;
-        rule.DeactivatedFrom = isActive ? null : (await _calendars.GetCalendar(organizationId)).LocalDate(DateTimeOffset.UtcNow);
-        rule.UpdatedAt = DateTimeOffset.UtcNow;
+        rule.DeactivatedFrom = isActive ? null : (await _calendars.GetCalendar(organizationId)).LocalDate(_timeProvider.GetUtcNow());
+        rule.UpdatedAt = _timeProvider.GetUtcNow();
         rule.UpdatedBy = userId;
 
         await _ruleHandler.Update(rule);
@@ -405,9 +408,10 @@ public class CommissionService : ICommissionRuleService, ICommissionService, ICo
         if (query.To < query.From)
             throw new ValidationAppException("'To' ne smije biti prije 'From'.");
 
-        (List<CommissionEntry> items, int totalCount) = await _entryHandler.GetPaged(organizationId, query);
+        (DateTimeOffset periodStart, DateTimeOffset periodEnd) = await ReportPeriod(organizationId, query.From, query.To);
+        (List<CommissionEntry> items, int totalCount) = await _entryHandler.GetPaged(organizationId, query, periodStart, periodEnd);
 
-        List<CommissionEntryDto> dtos = items.Select(e => ToDto(e, query.From, query.To)).ToList();
+        List<CommissionEntryDto> dtos = items.Select(e => ToDto(e, periodStart, periodEnd)).ToList();
         return PagedResult<CommissionEntryDto>.Create(dtos, totalCount, query.Page, query.PageSize);
     }
 
@@ -416,13 +420,23 @@ public class CommissionService : ICommissionRuleService, ICommissionService, ICo
         if (query.To < query.From)
             throw new ValidationAppException("'To' ne smije biti prije 'From'.");
 
-        List<EmployeeCommissionSummaryDto> employees = await _entryHandler.GetSummaryByEmployee(organizationId, query);
+        (DateTimeOffset periodStart, DateTimeOffset periodEnd) = await ReportPeriod(organizationId, query.From, query.To);
+        List<EmployeeCommissionSummaryDto> employees = await _entryHandler.GetSummaryByEmployee(organizationId, query, periodStart, periodEnd);
 
         return new CommissionSummaryResultDto
         {
             Employees = employees,
             TotalNetAmount = employees.Sum(e => e.NetAmount)
         };
+    }
+
+    /// <summary>T1-7: izvještaj po danima organizacije — From i To su DateOnly, OBA kraja uključena; granice dana su u zoni
+    /// ORGANIZACIJE (ne poslovnice; cjenik namjerno koristi zonu poslovnice termina, vidi ARCH §7.3). Rezultat je polu-otvoren
+    /// raspon instanata [početak From, početak To+1) nad kojim ostaje postojeće filtriranje EarnedAt/ReversedAt.</summary>
+    private async Task<(DateTimeOffset Start, DateTimeOffset End)> ReportPeriod(Guid organizationId, DateOnly from, DateOnly to)
+    {
+        OrganizationCalendar calendar = await _calendars.GetCalendar(organizationId);
+        return (calendar.StartOfDay(from), calendar.StartOfDay(to.AddDays(1)));
     }
 
     private static CommissionEntryDto ToDto(CommissionEntry entry, DateTimeOffset? from = null, DateTimeOffset? to = null)
@@ -648,9 +662,9 @@ public class CommissionService : ICommissionRuleService, ICommissionService, ICo
             ClientMembership membership = await _membershipHandler.GetForUpdate(uow, organizationId, sourceId);
             Guid? old = membership.SaleCommissionEmployeeId;
             membership.SaleCommissionEmployeeId = newEmployeeId;
-            membership.UpdatedAt = DateTimeOffset.UtcNow;
+            membership.UpdatedAt = _timeProvider.GetUtcNow();
             membership.UpdatedBy = userId;
-            _membershipHandler.AddAudit(uow, MembershipTimelines.Audit(membership, userId, changeType, old?.ToString(), newEmployeeId.ToString(), reason));
+            _membershipHandler.AddAudit(uow, MembershipTimelines.Audit(membership, userId, changeType, old?.ToString(), newEmployeeId.ToString(), _timeProvider.GetUtcNow(), reason));
             await uow.Context.SaveChangesAsync();
             return (CommissionSubjectType.MembershipPlan, membership.MembershipPlanId);
         }
@@ -666,7 +680,7 @@ public class CommissionService : ICommissionRuleService, ICommissionService, ICo
             ChangeType = changeType,
             OldValue = $"{item.Id}:{previous}",
             NewValue = $"{item.Id}:{newEmployeeId}:{reason}",
-            ChangedAt = DateTimeOffset.UtcNow,
+            ChangedAt = _timeProvider.GetUtcNow(),
             ChangedBy = userId
         });
         return item.Type == CheckoutItemType.Product
@@ -684,7 +698,7 @@ public class CommissionService : ICommissionRuleService, ICommissionService, ICo
             return null;
 
         RuleChoice choice = RuleChoice.ForSubject(rule, null, "Pravilo za prodaju predmeta.");
-        DateTimeOffset now = DateTimeOffset.UtcNow;
+        DateTimeOffset now = _timeProvider.GetUtcNow();
         CommissionEntry entry = new CommissionEntry
         {
             Id = Guid.NewGuid(),
@@ -775,8 +789,8 @@ public class CommissionService : ICommissionRuleService, ICommissionService, ICo
                 Status = CommissionEntryStatus.Earned,
                 // StatusVersion IZVORNOG SUDJELOVANJA NAKON prijelaza u Completed — zaseban identitet ove completion-pojave.
                 SourceVersion = participation.StatusVersion,
-                EarnedAt = DateTimeOffset.UtcNow,
-                CreatedAt = DateTimeOffset.UtcNow
+                EarnedAt = _timeProvider.GetUtcNow(),
+                CreatedAt = _timeProvider.GetUtcNow()
             });
         }
     }
@@ -827,8 +841,8 @@ public class CommissionService : ICommissionRuleService, ICommissionService, ICo
                 AppliedRuleScope = choice.Scope,
                 RuleEvaluation = choice.EvaluationJson,
                 Status = CommissionEntryStatus.Earned,
-                EarnedAt = DateTimeOffset.UtcNow,
-                CreatedAt = DateTimeOffset.UtcNow
+                EarnedAt = _timeProvider.GetUtcNow(),
+                CreatedAt = _timeProvider.GetUtcNow()
             });
         }
 
@@ -837,7 +851,7 @@ public class CommissionService : ICommissionRuleService, ICommissionService, ICo
 
     public async Task GenerateForCheckoutCompletion(IUnitOfWork uow, Guid organizationId, Guid completedByUserId, Checkout checkout)
     {
-        DateOnly saleDate = (await _calendars.GetCompanyCalendar(organizationId, checkout.CompanyId)).LocalDate(DateTimeOffset.UtcNow);
+        DateOnly saleDate = (await _calendars.GetCompanyCalendar(organizationId, checkout.CompanyId)).LocalDate(_timeProvider.GetUtcNow());
 
         // §18.1 ("Sold By"): korisnik je zaposlenik ODABRAN na stavci (default onaj koji je stavku dodao), ne onaj koji zatvara
         // checkout. Odabran je dok je bio aktivan, pa provizija nastaje i ako je u međuvremenu postao neaktivan. Bez korisnika →
@@ -883,7 +897,7 @@ public class CommissionService : ICommissionRuleService, ICommissionService, ICo
             return;
 
         // Q42 — evaluira se jednom, prvi put kad je uvjet ispunjen; ishod se pamti (NoRecipient dopušta naknadnu dodjelu).
-        DateTimeOffset now = DateTimeOffset.UtcNow;
+        DateTimeOffset now = _timeProvider.GetUtcNow();
         decimal baseAmount = MembershipFirstSale.PaidAmount(charges);
         membership.FirstSaleSettledAt = now;
         membership.FirstSaleBaseAmount = baseAmount;
@@ -951,7 +965,7 @@ public class CommissionService : ICommissionRuleService, ICommissionService, ICo
         DateOnly sessionDate = await SessionDate(organizationId, execution);
         decimal fee = settlement.MonetaryDue;
         int sourceVersion = entries.Count == 0 ? 0 : entries.Max(e => e.SourceVersion) + 1;
-        DateTimeOffset now = DateTimeOffset.UtcNow;
+        DateTimeOffset now = _timeProvider.GetUtcNow();
 
         foreach (Guid employeeId in execution.EmployeeIds.Distinct().OrderBy(id => id))
         {
@@ -1011,10 +1025,10 @@ public class CommissionService : ICommissionRuleService, ICommissionService, ICo
 
         Guid? old = membership.SaleCommissionEmployeeId;
         membership.SaleCommissionEmployeeId = employeeId;
-        membership.UpdatedAt = DateTimeOffset.UtcNow;
+        membership.UpdatedAt = _timeProvider.GetUtcNow();
         membership.UpdatedBy = userId;
         _membershipHandler.AddAudit(uow, MembershipTimelines.Audit(membership, userId, "SaleCommissionEmployeeChanged",
-            old?.ToString(), employeeId?.ToString(), via));
+            old?.ToString(), employeeId?.ToString(), _timeProvider.GetUtcNow(), via));
         await uow.Context.SaveChangesAsync();
         return true;
     }
@@ -1036,7 +1050,7 @@ public class CommissionService : ICommissionRuleService, ICommissionService, ICo
     private async Task Reverse(IUnitOfWork uow, Guid userId, CommissionEntry entry, string reason)
     {
         entry.Status = CommissionEntryStatus.Reversed;
-        entry.ReversedAt = DateTimeOffset.UtcNow;
+        entry.ReversedAt = _timeProvider.GetUtcNow();
         entry.ReversedBy = userId;
         entry.ReversalReason = reason;
         await _entryHandler.Update(uow, entry);

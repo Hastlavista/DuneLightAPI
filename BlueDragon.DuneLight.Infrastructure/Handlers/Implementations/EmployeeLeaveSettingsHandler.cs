@@ -11,10 +11,12 @@ namespace BlueDragon.DuneLight.Infrastructure.Handlers.Implementations;
 public class EmployeeLeaveSettingsHandler : IEmployeeLeaveSettingsHandler
 {
     private readonly DatabaseSettings _databaseSettings;
+    private readonly TimeProvider _timeProvider;
 
-    public EmployeeLeaveSettingsHandler(DatabaseSettings databaseSettings)
+    public EmployeeLeaveSettingsHandler(DatabaseSettings databaseSettings, TimeProvider timeProvider)
     {
         _databaseSettings = databaseSettings;
+        _timeProvider = timeProvider;
     }
 
     public async Task<EmployeeLeaveSettings> GetForEmployee(Guid organizationId, Guid employeeId)
@@ -45,7 +47,7 @@ public class EmployeeLeaveSettingsHandler : IEmployeeLeaveSettingsHandler
                 RenewalDay = renewalDay,
                 CarryoverExpiryMonth = carryoverExpiryMonth,
                 CarryoverExpiryDay = carryoverExpiryDay,
-                CreatedAt = DateTimeOffset.UtcNow,
+                CreatedAt = _timeProvider.GetUtcNow(),
                 CreatedBy = userId
             };
             context.EmployeeLeaveSettings.Add(existing);
@@ -57,7 +59,7 @@ public class EmployeeLeaveSettingsHandler : IEmployeeLeaveSettingsHandler
             existing.RenewalDay = renewalDay;
             existing.CarryoverExpiryMonth = carryoverExpiryMonth;
             existing.CarryoverExpiryDay = carryoverExpiryDay;
-            existing.UpdatedAt = DateTimeOffset.UtcNow;
+            existing.UpdatedAt = _timeProvider.GetUtcNow();
             existing.UpdatedBy = userId;
         }
 

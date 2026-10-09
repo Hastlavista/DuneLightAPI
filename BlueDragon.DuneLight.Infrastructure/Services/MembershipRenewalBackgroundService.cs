@@ -4,6 +4,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using BlueDragon.DuneLight.Infrastructure.Domain.Settings;
 using BlueDragon.DuneLight.Infrastructure.Handlers.Interfaces;
+using BlueDragon.DuneLight.Infrastructure.Time;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
@@ -50,6 +51,8 @@ public class MembershipRenewalBackgroundService : BackgroundService
                     stoppingToken.ThrowIfCancellationRequested();
                     try
                     {
+                        // T1: "danas" obnove je poslovni sat te organizacije (uključujući simulirani pomak testnih alata).
+                        using IDisposable clock = OrganizationClockContext.Use(organizationId);
                         using IServiceScope scope = _scopeFactory.CreateScope();
                         IMembershipRenewalService renewal = scope.ServiceProvider.GetRequiredService<IMembershipRenewalService>();
                         await renewal.RunForOrganization(organizationId);

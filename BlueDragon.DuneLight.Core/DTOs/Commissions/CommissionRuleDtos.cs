@@ -8,7 +8,7 @@ public class CommissionRuleDto
 {
     public Guid Id { get; set; }
     public Guid EmployeeId { get; set; }
-    public string EmployeeName { get; set; }
+    public string? EmployeeName { get; set; }
 
     /// <summary>P2 (2F) — za odrađeno (usluga, opće pravilo) ili za prodaju (proizvod, paket, plan članarine).</summary>
     public CommissionRuleKind Kind { get; set; }
@@ -16,13 +16,13 @@ public class CommissionRuleDto
     /// <summary>AllServices = opće pravilo zaposlenika za sve individualne usluge (pravilo za uslugu ima prednost).</summary>
     public CommissionSubjectType SubjectType { get; set; }
     public Guid? ServiceId { get; set; }
-    public string ServiceName { get; set; }
+    public string? ServiceName { get; set; }
     public Guid? ProductId { get; set; }
-    public string ProductName { get; set; }
+    public string? ProductName { get; set; }
     public Guid? PackageId { get; set; }
-    public string PackageName { get; set; }
+    public string? PackageName { get; set; }
     public Guid? MembershipPlanId { get; set; }
-    public string MembershipPlanName { get; set; }
+    public string? MembershipPlanName { get; set; }
 
     /// <summary>P2 (2F) — od kad pravilo vrijedi (uključivo); null = bez početnog datuma.</summary>
     public DateOnly? EffectiveFrom { get; set; }

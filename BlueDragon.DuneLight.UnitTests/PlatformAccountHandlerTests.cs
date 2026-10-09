@@ -28,7 +28,7 @@ public class PlatformAccountHandlerTests
         IPlatformAccountHandler handler = new PlatformAccountHandler(Settings());
         try
         {
-            await handler.Create(new PlatformAccount { Id = accountId, Email = email, PasswordHash = "hash", IsActive = true, CreatedAt = DateTimeOffset.UtcNow });
+            await handler.Create(new PlatformAccount { Id = accountId, Email = email, PasswordHash = "hash", IsActive = true, CreatedAt = TestClock.UtcNow });
 
             PlatformAccount found = await handler.GetByEmail(email);
             Assert.NotNull(found);
@@ -51,7 +51,7 @@ public class PlatformAccountHandlerTests
         IPlatformAccountHandler handler = new PlatformAccountHandler(Settings());
         try
         {
-            await handler.Create(new PlatformAccount { Id = accountId, Email = email, PasswordHash = "hash", IsActive = true, CreatedAt = DateTimeOffset.UtcNow });
+            await handler.Create(new PlatformAccount { Id = accountId, Email = email, PasswordHash = "hash", IsActive = true, CreatedAt = TestClock.UtcNow });
             Assert.True(await handler.IsActive(accountId));
 
             await using DatabaseContext context = DatabaseContext.GenerateContext(LocalConnectionString);

@@ -1,7 +1,7 @@
 # Arhitektura
 
 > Živi dokument. Ažurira se kad se arhitektura promijeni, ne naknadno "kad stignem".
-> Zadnje ažuriranje: 2026-10-09 (K2 granularni grantovi i zatvoren termin, ADR-0032; prije toga K1 dorade iz povratnih informacija klijenta, ADR-0031; prije toga P2 Memberships: faze 2A–2F — katalog planova, članstva, periodi/zaduženja/obnova, pokriće članarinom, cjenovna pogodnost, provizije (Vagaro model), ADR-0025 – ADR-0030; prije toga P1 ADR-0015 – ADR-0018)
+> Zadnje ažuriranje: 2026-10-09 (T1 poslovni sat, testni alati, oblik 403, Swagger, ADR-0033 – ADR-0034; §9 veza na frontend dokumentaciju; K2 granularni grantovi i zatvoren termin, ADR-0032; prije toga K1 dorade iz povratnih informacija klijenta, ADR-0031; prije toga P2 Memberships: faze 2A–2F — katalog planova, članstva, periodi/zaduženja/obnova, pokriće članarinom, cjenovna pogodnost, provizije (Vagaro model), ADR-0025 – ADR-0030; prije toga P1 ADR-0015 – ADR-0018)
 
 Izvori ovog dokumenta, redom prednosti: **stvarni kod** → ADR-ovi u `docs/decisions/` i zapisi faza (`docs/p1/`) → povijesni izvori izvan repozitorija
 (sažetak dosadašnjeg arhitekta, Decision Log v1, Target Architecture v1, Business Rules vodič starog
@@ -30,7 +30,8 @@ M0–M1H i **P1 — Cancellation / Late Cancellation / NoShow Policy Engine** (2
 faze 2A–2F implementirane (katalog planova, članstva, periodi i obnova, pokriće, cjenovna pogodnost, provizije); slijedi ručno testiranje.
 **K1** (dorade iz validacije vodiča s klijentom, [K1 record](k1/K1_DECISION_RECORD.md), [povratne informacije](klijent/POVRATNE_INFORMACIJE_v1.md), ADR-0031)
 implementiran i ZAKLJUČEN 2026-10-08. **K2 Ovlasti** (granularni grantovi, zatvoren termin, [K2 record](k2/K2_DECISION_RECORD.md), ADR-0032) implementiran 2026-10-09.
-Redoslijed nakon K2 (odluka 2026-10-09): K3 Nositelj + podračuni → P3 Client Credit Ledger → P4 Notifications → P5 Group
+**T1** (poslovni sat i simulirano vrijeme, seed iz Managementa, oblik 403, točnost Swaggera; preduvjet frontend faze F1;
+[T1 record](t1/T1_DECISION_RECORD.md), ADR-0033, ADR-0034) implementiran 2026-10-09. Redoslijed nakon K2 (odluka 2026-10-09): K3 Nositelj + podračuni → P3 Client Credit Ledger → P4 Notifications → P5 Group
 occurrence propagacija → P6 Workforce/catalog integritet → Paketi v2 / P1+ → Payroll. K3 ide prije P3 jer povrat i kredit moraju
 znati tko je platitelj.
 
@@ -41,8 +42,10 @@ znati tko je platitelj.
   `ApiKey` shema preko `X-Api-Key`, zasebna `PlatformBearer` shema za Management), grant autorizacija
   (`Authorization/RequireGrantAttribute`, `RequireGrantOrAssignedCompanyAttribute`, `GrantAuthorization`),
   `Middleware/ExceptionHandlingMiddleware` (iznimke → `{ error: { code, message, details } }`), Swagger, `Startup.cs` (DI).
-  Razvojni alati: kontroleri s `[DevelopmentOnly]` (`Development/`) se izvan Development okruženja ne registriraju (ruta fizički ne
-  postoji, 404); trenutno `POST /api/dev/time/membership-renewal-run` (prolaz obnove članarina za zadani datum, za ručno testiranje).
+  Testni alati (T1, PRIVREMENO do go-livea): kontroleri s `[TestToolsOnly]` (`TestTools/`) postoje samo uz izričitu postavku
+  `TestTools:Enabled` (inače ruta fizički ne postoji, 404); uključena postavka u okruženju Production zaustavlja pokretanje
+  (`TestToolsStartupGuard`). Trenutno `ManagementTestToolsController`: pomak poslovnog sata organizacije i seed (samo Management).
+  `OrganizationClockMiddleware` postavlja organizaciju poslovnog sata za tenant zahtjev.
 - **Lokacija:** `BlueDragon.DuneLight.API/`
 - **Ovisi o:** Core (interfejsi, DTO), Infrastructure (registracija implementacija)
 - **Koriste je:** Angular frontend, platformski Management klijent
@@ -171,6 +174,20 @@ Tipična pisaća operacija (npr. otkazivanje Participationa):
 
 Vrijeme: instanti su UTC `DateTimeOffset`; lokalni (poslovni) datumi i radno vrijeme računaju se u efektivnoj zoni
 Companyja (`Company.TimeZone ?? Organization.TimeZone`) isključivo kroz `OrganizationCalendar` (ADR-0013).
+**Tipovi (T1-7, ADR-0035):** trenutak `DateTimeOffset`, dan `DateOnly` ("yyyy-MM-dd", `date`), vrijeme dana `TimeOnly` ("HH:mm:ss",
+`time`), trajanje `TimeSpan` — u DTO-ovima, query parametrima, entitetima i bazi. Dan cjenika termina = lokalni datum početka u
+zoni poslovnice termina (`IPricingService.ResolveForServiceStart`, oba kraja stavke uključena); izvještaj provizija = dani
+organizacije, oba kraja uključena.
+**Cijena je zamrznuta po sudjelovanju (T1-8):** razrješava se pri upisu (nastanak sudjelovanja: kreiranje, dodavanje klijenta/
+segmenta, gost, lista čekanja, generiranje grupe, upis člana); grupna prisutnost i ručni iznos pri odrađivanju koriste spremljenu
+cijenu (`ParticipationPrice.Stored`). Cjenik se ponovno čita samo segmentnom naredbom koja mijenja nešto o čemu cijena ovisi
+(usluga, izvor cijene, efektivni zaposlenik izvora, dan cjenika) i odgovor tada nosi `PARTICIPATION_PRICE_CHANGED`. Izmjena cjenika
+ne mijenja zakazana sudjelovanja (primjena na zakazane = P5). Rupa u cjeniku nije greška: zadana cijena usluge uz upozorenje
+`PRICE_NOT_DEFINED` (zbirno `PRICE_NOT_DEFINED_OCCURRENCES`).
+**Poslovni sat (T1):** "sada" se čita isključivo kroz injektirani `TimeProvider` (singleton `BusinessTimeProvider` = stvarni sat +
+simulirani pomak organizacije iz `OrganizationClockContext`; bez testnih alata pomak je 0). Nikad `DateTime(Offset).Now/UtcNow`;
+čista pravila u `Utils` primaju `now` parametrom. Sistemski sat (`TimeProvider.System`) samo za istek JWT-a, outbox obradu i
+bootstrap. `GET /api/organization/clock` je izvor "sada"/"danas" za frontend.
 
 ## 4. Model podataka
 
@@ -266,7 +283,7 @@ Pravila koja se ne krše bez nove odluke (ADR):
 - Cijena i provizija su odvojene (ADR-0010). Osnovica postotka za odrađeno je cijena sesije (ručni iznos ili cjenik), umanjena
   samo prema postavkama organizacije; trenutak nastanka je Completed; prošlo razdoblje izvještaja se nikad ne mijenja (ADR-0030).
 - Paket nije plaćanje; prihod = stvarna plaćanja (ADR-0012).
-- UTC instanti, `DateOnly` poslovni datumi, efektivna zona Companyja; nikad host zona (ADR-0013).
+- UTC instanti, `DateOnly` poslovni datumi, `TimeOnly` vrijeme dana, efektivna zona Companyja; nikad host zona (ADR-0013, ADR-0035).
 - Uske poslovne naredbe; nema generičkog `PUT` agregata ni promjene Companyja na Appointmentu (ADR-0014).
 - Višetablične operacije u jednom `IUnitOfWork`-u; lifecycle efekti, audit i outbox u istoj transakciji.
 - Neodlučeno poslovno pravilo = STANI i pitaj.
@@ -323,6 +340,13 @@ Pravila koja se ne krše bez nove odluke (ADR):
   - otpis po učinku (`appointments.policy.fee.waive` / `.unit.waive`, `Utils/PolicyOverride`); korekcija ≠ otpis (Reversed);
   - `appointments.availability.override` (`Utils/AvailabilityOverride`, audit `AvailabilityOverride`), `roster.entries.write.past`;
   - `appointments.policy.override` ugašen.
+- [x] T1-9 paketi unatrag i GDPR ([T1 record](t1/T1_DECISION_RECORD.md) "T1-9 Paketi i GDPR") — implementirano 2026-10-09
+  (migracija `20261030000002`):
+  - grant `clients.packages.write.past` (ručni upis paketa s `PurchaseDate` prije današnjeg dana, bez granice; samo Admin grupe);
+    `PurchaseDate` u budućnosti i paket istekao pri upisu se odbijaju; checkout uvijek prodaje na današnji dan;
+  - paket pokriva samo dane usluge `PurchaseDate`…`ValidUntilDate` (`Utils/PackageValidity`, jedno pravilo); upis paketa ne
+    mijenja postojeća sudjelovanja;
+  - povijest klijenta `client_audit_logs` (`GdprConsent`, `PackageIssuedBackdated`); datum GDPR suglasnosti ne smije biti u budućnosti.
 - [ ] Payroll po Vagaro modelu (zasebna faza nakon P2, [plan §26](p2/P2_PLAN.md), [pitanja](payroll/PAYROLL_QUESTIONS.md)): obračunsko
   razdoblje i zatvaranje, tiered po prometu (nadogradnja općeg pravila, bez migracije), klase, trošak usluge, napojnice, satnica
   ili provizija, ovlasti.
@@ -371,6 +395,23 @@ P1 record je uveden u `docs/p1/`; README je usklađen s kodom.
 - [ ] **P4 — obavijesti o članarinama:** P2 ne piše outbox događaje članarina (događaj bez handlera se nikad ne označi
   obrađenim). Handleri u P4 moraju moći raditi **iz stanja u bazi** (periodi, zaduženja, oznake, povijest članstva), jer
   povijesni događaji iz P2 neće postojati (P2 dnevnik 2026-10-07).
+- [ ] **Cijena od određenog sata** (T1-7, 2026-10-09): stavka cjenika vrijedi po danima (`DateOnly`, dan = lokalni datum početka
+  termina u zoni poslovnice; termin preko ponoći pripada danu početka). Promjena cijene unutar dana namjerno nije podržana —
+  dodaje se kao nova odluka samo ako klijent zatraži (uz P-17, cijena po razini zaposlenika).
+- [ ] **Ručni iznos sudjelovanja** (T1-8, 2026-10-09): treba li ručni iznos različit od predložene cijene poseban grant i/ili
+  obavezan razlog. Danas: upis bez posebnog granta i razloga, uz audit. Ne rješava se sada.
+- [ ] **Zona dana: izvještaj provizija vs. cjenik** (T1-7, 2026-10-09): razdoblje izvještaja provizija su dani u zoni
+  ORGANIZACIJE, a dan cjenika je lokalni dan u zoni POSLOVNICE termina. Za organizaciju s poslovnicama u različitim zonama dan
+  provizije može se razlikovati od lokalnog dana poslovnice. Ne rješava se sada.
+- [ ] **GDPR pristanak** (T1-7, 2026-10-09; prije online bookinga i go-livea): danas zastavica + datum s obrasca (`DateOnly`) i
+  audit promjena (T1-9: `client_audit_logs`, `GdprConsent`; datum ne u budućnosti). Otvoreno: povijest pristanka (dan / povučen /
+  ponovno dan), verzija teksta na koji je klijent pristao, trenutak pristanka kod online prijave. Zahtjeve potvrditi s pravnikom.
+- [ ] **Prebacivanje prošlih termina na paket upisan unatrag** (T1-9, 2026-10-09): izričita radnja po terminu s razlogom, samo ako
+  zatraže. Danas upis paketa (i unatrag) ne mijenja odrađena / plaćena / dužna sudjelovanja; jedini put je korekcija statusa (K2:
+  Completed → Confirmed uz `appointments.corrections.completed` i razlog na zatvorenom terminu, pa Completed s paketom), i to samo
+  bez aktivnog novčanog namirenja.
+- [ ] **Uvoz klijenata s paketima** (T1-9, 2026-10-09): alat za uvoz ne postoji. Uvoz paketa s prošlim datumima trebao bi grant
+  `clients.packages.write.past` i izričitu odluku o već isteklim paketima (ručni upis ih danas odbija, `PACKAGE_EXPIRED_AT_ISSUE`).
 - [ ] **Ovlasti: grantovi, grupe i capabilityji** — otvorena tema za kasnije, kad budemo testirali osnovni rad cijele
   aplikacije s frontendom i UX tokom (P2 dnevnik 2026-10-07). Ne implementira se sada.
   - *Princip koji vrijedi odmah (od P2 2B):* grantovi su granularni po poslovnoj RADNJI (ne po polju), posebno za osjetljive
@@ -399,12 +440,14 @@ P1 record je uveden u `docs/p1/`; README je usklađen s kodom.
 - [x] `ArrivedAt/ArrivedBy` — zapisuje ih naredba dolaska (K1-2).
 - [ ] Postotna provizija nema zaokruživanje (`CommissionService`).
 - [ ] `GrantResolver` cache (~30 s) nema invalidaciju pri promjeni dozvola (svjesni trade-off).
-- [ ] Nema apstrakcije vremena (237 poziva `DateTimeOffset.UtcNow`): simulacija sata organizacije za testiranje nije moguća; danas
-  postoji samo razvojni prolaz obnove za zadani datum (P2 dnevnik 2026-10-08). Kandidat: `TimeProvider` kroz DI (prihvaćeno kao
-  tehnički dug). Potreban je i za ručno testiranje P1 otkaznih prozora (kasni otkaz / izostanak ovise o stvarnom satu), dug grace
-  i "budući termin" u pokriću, koje razvojni prolaz obnove ne pomiče. Od K2 i za automatsko zatvaranje termina (ručno testiranje
-  zasad SQL-om, `docs/p2/P2_ZAVRSNI_PREGLED.md` c) točka 12). **Riješiti prije frontenda / online bookinga; ujedinjuje razvojni
-  pomak vremena (obnova članarina, zatvaranje termina, otkazni prozori)** (odluka 2026-10-09).
+- [x] Apstrakcija vremena — riješeno u T1 (2026-10-09, [ADR-0033](decisions/0033-t1-poslovni-sat-organizacije.md)): jedan poslovni sat (`TimeProvider`),
+  simulirani pomak po organizaciji iz Managementa (testni alat), endpoint vremena organizacije.
+- [ ] **Prije go-livea ukloniti testne alate T1** (pomak sata, seed, `[TestToolsOnly]` kontroleri, `test_tool_organizations`,
+  `TestToolsSettings`); poslovni sat i `GET /api/organization/clock` ostaju.
+- [x] **Tipovi datuma i vremena (nalaz T1-6)** — riješeno u T1-7 (2026-10-09, [ADR-0035](decisions/0035-t1-tipovi-datuma-i-vremena.md)):
+  trenutak `DateTimeOffset`, dan `DateOnly`, vrijeme dana `TimeOnly`, trajanje `TimeSpan`; migracija `T1DateTypes`.
+- [ ] `[Required]` na ne-nullable value tipovima nema učinka (nedostajuća vrijednost postaje `Guid.Empty`/0/`0001-01-01`) — nalaz T1-6,
+  otvoreno.
 - [ ] Tajne i bootstrap pristupni podaci platforme su u `appsettings.json` pod verzioniranjem — premjestiti u user-secrets /
   varijable okoline.
 - [ ] Seq URL hardkodiran u `Program.cs`.
@@ -428,7 +471,7 @@ P1 record je uveden u `docs/p1/`; README je usklađen s kodom.
   u P2 2F (Q38, postavka organizacije, default Never).
 
 Način rada (odlučeno 2026-10-06): build i testove pokreće Claude; PR-ovi idu na `development-claude`; ovaj repozitorij
-pokriva samo backend (Angular frontend se dokumentira u vlastitom repozitoriju); odluke po fazi bilježe se u
+pokriva samo backend (Angular frontend se dokumentira u vlastitom repozitoriju, vidi §9); odluke po fazi bilježe se u
 `docs/<faza>/` (vidi `docs/WORKFLOW.md`).
 
 ## 8. Indeks odluka
@@ -466,3 +509,18 @@ pokriva samo backend (Angular frontend se dokumentira u vlastitom repozitoriju);
 | [0030](decisions/0030-p2-provizije-vagaro-model.md) | P2: Provizije, Vagaro model (proširuje ADR-0010) | Prihvaćeno, 2F implementirano |
 | [0031](decisions/0031-k1-dorade-rasporeda-i-klijenata.md) | K1: dorade rasporeda i klijenata (prošlost, dolazak, razlozi, vraćanje termina, zadani resursi, stajanje članstva) | Prihvaćeno, implementirano |
 | [0032](decisions/0032-k2-granularni-grantovi-i-zatvoren-termin.md) | K2: granularni grantovi (korekcije po izvornom statusu i zatvoren termin, otpis naknade/jedinice, rad izvan radnog vremena, roster u prošlosti) | Prihvaćeno, implementirano |
+| [0033](decisions/0033-t1-poslovni-sat-organizacije.md) | T1: Jedan poslovni sat organizacije (TimeProvider) i simulirani pomak za testiranje | Prihvaćeno, implementirano |
+| [0034](decisions/0034-t1-oblik-odbijanja-403.md) | T1: Oblik odbijanja 403 (razlog i svi grantovi koji nedostaju; own opseg 403 OutOfScope) | Prihvaćeno, implementirano |
+| [0035](decisions/0035-t1-tipovi-datuma-i-vremena.md) | T1: Tipovi datuma i vremena (trenutak DateTimeOffset, dan DateOnly, vrijeme dana TimeOnly) | Prihvaćeno, implementirano |
+
+## 9. Frontend
+
+Angular frontend je zaseban repozitorij: `C:\Users\Silvio\WebstormProjects\BlueDragon.DuneLight`. Njegova dokumentacija:
+- `CLAUDE.md` — pravila rada na frontendu;
+- `ARCHITECTURE.md` — struktura, routing, stanje, API, prikaz grešaka i razloga (objašnjivost), ovlasti u UI-ju, design sustav;
+- `docs/adr/` — frontend odluke `FE-ADR-NNNN` (samo izgled, ponašanje ekrana, tehnička rješenja);
+- `docs/f1/`, `docs/f2/`… — zapisi frontend faza (plan, decision record s dnevnikom, završni pregled).
+
+Poslovna pravila žive samo ovdje (ADR-ovi i zapisi faza); frontend ih referencira i ne prepisuje (FE-ADR-0001). Ako frontend
+otkrije da pravilo treba promijeniti ili nedostaje, odluka se donosi u ovom repozitoriju. Sažetak cijelog projekta za novi chat
+je `KONTEKST_ZA_CHAT.md` u korijenu ovog repozitorija.

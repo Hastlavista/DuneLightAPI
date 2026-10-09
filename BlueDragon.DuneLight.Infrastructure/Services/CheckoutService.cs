@@ -48,6 +48,7 @@ public class CheckoutService : ICheckoutService
     private readonly IMembershipCoverageService _membershipCoverage;
     private readonly IGroupMembershipSkipService _membershipSkips;
     private readonly IEmployeeHandler _employeeHandler;
+    private readonly TimeProvider _timeProvider;
 
     public CheckoutService(
         ICheckoutHandler checkoutHandler,
@@ -66,7 +67,8 @@ public class CheckoutService : ICheckoutService
         IClientMembershipHandler membershipHandler,
         IMembershipCoverageService membershipCoverage,
         IGroupMembershipSkipService membershipSkips,
-        IEmployeeHandler employeeHandler)
+        IEmployeeHandler employeeHandler,
+        TimeProvider timeProvider)
     {
         _membershipCoverage = membershipCoverage;
         _membershipSkips = membershipSkips;
@@ -85,6 +87,7 @@ public class CheckoutService : ICheckoutService
         _pricingService = pricingService;
         _commissionLedgerService = commissionLedgerService;
         _unitOfWorkFactory = unitOfWorkFactory;
+        _timeProvider = timeProvider;
     }
 
     public async Task<CheckoutDto> Create(Guid organizationId, Guid userId, CheckoutCreateRequest request)
@@ -103,7 +106,7 @@ public class CheckoutService : ICheckoutService
         if (!company.IsActive)
             throw new BusinessRuleException(ErrorCodes.InactiveCompany, $"Tvrtka '{company.Name}' nije aktivna.");
 
-        DateTimeOffset now = DateTimeOffset.UtcNow;
+        DateTimeOffset now = _timeProvider.GetUtcNow();
         Checkout checkout = new Checkout
         {
             Id = Guid.NewGuid(),
@@ -199,7 +202,7 @@ public class CheckoutService : ICheckoutService
             throw new BusinessRuleException(
                 ErrorCodes.BookingAlreadyInOpenCheckout, "Booking je već aktivna stavka u drugom otvorenom checkoutu.");
 
-        DateTimeOffset now = DateTimeOffset.UtcNow;
+        DateTimeOffset now = _timeProvider.GetUtcNow();
         CheckoutItem item = new CheckoutItem
         {
             Id = Guid.NewGuid(),
@@ -258,7 +261,7 @@ public class CheckoutService : ICheckoutService
 
         decimal price = await ResolvePackagePrice(organizationId, package.Id.GetValueOrDefault(), locked.CompanyId);
 
-        DateTimeOffset now = DateTimeOffset.UtcNow;
+        DateTimeOffset now = _timeProvider.GetUtcNow();
         CheckoutItem item = new CheckoutItem
         {
             Id = Guid.NewGuid(),
@@ -315,7 +318,7 @@ public class CheckoutService : ICheckoutService
         if (amount <= 0m || amount > outstanding || decimal.Round(amount, 2) != amount)
             throw new ValidationAppException($"Iznos mora biti veći od 0, najviše {outstanding} (preostali dug), s najviše 2 decimale.");
 
-        DateTimeOffset now = DateTimeOffset.UtcNow;
+        DateTimeOffset now = _timeProvider.GetUtcNow();
         CheckoutItem item = new CheckoutItem
         {
             Id = Guid.NewGuid(),
@@ -426,7 +429,7 @@ public class CheckoutService : ICheckoutService
         if (!product.IsActive)
             throw new BusinessRuleException(ErrorCodes.InactiveProduct, $"Proizvod '{product.Name}' nije aktivan i ne može se prodati.");
 
-        DateTimeOffset now = DateTimeOffset.UtcNow;
+        DateTimeOffset now = _timeProvider.GetUtcNow();
 
         // Jedna stavka po Productu po Checkoutu — ponovno dodavanje istog Producta povećava Quantity/Amount
         // postojeće aktivne stavke umjesto stvaranja duplikata (vidi spec section 27).
@@ -521,7 +524,7 @@ public class CheckoutService : ICheckoutService
             CheckoutId = checkoutId,
             ChangeType = "ItemRemoved",
             OldValue = item.Description,
-            ChangedAt = DateTimeOffset.UtcNow,
+            ChangedAt = _timeProvider.GetUtcNow(),
             ChangedBy = userId
         });
         await uow.CommitAsync();
@@ -564,7 +567,7 @@ public class CheckoutService : ICheckoutService
                 ChangeType = "SaleCommissionEmployeeChanged",
                 OldValue = $"{item.Id}:{previous}",
                 NewValue = $"{item.Id}:{employeeId}",
-                ChangedAt = DateTimeOffset.UtcNow,
+                ChangedAt = _timeProvider.GetUtcNow(),
                 ChangedBy = userId
             });
         }
@@ -599,7 +602,7 @@ public class CheckoutService : ICheckoutService
                 ErrorCodes.PaymentExceedsOutstandingAmount, "Iznos premašuje preostali dug checkouta.",
                 new { outstanding = totalOutstanding, requested = request.Amount });
 
-        DateTimeOffset now = DateTimeOffset.UtcNow;
+        DateTimeOffset now = _timeProvider.GetUtcNow();
         Guid paymentId = Guid.NewGuid();
 
         Payment payment = new Payment
@@ -733,7 +736,7 @@ public class CheckoutService : ICheckoutService
             throw new BusinessRuleException(ErrorCodes.PaymentAlreadyVoided, "Plaćanje je već poništeno.");
 
         payment.Status = PaymentStatus.Voided;
-        payment.VoidedAt = DateTimeOffset.UtcNow;
+        payment.VoidedAt = _timeProvider.GetUtcNow();
         payment.VoidedBy = userId;
         payment.VoidReason = request.Reason.Trim();
 
@@ -748,7 +751,7 @@ public class CheckoutService : ICheckoutService
             ChangeType = "PaymentVoided",
             OldValue = $"{payment.Amount} {payment.Method}",
             NewValue = "Voided",
-            ChangedAt = DateTimeOffset.UtcNow,
+            ChangedAt = _timeProvider.GetUtcNow(),
             ChangedBy = userId
         });
         await uow.CommitAsync();
@@ -770,7 +773,7 @@ public class CheckoutService : ICheckoutService
             throw new BusinessRuleException(
                 ErrorCodes.CheckoutOutstandingBalance, "Checkout nije u potpunosti namiren.", new { outstanding = totals.OutstandingAmount });
 
-        DateTimeOffset now = DateTimeOffset.UtcNow;
+        DateTimeOffset now = _timeProvider.GetUtcNow();
 
         List<CheckoutItem> productItems = graph.Items.Where(i => i.Type == CheckoutItemType.Product).ToList();
         await _stockLedgerService.ConsumeForSale(uow, organizationId, userId, graph.CompanyId, productItems, now);
@@ -819,7 +822,7 @@ public class CheckoutService : ICheckoutService
             throw new BusinessRuleException(
                 ErrorCodes.CheckoutHasActivePayments, "Checkout ima aktivna plaćanja — poništite ih prije otkazivanja.");
 
-        DateTimeOffset now = DateTimeOffset.UtcNow;
+        DateTimeOffset now = _timeProvider.GetUtcNow();
         graph.Status = CheckoutStatus.Cancelled;
         graph.CancelledAt = now;
         graph.CancelledBy = userId;
@@ -867,14 +870,14 @@ public class CheckoutService : ICheckoutService
         {
             SubjectType = PricingSubjectType.Package,
             SubjectId = packageId,
-            CompanyId = companyId,
-            Date = DateTimeOffset.UtcNow
+            CompanyId = companyId
+            // T1-7: Date null = danas po poslovnom satu u zoni poslovnice checkouta.
         });
         return resolved.Price;
     }
 
     private async Task IssueClientPackage(
-        IUnitOfWork uow, Guid organizationId, Guid userId, Checkout checkout, CheckoutItem item, DateTimeOffset purchaseDate)
+        IUnitOfWork uow, Guid organizationId, Guid userId, Checkout checkout, CheckoutItem item, DateTimeOffset purchasedAt)
     {
         Package package = await _packageHandler.GetById(organizationId, item.PackageId.GetValueOrDefault());
         if (package == null)
@@ -883,9 +886,10 @@ public class CheckoutService : ICheckoutService
             throw new BusinessRuleException(
                 ErrorCodes.InactivePackage, $"Paket '{package.Name}' više nije aktivan — kupnja se ne može dovršiti.");
 
-        // Phase D3B3A.1: poslovni datum kupnje je lokalni datum u kalendaru poslovnice checkouta.
-        DateOnly validUntilDate = PackageExpiryCalculator.ForSale(package, purchaseDate,
-            await _organizationCalendarService.GetCompanyCalendar(organizationId, checkout.CompanyId));
+        // T1-7: PurchaseDate = poslovni dan kupnje = lokalni datum trenutka checkouta u zoni poslovnice checkouta; trenutak
+        // prodaje ostaje CreatedAt (i na checkoutu/plaćanju).
+        DateOnly purchaseDay = (await _organizationCalendarService.GetCompanyCalendar(organizationId, checkout.CompanyId)).LocalDate(purchasedAt);
+        DateOnly validUntilDate = PackageExpiryCalculator.ForSale(package, purchaseDay);
 
         Guid clientPackageId = Guid.NewGuid();
         ClientPackage clientPackage = new ClientPackage
@@ -894,7 +898,7 @@ public class CheckoutService : ICheckoutService
             OrganizationId = organizationId,
             ClientId = checkout.ClientId,
             PackageId = package.Id.GetValueOrDefault(),
-            PurchaseDate = purchaseDate,
+            PurchaseDate = purchaseDay,
             // Cijena je već snapshotana na CheckoutItem.Amount kod dodavanja — NE re-razrješava se ovdje (vidi
             // spec section 25).
             PaidPrice = item.Amount,
@@ -904,7 +908,7 @@ public class CheckoutService : ICheckoutService
             ValidityType = package.ValidityType,
             ValidUntilDate = validUntilDate,
             Status = ClientPackageStatus.Active,
-            CreatedAt = purchaseDate,
+            CreatedAt = purchasedAt,
             CreatedBy = userId
         };
 
@@ -929,7 +933,7 @@ public class CheckoutService : ICheckoutService
             CheckoutId = checkout.Id.GetValueOrDefault(),
             ChangeType = "ClientPackageIssued",
             NewValue = clientPackageId.ToString(),
-            ChangedAt = purchaseDate,
+            ChangedAt = purchasedAt,
             ChangedBy = userId
         });
     }

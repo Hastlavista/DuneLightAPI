@@ -32,7 +32,7 @@ public class PlatformAuthService : IPlatformAuthService
                 "Neispravan email ili lozinka.");
         }
 
-        (string token, DateTime expiration) = _platformJwtService.GenerateToken(
+        (string token, DateTimeOffset expiration) = _platformJwtService.GenerateToken(
             account.Id.GetValueOrDefault(),
             account.Email);
 

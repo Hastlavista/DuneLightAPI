@@ -69,6 +69,7 @@ public static class GroupCapacityOverride
             return;
         GrantContext grants = await grantResolver.Resolve(organizationId, userId);
         if (!grants.Has(Grants.GroupsCapacityOverride))
-            throw new ForbiddenAppException("Prekoračenje kapaciteta grupe zahtijeva ovlast groups.capacity.override.");
+            throw ForbiddenAppException.MissingGrant(
+                "Prekoračenje kapaciteta grupe zahtijeva ovlast groups.capacity.override.", Grants.GroupsCapacityOverride);
     }
 }

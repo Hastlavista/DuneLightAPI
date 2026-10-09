@@ -15,13 +15,13 @@ public class MembershipPlanDto
 {
     public Guid Id { get; set; }
     public string Name { get; set; }
-    public string Description { get; set; }
+    public string? Description { get; set; }
     public bool IsActive { get; set; }
 
     /// <summary>Najveći broj aktivnih članstava plana (zasebno od kapaciteta termina); null = bez ograničenja.</summary>
     public int? MaxActiveMemberships { get; set; }
 
-    public MembershipPlanVersionDto LatestVersion { get; set; }
+    public MembershipPlanVersionDto? LatestVersion { get; set; }
 
     /// <summary>Puna povijest verzija (najnovija prva) — samo u detalju plana.</summary>
     public List<MembershipPlanVersionDto> Versions { get; set; } = new();
@@ -58,14 +58,14 @@ public class MembershipPlanVersionDto
 public class MembershipPlanCompanyDto
 {
     public Guid CompanyId { get; set; }
-    public string CompanyName { get; set; }
+    public string? CompanyName { get; set; }
     public bool IsActive { get; set; }
 }
 
 public class MembershipPlanServiceDto
 {
     public Guid ServiceId { get; set; }
-    public string ServiceName { get; set; }
+    public string? ServiceName { get; set; }
     public bool IsActive { get; set; }
 }
 
@@ -74,7 +74,7 @@ public class MembershipPlanServiceDto
 public class MembershipUsageLimitDto
 {
     public Guid? ServiceId { get; set; }
-    public string ServiceName { get; set; }
+    public string? ServiceName { get; set; }
 
     [Required]
     public MembershipUsageWindow? Window { get; set; }
@@ -94,7 +94,7 @@ public class MembershipPriceBenefitDto
     public MembershipPriceBenefitScope? Scope { get; set; }
 
     public Guid? ServiceId { get; set; }
-    public string ServiceName { get; set; }
+    public string? ServiceName { get; set; }
 
     [Required]
     public MembershipPriceBenefitType? Type { get; set; }
@@ -187,7 +187,7 @@ public class MembershipPlanAffectedMembershipDto
     public bool Skipped { get; set; }
 
     /// <summary>Kod razloga preskakanja (npr. MEMBERSHIP_OVERLAPPING_COVERAGE); članstvo dobiva trajnu oznaku.</summary>
-    public string SkipReason { get; set; }
+    public string? SkipReason { get; set; }
 
     /// <summary>Članstvo ima zakazanu klijentovu promjenu plana: izmjena se ne primjenjuje sada, nego se pamti s ovim datumom i
     /// vraća ako klijent povuče promjenu.</summary>
@@ -201,7 +201,7 @@ public class MembershipPlanCreateRequest : MembershipPlanTermsRequest
     public string Name { get; set; }
 
     [MaxLength(2000)]
-    public string Description { get; set; }
+    public string? Description { get; set; }
 
     public int? MaxActiveMemberships { get; set; }
 }
@@ -213,7 +213,7 @@ public class MembershipPlanDetailsRequest
     public string Name { get; set; }
 
     [MaxLength(2000)]
-    public string Description { get; set; }
+    public string? Description { get; set; }
 }
 
 public class MembershipPlanCapacityRequest

@@ -22,11 +22,13 @@ public class CancellationReasonService : ICancellationReasonService
 {
     private readonly ICancellationReasonHandler _handler;
     private readonly IOrganizationSettingsHandler _settingsHandler;
+    private readonly TimeProvider _timeProvider;
 
-    public CancellationReasonService(ICancellationReasonHandler handler, IOrganizationSettingsHandler settingsHandler)
+    public CancellationReasonService(ICancellationReasonHandler handler, IOrganizationSettingsHandler settingsHandler, TimeProvider timeProvider)
     {
         _handler = handler;
         _settingsHandler = settingsHandler;
+        _timeProvider = timeProvider;
     }
 
     public async Task<List<CancellationReasonDto>> GetAll(Guid organizationId, bool? isActive, CancellationReasonEvent? appliesTo) =>
@@ -45,7 +47,7 @@ public class CancellationReasonService : ICancellationReasonService
             Id = Guid.NewGuid(),
             OrganizationId = organizationId,
             IsActive = true,
-            CreatedAt = DateTimeOffset.UtcNow,
+            CreatedAt = _timeProvider.GetUtcNow(),
             CreatedBy = userId
         };
         Apply(reason, request, name);
@@ -60,7 +62,7 @@ public class CancellationReasonService : ICancellationReasonService
         if (reason.IsActive)
             await EnsureNameFree(organizationId, name, excludeId: id);
         Apply(reason, request, name);
-        reason.UpdatedAt = DateTimeOffset.UtcNow;
+        reason.UpdatedAt = _timeProvider.GetUtcNow();
         reason.UpdatedBy = userId;
         await _handler.Update(reason);
         return ToDto(reason);
@@ -74,7 +76,7 @@ public class CancellationReasonService : ICancellationReasonService
         if (isActive)
             await EnsureNameFree(organizationId, reason.Name, excludeId: id);
         reason.IsActive = isActive;
-        reason.UpdatedAt = DateTimeOffset.UtcNow;
+        reason.UpdatedAt = _timeProvider.GetUtcNow();
         reason.UpdatedBy = userId;
         await _handler.Update(reason);
         return ToDto(reason);

@@ -38,7 +38,7 @@ public class ClientsController : ControllerBase
     /// <summary>Klijenti kojima je rođendan u zadanom razdoblju (godina se zanemaruje), sortirano po datumu.</summary>
     [HttpGet("birthdays")]
     [RequireGrant(Grants.ClientsView)]
-    public async Task<ActionResult<List<ClientBirthdayDto>>> GetBirthdays([FromQuery] DateTimeOffset from, [FromQuery] DateTimeOffset to)
+    public async Task<ActionResult<List<ClientBirthdayDto>>> GetBirthdays([FromQuery] DateOnly from, [FromQuery] DateOnly to)
     {
         return Ok(await _clientService.GetBirthdays(this.CurrentOrganizationId(), from, to));
     }

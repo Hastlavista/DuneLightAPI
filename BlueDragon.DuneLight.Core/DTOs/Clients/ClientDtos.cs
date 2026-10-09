@@ -8,7 +8,7 @@ public class ClientTagRefDto
 {
     public Guid TagId { get; set; }
     public string Name { get; set; }
-    public string ColorHex { get; set; }
+    public string? ColorHex { get; set; }
 }
 
 /// <summary>Puni prikaz klijenta — admin, trener i recepcija (svi vide sve, uključivo zdravstvenu napomenu).</summary>
@@ -18,18 +18,18 @@ public class ClientDto
     public int MemberNumber { get; set; }
     public string FirstName { get; set; }
     public string LastName { get; set; }
-    public DateTimeOffset? DateOfBirth { get; set; }
-    public string Occupation { get; set; }
-    public string Phone { get; set; }
-    public string Email { get; set; }
-    public string Note { get; set; }
-    public string HealthNote { get; set; }
+    public DateOnly? DateOfBirth { get; set; }
+    public string? Occupation { get; set; }
+    public string? Phone { get; set; }
+    public string? Email { get; set; }
+    public string? Note { get; set; }
+    public string? HealthNote { get; set; }
     public bool GdprConsentGiven { get; set; }
-    public DateTimeOffset? GdprConsentDate { get; set; }
+    public DateOnly? GdprConsentDate { get; set; }
     public Guid? HomeCompanyId { get; set; }
-    public string HomeCompanyName { get; set; }
+    public string? HomeCompanyName { get; set; }
     public Guid? HomeTrainerId { get; set; }
-    public string HomeTrainerName { get; set; }
+    public string? HomeTrainerName { get; set; }
     public bool IsActive { get; set; }
     public bool IsAnonymized { get; set; }
     public DateTimeOffset? AnonymizedAt { get; set; }
@@ -62,25 +62,25 @@ public class ClientCreateRequest
     [MaxLength(255)]
     public string LastName { get; set; }
 
-    public DateTimeOffset? DateOfBirth { get; set; }
+    public DateOnly? DateOfBirth { get; set; }
 
     [MaxLength(255)]
-    public string Occupation { get; set; }
+    public string? Occupation { get; set; }
 
     [MaxLength(255)]
-    public string Phone { get; set; }
+    public string? Phone { get; set; }
 
     [EmailAddress]
     [MaxLength(255)]
-    public string Email { get; set; }
+    public string? Email { get; set; }
 
-    public string Note { get; set; }
+    public string? Note { get; set; }
 
-    public string HealthNote { get; set; }
+    public string? HealthNote { get; set; }
 
     public bool GdprConsentGiven { get; set; }
 
-    public DateTimeOffset? GdprConsentDate { get; set; }
+    public DateOnly? GdprConsentDate { get; set; }
 
     public Guid? HomeCompanyId { get; set; }
 
@@ -106,25 +106,25 @@ public class ClientUpdateRequest
     [MaxLength(255)]
     public string LastName { get; set; }
 
-    public DateTimeOffset? DateOfBirth { get; set; }
+    public DateOnly? DateOfBirth { get; set; }
 
     [MaxLength(255)]
-    public string Occupation { get; set; }
+    public string? Occupation { get; set; }
 
     [MaxLength(255)]
-    public string Phone { get; set; }
+    public string? Phone { get; set; }
 
     [EmailAddress]
     [MaxLength(255)]
-    public string Email { get; set; }
+    public string? Email { get; set; }
 
-    public string Note { get; set; }
+    public string? Note { get; set; }
 
-    public string HealthNote { get; set; }
+    public string? HealthNote { get; set; }
 
     public bool GdprConsentGiven { get; set; }
 
-    public DateTimeOffset? GdprConsentDate { get; set; }
+    public DateOnly? GdprConsentDate { get; set; }
 
     public Guid? HomeCompanyId { get; set; }
 
@@ -139,9 +139,9 @@ public class ClientBirthdayDto
     public Guid Id { get; set; }
     public string FirstName { get; set; }
     public string LastName { get; set; }
-    public string Phone { get; set; }
-    public DateTimeOffset DateOfBirth { get; set; }
+    public string? Phone { get; set; }
+    public DateOnly DateOfBirth { get; set; }
 
     /// <summary>Datum sljedeće proslave rođendana unutar traženog razdoblja (godina je izračunata, ne stvarna godina rođenja).</summary>
-    public DateTimeOffset NextOccurrence { get; set; }
+    public DateOnly NextOccurrence { get; set; }
 }

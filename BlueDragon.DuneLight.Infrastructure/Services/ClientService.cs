@@ -29,6 +29,7 @@ public class ClientService : IClientService
     private readonly IOrganizationCalendarService _organizationCalendarService;
     private readonly IWaitlistHandler _waitlistHandler;
     private readonly IClientFutureActivityProvider _futureActivityProvider;
+    private readonly TimeProvider _timeProvider;
 
     public ClientService(
         IClientHandler clientHandler,
@@ -40,7 +41,8 @@ public class ClientService : IClientService
         IClientPackageHandler clientPackageHandler,
         IWaitlistHandler waitlistHandler,
         IClientFutureActivityProvider futureActivityProvider,
-        IOrganizationCalendarService organizationCalendarService)
+        IOrganizationCalendarService organizationCalendarService,
+        TimeProvider timeProvider)
     {
         _organizationCalendarService = organizationCalendarService;
         _clientHandler = clientHandler;
@@ -52,6 +54,7 @@ public class ClientService : IClientService
         _clientPackageHandler = clientPackageHandler;
         _waitlistHandler = waitlistHandler;
         _futureActivityProvider = futureActivityProvider;
+        _timeProvider = timeProvider;
     }
 
     public async Task<PagedResult<ClientDto>> GetPaged(
@@ -90,8 +93,9 @@ public class ClientService : IClientService
 
     public async Task<ClientDto> Create(Guid organizationId, Guid userId, ClientCreateRequest request)
     {
-        ValidateDateOfBirth(request.DateOfBirth);
-        ValidateGdprConsent(request.GdprConsentGiven, request.GdprConsentDate);
+        DateOnly today = await Today(organizationId);
+        ValidateDateOfBirth(request.DateOfBirth, today);
+        ValidateGdprConsent(request.GdprConsentGiven, request.GdprConsentDate, today);
         if (request.MemberNumber.HasValue)
             await EnsureManualMemberNumberAllowed(organizationId, request.MemberNumber.Value, excludeId: null, request.ConfirmMemberNumberJump);
         string email = EmailNormalizer.Normalize(request.Email);
@@ -120,7 +124,7 @@ public class ClientService : IClientService
             HomeCompanyId = request.HomeCompanyId,
             HomeTrainerId = request.HomeTrainerId,
             IsActive = true,
-            CreatedAt = DateTimeOffset.UtcNow,
+            CreatedAt = _timeProvider.GetUtcNow(),
             CreatedBy = userId
         };
 
@@ -129,7 +133,9 @@ public class ClientService : IClientService
         try
         {
             // K1-3: bez ručnog broja handler dodjeljuje sljedeći pod lockom organizacije.
-            await _clientHandler.Add(client, assignMemberNumber: !request.MemberNumber.HasValue);
+            // T1-9: dana suglasnost pri kreiranju je promjena (prije: nije dana) i ide u povijest klijenta, u istoj transakciji.
+            List<ClientAuditLog> audit = GdprConsentAudit(client, userId, oldGiven: false, oldDate: null);
+            await _clientHandler.Add(client, assignMemberNumber: !request.MemberNumber.HasValue, audit);
         }
         catch (DbUpdateException ex) when (IsEmailUniqueViolation(ex))
         {
@@ -150,8 +156,11 @@ public class ClientService : IClientService
             throw new NotFoundAppException("Client", id);
 
         EnsureNotAnonymized(existing);
-        ValidateDateOfBirth(request.DateOfBirth);
-        ValidateGdprConsent(request.GdprConsentGiven, request.GdprConsentDate);
+        DateOnly today = await Today(organizationId);
+        ValidateDateOfBirth(request.DateOfBirth, today);
+        ValidateGdprConsent(request.GdprConsentGiven, request.GdprConsentDate, today);
+        bool oldGdprGiven = existing.GdprConsentGiven;
+        DateOnly? oldGdprDate = existing.GdprConsentDate;
         int memberNumber = request.MemberNumber ?? existing.MemberNumber;
         if (memberNumber != existing.MemberNumber)
             await EnsureManualMemberNumberAllowed(organizationId, memberNumber, excludeId: id, request.ConfirmMemberNumberJump);
@@ -176,14 +185,14 @@ public class ClientService : IClientService
         existing.GdprConsentDate = request.GdprConsentGiven ? request.GdprConsentDate : null;
         existing.HomeCompanyId = request.HomeCompanyId;
         existing.HomeTrainerId = request.HomeTrainerId;
-        existing.UpdatedAt = DateTimeOffset.UtcNow;
+        existing.UpdatedAt = _timeProvider.GetUtcNow();
         existing.UpdatedBy = userId;
 
         List<ClientTagAssignment> newTags = BuildTags(request.TagIds);
 
         try
         {
-            await _clientHandler.Update(existing, newTags);
+            await _clientHandler.Update(existing, newTags, GdprConsentAudit(existing, userId, oldGdprGiven, oldGdprDate));
         }
         catch (DbUpdateException ex) when (IsEmailUniqueViolation(ex))
         {
@@ -207,7 +216,7 @@ public class ClientService : IClientService
             EnsureNotAnonymized(client);
 
         if (isActive != client.IsActive)
-            await _clientHandler.SetActiveAndStamp(organizationId, id, isActive, DateTimeOffset.UtcNow, userId);
+            await _clientHandler.SetActiveAndStamp(organizationId, id, isActive, _timeProvider.GetUtcNow(), userId);
 
         return await GetById(organizationId, id);
     }
@@ -234,7 +243,11 @@ public class ClientService : IClientService
         if (!client.IsAnonymized)
         {
             await EnsureNoActiveBusinessRelationships(organizationId, id);
-            await _clientHandler.Anonymize(organizationId, id, DateTimeOffset.UtcNow, userId);
+            // T1-9: anonimizacija briše suglasnost — i to je promjena suglasnosti koja ide u povijest klijenta.
+            DateTimeOffset anonymizedAt = _timeProvider.GetUtcNow();
+            List<ClientAuditLog> audit = GdprConsentAudit(organizationId, id, userId, anonymizedAt,
+                client.GdprConsentGiven, client.GdprConsentDate, newGiven: false, newDate: null, reason: "Anonimizacija");
+            await _clientHandler.Anonymize(organizationId, id, anonymizedAt, userId, audit);
         }
 
         return await GetById(organizationId, id);
@@ -248,7 +261,7 @@ public class ClientService : IClientService
     private async Task EnsureNoActiveBusinessRelationships(Guid organizationId, Guid clientId)
     {
         // Paket nije vezan uz poslovnicu — "danas" za valjanost paketa je današnji datum u kalendaru organizacije.
-        DateOnly today = (await _organizationCalendarService.GetCalendar(organizationId)).LocalDate(DateTimeOffset.UtcNow);
+        DateOnly today = (await _organizationCalendarService.GetCalendar(organizationId)).LocalDate(_timeProvider.GetUtcNow());
 
         bool hasFutureScheduledAppointments = await _appointmentHandler.HasFutureScheduledForClient(organizationId, clientId);
         bool hasActiveGroupMemberships = await _groupHandler.HasActiveMembershipForClient(organizationId, clientId);
@@ -270,14 +283,14 @@ public class ClientService : IClientService
             });
     }
 
-    public async Task<List<ClientBirthdayDto>> GetBirthdays(Guid organizationId, DateTimeOffset from, DateTimeOffset to)
+    public async Task<List<ClientBirthdayDto>> GetBirthdays(Guid organizationId, DateOnly from, DateOnly to)
     {
         List<Client> candidates = await _clientHandler.GetBirthdayCandidates(organizationId);
 
         List<ClientBirthdayDto> result = new List<ClientBirthdayDto>();
         foreach (Client client in candidates)
         {
-            (bool isInRange, DateTimeOffset occurrence) = FindOccurrenceInRange(client.DateOfBirth.Value, from, to);
+            (bool isInRange, DateOnly occurrence) = FindOccurrenceInRange(client.DateOfBirth.Value, from, to);
             if (!isInRange)
                 continue;
 
@@ -300,17 +313,55 @@ public class ClientService : IClientService
         return await _clientHandler.GetNextMemberNumber(organizationId);
     }
 
-    private static void ValidateDateOfBirth(DateTimeOffset? dateOfBirth)
+    /// <summary>T1-7: "danas" = poslovni dan organizacije (poslovni sat, zona organizacije).</summary>
+    private static void ValidateDateOfBirth(DateOnly? dateOfBirth, DateOnly today)
     {
-        if (dateOfBirth.HasValue && dateOfBirth.Value.Date > DateTimeOffset.UtcNow.Date)
+        if (dateOfBirth.HasValue && dateOfBirth.Value > today)
             throw new ValidationAppException("Datum rođenja ne smije biti u budućnosti.");
     }
 
-    private static void ValidateGdprConsent(bool consentGiven, DateTimeOffset? consentDate)
+    /// <summary>T1-9: datum je obavezan kad je suglasnost dana i ne smije biti nakon današnjeg dana organizacije (poslovni sat).
+    /// Bez suglasnosti se datum ne sprema, pa se ni ne provjerava.</summary>
+    private static void ValidateGdprConsent(bool consentGiven, DateOnly? consentDate, DateOnly today)
     {
         if (consentGiven && !consentDate.HasValue)
             throw new ValidationAppException("Datum GDPR suglasnosti je obavezan kad je suglasnost dana.");
+        if (consentGiven && consentDate.Value > today)
+            throw new ValidationAppException(ErrorCodes.GdprConsentDateInFuture,
+                $"Datum GDPR suglasnosti ({consentDate.Value:dd.MM.yyyy.}) ne smije biti nakon današnjeg dana ({today:dd.MM.yyyy.}).");
     }
+
+    /// <summary>T1-9: zapis povijesti za promjenu zastavice i/ili datuma GDPR suglasnosti (staro → novo, tko, kada); prazno kad
+    /// se ništa nije promijenilo.</summary>
+    private List<ClientAuditLog> GdprConsentAudit(Client client, Guid userId, bool oldGiven, DateOnly? oldDate) =>
+        GdprConsentAudit(client.OrganizationId, client.Id.GetValueOrDefault(), userId, _timeProvider.GetUtcNow(),
+            oldGiven, oldDate, client.GdprConsentGiven, client.GdprConsentDate, reason: null);
+
+    private static List<ClientAuditLog> GdprConsentAudit(
+        Guid organizationId, Guid clientId, Guid userId, DateTimeOffset changedAt,
+        bool oldGiven, DateOnly? oldDate, bool newGiven, DateOnly? newDate, string reason)
+    {
+        if (oldGiven == newGiven && oldDate == newDate)
+            return new List<ClientAuditLog>();
+        return new List<ClientAuditLog>
+        {
+            new()
+            {
+                Id = Guid.NewGuid(),
+                OrganizationId = organizationId,
+                ClientId = clientId,
+                ChangeType = ClientAuditChangeTypes.GdprConsent,
+                OldValue = ClientAuditChangeTypes.GdprValue(oldGiven, oldDate),
+                NewValue = ClientAuditChangeTypes.GdprValue(newGiven, newDate),
+                Reason = reason,
+                ChangedAt = changedAt,
+                ChangedBy = userId
+            }
+        };
+    }
+
+    private async Task<DateOnly> Today(Guid organizationId) =>
+        (await _organizationCalendarService.GetCalendar(organizationId)).LocalDate(_timeProvider.GetUtcNow());
 
     private static void EnsureNotAnonymized(Client client)
     {
@@ -427,7 +478,8 @@ public class ClientService : IClientService
     }
 
     /// <summary>Nalazi prvu pojavu datuma rođenja (bez obzira na stvarnu godinu) unutar [from, to], provjeravajući godinu 'from' i sljedeću (pokriva prijelaz preko Nove godine).</summary>
-    private static (bool IsInRange, DateTimeOffset Occurrence) FindOccurrenceInRange(DateTimeOffset dateOfBirth, DateTimeOffset from, DateTimeOffset to)
+    /// <summary>T1-7: čisti kalendarski dani (DateOnly), oba kraja uključena — bez offseta, pa nema pomaka dana.</summary>
+    private static (bool IsInRange, DateOnly Occurrence) FindOccurrenceInRange(DateOnly dateOfBirth, DateOnly from, DateOnly to)
     {
         foreach (int year in new[] { from.Year, from.Year + 1 })
         {
@@ -436,8 +488,8 @@ public class ClientService : IClientService
             if (month == 2 && day == 29 && !DateTime.IsLeapYear(year))
                 day = 28;
 
-            DateTimeOffset occurrence = new DateTimeOffset(year, month, day, 0, 0, 0, from.Offset);
-            if (occurrence.Date >= from.Date && occurrence.Date <= to.Date)
+            DateOnly occurrence = new DateOnly(year, month, day);
+            if (occurrence >= from && occurrence <= to)
                 return (true, occurrence);
         }
 

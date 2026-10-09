@@ -5,6 +5,7 @@ using System.Threading.Tasks;
 using BlueDragon.DuneLight.Core.Enums;
 using BlueDragon.DuneLight.Core.Shared;
 using BlueDragon.DuneLight.Infrastructure.Domain.Contexts;
+using BlueDragon.DuneLight.Infrastructure.Domain.Models.Appointments;
 using BlueDragon.DuneLight.Infrastructure.Domain.Models.Catalog;
 using BlueDragon.DuneLight.Infrastructure.Domain.Settings;
 using BlueDragon.DuneLight.Infrastructure.Handlers.Interfaces;
@@ -143,7 +144,7 @@ public class PriceListItemHandler : IPriceListItemHandler
         return await query.ToListAsync();
     }
 
-    public async Task<List<PriceListItem>> GetActiveForCompany(Guid organizationId, Guid? companyId, DateTimeOffset date)
+    public async Task<List<PriceListItem>> GetActiveForCompany(Guid organizationId, Guid? companyId, DateOnly date)
     {
         await using DatabaseContext context = DatabaseContext.GenerateContext(_databaseSettings.ConnectionString);
 
@@ -158,4 +159,24 @@ public class PriceListItemHandler : IPriceListItemHandler
             .ToListAsync();
     }
 
+    public async Task<List<(Guid CompanyId, DateTimeOffset PlannedStart)>> GetScheduledServiceStarts(
+        Guid organizationId, Guid serviceId, Guid? companyId, Guid? pricingEmployeeId, DateTimeOffset from, DateTimeOffset? to)
+    {
+        await using DatabaseContext context = DatabaseContext.GenerateContext(_databaseSettings.ConnectionString);
+
+        IQueryable<BookingSegmentParticipation> query = context.BookingSegmentParticipations.AsNoTracking().Where(p =>
+            p.OrganizationId == organizationId &&
+            p.Status == ParticipationStatus.Confirmed &&
+            p.Segment.ServiceId == serviceId &&
+            p.Segment.PlannedStart >= from);
+        if (to.HasValue)
+            query = query.Where(p => p.Segment.PlannedStart < to.Value);
+        if (companyId.HasValue)
+            query = query.Where(p => p.Segment.Appointment.CompanyId == companyId.Value);
+        if (pricingEmployeeId.HasValue)
+            query = query.Where(p => p.PricingEmployeeId == pricingEmployeeId.Value);
+
+        var rows = await query.Select(p => new { p.Segment.Appointment.CompanyId, p.Segment.PlannedStart }).ToListAsync();
+        return rows.Select(r => (r.CompanyId, r.PlannedStart)).ToList();
+    }
 }

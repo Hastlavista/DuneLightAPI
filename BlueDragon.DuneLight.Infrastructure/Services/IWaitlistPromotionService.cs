@@ -1,5 +1,7 @@
 using System;
+using System.Collections.Generic;
 using System.Threading.Tasks;
+using BlueDragon.DuneLight.Core.Shared;
 using BlueDragon.DuneLight.Infrastructure.UnitOfWork;
 
 namespace BlueDragon.DuneLight.Infrastructure.Services;
@@ -16,8 +18,10 @@ public interface IWaitlistPromotionService
     /// <summary>Kad se jedno ili više mjesta oslobodi na budućem Scheduled grupnom terminu (Booking otkazan),
     /// promovira onoliko najstarijih eligible Waiting redaka koliko ima slobodnog kapaciteta — revalidira
     /// eligibility za svakog kandidata, permanentno neeligible kandidate prebacuje u Expired i nastavlja dalje
-    /// (ne blokira red). No-op ako termin nije Form=Group, nije Scheduled, ili je StartsAt već prošao.</summary>
-    Task PromoteEligibleWaiters(IUnitOfWork uow, Guid organizationId, Guid appointmentId, Guid userId);
+    /// (ne blokira red). No-op ako termin nije Form=Group, nije Scheduled, ili je StartsAt već prošao.
+    /// T1-8: vraća upozorenja promocije (PRICE_NOT_DEFINED za cijenu promoviranog iz zadane cijene uz rupu u cjeniku) — pozivatelj
+    /// ih dodaje u odgovor naredbe koja je oslobodila mjesto.</summary>
+    Task<List<WarningDto>> PromoteEligibleWaiters(IUnitOfWork uow, Guid organizationId, Guid appointmentId, Guid userId);
 
     /// <summary>Prebacuje sve preostale Waiting retke termina u Expired (bez promocije) — koristi se kod
     /// otkazivanja/zatvaranja cijelog Appointmenta (vidi WaitlistExpiredReasons).</summary>

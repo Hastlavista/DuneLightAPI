@@ -32,9 +32,13 @@ public interface ICommissionEntryHandler
 
     Task<CommissionEntry> GetById(Guid organizationId, Guid id);
 
-    /// <summary>P2 (2F, brojanje po događajima) — zapisi zarađeni ILI stornirani u razdoblju [From, To).</summary>
-    Task<(List<CommissionEntry> Items, int TotalCount)> GetPaged(Guid organizationId, CommissionEntryQuery query);
+    /// <summary>P2 (2F, brojanje po događajima) — zapisi zarađeni ILI stornirani u razdoblju [periodStart, periodEnd). T1-7:
+    /// granice su UTC instanti lokalnih ponoći u zoni organizacije (izračunava ih CommissionService iz DateOnly From/To);
+    /// filtri zaposlenika/poslovnice i stranica dolaze iz <paramref name="query"/>.</summary>
+    Task<(List<CommissionEntry> Items, int TotalCount)> GetPaged(
+        Guid organizationId, CommissionEntryQuery query, DateTimeOffset periodStart, DateTimeOffset periodEnd);
 
     /// <summary>Agregat po zaposleniku po događajima: zarada u razdoblju EarnedAt, storno u razdoblju ReversedAt.</summary>
-    Task<List<EmployeeCommissionSummaryDto>> GetSummaryByEmployee(Guid organizationId, CommissionSummaryQuery query);
+    Task<List<EmployeeCommissionSummaryDto>> GetSummaryByEmployee(
+        Guid organizationId, CommissionSummaryQuery query, DateTimeOffset periodStart, DateTimeOffset periodEnd);
 }

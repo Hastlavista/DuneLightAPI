@@ -36,6 +36,6 @@ public class RequireGrantAttribute : Attribute, IAsyncAuthorizationFilter
             return;
 
         if (!grantContext.HasAny(_grants))
-            context.Result = new ForbidResult();
+            context.Result = ForbiddenResults.MissingAnyGrant(_grants);
     }
 }

@@ -42,8 +42,8 @@ namespace BlueDragon.DuneLight.UnitTests.Memberships;
 public class MembershipCoverageTests
 {
     private static IClientMembershipService Memberships(SchedulingWorld w) => w.Resolve<IClientMembershipService>();
-    private static DateOnly Today => DateOnly.FromDateTime(DateTime.UtcNow);
-    private static DateTimeOffset At(int days, int hour) => new DateTimeOffset(DateTime.UtcNow.Date, TimeSpan.Zero).AddDays(days).AddHours(hour);
+    private static DateOnly Today => DateOnly.FromDateTime(TestClock.UtcNow.UtcDateTime);
+    private static DateTimeOffset At(int days, int hour) => new DateTimeOffset(TestClock.UtcNow.UtcDateTime.Date, TimeSpan.Zero).AddDays(days).AddHours(hour);
 
     private static MembershipUsageLimitDto Limit(MembershipUsageWindow window, int max, Guid? serviceId = null) =>
         new() { Window = window, MaxUses = max, ServiceId = serviceId };
@@ -78,7 +78,7 @@ public class MembershipCoverageTests
         return await db.Set<MembershipUsage>().AsNoTracking().Where(u => u.OrganizationId == w.OrganizationId).ToListAsync();
     }
 
-    private static int LateWindow(DateTimeOffset start) => (int)(start - DateTimeOffset.UtcNow).TotalMinutes + 60;
+    private static int LateWindow(DateTimeOffset start) => (int)(start - TestClock.UtcNow).TotalMinutes + 60;
 
     private static void AssertCoverage(BookingParticipationDto p, MembershipCoverageStatus status, MembershipCoverageReason reason) =>
         Assert.Equal((status, reason), (p.MembershipCoverage.Status, p.MembershipCoverage.Reason));
@@ -290,7 +290,7 @@ public class MembershipCoverageTests
         await SchedulingAssert.BusinessRule(ErrorCodes.MembershipCoveragePending, () => w.Checkouts.AddBookingItem(
             w.OrganizationId, w.ActorUserId, checkout.Id, new CheckoutAddBookingItemRequest { ParticipationId = p.Id }));
 
-        await w.Resolve<IMembershipRenewalService>().RunForOrganization(w.OrganizationId, Today.AddMonths(1));
+        await w.Resolve<IMembershipRenewalService>().RunForOrganizationOn(w.OrganizationId, Today.AddMonths(1));
 
         BookingParticipationDto evaluated = await Only(w, far.Id);
         AssertCoverage(evaluated, MembershipCoverageStatus.Covered, MembershipCoverageReason.Claimed);
@@ -333,7 +333,7 @@ public class MembershipCoverageTests
         AssertCoverage(await Only(w, booked.Id), MembershipCoverageStatus.Covered, MembershipCoverageReason.Claimed);
 
         // The daily run two days later: the first charge is overdue after the (zero) grace period.
-        await w.Resolve<IMembershipRenewalService>().RunForOrganization(w.OrganizationId, Today.AddDays(2));
+        await w.Resolve<IMembershipRenewalService>().RunForOrganizationOn(w.OrganizationId, Today.AddDays(2));
         BookingParticipationDto uncovered = await Only(w, booked.Id);
         AssertCoverage(uncovered, MembershipCoverageStatus.NotCovered, MembershipCoverageReason.DebtNotCovered);
         Assert.Equal((BookingStatus.Confirmed, 50m), (uncovered.Status, uncovered.MonetaryDue));
@@ -565,7 +565,7 @@ public class MembershipCoverageTests
         List<AppointmentDto> series = await w.Appointments.CreateRecurring(w.OrganizationId, w.ActorUserId, true, new RecurringAppointmentCreateRequest
         {
             RecurrenceType = RecurrenceType.Daily, ServiceId = w.Service.Id.Value, EmployeeId = w.Employee.Id.Value, CompanyId = w.Company.Id.Value,
-            ClientIds = new List<Guid> { w.Client.Id.Value }, FirstOccurrenceStartsAt = At(4, 15), EndDate = At(6, 15), OverrideAvailability = true
+            ClientIds = new List<Guid> { w.Client.Id.Value }, FirstOccurrenceStartsAt = At(4, 15), EndDate = SchedulingWorld.Day(At(6, 15)), OverrideAvailability = true
         });
         Assert.Equal(3, series.Count);
         Assert.All(series, s => Assert.Equal(MembershipCoverageStatus.Covered,

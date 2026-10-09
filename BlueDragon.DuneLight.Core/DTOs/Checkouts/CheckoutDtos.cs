@@ -79,10 +79,10 @@ public class CheckoutPaymentCreateRequest
     public PaymentMethod Method { get; set; }
 
     [MaxLength(500)]
-    public string Note { get; set; }
+    public string? Note { get; set; }
 
     /// <summary>Opcionalno — izostavi za automatsku FIFO raspodjelu (preporučeno za normalan POS unos).</summary>
-    public List<CheckoutPaymentAllocationRequest> Allocations { get; set; }
+    public List<CheckoutPaymentAllocationRequest>? Allocations { get; set; }
 }
 
 /// <summary>Poništenje pogrešno unesenog Paymenta — dopušteno samo dok je Checkout Open (vidi spec section 48).</summary>
@@ -153,10 +153,10 @@ public class CheckoutDto
     public CheckoutStatus Status { get; set; }
 
     public Guid CompanyId { get; set; }
-    public string CompanyName { get; set; }
+    public string? CompanyName { get; set; }
 
     public Guid ClientId { get; set; }
-    public string ClientName { get; set; }
+    public string? ClientName { get; set; }
 
     public List<CheckoutItemDto> Items { get; set; } = new();
     public List<PaymentDto> Payments { get; set; } = new();

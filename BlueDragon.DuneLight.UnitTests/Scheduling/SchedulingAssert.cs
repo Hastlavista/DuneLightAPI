@@ -4,6 +4,8 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
 using BlueDragon.DuneLight.Core.DTOs.Appointments;
+using BlueDragon.DuneLight.Core.Enums;
+using BlueDragon.DuneLight.Core.Shared;
 using BlueDragon.DuneLight.Core.Shared.Exceptions;
 
 namespace BlueDragon.DuneLight.UnitTests.Scheduling;
@@ -16,6 +18,19 @@ public static class SchedulingAssert
     {
         BusinessRuleException ex = await Assert.ThrowsAsync<BusinessRuleException>(action);
         Assert.Equal(expectedCode, ex.Code);
+        return ex;
+    }
+
+    /// <summary>CHANGED in T1: own opseg na tuđem resursu više nije 409 BusinessRule nego 403 s razlogom OutOfScope (kod ostaje
+    /// NOT_OWNER, details: trenutni opseg Own, potreban All).</summary>
+    public static async Task<ForbiddenAppException> OutOfScope(Func<Task> action)
+    {
+        ForbiddenAppException ex = await Assert.ThrowsAsync<ForbiddenAppException>(action);
+        Assert.Equal(ErrorCodes.NotOwner, ex.Code);
+        Assert.Equal(ForbiddenReason.OutOfScope, ex.Details.Reason);
+        Assert.Equal(AccessScope.Own, ex.Details.CurrentScope);
+        Assert.Equal(AccessScope.All, ex.Details.RequiredScope);
+        Assert.NotEmpty(ex.Details.RequiredGrants);
         return ex;
     }
 

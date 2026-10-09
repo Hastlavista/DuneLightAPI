@@ -35,7 +35,7 @@ public class RosterReviewsController : ControllerBase
     [HttpGet("personal")]
     [RequireGrant(Grants.RosterReviewsPersonalViewOwn, Grants.RosterReviewsPersonalViewAll)]
     public async Task<ActionResult<RosterPersonalReviewDto>> GetPersonal(
-        [FromQuery] Guid employeeId, [FromQuery] DateTimeOffset from, [FromQuery] DateTimeOffset to)
+        [FromQuery] Guid employeeId, [FromQuery] DateOnly from, [FromQuery] DateOnly to)
     {
         return Ok(await _rosterEntryService.GetPersonal(
             this.CurrentOrganizationId(), this.CurrentUserId(), this.HasGrant(Grants.RosterReviewsPersonalViewAll), employeeId, from, to));

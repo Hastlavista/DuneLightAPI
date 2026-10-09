@@ -3,11 +3,14 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
+using System.Threading.Tasks;
 using BlueDragon.DuneLight.Infrastructure.Domain.Settings;
 using BlueDragon.DuneLight.Infrastructure.Handlers.Implementations;
+using BlueDragon.DuneLight.Infrastructure.Integrations;
 using BlueDragon.DuneLight.Infrastructure.Outbox;
 using BlueDragon.DuneLight.Infrastructure.Outbox.Handlers;
 using BlueDragon.DuneLight.Infrastructure.Services;
+using BlueDragon.DuneLight.Infrastructure.Time;
 using BlueDragon.DuneLight.Infrastructure.UnitOfWork;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
@@ -42,6 +45,15 @@ public static class SchedulingTestHost
         services.AddSingleton(new DatabaseSettings { ConnectionString = ConnectionString });
         services.AddSingleton<IUnitOfWorkFactory, UnitOfWorkFactory>();
         services.AddSingleton<IOutboxWriter, OutboxWriter>();
+        // T1-4: seed nove demo organizacije ide kroz pravu registraciju (AuthService → JwtService treba JwtSettings).
+        services.AddSingleton(MultiSegmentHttpContractTests.Jwt);
+
+        // T1: isti poslovni sat kao u produkciji (BusinessTimeProvider nad testnim izvorom sata); pomak po organizaciji je uključen
+        // (TestTools), pa testovi pomiču sat samo svoje organizacije i ne smetaju paralelnim testovima.
+        services.AddSingleton(new TestToolsSettings { Enabled = true });
+        services.AddSingleton<IClockOffsetStore, ClockOffsetStore>();
+        services.AddSingleton(sp => new BusinessTimeProvider(sp.GetRequiredService<IClockOffsetStore>(), TestClock.Source));
+        services.AddSingleton<TimeProvider>(sp => sp.GetRequiredService<BusinessTimeProvider>());
 
         // Outbox message handlers are registered explicitly in Startup.cs; tests resolve them directly to run the
         // outbox -> Notification step without the background OutboxProcessorService.
@@ -71,9 +83,18 @@ public static class SchedulingTestHost
             }
         }
 
+        // T1-4: seed dodaje praznik poslovnice kroz CompanyHolidayService; vanjski izvor praznika (samo Generate) testovi ne zovu.
+        services.AddSingleton<IPublicHolidayApiClient, NoPublicHolidaysApiClient>();
+
         services.AddSingleton<Microsoft.Extensions.Caching.Memory.IMemoryCache>(
             new Microsoft.Extensions.Caching.Memory.MemoryCache(new Microsoft.Extensions.Caching.Memory.MemoryCacheOptions()));
 
         return services.BuildServiceProvider(new ServiceProviderOptions { ValidateScopes = false, ValidateOnBuild = false });
     }
+}
+
+/// <summary>Testni izvor javnih praznika bez mreže: nikad ne vraća praznike.</summary>
+internal sealed class NoPublicHolidaysApiClient : IPublicHolidayApiClient
+{
+    public Task<List<PublicHolidayResult>> GetPublicHolidays(int year, string countryCode) => Task.FromResult(new List<PublicHolidayResult>());
 }

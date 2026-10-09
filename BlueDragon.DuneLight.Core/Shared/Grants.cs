@@ -45,6 +45,7 @@ public static class Grants
     public const string ClientsTagsManage = "clients.tags.manage";
     public const string ClientsPackagesView = "clients.packages.view";
     public const string ClientsPackagesManage = "clients.packages.manage";
+    public const string ClientsPackagesWritePast = "clients.packages.write.past";
     public const string ClientsMembershipsView = "clients.memberships.view";
     public const string ClientsMembershipsSell = "clients.memberships.sell";
     public const string ClientsMembershipsCancel = "clients.memberships.cancel";
@@ -188,6 +189,7 @@ public static class Grants
         new(ClientsTagsManage, "Upravljanje oznakama klijenata", "clients", "Uređivanje oznaka klijenata."),
         new(ClientsPackagesView, "Pregled paketa klijenata", "clients", "Pregled paketa klijenta."),
         new(ClientsPackagesManage, "Dodjela paketa klijentima", "clients", "Dodjela paketa klijentu."),
+        new(ClientsPackagesWritePast, "Paket unatrag", "clients", "Ručni upis paketa klijentu s datumom kupnje prije današnjeg dana (uz dodjelu paketa klijentima)."),
         new(ClientsMembershipsView, "Pregled članstava", "clients", "Pregled članarina klijenata, njihovog stanja, pauza i zakazanih promjena."),
         new(ClientsMembershipsSell, "Prodaja članarina", "clients", "Prodaja članarine klijentu (plan, datum početka, poslovnica prodaje)."),
         new(ClientsMembershipsCancel, "Otkaz članarine", "clients", "Zahtjev za otkaz članarine (djeluje prema otkaznom roku i minimalnoj obvezi) i povlačenje zakazanog otkaza."),

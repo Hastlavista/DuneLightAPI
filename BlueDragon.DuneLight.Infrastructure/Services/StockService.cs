@@ -29,19 +29,22 @@ public class StockService : IStockService, IStockLedgerService
     private readonly IStockMovementHandler _stockMovementHandler;
     private readonly ICompanyHandler _companyHandler;
     private readonly IUnitOfWorkFactory _unitOfWorkFactory;
+    private readonly TimeProvider _timeProvider;
 
     public StockService(
         IProductHandler productHandler,
         IProductStockHandler productStockHandler,
         IStockMovementHandler stockMovementHandler,
         ICompanyHandler companyHandler,
-        IUnitOfWorkFactory unitOfWorkFactory)
+        IUnitOfWorkFactory unitOfWorkFactory,
+        TimeProvider timeProvider)
     {
         _productHandler = productHandler;
         _productStockHandler = productStockHandler;
         _stockMovementHandler = stockMovementHandler;
         _companyHandler = companyHandler;
         _unitOfWorkFactory = unitOfWorkFactory;
+        _timeProvider = timeProvider;
     }
 
     public async Task<List<ProductStockDto>> GetByCompany(Guid organizationId, Guid companyId)
@@ -95,7 +98,7 @@ public class StockService : IStockService, IStockLedgerService
         if (!company.IsActive)
             throw new BusinessRuleException(ErrorCodes.InactiveCompany, $"Tvrtka '{company.Name}' nije aktivna.");
 
-        DateTimeOffset now = DateTimeOffset.UtcNow;
+        DateTimeOffset now = _timeProvider.GetUtcNow();
         await using IUnitOfWork uow = await _unitOfWorkFactory.Begin();
 
         ProductStock stock = await _productStockHandler.GetOrCreateForUpdate(uow, organizationId, productId, companyId, now);
@@ -153,7 +156,7 @@ public class StockService : IStockService, IStockLedgerService
         if (!toCompany.IsActive)
             throw new BusinessRuleException(ErrorCodes.InactiveCompany, $"Tvrtka '{toCompany.Name}' nije aktivna.");
 
-        DateTimeOffset now = DateTimeOffset.UtcNow;
+        DateTimeOffset now = _timeProvider.GetUtcNow();
         await using IUnitOfWork uow = await _unitOfWorkFactory.Begin();
 
         // Deterministički redoslijed zaključavanja po CompanyId (vidi spec section 34) — smanjuje rizik

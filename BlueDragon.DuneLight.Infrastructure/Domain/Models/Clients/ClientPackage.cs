@@ -31,7 +31,7 @@ public class ClientPackage
     public Guid PackageId { get; set; }
 
     [Column("purchase_date")]
-    public DateTimeOffset PurchaseDate { get; set; }
+    public DateOnly PurchaseDate { get; set; }
 
     [Column("paid_price")]
     public decimal PaidPrice { get; set; }

@@ -62,6 +62,7 @@ public class GroupService : IGroupService
     private readonly IBookingSegmentParticipationHandler _participationHandler;
     private readonly IGrantResolver _grantResolver;
     private readonly IMembershipCoverageService _membershipCoverage;
+    private readonly TimeProvider _timeProvider;
 
     public GroupService(
         IGroupHandler groupHandler,
@@ -87,8 +88,10 @@ public class GroupService : IGroupService
         IOrganizationCalendarService organizationCalendarService,
         IBookingSegmentParticipationHandler participationHandler,
         IGrantResolver grantResolver,
-        IMembershipCoverageService membershipCoverage)
+        IMembershipCoverageService membershipCoverage,
+        TimeProvider timeProvider)
     {
+        _timeProvider = timeProvider;
         _organizationCalendarService = organizationCalendarService;
         _participationHandler = participationHandler;
         _grantResolver = grantResolver;
@@ -119,14 +122,8 @@ public class GroupService : IGroupService
     private Task<ResolvePriceResponse> ResolveServicePrice(
         Guid organizationId, Guid serviceId, Guid companyId, Guid? pricingEmployeeId, DateTimeOffset date)
     {
-        return _pricingService.ResolvePrice(organizationId, new ResolvePriceRequest
-        {
-            SubjectType = PricingSubjectType.Service,
-            SubjectId = serviceId,
-            CompanyId = companyId,
-            EmployeeId = pricingEmployeeId,
-            Date = date
-        });
+        // T1-7: dan cjenika = lokalni datum početka u zoni poslovnice termina (vidi IPricingService.ResolveForServiceStart).
+        return _pricingService.ResolveForServiceStart(organizationId, serviceId, companyId, pricingEmployeeId, date);
     }
 
     #region Group definition
@@ -136,15 +133,12 @@ public class GroupService : IGroupService
         if (request.Slots == null || request.Slots.Count == 0)
             throw new ValidationAppException("Grupa mora imati barem jedan slot.");
 
-        foreach (GroupSlotCreateRequest slot in request.Slots)
-            ValidateSlotTime(slot.StartTime);
-
         if (request.SegmentTemplates == null || request.SegmentTemplates.Count == 0)
             throw new ValidationAppException("Grupa mora imati barem jedan predložak segmenta.");
         await EnsureCompany(organizationId, request.CompanyId);
 
         Guid groupId = Guid.NewGuid();
-        DateTimeOffset now = DateTimeOffset.UtcNow;
+        DateTimeOffset now = _timeProvider.GetUtcNow();
         List<GroupSegmentTemplate> templates = new();
         foreach (GroupSegmentTemplateRequest templateRequest in request.SegmentTemplates)
             templates.Add(await BuildTemplate(organizationId, groupId, request.CompanyId, templateRequest, now));
@@ -200,7 +194,7 @@ public class GroupService : IGroupService
             organizationId, request.CompanyId, existing.SegmentTemplates,
             existing.Slots.Where(s => s.IsActive).Select(s => (s.DayOfWeek, s.StartTime)).ToList());
 
-        DateTimeOffset now = DateTimeOffset.UtcNow;
+        DateTimeOffset now = _timeProvider.GetUtcNow();
         existing.Name = request.Name;
         existing.CompanyId = request.CompanyId;
         existing.Note = request.Note;
@@ -227,7 +221,7 @@ public class GroupService : IGroupService
         if (existing.IsActive == isActive)
             return await GetDtoById(organizationId, id);
 
-        DateTimeOffset now = DateTimeOffset.UtcNow;
+        DateTimeOffset now = _timeProvider.GetUtcNow();
         bool wasActive = existing.IsActive;
         existing.IsActive = isActive;
         existing.UpdatedAt = now;
@@ -277,7 +271,7 @@ public class GroupService : IGroupService
         if (group == null)
             throw new NotFoundAppException("Group", id);
 
-        DateTimeOffset now = DateTimeOffset.UtcNow;
+        DateTimeOffset now = _timeProvider.GetUtcNow();
         List<Appointment> appointments = await _groupHandler.GetAppointmentsForGroup(
             organizationId, id, now.AddMonths(-3), now.AddMonths(3));
 
@@ -314,8 +308,6 @@ public class GroupService : IGroupService
         if (group == null)
             throw new NotFoundAppException("Group", groupId);
 
-        ValidateSlotTime(request.StartTime);
-
         List<WarningDto> warnings = await ComputeWorkingHoursWarnings(
             organizationId, group.CompanyId, group.SegmentTemplates, new() { (request.DayOfWeek, request.StartTime) });
 
@@ -326,7 +318,7 @@ public class GroupService : IGroupService
             DayOfWeek = request.DayOfWeek,
             StartTime = request.StartTime,
             IsActive = true,
-            CreatedAt = DateTimeOffset.UtcNow
+            CreatedAt = _timeProvider.GetUtcNow()
         });
 
         GroupDto dto = await GetDtoById(organizationId, groupId);
@@ -343,8 +335,6 @@ public class GroupService : IGroupService
         GroupSlot slot = await _groupHandler.GetSlotById(organizationId, groupId, slotId);
         if (slot == null)
             throw new NotFoundAppException("GroupSlot", slotId);
-
-        ValidateSlotTime(request.StartTime);
 
         List<WarningDto> warnings = await ComputeWorkingHoursWarnings(
             organizationId, group.CompanyId, group.SegmentTemplates, new() { (request.DayOfWeek, request.StartTime) });
@@ -388,7 +378,7 @@ public class GroupService : IGroupService
     {
         Group group = await _groupHandler.GetById(organizationId, groupId)
             ?? throw new NotFoundAppException("Group", groupId);
-        DateTimeOffset now = DateTimeOffset.UtcNow;
+        DateTimeOffset now = _timeProvider.GetUtcNow();
         GroupSegmentTemplate template = await BuildTemplate(organizationId, groupId, group.CompanyId, request, now);
         EnsureAnchorTemplate(group.SegmentTemplates.Append(template).ToList());
 
@@ -424,7 +414,7 @@ public class GroupService : IGroupService
         GroupSegmentTemplate existing = group.SegmentTemplates.SingleOrDefault(t => t.Id == templateId)
             ?? throw new NotFoundAppException("GroupSegmentTemplate", templateId);
 
-        DateTimeOffset now = DateTimeOffset.UtcNow;
+        DateTimeOffset now = _timeProvider.GetUtcNow();
         // Phase M1H: izmjena predloška je POTPUNA zamjena njegove definicije (uključivo osoblje i izvor cijene). K1-6: izostavljeni
         // resursi (null) zadržavaju postojeće resurse predloška — zadani resursi usluge se kopiraju samo pri kreiranju.
         request.Resources ??= existing.Resources
@@ -486,7 +476,7 @@ public class GroupService : IGroupService
             throw new BusinessRuleException(ErrorCodes.ReferencedCannotDelete,
                 "Predložak biraju aktivni članovi — najprije promijenite njihov odabir predložaka.");
 
-        DateTimeOffset now = DateTimeOffset.UtcNow;
+        DateTimeOffset now = _timeProvider.GetUtcNow();
         await using (IUnitOfWork uow = await _unitOfWorkFactory.Begin())
         {
             uow.Context.GroupMemberSegmentTemplates.RemoveRange(
@@ -639,8 +629,9 @@ public class GroupService : IGroupService
         List<GroupSegmentTemplate> selected = ResolveSelection(group, request.SegmentTemplateIds);
         await GroupCapacityOverride.EnsureAllowed(_grantResolver, organizationId, userId, request.OverrideCapacity);
 
-        DateTimeOffset now = DateTimeOffset.UtcNow;
+        DateTimeOffset now = _timeProvider.GetUtcNow();
         Guid memberId = Guid.NewGuid();
+        WarningDto priceWarning;
 
         await using (IUnitOfWork uow = await _unitOfWorkFactory.Begin())
         {
@@ -683,13 +674,16 @@ public class GroupService : IGroupService
 
             // Novi član odmah sudjeluje na već generiranim BUDUĆIM occurrenceima — samo u segmentima odabranih predložaka.
             List<Appointment> futureAppointments = await _appointmentHandler.GetFutureScheduledForGroup(uow, organizationId, groupId);
-            await JoinFutureOccurrences(uow, organizationId, userId, request.ClientId, futureAppointments,
-                selected.Select(t => t.Id.GetValueOrDefault()).ToHashSet(), request.OverrideCapacity, now);
+            priceWarning = PriceWarnings.NotDefinedOccurrences(await JoinFutureOccurrences(uow, organizationId, userId, request.ClientId,
+                futureAppointments, selected.Select(t => t.Id.GetValueOrDefault()).ToHashSet(), request.OverrideCapacity, now));
 
             await uow.CommitAsync();
         }
 
-        return await GetDtoById(organizationId, groupId);
+        GroupDto dto = await GetDtoById(organizationId, groupId);
+        if (priceWarning != null)
+            dto.Warnings.Add(priceWarning);
+        return dto;
     }
 
     public async Task<GroupDto> ChangeMemberSegmentTemplates(
@@ -709,7 +703,8 @@ public class GroupService : IGroupService
             return await GetDtoById(organizationId, groupId);
 
         await GroupCapacityOverride.EnsureAllowed(_grantResolver, organizationId, userId, request.OverrideCapacity);
-        DateTimeOffset now = DateTimeOffset.UtcNow;
+        DateTimeOffset now = _timeProvider.GetUtcNow();
+        List<WarningDto> warnings = new();
 
         await using (IUnitOfWork uow = await _unitOfWorkFactory.Begin())
         {
@@ -745,20 +740,24 @@ public class GroupService : IGroupService
             // dodani — novo sudjelovanje na istom Bookingu occurrencea. Prošli/odrađeni occurrencei se ne diraju.
             List<Appointment> futureAppointments = await _appointmentHandler.GetFutureScheduledForGroup(uow, organizationId, groupId);
             if (removed.Count > 0)
-                await WithdrawFromFutureSegments(uow, organizationId, userId, member.ClientId, futureAppointments,
+                warnings.AddRange(await WithdrawFromFutureSegments(uow, organizationId, userId, member.ClientId, futureAppointments,
                     segment => segment.GroupSegmentTemplateId.HasValue && removed.Contains(segment.GroupSegmentTemplateId.Value),
-                    "Klijent više ne sudjeluje u ovom dijelu grupe", removeUntouched: true, now);
+                    "Klijent više ne sudjeluje u ovom dijelu grupe", removeUntouched: true, now));
             if (added.Count > 0)
             {
                 futureAppointments = await _appointmentHandler.GetFutureScheduledForGroup(uow, organizationId, groupId);
-                await JoinFutureOccurrences(uow, organizationId, userId, member.ClientId, futureAppointments,
-                    added.Select(t => t.Id.GetValueOrDefault()).ToHashSet(), request.OverrideCapacity, now);
+                WarningDto priceWarning = PriceWarnings.NotDefinedOccurrences(await JoinFutureOccurrences(uow, organizationId, userId,
+                    member.ClientId, futureAppointments, added.Select(t => t.Id.GetValueOrDefault()).ToHashSet(), request.OverrideCapacity, now));
+                if (priceWarning != null)
+                    warnings.Add(priceWarning);
             }
 
             await uow.CommitAsync();
         }
 
-        return await GetDtoById(organizationId, groupId);
+        GroupDto dto = await GetDtoById(organizationId, groupId);
+        dto.Warnings.AddRange(warnings);
+        return dto;
     }
 
     public async Task<GroupDto> RemoveMember(Guid organizationId, Guid userId, Guid groupId, Guid memberId)
@@ -773,7 +772,8 @@ public class GroupService : IGroupService
             return await GetDtoById(organizationId, groupId);
 
         member.IsActive = false;
-        DateTimeOffset now = DateTimeOffset.UtcNow;
+        DateTimeOffset now = _timeProvider.GetUtcNow();
+        List<WarningDto> promotionWarnings;
 
         await using (IUnitOfWork uow = await _unitOfWorkFactory.Begin())
         {
@@ -800,13 +800,15 @@ public class GroupService : IGroupService
             // briše (prazan Booking s njim) — ponovni upis tada normalno stvara novo; sudjelovanje S POVIJEŠĆU se otkazuje uz
             // kasno-otkazivanje po početku NJEGOVOG segmenta. Prošli/odrađeni segmenti se ne diraju.
             List<Appointment> futureAppointments = await _appointmentHandler.GetFutureScheduledForGroup(uow, organizationId, groupId);
-            await WithdrawFromFutureSegments(uow, organizationId, userId, member.ClientId, futureAppointments,
+            promotionWarnings = await WithdrawFromFutureSegments(uow, organizationId, userId, member.ClientId, futureAppointments,
                 _ => true, "Klijent uklonjen iz grupe", removeUntouched: true, now);
 
             await uow.CommitAsync();
         }
 
-        return await GetDtoById(organizationId, groupId);
+        GroupDto dto = await GetDtoById(organizationId, groupId);
+        dto.Warnings.AddRange(promotionWarnings);
+        return dto;
     }
 
     /// <summary>Eksplicitan odabir predložaka člana (barem jedan, bez duplikata, bez međusobnog preklapanja).</summary>
@@ -845,7 +847,7 @@ public class GroupService : IGroupService
     {
         List<Guid> roomIds = await uow.Context.AppointmentSegments
             .Where(seg => seg.Appointment.GroupId == groupId && seg.Appointment.OrganizationId == organizationId &&
-                          seg.RoomId != null && seg.PlannedStart >= DateTimeOffset.UtcNow)
+                          seg.RoomId != null && seg.PlannedStart >= _timeProvider.GetUtcNow())
             .Select(seg => seg.RoomId.Value)
             .Distinct()
             .ToListAsync();
@@ -877,10 +879,12 @@ public class GroupService : IGroupService
     /// occurrenceu pod Appointment lockom meki kapacitet segmenta (override samo eksplicitno) i optimistička provjera okvira.
     /// Pozivatelj je zaključao klijenta.
     /// </summary>
-    private async Task JoinFutureOccurrences(
+    private async Task<List<(Guid OccurrenceKey, ResolvePriceResponse Resolved)>> JoinFutureOccurrences(
         IUnitOfWork uow, Guid organizationId, Guid userId, Guid clientId, List<Appointment> futureAppointments, HashSet<Guid> templateIds,
         bool overrideCapacity, DateTimeOffset now)
     {
+        // T1-8: cijene upisane na nova sudjelovanja (po terminu) — za zbirno upozorenje o rupi u cjeniku.
+        List<(Guid OccurrenceKey, ResolvePriceResponse Resolved)> priced = new();
         List<(Appointment Appointment, List<AppointmentSegment> Segments)> targets = futureAppointments
             .Select(a => (a, a.Segments
                 .Where(s => s.GroupSegmentTemplateId.HasValue && templateIds.Contains(s.GroupSegmentTemplateId.Value) && s.PlannedStart >= now)
@@ -890,7 +894,7 @@ public class GroupService : IGroupService
             .Where(t => t.Item2.Count > 0)
             .ToList();
         if (targets.Count == 0)
-            return;
+            return priced;
 
         List<AppointmentSegment> allSegments = targets.SelectMany(t => t.Segments).ToList();
         // Prostorije pa resursi (globalni redoslijed nakon klijenta), PRIJE Appointment lockova niže.
@@ -964,6 +968,7 @@ public class GroupService : IGroupService
 
                 ResolvePriceResponse resolvedPrice = await ResolveServicePrice(organizationId, segment.ServiceId, appointment.CompanyId, SegmentPricingSource.PricingEmployeeOf(segment), segment.PlannedStart);
                 created.Add(BookingFactory.AddParticipation(booking, segment, ParticipationStatus.Confirmed, BookingPricing.AtSuggested(resolvedPrice), now));
+                priced.Add((appointmentId, resolvedPrice));
             }
 
             if (created.Count == 0)
@@ -985,6 +990,8 @@ public class GroupService : IGroupService
                 await _membershipCoverage.SyncParticipation(uow, organizationId, userId, appointment, booking, participation,
                     MembershipCoverageEvent.Booking, MembershipCoverageMode.Automatic);
         }
+
+        return priced;
     }
 
     /// <summary>P2 (Q18, pregled 2D #11) — zapis preskočenog člana u segmentu; postojeći zapis za isti (segment, klijent) se
@@ -1024,10 +1031,12 @@ public class GroupService : IGroupService
     /// initiatorom System (P1, bez klasifikacije i posljedice politike), audit i događaj.
     /// Oslobođeno mjesto promovira SAMO listu čekanja tog segmenta; status occurrencea se zatim izvodi.
     /// </summary>
-    private async Task WithdrawFromFutureSegments(
+    private async Task<List<WarningDto>> WithdrawFromFutureSegments(
         IUnitOfWork uow, Guid organizationId, Guid userId, Guid clientId, List<Appointment> futureAppointments,
         Func<AppointmentSegment, bool> segmentFilter, string reason, bool removeUntouched, DateTimeOffset now)
     {
+        // T1-8: upozorenja promocije liste čekanja (cijena promoviranog uz rupu u cjeniku) idu u odgovor naredbe.
+        List<WarningDto> promotionWarnings = new();
         foreach (Appointment appointment in futureAppointments)
         {
             Booking booking = appointment.Bookings.FirstOrDefault(b => b.ClientId == clientId);
@@ -1081,7 +1090,7 @@ public class GroupService : IGroupService
                 // postavlja kod) — bez klasifikacije kasnog otkazivanja i bez posljedice politike. Samo aktivna sudjelovanja,
                 // pa nema efekata prethodnog stanja za reverziju.
                 ParticipationEventMetadata.Clear(participation);
-                ParticipationLifecycle.TrySetStatus(participation, ParticipationStatus.Cancelled);
+                ParticipationLifecycle.TrySetStatus(participation, ParticipationStatus.Cancelled, now);
                 ParticipationEventMetadata.SetCancelled(participation, CancellationInitiator.System, now, userId, reason);
                 booking.UpdatedAt = now;
                 booking.UpdatedBy = userId;
@@ -1101,7 +1110,7 @@ public class GroupService : IGroupService
                     ChangedBy = userId
                 });
 
-                await ParticipationEvents.WriteCancelled(_outboxWriter, uow, organizationId, appointment, booking, participation);
+                await ParticipationEvents.WriteCancelled(_outboxWriter, uow, organizationId, appointment, booking, participation, now);
 
                 // P2 (2D): sustavsko otkazivanje vraća claim (CancelledBySystem); bez članarine no-op.
                 await _membershipCoverage.SyncParticipation(uow, organizationId, userId, appointment, booking, participation,
@@ -1112,10 +1121,12 @@ public class GroupService : IGroupService
 
             // Oslobođeno mjesto → promocija liste čekanja (po segmentu; samo segmenti kojima se oslobodilo mjesto imaju
             // slobodnih mjesta).
-            await _waitlistPromotionService.PromoteEligibleWaiters(uow, organizationId, appointmentId, userId);
+            promotionWarnings.AddRange(await _waitlistPromotionService.PromoteEligibleWaiters(uow, organizationId, appointmentId, userId));
 
-            await AppointmentLifecycle.Refresh(_appointmentHandler, _appointmentAuditLogHandler, uow, organizationId, appointmentId, userId);
+            await AppointmentLifecycle.Refresh(_appointmentHandler, _appointmentAuditLogHandler, uow, organizationId, appointmentId, userId, now);
         }
+
+        return promotionWarnings;
     }
 
     #endregion
@@ -1240,10 +1251,10 @@ public class GroupService : IGroupService
             .ToList();
         candidateGroups = candidateGroups.Where(g => g.Company?.IsActive == true).ToList();
 
-        // Raspon su kalendarski datumi kako ih je klijent napisao; vrijeme slota (+ pomak predloška) je lokalno vrijeme u
+        // Raspon su kalendarski dani (T1-7: DateOnly, oba kraja uključena, zona poslovnice grupe); vrijeme slota (+ pomak predloška) je lokalno vrijeme u
         // efektivnoj zoni poslovnice grupe (zidni sat, i preko DST prijelaza) — ne offset zahtjeva ni hosta.
-        DateOnly fromDate = CalendarDates.FromWallDate(request.FromDate);
-        DateOnly toDate = CalendarDates.FromWallDate(request.ToDate);
+        DateOnly fromDate = request.FromDate;
+        DateOnly toDate = request.ToDate;
         List<Guid> candidateCompanyIds = candidateGroups.Select(g => g.CompanyId).Distinct().ToList();
         Dictionary<Guid, OrganizationCalendar> calendarsByCompany =
             await _organizationCalendarService.GetCompanyCalendars(organizationId, candidateCompanyIds);
@@ -1291,7 +1302,7 @@ public class GroupService : IGroupService
                         continue;
                     }
 
-                    DateTimeOffset startsAt = calendar.ToInstant(date, slot.StartTime);
+                    DateTimeOffset startsAt = calendar.ToInstant(date, slot.StartTime.ToTimeSpan());
                     (Guid, DateTimeOffset) key = (slot.Id.GetValueOrDefault(), startsAt);
 
                     if (existing.Contains(key))
@@ -1358,6 +1369,8 @@ public class GroupService : IGroupService
         List<AppointmentScheduleCellDto> createdDtos = new List<AppointmentScheduleCellDto>();
         List<GroupOccurrenceMembershipSkip> membershipSkips = new();
         List<(Guid AppointmentId, List<WarningDto> Warnings)> overriddenOccurrences = new();
+        // T1-8: cijene upisane članovima po terminu — jedno zbirno upozorenje o rupi u cjeniku za cijelo generiranje.
+        List<(Guid OccurrenceKey, ResolvePriceResponse Resolved)> generationPrices = new();
 
         foreach (GroupOccurrenceCandidate candidate in candidates)
         {
@@ -1381,12 +1394,15 @@ public class GroupService : IGroupService
             // Predložena cijena po SUDJELOVANJU: usluga predloška tog segmenta i početak segmenta. Booking ostaje
             // financijski neplaćen do check-ina (BookingService.ResolveCoverage).
             List<SegmentPlan> plans = new();
+            List<ResolvePriceResponse> occurrencePrices = new();
             foreach (CandidateSegment segment in candidate.Segments)
             {
                 // Phase M1G: osoblje i izvor cijene se KOPIRAJU iz predloška (generiranje ne bira drugi izvor).
                 PricingSourceValue pricingSource = new(segment.Template.PricingMode, segment.Template.PricingEmployeeId);
                 ResolvePriceResponse resolvedPrice = await ResolveServicePrice(
                     organizationId, segment.Template.ServiceId, group.CompanyId, pricingSource.PricingEmployeeId, segment.Start);
+                if (segment.ClientIds.Count > 0)
+                    occurrencePrices.Add(resolvedPrice);
                 plans.Add(new SegmentPlan(
                     segment.Template.ServiceId, segment.Start, segment.End,
                     segment.Template.Employees.Select(e => e.EmployeeId).ToList(),
@@ -1399,8 +1415,9 @@ public class GroupService : IGroupService
 
             Appointment appointment = AppointmentFactory.CreateGroupOccurrence(
                 organizationId, group.CompanyId, group.Id.GetValueOrDefault(), slot.Id.GetValueOrDefault(),
-                userId, DateTimeOffset.UtcNow, plans);
+                userId, _timeProvider.GetUtcNow(), plans);
             toCreate.Add(appointment);
+            generationPrices.AddRange(occurrencePrices.Select(price => (appointment.Id.GetValueOrDefault(), price)));
             foreach ((Guid templateId, Guid clientId, Guid membershipId) in blocked)
                 membershipSkips.Add(new GroupOccurrenceMembershipSkip
                 {
@@ -1411,7 +1428,7 @@ public class GroupService : IGroupService
                     AppointmentSegmentId = appointment.Segments.Single(s => s.GroupSegmentTemplateId == templateId).Id.GetValueOrDefault(),
                     ClientId = clientId,
                     ClientMembershipId = membershipId,
-                    SkippedAt = DateTimeOffset.UtcNow,
+                    SkippedAt = _timeProvider.GetUtcNow(),
                     SkippedBy = userId
                 });
 
@@ -1466,7 +1483,7 @@ public class GroupService : IGroupService
 
         // K2: override radnog vremena / praznika koji je stvarno nešto zaobišao bilježi se po generiranom terminu.
         foreach ((Guid appointmentId, List<WarningDto> warnings) in overriddenOccurrences)
-            await AvailabilityOverride.Audit(_appointmentAuditLogHandler, uow, appointmentId, warnings, userId);
+            await AvailabilityOverride.Audit(_appointmentAuditLogHandler, uow, appointmentId, warnings, userId, _timeProvider.GetUtcNow());
 
         // P2 (2D, §11.4): pokriće članova redom po vremenu occurrencea; generiranje je automatski proces i nikad ne odbija
         // (iskorišten limit → sljedeći izvor, razlog na sudjelovanju). Bez članarine no-op.
@@ -1480,8 +1497,10 @@ public class GroupService : IGroupService
 
         await uow.CommitAsync();
 
+        WarningDto priceWarning = PriceWarnings.NotDefinedOccurrences(generationPrices);
         return new GenerateGroupAppointmentsResult
         {
+            Warnings = priceWarning == null ? new List<WarningDto>() : new List<WarningDto> { priceWarning },
             CreatedCount = toCreate.Count,
             SkippedCount = skipped,
             Created = createdDtos.OrderBy(a => a.PlannedStart).ToList(),
@@ -1493,9 +1512,9 @@ public class GroupService : IGroupService
     /// <summary>Lokalni (zidni) raspon segmenta: početak = sidro + pomak, kraj = početak + trajanje — oba razriješena kroz
     /// kalendar poslovnice (DST). Kraj koji bi na prijelazu pao na/prije početka koristi apsolutno trajanje.</summary>
     private static (DateTimeOffset Start, DateTimeOffset End) TemplateWindow(
-        OrganizationCalendar calendar, DateOnly date, TimeSpan slotStart, GroupSegmentTemplate template)
+        OrganizationCalendar calendar, DateOnly date, TimeOnly slotStart, GroupSegmentTemplate template)
     {
-        TimeSpan localStart = slotStart + TimeSpan.FromMinutes(template.StartOffsetMinutes);
+        TimeSpan localStart = slotStart.ToTimeSpan() + TimeSpan.FromMinutes(template.StartOffsetMinutes);
         DateTimeOffset start = calendar.ToInstant(date, localStart);
         DateTimeOffset end = calendar.ToInstant(date, localStart + TimeSpan.FromMinutes(template.DurationMinutes));
         if (end <= start)
@@ -1782,7 +1801,7 @@ public class GroupService : IGroupService
     /// budućem datumu tog dana; jedno upozorenje po slotu. Predlošci bez osoblja se preskaču.</summary>
     private async Task<List<WarningDto>> ComputeWorkingHoursWarnings(
         Guid organizationId, Guid companyId, IReadOnlyCollection<GroupSegmentTemplate> templates,
-        List<(DayOfWeek DayOfWeek, TimeSpan StartTime)> slots)
+        List<(DayOfWeek DayOfWeek, TimeOnly StartTime)> slots)
     {
         List<WarningDto> warnings = new List<WarningDto>();
         List<(GroupSegmentTemplate Template, Guid EmployeeId)> staffed = templates
@@ -1796,14 +1815,14 @@ public class GroupService : IGroupService
             employeeTemplates[employeeId] = await _workingHoursTemplateHandler.GetForEmployee(organizationId, employeeId);
         WorkingHoursTemplate companyTemplate = await _workingHoursTemplateHandler.GetForCompany(organizationId, companyId);
         OrganizationCalendar calendar = await _organizationCalendarService.GetCompanyCalendar(organizationId, companyId);
-        DateOnly today = calendar.LocalDate(DateTimeOffset.UtcNow);
+        DateOnly today = calendar.LocalDate(_timeProvider.GetUtcNow());
 
-        foreach ((DayOfWeek dayOfWeek, TimeSpan startTime) in slots)
+        foreach ((DayOfWeek dayOfWeek, TimeOnly startTime) in slots)
         {
             DateOnly representativeDate = NextOccurrenceDate(today, dayOfWeek);
             bool outside = staffed.Any(x =>
             {
-                TimeSpan localStart = startTime + TimeSpan.FromMinutes(x.Template.StartOffsetMinutes);
+                TimeSpan localStart = startTime.ToTimeSpan() + TimeSpan.FromMinutes(x.Template.StartOffsetMinutes);
                 DateOnly date = representativeDate.AddDays((int)localStart.TotalDays);
                 return !IsWithinWorkingHours(employeeTemplates[x.EmployeeId], companyTemplate, new List<RosterEntry>(), date,
                     TimeSpan.FromTicks(localStart.Ticks % TimeSpan.TicksPerDay), x.Template.DurationMinutes);
@@ -1824,12 +1843,6 @@ public class GroupService : IGroupService
     {
         int diff = ((int)dayOfWeek - (int)from.DayOfWeek + 7) % 7;
         return from.AddDays(diff);
-    }
-
-    private static void ValidateSlotTime(TimeSpan startTime)
-    {
-        if (startTime < TimeSpan.Zero || startTime >= TimeSpan.FromDays(1))
-            throw new ValidationAppException("Vrijeme slota mora biti između 00:00 i 23:59.");
     }
 
     private async Task EnsureGroupExists(Guid organizationId, Guid groupId)

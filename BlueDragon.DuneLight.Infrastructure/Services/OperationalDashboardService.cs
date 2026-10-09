@@ -21,9 +21,8 @@ namespace BlueDragon.DuneLight.Infrastructure.Services;
 /// <summary>
 /// Vidi IOperationalDashboardService. Sastavlja se od već postojećih handler upita — ne uvodi novu poslovnu
 /// logiku, samo agregira (vidi ParticipationSettlement/CheckoutFinancialsCalculator/WorkingHoursCalculator
-/// za sve financijske/dostupnostne izračune). Datumska granica je [dayStart, dayEnd) po kalendarskom danu, isti
-/// obrazac implicitne DateTimeOffset konverzije kao AppointmentService.GetAvailableSlots/RosterEntryService
-/// (nema odvojene per-organizaciju timezone — vidi spec section 30).
+/// za sve financijske/dostupnostne izračune). Dan je DateOnly (T1-7); granica je [dayStart, dayEnd) = UTC instanti lokalnih
+/// ponoći u efektivnoj zoni poslovnice (ADR-0013).
 /// </summary>
 public class OperationalDashboardService : IOperationalDashboardService
 {
@@ -40,6 +39,7 @@ public class OperationalDashboardService : IOperationalDashboardService
     private readonly IProductStockHandler _productStockHandler;
 
     private readonly IOrganizationCalendarService _organizationCalendarService;
+    private readonly TimeProvider _timeProvider;
 
     public OperationalDashboardService(
         ICompanyHandler companyHandler,
@@ -53,8 +53,10 @@ public class OperationalDashboardService : IOperationalDashboardService
         IScheduleBreakHandler scheduleBreakHandler,
         IProductHandler productHandler,
         IProductStockHandler productStockHandler,
-        IOrganizationCalendarService organizationCalendarService)
+        IOrganizationCalendarService organizationCalendarService,
+        TimeProvider timeProvider)
     {
+        _timeProvider = timeProvider;
         _organizationCalendarService = organizationCalendarService;
         _companyHandler = companyHandler;
         _appointmentHandler = appointmentHandler;
@@ -69,19 +71,19 @@ public class OperationalDashboardService : IOperationalDashboardService
         _productStockHandler = productStockHandler;
     }
 
-    public async Task<OperationalDashboardDto> GetDashboard(Guid organizationId, Guid companyId, DateTimeOffset? date)
+    public async Task<OperationalDashboardDto> GetDashboard(Guid organizationId, Guid companyId, DateOnly? date)
     {
         Company company = await _companyHandler.GetById(organizationId, companyId);
         if (company == null)
             throw new NotFoundAppException("Company", companyId);
 
-        // Kalendarski dan poslovnice: zatraženi datum kako ga je klijent napisao, inače "danas" u efektivnoj zoni poslovnice;
+        // Kalendarski dan poslovnice (T1-7: DateOnly): zatraženi dan, inače "danas" u efektivnoj zoni poslovnice;
         // granice [dayStart, dayEnd) su UTC instanti lokalnih ponoći (isto pravilo kao AppointmentService.GetAvailableSlots).
         OrganizationCalendar calendar = await _organizationCalendarService.GetCompanyCalendar(organizationId, companyId);
-        DateOnly day = date.HasValue ? CalendarDates.FromWallDate(date.Value) : calendar.LocalDate(DateTimeOffset.UtcNow);
+        DateOnly day = date ?? calendar.LocalDate(_timeProvider.GetUtcNow());
         DateTimeOffset dayStart = calendar.StartOfDay(day);
         DateTimeOffset dayEnd = calendar.StartOfDay(day.AddDays(1));
-        DateTimeOffset now = DateTimeOffset.UtcNow;
+        DateTimeOffset now = _timeProvider.GetUtcNow();
 
         List<Appointment> appointments = await _appointmentHandler.GetForDashboard(organizationId, companyId, dayStart, dayEnd);
         List<Guid> appointmentIds = appointments.Select(a => a.Id.GetValueOrDefault()).ToList();
@@ -104,7 +106,7 @@ public class OperationalDashboardService : IOperationalDashboardService
                 Name = company.Name,
                 IsActive = company.IsActive
             },
-            Date = CalendarDates.ToUtcMidnight(day),
+            Date = day,
             Schedule = schedule,
             Staff = staff,
             Financial = financial,
@@ -303,7 +305,7 @@ public class OperationalDashboardService : IOperationalDashboardService
                 IsAbsent = isAbsent,
                 IsWorking = !isAbsent && postBreakIntervals.Count > 0,
                 WorkIntervals = effectiveIntervals
-                    .Select(i => new DashboardWorkIntervalDto { Start = i.Start, End = i.End })
+                    .Select(i => new DashboardWorkIntervalDto { Start = WorkingHoursCalculator.ToTimeOnly(i.Start), End = WorkingHoursCalculator.ToTimeOnly(i.End) })
                     .ToList(),
                 Breaks = breaksForEmployee
                     .Select(b => new DashboardBreakDto { StartsAt = b.StartsAt, DurationMinutes = b.DurationMinutes })

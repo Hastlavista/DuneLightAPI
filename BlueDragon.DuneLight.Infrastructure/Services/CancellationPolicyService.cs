@@ -30,17 +30,20 @@ public class CancellationPolicyService : ICancellationPolicyService, ICancellati
     private readonly ICompanyHandler _companyHandler;
     private readonly IServiceHandler _serviceHandler;
     private readonly IUnitOfWorkFactory _unitOfWorkFactory;
+    private readonly TimeProvider _timeProvider;
 
     public CancellationPolicyService(
         ICancellationPolicyHandler handler,
         ICompanyHandler companyHandler,
         IServiceHandler serviceHandler,
-        IUnitOfWorkFactory unitOfWorkFactory)
+        IUnitOfWorkFactory unitOfWorkFactory,
+        TimeProvider timeProvider)
     {
         _handler = handler;
         _companyHandler = companyHandler;
         _serviceHandler = serviceHandler;
         _unitOfWorkFactory = unitOfWorkFactory;
+        _timeProvider = timeProvider;
     }
 
     #region Resolver
@@ -84,7 +87,7 @@ public class CancellationPolicyService : ICancellationPolicyService, ICancellati
 
     public async Task CreateNeutralOrganizationDefault(IUnitOfWork uow, Guid organizationId, Guid? userId)
     {
-        DateTimeOffset now = DateTimeOffset.UtcNow;
+        DateTimeOffset now = _timeProvider.GetUtcNow();
         CancellationPolicy policy = new CancellationPolicy
         {
             Id = Guid.NewGuid(),
@@ -134,7 +137,7 @@ public class CancellationPolicyService : ICancellationPolicyService, ICancellati
         string name = NormalizeName(request?.Name);
         CancellationPolicyRules.Validate(request);
 
-        DateTimeOffset now = DateTimeOffset.UtcNow;
+        DateTimeOffset now = _timeProvider.GetUtcNow();
         CancellationPolicy policy = new CancellationPolicy
         {
             Id = Guid.NewGuid(),
@@ -168,7 +171,7 @@ public class CancellationPolicyService : ICancellationPolicyService, ICancellati
             if (policy.IsActive)
                 await EnsureActiveNameFree(uow, organizationId, name, exceptId: id);
             policy.Name = name;
-            Touch(policy, userId);
+            Touch(policy, userId, _timeProvider.GetUtcNow());
             await SaveTranslatingDuplicates(uow, name);
             await uow.CommitAsync();
         }
@@ -186,9 +189,9 @@ public class CancellationPolicyService : ICancellationPolicyService, ICancellati
 
             // D11: kreiranje verzije = objava; starije verzije se nikad ne mijenjaju. Version + 1 pod lockom profila.
             int next = await _handler.GetLatestVersionNumber(uow, id) + 1;
-            DateTimeOffset now = DateTimeOffset.UtcNow;
+            DateTimeOffset now = _timeProvider.GetUtcNow();
             uow.Context.CancellationPolicyVersions.Add(NewVersion(policy, next, request, userId, now));
-            Touch(policy, userId);
+            Touch(policy, userId, _timeProvider.GetUtcNow());
             await uow.Context.SaveChangesAsync();
             await uow.CommitAsync();
         }
@@ -206,7 +209,7 @@ public class CancellationPolicyService : ICancellationPolicyService, ICancellati
             {
                 await EnsureActiveNameFree(uow, organizationId, policy.Name, exceptId: id);
                 policy.IsActive = true;
-                Touch(policy, userId);
+                Touch(policy, userId, _timeProvider.GetUtcNow());
                 await SaveTranslatingDuplicates(uow, policy.Name);
             }
 
@@ -231,7 +234,7 @@ public class CancellationPolicyService : ICancellationPolicyService, ICancellati
             if (policy.IsActive)
             {
                 policy.IsActive = false;
-                Touch(policy, userId);
+                Touch(policy, userId, _timeProvider.GetUtcNow());
                 await uow.Context.SaveChangesAsync();
             }
 
@@ -258,13 +261,13 @@ public class CancellationPolicyService : ICancellationPolicyService, ICancellati
                 if (current != null)
                 {
                     current.IsOrganizationDefault = false;
-                    Touch(current, userId);
+                    Touch(current, userId, _timeProvider.GetUtcNow());
                     // Djelomični unique (organization_id) WHERE is_organization_default — stara zadana se gasi prije nove.
                     await uow.Context.SaveChangesAsync();
                 }
 
                 target.IsOrganizationDefault = true;
-                Touch(target, userId);
+                Touch(target, userId, _timeProvider.GetUtcNow());
                 await uow.Context.SaveChangesAsync();
             }
 
@@ -303,7 +306,7 @@ public class CancellationPolicyService : ICancellationPolicyService, ICancellati
             if (!policy.IsActive)
                 throw new BusinessRuleException(ErrorCodes.CancellationPolicyInactive, "Neaktivna politika se ne može dodijeliti.");
 
-            DateTimeOffset now = DateTimeOffset.UtcNow;
+            DateTimeOffset now = _timeProvider.GetUtcNow();
             CancellationPolicyAssignment existing = await _handler.GetAssignmentForScope(uow, organizationId, request.CompanyId, request.ServiceId);
             if (existing == null)
             {
@@ -428,9 +431,9 @@ public class CancellationPolicyService : ICancellationPolicyService, ICancellati
         }
     }
 
-    private static void Touch(CancellationPolicy policy, Guid userId)
+    private static void Touch(CancellationPolicy policy, Guid userId, DateTimeOffset now)
     {
-        policy.UpdatedAt = DateTimeOffset.UtcNow;
+        policy.UpdatedAt = now;
         policy.UpdatedBy = userId;
     }
 

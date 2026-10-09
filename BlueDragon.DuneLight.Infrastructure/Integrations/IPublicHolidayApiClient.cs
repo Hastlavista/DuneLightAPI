@@ -6,7 +6,7 @@ namespace BlueDragon.DuneLight.Infrastructure.Integrations;
 
 public class PublicHolidayResult
 {
-    public DateTimeOffset Date { get; set; }
+    public DateOnly Date { get; set; }
     public string Name { get; set; }
 }
 

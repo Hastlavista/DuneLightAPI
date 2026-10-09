@@ -5,11 +5,13 @@ namespace BlueDragon.DuneLight.Infrastructure.Utils;
 
 /// <summary>
 /// Phase D3B3A/D3B3A.1 — JEDINO pravilo valjanosti paketa, isključivo usporedba KALENDARSKIH datuma: paket vrijedi za
-/// izvođenje usluge kad je lokalni datum izvođenja &lt;= ClientPackage.ValidUntilDate. Lokalni datum izvođenja je
-/// datum planiranog početka segmenta sudjelovanja u efektivnoj zoni poslovnice termina (Company.TimeZone ??
-/// Organization.TimeZone, OrganizationCalendar) — nikad trenutni sat, UTC datum ni zona hosta. Isto pravilo koriste
-/// eligibility upit (ClientPackageHandler.GetEligibleForService) i potrošnja (ClientPackageEntryMutator.Deduct kroz
-/// IPackageConsumptionLedgerService).
+/// izvođenje usluge kad je ClientPackage.PurchaseDate &lt;= lokalni datum izvođenja &lt;= ClientPackage.ValidUntilDate (oba kraja
+/// uključena). Lokalni datum izvođenja je datum planiranog početka segmenta sudjelovanja u efektivnoj zoni poslovnice termina
+/// (Company.TimeZone ?? Organization.TimeZone, OrganizationCalendar) — nikad trenutni sat, UTC datum ni zona hosta. Isto
+/// pravilo koriste eligibility upit (ClientPackageHandler.GetEligibleForService) i potrošnja (ClientPackageEntryMutator.Deduct
+/// kroz IPackageConsumptionLedgerService).
+/// T1-9 (CHANGED in T1): donja granica PurchaseDate — paket ne pokriva termine prije dana kupnje, ni kad je upisan unatrag
+/// (prije: samo gornja granica ValidUntilDate).
 /// </summary>
 public static class PackageValidity
 {
@@ -21,5 +23,5 @@ public static class PackageValidity
     }
 
     public static bool IsValidOn(ClientPackage clientPackage, DateOnly serviceDate) =>
-        serviceDate <= clientPackage.ValidUntilDate;
+        serviceDate >= clientPackage.PurchaseDate && serviceDate <= clientPackage.ValidUntilDate;
 }

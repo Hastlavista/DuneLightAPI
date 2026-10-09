@@ -74,4 +74,21 @@ public static class WarningCodes
     public const string ParticipationNotCovered = "PARTICIPATION_NOT_COVERED";
     /// <summary>Klijent ima prihvatljiv paket za sesiju koji nije odabran/potrošen (details nose pakete) — odabrati ga pri odradi.</summary>
     public const string ParticipationPackageAvailable = "PARTICIPATION_PACKAGE_AVAILABLE";
+
+    // T1-8 — pravila cijena
+    /// <summary>Cijena sudjelovanja uzeta iz zadane cijene usluge jer (1) usluga ima stavke cjenika, ali nijedna ne pokriva dan
+    /// termina, ili (2) je zadana cijena 0 € (details: WarningPriceNotDefinedDetails). Rezervacija se ne odbija.</summary>
+    public const string PriceNotDefined = "PRICE_NOT_DEFINED";
+    /// <summary>Zbirno upozorenje generiranja grupnih termina (i upisa člana u već generirane termine): broj termina i datumi na
+    /// kojima je cijena uzeta iz zadane cijene usluge (details: WarningPriceNotDefinedOccurrencesDetails).</summary>
+    public const string PriceNotDefinedOccurrences = "PRICE_NOT_DEFINED_OCCURRENCES";
+    /// <summary>Segmentna naredba je ponovno pročitala cjenik i promijenila cijenu sudjelovanja (details:
+    /// WarningParticipationPriceChangedDetails, jedno upozorenje po sudjelovanju).</summary>
+    public const string ParticipationPriceChanged = "PARTICIPATION_PRICE_CHANGED";
+    /// <summary>Nakon spremanja stavke cjenika postoji rupa (dani bez stavke) između spremljene i susjedne stavke istog
+    /// predmeta i konteksta (details: WarningPriceListGapDetails). Spremanje se ne odbija.</summary>
+    public const string PriceListGap = "PRICE_LIST_GAP";
+    /// <summary>Zakazana buduća sudjelovanja (Confirmed) usluge i konteksta stavke s danom unutar važenja stavke ZADRŽAVAJU svoju
+    /// spremljenu cijenu — primjena nove cijene na zakazane termine je P5 (details: WarningPriceListScheduledKeepDetails).</summary>
+    public const string PriceListScheduledKeepOldPrice = "PRICE_LIST_SCHEDULED_KEEP_OLD_PRICE";
 }

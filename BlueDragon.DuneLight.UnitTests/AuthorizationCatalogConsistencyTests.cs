@@ -26,7 +26,8 @@ public class AuthorizationCatalogConsistencyTests
         [Grants.GroupsCapacityOverride] = "GroupCapacityGuard: eksplicitno prekoračenje mekog kapaciteta segmenta grupe unutar groups.manage/appointments akcija.",
         [Grants.AppointmentsMembershipBlockOverride] = "MembershipCoverageService: rezervacija člana u dugu uz postavku \"blokiraj rezervaciju\" unutar appointments/groups akcija (P2 Q54).",
         [Grants.AppointmentsAvailabilityOverride] = "AvailabilityOverride: rad izvan radnog vremena / dostupnosti uz OverrideAvailability unutar appointments/groups akcija (K2, P-2).",
-        [Grants.RosterEntriesWritePast] = "RosterEntryService: upis/izmjena/brisanje roster zapisa u prošlosti unutar roster.entries.write.own/all (K2, P-4)."
+        [Grants.RosterEntriesWritePast] = "RosterEntryService: upis/izmjena/brisanje roster zapisa u prošlosti unutar roster.entries.write.own/all (K2, P-4).",
+        [Grants.ClientsPackagesWritePast] = "ClientPackageService.Create: ručni upis paketa s datumom kupnje prije današnjeg dana unutar clients.packages.manage (T1-9)."
     };
 
     private static readonly HashSet<string> CatalogKeys = Grants.Catalog.Select(g => g.Key).ToHashSet();

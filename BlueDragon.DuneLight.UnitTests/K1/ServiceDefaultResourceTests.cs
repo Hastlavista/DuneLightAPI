@@ -115,7 +115,7 @@ public class ServiceDefaultResourceTests
             EmployeeId = w.Employee.Id.Value,
             ClientIds = new List<Guid> { w.Client.Id.Value },
             FirstOccurrenceStartsAt = SchedulingWorld.Future(10),
-            EndDate = SchedulingWorld.Future(10).AddDays(7),
+            EndDate = SchedulingWorld.Day(SchedulingWorld.Future(10).AddDays(7)),
             RecurrenceType = RecurrenceType.Weekly
         });
 
@@ -141,7 +141,7 @@ public class ServiceDefaultResourceTests
             {
                 CompanyId = w.Company.Id.Value, ServiceId = w.Service.Id.Value, EmployeeId = w.Employee.Id.Value,
                 ClientIds = new List<Guid> { w.Client.Id.Value },
-                FirstOccurrenceStartsAt = SchedulingWorld.Future(10), EndDate = SchedulingWorld.Future(10).AddDays(14),
+                FirstOccurrenceStartsAt = SchedulingWorld.Future(10), EndDate = SchedulingWorld.Day(SchedulingWorld.Future(10).AddDays(14)),
                 RecurrenceType = RecurrenceType.Weekly
             }));
 

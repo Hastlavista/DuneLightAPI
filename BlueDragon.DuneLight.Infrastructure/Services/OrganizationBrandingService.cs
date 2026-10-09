@@ -17,17 +17,20 @@ public class OrganizationBrandingService : IOrganizationBrandingService
     private readonly IOrganizationBrandingAuditLogHandler _auditLogHandler;
     private readonly IAuthHandler _authHandler;
     private readonly IBrandingFileStorage _brandingFileStorage;
+    private readonly TimeProvider _timeProvider;
 
     public OrganizationBrandingService(
         IOrganizationBrandingHandler organizationBrandingHandler,
         IOrganizationBrandingAuditLogHandler auditLogHandler,
         IAuthHandler authHandler,
-        IBrandingFileStorage brandingFileStorage)
+        IBrandingFileStorage brandingFileStorage,
+        TimeProvider timeProvider)
     {
         _organizationBrandingHandler = organizationBrandingHandler;
         _auditLogHandler = auditLogHandler;
         _authHandler = authHandler;
         _brandingFileStorage = brandingFileStorage;
+        _timeProvider = timeProvider;
     }
 
     public async Task<OrganizationBrandingResponse> GetPublicBranding(string organizationSlug)
@@ -180,7 +183,7 @@ public class OrganizationBrandingService : IOrganizationBrandingService
             ChangeType = changeType,
             OldValue = oldValue,
             NewValue = newValue,
-            ChangedAt = DateTimeOffset.UtcNow,
+            ChangedAt = _timeProvider.GetUtcNow(),
             ChangedBy = userId
         });
     }

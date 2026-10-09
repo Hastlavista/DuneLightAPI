@@ -11,7 +11,7 @@ namespace BlueDragon.DuneLight.Infrastructure.Services;
 /// </summary>
 public class PriceResolutionService : IPriceResolutionService
 {
-    public ResolvedPrice Resolve(IEnumerable<PriceCandidate> candidates, decimal defaultPrice, Guid? companyId, Guid? employeeId, DateTimeOffset date)
+    public ResolvedPrice Resolve(IEnumerable<PriceCandidate> candidates, decimal defaultPrice, Guid? companyId, Guid? employeeId, DateOnly date)
     {
         List<PriceCandidate> validOnDate = candidates
             .Where(c => c.IsActive && c.ValidFrom <= date && (c.ValidTo == null || c.ValidTo >= date))

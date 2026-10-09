@@ -8,12 +8,12 @@ public class ScheduleBreakDto
 {
     public Guid Id { get; set; }
     public Guid EmployeeId { get; set; }
-    public string EmployeeName { get; set; }
+    public string? EmployeeName { get; set; }
     public Guid CompanyId { get; set; }
-    public string CompanyName { get; set; }
+    public string? CompanyName { get; set; }
     public DateTimeOffset StartsAt { get; set; }
     public int DurationMinutes { get; set; }
-    public string Note { get; set; }
+    public string? Note { get; set; }
     public Guid? RecurrenceGroupId { get; set; }
 
     public DateTimeOffset CreatedAt { get; set; }
@@ -29,10 +29,10 @@ public class ScheduleBreakCellDto
     public DateTimeOffset StartsAt { get; set; }
     public int DurationMinutes { get; set; }
     public Guid EmployeeId { get; set; }
-    public string EmployeeName { get; set; }
+    public string? EmployeeName { get; set; }
     public Guid CompanyId { get; set; }
-    public string CompanyName { get; set; }
-    public string Note { get; set; }
+    public string? CompanyName { get; set; }
+    public string? Note { get; set; }
 }
 
 public class ScheduleBreakQuery
@@ -62,7 +62,7 @@ public class ScheduleBreakCreateRequest
     [Range(1, int.MaxValue, ErrorMessage = "Trajanje mora biti veće od nule.")]
     public int DurationMinutes { get; set; }
 
-    public string Note { get; set; }
+    public string? Note { get; set; }
 }
 
 public class ScheduleBreakUpdateRequest : ScheduleBreakCreateRequest
@@ -90,7 +90,7 @@ public class RecurringScheduleBreakCreateRequest
     public int DurationMinutes { get; set; }
 
     [Required]
-    public DateTimeOffset EndDate { get; set; }
+    public DateOnly EndDate { get; set; }
 
-    public string Note { get; set; }
+    public string? Note { get; set; }
 }

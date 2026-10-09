@@ -30,11 +30,11 @@ public class LeaveFund
     public int FundYear { get; set; }
 
     [Column("opened_at")]
-    public DateTimeOffset OpenedAt { get; set; }
+    public DateOnly OpenedAt { get; set; }
 
     /// <summary>Nakon ovog datuma neiskorišteni ostatak ovog fonda više nije prihvatljiv za trošenje (vidi LeaveFundHandler.GetEligible).</summary>
     [Column("expires_at")]
-    public DateTimeOffset ExpiresAt { get; set; }
+    public DateOnly ExpiresAt { get; set; }
 
     [Column("allocated_days")]
     public int AllocatedDays { get; set; }

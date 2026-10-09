@@ -38,9 +38,9 @@ public class MultiEmployeeSegmentTests
         Employee ana = await w.AddEmployee("Ana", assignedToService: false);
         Employee marko = await w.AddEmployee("Marko", assignedToService: false);
         Employee ivana = await w.AddEmployee("Ivana", assignedToService: false);
-        await w.AddPriceListItem(duo, 55m, SchedulingWorld.PastDay, companyId: w.Company.Id);
-        await w.AddPriceListItem(duo, 60m, SchedulingWorld.PastDay, employeeId: ana.Id);
-        await w.AddPriceListItem(duo, 70m, SchedulingWorld.PastDay, companyId: w.Company.Id, employeeId: marko.Id);
+        await w.AddPriceListItem(duo, 55m, SchedulingWorld.Day(SchedulingWorld.PastDay), companyId: w.Company.Id);
+        await w.AddPriceListItem(duo, 60m, SchedulingWorld.Day(SchedulingWorld.PastDay), employeeId: ana.Id);
+        await w.AddPriceListItem(duo, 70m, SchedulingWorld.Day(SchedulingWorld.PastDay), companyId: w.Company.Id, employeeId: marko.Id);
         return new Studio(duo, hundred, ana, marko, ivana);
     }
 
@@ -494,13 +494,17 @@ public class MultiEmployeeSegmentTests
 
         await Move(s.Ana, 11);
         await Move(s.Marko, 12);
-        await SchedulingAssert.BusinessRule(ErrorCodes.NotOwner, () => Move(s.Ivana, 13));
+        // CHANGED in T1: 403 OutOfScope (bilo 409 NOT_OWNER)
+        await SchedulingAssert.OutOfScope(() => Move(s.Ivana, 13));
         // Own scope cannot remove (or add) coworkers — even an assigned employee.
-        await SchedulingAssert.BusinessRule(ErrorCodes.NotOwner, () => ChangeEmployees(w, segment, new[] { s.Ana }, fullScope: false, userId: s.Ana.UserId));
-        await SchedulingAssert.BusinessRule(ErrorCodes.NotOwner, () => w.Appointments.Cancel(w.OrganizationId, s.Ana.UserId, false, dto.Id,
+        // CHANGED in T1: 403 OutOfScope (bilo 409 NOT_OWNER)
+        await SchedulingAssert.OutOfScope(() => ChangeEmployees(w, segment, new[] { s.Ana }, fullScope: false, userId: s.Ana.UserId));
+        // CHANGED in T1: 403 OutOfScope (bilo 409 NOT_OWNER)
+        await SchedulingAssert.OutOfScope(() => w.Appointments.Cancel(w.OrganizationId, s.Ana.UserId, false, dto.Id,
             SchedulingWorld.BusinessCancel("own")));
         // Own scope cannot create a segment for a coworker either.
-        await SchedulingAssert.BusinessRule(ErrorCodes.NotOwner, () => Create(w,
+        // CHANGED in T1: 403 OutOfScope (bilo 409 NOT_OWNER)
+        await SchedulingAssert.OutOfScope(() => Create(w,
             Seg(s.Duo, SchedulingWorld.Future(15), new[] { s.Ana, s.Marko }, SegmentPricingMode.Standard, clients: w.Client), fullScope: false, userId: s.Ana.UserId));
     }
 
@@ -561,7 +565,7 @@ public class MultiEmployeeSegmentTests
         PriceListItemCreateRequest Item(Employee employee, Guid? companyId = null) => new()
         {
             SubjectType = PricingSubjectType.Service, ServiceId = s.Hundred.Id, CompanyId = companyId, EmployeeId = employee?.Id,
-            Price = 90m, ValidFrom = SchedulingWorld.PastDay
+            Price = 90m, ValidFrom = SchedulingWorld.Day(SchedulingWorld.PastDay)
         };
 
         await pricing.Create(w.OrganizationId, w.ActorUserId, Item(null));
@@ -570,16 +574,16 @@ public class MultiEmployeeSegmentTests
         await SchedulingAssert.BusinessRule(ErrorCodes.PriceOverlap, () => pricing.Create(w.OrganizationId, w.ActorUserId, Item(s.Ana)));
         await SchedulingAssert.Validation(() => pricing.Create(w.OrganizationId, w.ActorUserId, new PriceListItemCreateRequest
         {
-            SubjectType = PricingSubjectType.Package, PackageId = Guid.NewGuid(), EmployeeId = s.Ana.Id, Price = 1m, ValidFrom = SchedulingWorld.PastDay
+            SubjectType = PricingSubjectType.Package, PackageId = Guid.NewGuid(), EmployeeId = s.Ana.Id, Price = 1m, ValidFrom = SchedulingWorld.Day(SchedulingWorld.PastDay)
         }));
 
         ResolvePriceResponse standard = await pricing.ResolvePrice(w.OrganizationId, new ResolvePriceRequest
         {
-            SubjectType = PricingSubjectType.Service, SubjectId = s.Duo.Id.Value, CompanyId = w.Company.Id, Date = SchedulingWorld.FutureDay
+            SubjectType = PricingSubjectType.Service, SubjectId = s.Duo.Id.Value, CompanyId = w.Company.Id, Date = SchedulingWorld.Day(SchedulingWorld.FutureDay)
         });
         Assert.Equal((55m, PriceSource.CompanySpecific), (standard.Price, standard.Source));
         // The effective (standard) price list never shows an employee price.
-        List<EffectivePriceDto> effective = await pricing.GetEffectivePriceList(w.OrganizationId, w.Company.Id, SchedulingWorld.FutureDay);
+        List<EffectivePriceDto> effective = await pricing.GetEffectivePriceList(w.OrganizationId, w.Company.Id, SchedulingWorld.Day(SchedulingWorld.FutureDay));
         Assert.Equal(55m, effective.Single(e => e.SubjectId == s.Duo.Id).Price);
     }
 

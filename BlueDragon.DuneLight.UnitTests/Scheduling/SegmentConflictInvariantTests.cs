@@ -61,7 +61,7 @@ public class SegmentConflictInvariantTests
     {
         await using DatabaseContext db = w.NewDb();
         Appointment a = await db.Appointments.SingleAsync(x => x.Id == appointmentId);
-        a.CancelledAt = DateTimeOffset.UtcNow;
+        a.CancelledAt = TestClock.UtcNow;
         await db.SaveChangesAsync();
     }
 
@@ -136,7 +136,7 @@ public class SegmentConflictInvariantTests
     {
         Guid client = Guid.NewGuid();
         Appointment proposed = AppointmentFactory.CreateIndividual(
-            Guid.NewGuid(), Guid.NewGuid(), null, null, Guid.NewGuid(), DateTimeOffset.UtcNow,
+            Guid.NewGuid(), Guid.NewGuid(), null, null, Guid.NewGuid(), TestClock.UtcNow,
             new[]
             {
                 new SegmentPlan(Guid.NewGuid(), T9, T9.AddMinutes(60), new[] { Guid.NewGuid() }, null, new[] { new ParticipantPlan(client, BookingPricing.Zero) }),

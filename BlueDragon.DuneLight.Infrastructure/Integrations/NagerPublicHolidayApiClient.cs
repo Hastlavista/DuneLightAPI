@@ -38,7 +38,7 @@ public class NagerPublicHolidayApiClient : IPublicHolidayApiClient
                 .Where(h => !string.IsNullOrWhiteSpace(h.Date))
                 .Select(h => new PublicHolidayResult
                 {
-                    Date = new DateTimeOffset(DateTime.ParseExact(h.Date, "yyyy-MM-dd", CultureInfo.InvariantCulture), TimeSpan.Zero),
+                    Date = DateOnly.ParseExact(h.Date, "yyyy-MM-dd", CultureInfo.InvariantCulture),
                     Name = string.IsNullOrWhiteSpace(h.LocalName) ? h.Name : h.LocalName
                 })
                 .ToList();

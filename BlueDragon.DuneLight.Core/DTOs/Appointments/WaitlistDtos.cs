@@ -15,7 +15,7 @@ public class WaitlistEntryDto
     public Guid AppointmentSegmentId { get; set; }
 
     public Guid ClientId { get; set; }
-    public string ClientName { get; set; }
+    public string? ClientName { get; set; }
     public WaitlistEntryStatus Status { get; set; }
 
     /// <summary>1-bazirana pozicija unutar Waiting reda (FIFO po JoinedAt/Id) — samo dok je Status Waiting,
@@ -31,7 +31,7 @@ public class WaitlistEntryDto
     public DateTimeOffset? CancelledAt { get; set; }
 
     /// <summary>Popunjeno samo kad je Status Expired — vidi WaitlistExpiredReasons.</summary>
-    public string ExpiredReason { get; set; }
+    public string? ExpiredReason { get; set; }
 }
 
 public class WaitlistJoinRequest

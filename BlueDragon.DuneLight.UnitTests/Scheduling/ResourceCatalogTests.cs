@@ -128,7 +128,7 @@ public class ResourceCatalogTests
         Resource Row(string name, int capacity, bool isActive = true) => new()
         {
             Id = Guid.NewGuid(), OrganizationId = w.OrganizationId, CompanyId = w.Company.Id.Value, Name = name,
-            Capacity = capacity, IsActive = isActive, CreatedAt = DateTimeOffset.UtcNow
+            Capacity = capacity, IsActive = isActive, CreatedAt = TestClock.UtcNow
         };
 
         await using (DatabaseContext db = w.NewDb())

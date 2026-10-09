@@ -89,7 +89,7 @@ public class CapacityEditInvariantTests
         return seeded;
     }
 
-    private static DateTimeOffset Now => DateTimeOffset.UtcNow;
+    private static DateTimeOffset Now => TestClock.UtcNow;
 
     #region Room
 

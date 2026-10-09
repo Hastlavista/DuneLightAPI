@@ -34,7 +34,7 @@ public class CancellationPolicyEngineTests
     private static readonly DateOnly LongValid = new(2035, 1, 1);
 
     /// <summary>A window that makes a client cancellation of <see cref="SchedulingWorld.Future"/>(10) LATE (now is years before).</summary>
-    private static int LateWindow() => (int)(SchedulingWorld.Future(10) - DateTimeOffset.UtcNow).TotalMinutes + 60;
+    private static int LateWindow() => (int)(SchedulingWorld.Future(10) - TestClock.UtcNow).TotalMinutes + 60;
 
     private static ICancellationPolicyService Policies(SchedulingWorld w) => w.Resolve<ICancellationPolicyService>();
 

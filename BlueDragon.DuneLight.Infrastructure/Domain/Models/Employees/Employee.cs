@@ -30,7 +30,7 @@ public class Employee
     public string Email { get; set; }
 
     [Column("date_of_birth")]
-    public DateTimeOffset? DateOfBirth { get; set; }
+    public DateOnly? DateOfBirth { get; set; }
 
     [Column("address")]
     public string Address { get; set; }
@@ -52,10 +52,10 @@ public class Employee
     public int SortOrder { get; set; }
 
     [Column("employment_start_date")]
-    public DateTimeOffset EmploymentStartDate { get; set; }
+    public DateOnly EmploymentStartDate { get; set; }
 
     [Column("employment_end_date")]
-    public DateTimeOffset? EmploymentEndDate { get; set; }
+    public DateOnly? EmploymentEndDate { get; set; }
 
     [Column("engagement_type_id")]
     public Guid EngagementTypeId { get; set; }

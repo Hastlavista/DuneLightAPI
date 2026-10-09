@@ -15,10 +15,12 @@ namespace BlueDragon.DuneLight.Infrastructure.Handlers.Implementations;
 public class RosterTypeHandler : IRosterTypeHandler
 {
     private readonly DatabaseSettings _databaseSettings;
+    private readonly TimeProvider _timeProvider;
 
-    public RosterTypeHandler(DatabaseSettings databaseSettings)
+    public RosterTypeHandler(DatabaseSettings databaseSettings, TimeProvider timeProvider)
     {
         _databaseSettings = databaseSettings;
+        _timeProvider = timeProvider;
     }
 
     public async Task<(List<RosterType> Items, int TotalCount)> GetPaged(Guid organizationId, PagedRequest request)
@@ -109,7 +111,7 @@ public class RosterTypeHandler : IRosterTypeHandler
             DeductsFromLeaveFund = definition.DeductsFromLeaveFund,
             SortOrder = definition.SortOrder,
             IsActive = true,
-            CreatedAt = DateTimeOffset.UtcNow
+            CreatedAt = _timeProvider.GetUtcNow()
         }).ToList();
 
         uow.Context.RosterTypes.AddRange(types);

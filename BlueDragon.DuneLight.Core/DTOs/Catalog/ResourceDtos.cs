@@ -8,13 +8,13 @@ public class ResourceDto
 {
     public Guid Id { get; set; }
     public Guid CompanyId { get; set; }
-    public string CompanyName { get; set; }
+    public string? CompanyName { get; set; }
     public string Name { get; set; }
 
     /// <summary>Broj raspoloživih jedinica resursa (≥ 1).</summary>
     public int Capacity { get; set; }
     public bool IsActive { get; set; }
-    public string Note { get; set; }
+    public string? Note { get; set; }
     public int SortOrder { get; set; }
     public DateTimeOffset CreatedAt { get; set; }
     public Guid? CreatedBy { get; set; }
@@ -34,7 +34,7 @@ public class ResourceCreateRequest
     [Range(CatalogCapacity.Min, int.MaxValue, ErrorMessage = "Kapacitet resursa mora biti najmanje 1.")]
     public int Capacity { get; set; }
 
-    public string Note { get; set; }
+    public string? Note { get; set; }
 
     public int SortOrder { get; set; }
 }
@@ -50,7 +50,7 @@ public class ResourceUpdateRequest
     [Range(CatalogCapacity.Min, int.MaxValue, ErrorMessage = "Kapacitet resursa mora biti najmanje 1.")]
     public int Capacity { get; set; }
 
-    public string Note { get; set; }
+    public string? Note { get; set; }
 
     public int SortOrder { get; set; }
 }

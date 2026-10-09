@@ -5,6 +5,7 @@ using System.Threading.Tasks;
 using BlueDragon.DuneLight.Core.DTOs.Catalog;
 using BlueDragon.DuneLight.Core.DTOs.Clients;
 using BlueDragon.DuneLight.Core.Enums;
+using BlueDragon.DuneLight.Core.Interfaces;
 using BlueDragon.DuneLight.Core.Interfaces.Catalog;
 using BlueDragon.DuneLight.Core.Interfaces.Clients;
 using BlueDragon.DuneLight.Core.Shared;
@@ -37,6 +38,8 @@ public class ClientPackageService : IClientPackageService, IPackageConsumptionLe
     private readonly IOrganizationSettingsService _organizationSettingsService;
     private readonly ICheckoutHandler _checkoutHandler;
     private readonly IBookingSegmentParticipationHandler _participationHandler;
+    private readonly IGrantResolver _grantResolver;
+    private readonly TimeProvider _timeProvider;
 
     public ClientPackageService(
         IClientPackageHandler clientPackageHandler,
@@ -47,8 +50,11 @@ public class ClientPackageService : IClientPackageService, IPackageConsumptionLe
         IOrganizationCalendarService organizationCalendarService,
         IOrganizationSettingsService organizationSettingsService,
         ICheckoutHandler checkoutHandler,
-        IBookingSegmentParticipationHandler participationHandler)
+        IBookingSegmentParticipationHandler participationHandler,
+        IGrantResolver grantResolver,
+        TimeProvider timeProvider)
     {
+        _grantResolver = grantResolver;
         _checkoutHandler = checkoutHandler;
         _participationHandler = participationHandler;
         _organizationCalendarService = organizationCalendarService;
@@ -58,6 +64,7 @@ public class ClientPackageService : IClientPackageService, IPackageConsumptionLe
         _packageHandler = packageHandler;
         _companyHandler = companyHandler;
         _pricingService = pricingService;
+        _timeProvider = timeProvider;
     }
 
     public async Task<ClientPackageDto> Create(Guid organizationId, Guid userId, Guid clientId, ClientPackageCreateRequest request)
@@ -85,16 +92,22 @@ public class ClientPackageService : IClientPackageService, IPackageConsumptionLe
                 throw new BusinessRuleException(ErrorCodes.InactiveCompany, $"Tvrtka '{company.Name}' nije aktivna.");
         }
 
-        DateTimeOffset purchaseDate = request.PurchaseDate ?? DateTimeOffset.UtcNow;
+        // T1-7: PurchaseDate je POSLOVNI dan kupnje (DateOnly) — zadana vrijednost je današnji dan po poslovnom satu u zoni
+        // poslovnice prodaje (organizacije kad prodaja stvarno nema poslovnicu); trenutak prodaje ostaje CreatedAt.
+        DateTimeOffset now = _timeProvider.GetUtcNow();
+        DateOnly today = (await _organizationCalendarService.GetCompanyOrOrganizationCalendar(organizationId, request.CompanyId)).LocalDate(now);
+        DateOnly purchaseDate = request.PurchaseDate ?? today;
+        bool backdated = await EnsurePurchaseDateAllowed(organizationId, userId, purchaseDate, today);
 
         decimal paidPrice = request.PaidPrice ?? await ResolveSuggestedPrice(organizationId, request.PackageId, request.CompanyId, purchaseDate);
 
-        // Phase D3B3A.1: poslovni datum kupnje = lokalni datum u kalendaru poslovnice prodaje (organizacije kad prodaja
-        // stvarno nema poslovnicu) — ne offset ulazne PurchaseDate vrijednosti, ne UTC datum, ne zona hosta.
-        OrganizationCalendar saleCalendar = request.CompanyId.HasValue
-            ? await _organizationCalendarService.GetCompanyCalendar(organizationId, request.CompanyId.Value)
-            : await _organizationCalendarService.GetCalendar(organizationId);
-        DateOnly validUntilDate = PackageExpiryCalculator.ForSale(package, purchaseDate, saleCalendar);
+        DateOnly validUntilDate = PackageExpiryCalculator.ForSale(package, purchaseDate);
+        // T1-9: paket koji bi pri upisu već bio istekao se ne upisuje (uvoz povijesti samo uz posebnu odluku). Vrijedi i za
+        // današnju kupnju paketa s fiksnim datumom isteka koji je prošao.
+        if (validUntilDate < today)
+            throw new BusinessRuleException(ErrorCodes.PackageExpiredAtIssue,
+                $"Paket kupljen {purchaseDate:dd.MM.yyyy.} vrijedi do {validUntilDate:dd.MM.yyyy.}, što je prije današnjeg dana ({today:dd.MM.yyyy.}) — istekao paket se ne može upisati.",
+                new { purchaseDate, validUntilDate, today });
 
         Guid clientPackageId = Guid.NewGuid();
         ClientPackage clientPackage = new ClientPackage
@@ -111,7 +124,7 @@ public class ClientPackageService : IClientPackageService, IPackageConsumptionLe
             ValidityType = package.ValidityType,
             ValidUntilDate = validUntilDate,
             Status = ClientPackageStatus.Active,
-            CreatedAt = DateTimeOffset.UtcNow,
+            CreatedAt = now,
             CreatedBy = userId
         };
 
@@ -127,8 +140,40 @@ public class ClientPackageService : IClientPackageService, IPackageConsumptionLe
             });
         }
 
-        await _clientPackageHandler.Add(clientPackage);
+        // T1-9: upis unatrag ide u povijest klijenta (tko, kada, PurchaseDate) u istom SaveChanges kao i paket. Upis paketa ne
+        // dira postojeća sudjelovanja (nema retroaktivnog pokrića) i ne stvara proviziju (provizija na prodaju je samo checkout).
+        ClientAuditLog audit = backdated
+            ? new ClientAuditLog
+            {
+                Id = Guid.NewGuid(),
+                OrganizationId = organizationId,
+                ClientId = clientId,
+                ChangeType = ClientAuditChangeTypes.PackageIssuedBackdated,
+                NewValue = $"clientPackageId={clientPackageId};purchaseDate={purchaseDate:yyyy-MM-dd}",
+                ChangedAt = now,
+                ChangedBy = userId
+            }
+            : null;
+        await _clientPackageHandler.Add(clientPackage, audit);
         return await GetById(organizationId, clientId, clientPackageId);
+    }
+
+    /// <summary>T1-9 — dan kupnje ručnog upisa paketa: nikad nakon današnjeg dana (zona poslovnice prodaje, bez nje organizacije;
+    /// poslovni sat); prije današnjeg dana samo uz clients.packages.write.past (bez granice unatrag, isti obrazac kao
+    /// roster.entries.write.past). Vraća je li upis unatrag. Checkout uvijek prodaje na današnji dan i ne prolazi ovuda.</summary>
+    private async Task<bool> EnsurePurchaseDateAllowed(Guid organizationId, Guid userId, DateOnly purchaseDate, DateOnly today)
+    {
+        if (purchaseDate > today)
+            throw new ValidationAppException(ErrorCodes.PackagePurchaseDateInFuture,
+                $"Datum kupnje paketa ({purchaseDate:dd.MM.yyyy.}) ne smije biti nakon današnjeg dana ({today:dd.MM.yyyy.}).");
+        if (purchaseDate == today)
+            return false;
+
+        GrantContext grants = await _grantResolver.Resolve(organizationId, userId);
+        if (!grants.Has(Grants.ClientsPackagesWritePast))
+            throw ForbiddenAppException.MissingGrant(
+                "Upis paketa s datumom kupnje prije današnjeg dana zahtijeva ovlast clients.packages.write.past.", Grants.ClientsPackagesWritePast);
+        return true;
     }
 
     public async Task<ClientPackageDto> GetById(Guid organizationId, Guid clientId, Guid id)
@@ -222,7 +267,7 @@ public class ClientPackageService : IClientPackageService, IPackageConsumptionLe
         DateOnly serviceDate = PackageValidity.ServiceDate(calendar, execution.StartsAt);
         ClientPackageEntryMutator.Deduct(clientPackage, execution.ServiceId, serviceDate);
 
-        DateTimeOffset now = DateTimeOffset.UtcNow;
+        DateTimeOffset now = _timeProvider.GetUtcNow();
         clientPackage.UpdatedAt = now;
         clientPackage.UpdatedBy = userId;
         await _clientPackageHandler.Update(uow, clientPackage);
@@ -261,10 +306,10 @@ public class ClientPackageService : IClientPackageService, IPackageConsumptionLe
             throw new NotFoundAppException("ClientPackage", active.ClientPackageId);
 
         // Pod lockom paketa: potrošnja je možda već poništena konkurentnim zahtjevom — tada ništa ne vraćamo (nikad dvaput).
-        if (!await _clientPackageHandler.TryMarkReversed(uow, active, userId, reason, DateTimeOffset.UtcNow))
+        if (!await _clientPackageHandler.TryMarkReversed(uow, active, userId, reason, _timeProvider.GetUtcNow()))
             return false;
 
-        DateTimeOffset now = DateTimeOffset.UtcNow;
+        DateTimeOffset now = _timeProvider.GetUtcNow();
         ClientPackageEntryMutator.Return(clientPackage, active.ServiceId);
         clientPackage.UpdatedAt = now;
         clientPackage.UpdatedBy = userId;
@@ -284,7 +329,7 @@ public class ClientPackageService : IClientPackageService, IPackageConsumptionLe
                 throw new BusinessRuleException(ErrorCodes.PackageAlreadyCancelled, "Paket je već otkazan.");
 
             clientPackage.Status = ClientPackageStatus.Cancelled;
-            clientPackage.CancelledAt = DateTimeOffset.UtcNow;
+            clientPackage.CancelledAt = _timeProvider.GetUtcNow();
             clientPackage.CancelledBy = userId;
         });
 
@@ -305,7 +350,7 @@ public class ClientPackageService : IClientPackageService, IPackageConsumptionLe
 
             mutate(clientPackage);
 
-            clientPackage.UpdatedAt = DateTimeOffset.UtcNow;
+            clientPackage.UpdatedAt = _timeProvider.GetUtcNow();
             clientPackage.UpdatedBy = userId;
 
             try
@@ -326,7 +371,7 @@ public class ClientPackageService : IClientPackageService, IPackageConsumptionLe
         }
     }
 
-    private async Task<decimal> ResolveSuggestedPrice(Guid organizationId, Guid packageId, Guid? companyId, DateTimeOffset date)
+    private async Task<decimal> ResolveSuggestedPrice(Guid organizationId, Guid packageId, Guid? companyId, DateOnly date)
     {
         ResolvePriceResponse resolved = await _pricingService.ResolvePrice(organizationId, new ResolvePriceRequest
         {
@@ -341,7 +386,7 @@ public class ClientPackageService : IClientPackageService, IPackageConsumptionLe
     /// <summary>Današnji kalendarski datum u kalendaru organizacije — samo za PRIKAZ efektivnog statusa (Expired) paketa,
     /// koji nije vezan uz poslovnicu; potrošnja/eligibility uvijek koriste datum izvođenja usluge.</summary>
     private async Task<DateOnly> TodayForOrganization(Guid organizationId) =>
-        (await _organizationCalendarService.GetCalendar(organizationId)).LocalDate(DateTimeOffset.UtcNow);
+        (await _organizationCalendarService.GetCalendar(organizationId)).LocalDate(_timeProvider.GetUtcNow());
 
     private static ClientPackageDto ToDto(ClientPackage cp, DateOnly today)
     {

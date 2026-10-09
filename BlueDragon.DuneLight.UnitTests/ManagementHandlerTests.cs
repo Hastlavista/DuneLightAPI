@@ -53,17 +53,17 @@ public class ManagementHandlerTests
         // (see DatabaseContext), so EF Core has no dependency graph across these types - Organizations must be
         // persisted in their own SaveChangesAsync before anything referencing them, same reasoning as
         // PlatformOperatorHandlerTests.
-        context.Organizations.Add(new Organization { Id = seed.Org1Id, Name = $"MgmtTest-Org1-{marker}", Slug = $"mgmt-test-org1-{marker}", CreatedAt = DateTimeOffset.UtcNow });
-        context.Organizations.Add(new Organization { Id = seed.Org2Id, Name = $"MgmtTest-Org2-{marker}", Slug = $"mgmt-test-org2-{marker}", CreatedAt = DateTimeOffset.UtcNow });
+        context.Organizations.Add(new Organization { Id = seed.Org1Id, Name = $"MgmtTest-Org1-{marker}", Slug = $"mgmt-test-org1-{marker}", CreatedAt = TestClock.UtcNow });
+        context.Organizations.Add(new Organization { Id = seed.Org2Id, Name = $"MgmtTest-Org2-{marker}", Slug = $"mgmt-test-org2-{marker}", CreatedAt = TestClock.UtcNow });
         await context.SaveChangesAsync();
 
-        context.Companies.Add(new Company { Id = Guid.NewGuid(), OrganizationId = seed.Org1Id, Name = "Org1-Company-A", Country = "HR", IsActive = true, CreatedAt = DateTimeOffset.UtcNow });
-        context.Companies.Add(new Company { Id = Guid.NewGuid(), OrganizationId = seed.Org1Id, Name = "Org1-Company-B", Country = "HR", IsActive = true, CreatedAt = DateTimeOffset.UtcNow });
-        context.Companies.Add(new Company { Id = Guid.NewGuid(), OrganizationId = seed.Org2Id, Name = "Org2-Company-A", Country = "HR", IsActive = true, CreatedAt = DateTimeOffset.UtcNow });
+        context.Companies.Add(new Company { Id = Guid.NewGuid(), OrganizationId = seed.Org1Id, Name = "Org1-Company-A", Country = "HR", IsActive = true, CreatedAt = TestClock.UtcNow });
+        context.Companies.Add(new Company { Id = Guid.NewGuid(), OrganizationId = seed.Org1Id, Name = "Org1-Company-B", Country = "HR", IsActive = true, CreatedAt = TestClock.UtcNow });
+        context.Companies.Add(new Company { Id = Guid.NewGuid(), OrganizationId = seed.Org2Id, Name = "Org2-Company-A", Country = "HR", IsActive = true, CreatedAt = TestClock.UtcNow });
 
-        context.Users.Add(new User { Id = seed.Org1User1Id, OrganizationId = seed.Org1Id, Email = $"org1-user1-{marker}@test.local", PasswordHash = "x", ApiKey = Guid.NewGuid().ToString("N"), IsActive = true, CreatedAt = DateTimeOffset.UtcNow });
-        context.Users.Add(new User { Id = seed.Org1User2Id, OrganizationId = seed.Org1Id, Email = $"org1-user2-{marker}@test.local", PasswordHash = "x", ApiKey = Guid.NewGuid().ToString("N"), IsActive = false, CreatedAt = DateTimeOffset.UtcNow });
-        context.Users.Add(new User { Id = seed.Org2User1Id, OrganizationId = seed.Org2Id, Email = $"org2-user1-{marker}@test.local", PasswordHash = "x", ApiKey = Guid.NewGuid().ToString("N"), IsActive = true, CreatedAt = DateTimeOffset.UtcNow });
+        context.Users.Add(new User { Id = seed.Org1User1Id, OrganizationId = seed.Org1Id, Email = $"org1-user1-{marker}@test.local", PasswordHash = "x", ApiKey = Guid.NewGuid().ToString("N"), IsActive = true, CreatedAt = TestClock.UtcNow });
+        context.Users.Add(new User { Id = seed.Org1User2Id, OrganizationId = seed.Org1Id, Email = $"org1-user2-{marker}@test.local", PasswordHash = "x", ApiKey = Guid.NewGuid().ToString("N"), IsActive = false, CreatedAt = TestClock.UtcNow });
+        context.Users.Add(new User { Id = seed.Org2User1Id, OrganizationId = seed.Org2Id, Email = $"org2-user1-{marker}@test.local", PasswordHash = "x", ApiKey = Guid.NewGuid().ToString("N"), IsActive = true, CreatedAt = TestClock.UtcNow });
 
         await context.SaveChangesAsync();
         return seed;
@@ -206,7 +206,7 @@ public class ManagementHandlerTests
         Seed seed = await SeedTwoOrganizations();
         try
         {
-            ICompanyHandler companyHandler = new CompanyHandler(Settings());
+            ICompanyHandler companyHandler = new CompanyHandler(Settings(), TestClock.Source);
 
             (List<Company> org1Companies, int org1Total) = await companyHandler.GetPaged(seed.Org1Id, new PagedRequest { PageSize = 20 });
             Assert.Equal(2, org1Total);

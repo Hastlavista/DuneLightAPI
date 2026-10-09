@@ -34,7 +34,7 @@ public class MembershipBillingTests
     private static IMembershipPlanService Plans(SchedulingWorld w) => w.Resolve<IMembershipPlanService>();
     private static IMembershipRenewalService Renewal(SchedulingWorld w) => w.Resolve<IMembershipRenewalService>();
     private static ICheckoutService Checkouts(SchedulingWorld w) => w.Resolve<ICheckoutService>();
-    private static DateOnly Today => DateOnly.FromDateTime(DateTime.UtcNow);
+    private static DateOnly Today => DateOnly.FromDateTime(TestClock.UtcNow.UtcDateTime);
 
     private static async Task<MembershipPlanDto> Plan(SchedulingWorld w, string name, decimal price, decimal startFee = 0m,
         MembershipRenewalAnchor anchor = MembershipRenewalAnchor.PurchaseDate) =>
@@ -82,17 +82,17 @@ public class MembershipBillingTests
         ClientMembershipDto sold = await Sell(w, plan.Id);
 
         DateOnly renewalDay = Today.AddMonths(1);
-        await Renewal(w).RunForOrganization(w.OrganizationId, renewalDay.AddDays(-1));
+        await Renewal(w).RunForOrganizationOn(w.OrganizationId, renewalDay.AddDays(-1));
         Assert.Single(await Memberships(w).GetPeriods(w.OrganizationId, sold.Id));
 
-        await Renewal(w).RunForOrganization(w.OrganizationId, renewalDay);
-        await Renewal(w).RunForOrganization(w.OrganizationId, renewalDay);
+        await Renewal(w).RunForOrganizationOn(w.OrganizationId, renewalDay);
+        await Renewal(w).RunForOrganizationOn(w.OrganizationId, renewalDay);
         List<MembershipPeriodDto> periods = await Memberships(w).GetPeriods(w.OrganizationId, sold.Id);
         Assert.Equal(new[] { renewalDay, Today }, periods.Select(p => p.StartsOn));
         Assert.Equal(2, (await Charges(w, sold.Id)).Count(c => c.Kind == MembershipChargeKind.Period));
 
         // Catch-up: a missed run opens every period that has started since.
-        await Renewal(w).RunForOrganization(w.OrganizationId, Today.AddMonths(3));
+        await Renewal(w).RunForOrganizationOn(w.OrganizationId, Today.AddMonths(3));
         Assert.Equal(4, (await Memberships(w).GetPeriods(w.OrganizationId, sold.Id)).Count);
     }
 
@@ -105,7 +105,7 @@ public class MembershipBillingTests
         ClientMembershipDto sold = await Sell(w, gold.Id);
         await Memberships(w).ChangePlan(w.OrganizationId, w.ActorUserId, sold.Id, new ClientMembershipPlanChangeRequest { MembershipPlanId = silver.Id });
 
-        await Renewal(w).RunForOrganization(w.OrganizationId, Today.AddMonths(1));
+        await Renewal(w).RunForOrganizationOn(w.OrganizationId, Today.AddMonths(1));
 
         ClientMembershipDto renewed = await Memberships(w).GetById(w.OrganizationId, sold.Id);
         Assert.Equal((silver.Id, silver.LatestVersion.Id), (renewed.MembershipPlanId, renewed.Terms.Id));
@@ -124,7 +124,7 @@ public class MembershipBillingTests
         await Memberships(w).ChangePlan(w.OrganizationId, w.ActorUserId, sold.Id, new ClientMembershipPlanChangeRequest { MembershipPlanId = silver.Id });
         await Plans(w).Deactivate(w.OrganizationId, w.ActorUserId, silver.Id);
 
-        await Renewal(w).RunForOrganization(w.OrganizationId, Today.AddMonths(1));
+        await Renewal(w).RunForOrganizationOn(w.OrganizationId, Today.AddMonths(1));
 
         ClientMembershipDto renewed = await Memberships(w).GetById(w.OrganizationId, sold.Id);
         Assert.Equal(gold.Id, renewed.MembershipPlanId);
@@ -146,11 +146,11 @@ public class MembershipBillingTests
 
         // Reactivated before the renewal: the membership simply continues.
         await Plans(w).Activate(w.OrganizationId, w.ActorUserId, gold.Id);
-        await Renewal(w).RunForOrganization(w.OrganizationId, Today.AddMonths(1));
+        await Renewal(w).RunForOrganizationOn(w.OrganizationId, Today.AddMonths(1));
         Assert.Null((await Memberships(w).GetById(w.OrganizationId, sold.Id)).EndsOn);
 
         await Plans(w).Deactivate(w.OrganizationId, w.ActorUserId, gold.Id);
-        await Renewal(w).RunForOrganization(w.OrganizationId, Today.AddMonths(2));
+        await Renewal(w).RunForOrganizationOn(w.OrganizationId, Today.AddMonths(2));
         ClientMembershipDto ended = await Memberships(w).GetById(w.OrganizationId, sold.Id);
         Assert.Equal((Today.AddMonths(2).AddDays(-1), MembershipEndReason.PlanDeactivated), (ended.EndsOn.Value, ended.EndReason.Value));
         Assert.Equal(2, (await Memberships(w).GetPeriods(w.OrganizationId, sold.Id)).Count);
@@ -166,7 +166,7 @@ public class MembershipBillingTests
         ClientMembershipDto sold = await Sell(w, gold.Id);
 
         // Off by default it would just renew; with N = 1 the unpaid first period (grace over) ends it at the renewal.
-        await Renewal(w).RunForOrganization(w.OrganizationId, Today.AddMonths(1));
+        await Renewal(w).RunForOrganizationOn(w.OrganizationId, Today.AddMonths(1));
 
         ClientMembershipDto ended = await Memberships(w).GetById(w.OrganizationId, sold.Id);
         Assert.Equal((Today.AddMonths(1).AddDays(-1), MembershipEndReason.NonPayment), (ended.EndsOn.Value, ended.EndReason.Value));
@@ -287,7 +287,7 @@ public class MembershipBillingTests
 
         ClientMembershipDto first = await Sell(w, strict.Id);
         await Memberships(w).ChangePlan(w.OrganizationId, w.ActorUserId, first.Id, new ClientMembershipPlanChangeRequest { MembershipPlanId = loose.Id });
-        await Renewal(w).RunForOrganization(w.OrganizationId, Today.AddMonths(1));
+        await Renewal(w).RunForOrganizationOn(w.OrganizationId, Today.AddMonths(1));
         Assert.Equal(loose.Id, (await Memberships(w).GetById(w.OrganizationId, first.Id)).MembershipPlanId);
 
         // The old 3-period commitment still binds (the new plan alone would end after month 2).
@@ -296,7 +296,7 @@ public class MembershipBillingTests
 
         // A longer new commitment counts from the change date.
         await Memberships(w).ChangePlan(w.OrganizationId, w.ActorUserId, first.Id, new ClientMembershipPlanChangeRequest { MembershipPlanId = longer.Id });
-        await Renewal(w).RunForOrganization(w.OrganizationId, Today.AddMonths(2));
+        await Renewal(w).RunForOrganizationOn(w.OrganizationId, Today.AddMonths(2));
         MembershipCancellationPreviewDto newer = await Memberships(w).PreviewCancellation(w.OrganizationId, first.Id);
         Assert.Equal((Today.AddMonths(8).AddDays(-1), MembershipEndEffectiveReason.MinimumCommitment), (newer.EffectiveOn, newer.Reason));
     }

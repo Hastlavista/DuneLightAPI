@@ -43,6 +43,7 @@ public class WaitlistService : IWaitlistService, IWaitlistPromotionService
     private readonly IUnitOfWorkFactory _unitOfWorkFactory;
     private readonly IMembershipCoverageService _membershipCoverage;
     private readonly IGrantResolver _grantResolver;
+    private readonly TimeProvider _timeProvider;
 
     public WaitlistService(
         IWaitlistHandler waitlistHandler,
@@ -56,8 +57,10 @@ public class WaitlistService : IWaitlistService, IWaitlistPromotionService
         IOutboxWriter outboxWriter,
         IUnitOfWorkFactory unitOfWorkFactory,
         IMembershipCoverageService membershipCoverage,
-        IGrantResolver grantResolver)
+        IGrantResolver grantResolver,
+        TimeProvider timeProvider)
     {
+        _timeProvider = timeProvider;
         _grantResolver = grantResolver;
         _waitlistHandler = waitlistHandler;
         _appointmentHandler = appointmentHandler;
@@ -79,14 +82,8 @@ public class WaitlistService : IWaitlistService, IWaitlistPromotionService
     private Task<ResolvePriceResponse> ResolveServicePrice(
         Guid organizationId, Guid serviceId, Guid companyId, Guid? pricingEmployeeId, DateTimeOffset date)
     {
-        return _pricingService.ResolvePrice(organizationId, new ResolvePriceRequest
-        {
-            SubjectType = PricingSubjectType.Service,
-            SubjectId = serviceId,
-            CompanyId = companyId,
-            EmployeeId = pricingEmployeeId,
-            Date = date
-        });
+        // T1-7: dan cjenika = lokalni datum početka u zoni poslovnice termina (vidi IPricingService.ResolveForServiceStart).
+        return _pricingService.ResolveForServiceStart(organizationId, serviceId, companyId, pricingEmployeeId, date);
     }
 
     public async Task<List<WaitlistEntryDto>> GetForAppointment(Guid organizationId, Guid appointmentId)
@@ -131,7 +128,7 @@ public class WaitlistService : IWaitlistService, IWaitlistPromotionService
         AppointmentSegment segment = GroupOccurrenceSegments.Require(appointment, request.SegmentId);
         await AppointmentOwnership.EnsureCallerOwnsSegments(_employeeHandler, organizationId, userId, hasFullScope, new[] { segment }, NotOwnerMessage);
 
-        DateTimeOffset now = DateTimeOffset.UtcNow;
+        DateTimeOffset now = _timeProvider.GetUtcNow();
         // Nedostupna za EKSPLICITNO otkazanu sesiju i za segment koji je već počeo.
         if (appointment.Status == AppointmentStatus.Cancelled || segment.PlannedStart <= now)
             throw new BusinessRuleException(ErrorCodes.WaitlistNotAvailable, "Lista čekanja nije dostupna za ovaj termin.");
@@ -228,7 +225,7 @@ public class WaitlistService : IWaitlistService, IWaitlistPromotionService
         // Idempotentno — Cancel na već terminalnom retku samo vraća trenutno stanje.
         if (entry.Status == WaitlistEntryStatus.Waiting)
         {
-            DateTimeOffset now = DateTimeOffset.UtcNow;
+            DateTimeOffset now = _timeProvider.GetUtcNow();
 
             await using (IUnitOfWork uow = await _unitOfWorkFactory.Begin())
             {
@@ -263,28 +260,32 @@ public class WaitlistService : IWaitlistService, IWaitlistPromotionService
     /// ne dira A. Nikad override kapaciteta. Promocija ponovno koristi klijentov postojeći Booking occurrencea i stvara samo
     /// sudjelovanje na tom segmentu.
     /// </summary>
-    public async Task PromoteEligibleWaiters(IUnitOfWork uow, Guid organizationId, Guid appointmentId, Guid userId)
+    public async Task<List<WarningDto>> PromoteEligibleWaiters(IUnitOfWork uow, Guid organizationId, Guid appointmentId, Guid userId)
     {
+        List<WarningDto> warnings = new();
         Appointment appointment = await _appointmentHandler.GetForUpdateWithGroup(uow, organizationId, appointmentId);
         if (appointment == null || appointment.Form != AppointmentForm.Group || appointment.Group == null)
-            return;
+            return warnings;
 
-        DateTimeOffset now = DateTimeOffset.UtcNow;
+        DateTimeOffset now = _timeProvider.GetUtcNow();
         // Scheduled = termin ima barem jedno Confirmed sudjelovanje ILI se tek izvodi — pozivatelji pozivaju promociju PRIJE
         // ponovnog izvođenja statusa.
         if (appointment.Status != AppointmentStatus.Scheduled)
-            return;
+            return warnings;
 
         foreach (AppointmentSegment segment in appointment.Segments.OrderBy(s => s.PlannedStart).ThenBy(s => s.Id))
         {
             if (segment.PlannedStart <= now)
                 continue;
-            await PromoteOnSegment(uow, organizationId, appointment, segment, userId, now);
+            await PromoteOnSegment(uow, organizationId, appointment, segment, userId, now, warnings);
         }
+
+        return warnings;
     }
 
     private async Task PromoteOnSegment(
-        IUnitOfWork uow, Guid organizationId, Appointment appointment, AppointmentSegment segment, Guid userId, DateTimeOffset now)
+        IUnitOfWork uow, Guid organizationId, Appointment appointment, AppointmentSegment segment, Guid userId, DateTimeOffset now,
+        List<WarningDto> warnings)
     {
         Guid appointmentId = appointment.Id.GetValueOrDefault();
         Guid segmentId = segment.Id.GetValueOrDefault();
@@ -362,6 +363,8 @@ public class WaitlistService : IWaitlistService, IWaitlistPromotionService
                 uow.Context.BookingSegmentParticipations.Add(promoted);
             }
             await uow.Context.SaveChangesAsync();
+            // T1-8: promovirani dobiva cijenu važeću za dan termina u trenutku promocije; rupa u cjeniku se prijavljuje.
+            PriceWarnings.AddNotDefined(warnings, resolvedPrice);
             // P2 (2D): promocija je rezervacija — claim kao i svaka druga, automatski proces (nikad ne odbija; bez članarine no-op).
             MembershipCoverageDecision coverage = await _membershipCoverage.SyncParticipation(uow, organizationId, userId, appointment, booking, promoted,
                 MembershipCoverageEvent.Booking, MembershipCoverageMode.Automatic);
@@ -442,7 +445,7 @@ public class WaitlistService : IWaitlistService, IWaitlistPromotionService
         if (waiting.Count == 0)
             return;
 
-        DateTimeOffset now = DateTimeOffset.UtcNow;
+        DateTimeOffset now = _timeProvider.GetUtcNow();
 
         foreach (WaitlistEntry entry in waiting)
         {

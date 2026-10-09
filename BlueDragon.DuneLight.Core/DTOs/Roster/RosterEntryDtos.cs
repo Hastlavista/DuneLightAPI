@@ -12,20 +12,20 @@ public class RosterEntryDto
     public string EmployeeName { get; set; }
     public Guid RosterTypeId { get; set; }
     public string RosterTypeName { get; set; }
-    public string RosterTypeColorHex { get; set; }
+    public string? RosterTypeColorHex { get; set; }
     public bool IsAbsence { get; set; }
     public bool CountsAsWork { get; set; }
 
     /// <summary>Oblik rad: jedini datum. Oblik odsutnost: "datum od".</summary>
-    public DateTimeOffset DateFrom { get; set; }
+    public DateOnly DateFrom { get; set; }
 
     /// <summary>Uvijek null za oblik rad. Za odsutnost: null = otvorena (još traje).</summary>
-    public DateTimeOffset? DateTo { get; set; }
+    public DateOnly? DateTo { get; set; }
 
-    public TimeSpan? StartTime { get; set; }
-    public TimeSpan? EndTime { get; set; }
+    public TimeOnly? StartTime { get; set; }
+    public TimeOnly? EndTime { get; set; }
     public decimal? DurationHours { get; set; }
-    public string Note { get; set; }
+    public string? Note { get; set; }
 
     /// <summary>Samo za work-formu: zamjenjuje WorkingHoursTemplate za ovaj EmployeeId+DateFrom kod izračuna dostupnosti. Uvijek false za odsutnost.</summary>
     public bool IsOverride { get; set; }
@@ -53,12 +53,12 @@ public class RosterEntryCreateRequest
     public Guid RosterTypeId { get; set; }
 
     [Required]
-    public DateTimeOffset DateFrom { get; set; }
+    public DateOnly DateFrom { get; set; }
 
-    public DateTimeOffset? DateTo { get; set; }
-    public TimeSpan? StartTime { get; set; }
-    public TimeSpan? EndTime { get; set; }
-    public string Note { get; set; }
+    public DateOnly? DateTo { get; set; }
+    public TimeOnly? StartTime { get; set; }
+    public TimeOnly? EndTime { get; set; }
+    public string? Note { get; set; }
 
     /// <summary>Samo za work-formu — ignorira se za odsutnost. Svi work-redovi istog EmployeeId+DateFrom moraju dijeliti istu vrijednost.</summary>
     public bool IsOverride { get; set; }
@@ -73,12 +73,12 @@ public class RosterEntryUpdateRequest
     public Guid RosterTypeId { get; set; }
 
     [Required]
-    public DateTimeOffset DateFrom { get; set; }
+    public DateOnly DateFrom { get; set; }
 
-    public DateTimeOffset? DateTo { get; set; }
-    public TimeSpan? StartTime { get; set; }
-    public TimeSpan? EndTime { get; set; }
-    public string Note { get; set; }
+    public DateOnly? DateTo { get; set; }
+    public TimeOnly? StartTime { get; set; }
+    public TimeOnly? EndTime { get; set; }
+    public string? Note { get; set; }
 
     /// <summary>Samo za work-formu — ignorira se za odsutnost. Svi work-redovi istog EmployeeId+DateFrom moraju dijeliti istu vrijednost.</summary>
     public bool IsOverride { get; set; }

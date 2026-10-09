@@ -20,11 +20,13 @@ public class CompanyService : ICompanyService
 {
     private readonly ICompanyHandler _companyHandler;
     private readonly IOrganizationSettingsHandler _organizationSettingsHandler;
+    private readonly TimeProvider _timeProvider;
 
-    public CompanyService(ICompanyHandler companyHandler, IOrganizationSettingsHandler organizationSettingsHandler)
+    public CompanyService(ICompanyHandler companyHandler, IOrganizationSettingsHandler organizationSettingsHandler, TimeProvider timeProvider)
     {
         _companyHandler = companyHandler;
         _organizationSettingsHandler = organizationSettingsHandler;
+        _timeProvider = timeProvider;
     }
 
     public async Task<PagedResult<CompanyDto>> GetPaged(Guid organizationId, PagedRequest request)
@@ -63,7 +65,7 @@ public class CompanyService : ICompanyService
             Note = request.Note,
             SortOrder = request.SortOrder,
             IsActive = true,
-            CreatedAt = DateTimeOffset.UtcNow,
+            CreatedAt = _timeProvider.GetUtcNow(),
             CreatedBy = userId
         };
 
@@ -90,7 +92,7 @@ public class CompanyService : ICompanyService
         company.TimeZone = request.TimeZone;
         company.Note = request.Note;
         company.SortOrder = request.SortOrder;
-        company.UpdatedAt = DateTimeOffset.UtcNow;
+        company.UpdatedAt = _timeProvider.GetUtcNow();
         company.UpdatedBy = userId;
 
         await _companyHandler.Update(company);
@@ -118,7 +120,7 @@ public class CompanyService : ICompanyService
             await EnsureNameIsUnique(organizationId, company.Name, excludeId: id);
 
             company.IsActive = true;
-            company.UpdatedAt = DateTimeOffset.UtcNow;
+            company.UpdatedAt = _timeProvider.GetUtcNow();
             company.UpdatedBy = userId;
             await _companyHandler.Update(company);
         }

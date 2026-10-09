@@ -6,37 +6,37 @@ namespace BlueDragon.DuneLight.Infrastructure.Utils;
 /// <summary>
 /// Čisti izračuni datuma za fond godišnjeg odmora iz EmployeeLeaveSettings (mjesec+dan bez godine) — isti
 /// stil kao PackageExpiryCalculator. 29.2. na neprijestupnu godinu klipa se na 28.2. (SafeDate).
+/// T1-7: sve vrijednosti su kalendarski dani (DateOnly); "danas" određuje pozivatelj kroz kalendar organizacije.
 /// </summary>
 public static class LeaveFundYearCalculator
 {
-    /// <summary>Kojoj obračunskoj godini (FundYear) pripada dani datum — prije datuma obnove u toj kalendarskoj godini pripada prethodnoj obračunskoj godini.</summary>
-    public static int ResolveFundYear(EmployeeLeaveSettings settings, DateTimeOffset date)
-    {
-        DateTime renewalThisCalendarYear = SafeDate(date.Year, settings.RenewalMonth, settings.RenewalDay);
-        return date.Date >= renewalThisCalendarYear ? date.Year : date.Year - 1;
-    }
-
-    /// <summary>Isto pravilo za kalendarski datum (datum odsutnosti u rosteru).</summary>
+    /// <summary>Kojoj obračunskoj godini (FundYear) pripada dani kalendarski datum — prije datuma obnove u toj kalendarskoj
+    /// godini pripada prethodnoj obračunskoj godini.</summary>
     public static int ResolveFundYear(EmployeeLeaveSettings settings, DateOnly date)
     {
-        DateTime renewalThisCalendarYear = SafeDate(date.Year, settings.RenewalMonth, settings.RenewalDay);
-        return date.ToDateTime(TimeOnly.MinValue) >= renewalThisCalendarYear ? date.Year : date.Year - 1;
+        DateOnly renewalThisCalendarYear = SafeDate(date.Year, settings.RenewalMonth, settings.RenewalDay);
+        return date >= renewalThisCalendarYear ? date.Year : date.Year - 1;
     }
 
-    public static DateTimeOffset ResolveOpenedAt(EmployeeLeaveSettings settings, int fundYear)
+    public static DateOnly ResolveOpenedAt(EmployeeLeaveSettings settings, int fundYear)
     {
-        return new DateTimeOffset(SafeDate(fundYear, settings.RenewalMonth, settings.RenewalDay), TimeSpan.Zero);
+        return SafeDate(fundYear, settings.RenewalMonth, settings.RenewalDay);
     }
 
-    /// <summary>Fond otvoren u fundYear ističe (za prijenos) na CarryoverExpiry datum SLJEDEĆE kalendarske godine (npr. fond 2026 s prijenosom do 30.6. ističe 30.6.2027.).</summary>
-    public static DateTimeOffset ResolveExpiresAt(EmployeeLeaveSettings settings, int fundYear)
+    /// <summary>Fond otvoren u fundYear ističe (za prijenos) na CarryoverExpiry datum SLJEDEĆE kalendarske godine (npr. fond 2026
+    /// s prijenosom do 30.6. ističe 30.6.2027.). Zadnji dan na koji se fond još smije trošiti (uključivo).</summary>
+    public static DateOnly ResolveExpiresAt(EmployeeLeaveSettings settings, int fundYear)
     {
-        return new DateTimeOffset(SafeDate(fundYear + 1, settings.CarryoverExpiryMonth, settings.CarryoverExpiryDay), TimeSpan.Zero);
+        return SafeDate(fundYear + 1, settings.CarryoverExpiryMonth, settings.CarryoverExpiryDay);
     }
 
-    private static DateTime SafeDate(int year, int month, int day)
+    /// <summary>Fond je istekao od dana ExpiresAt (uključivo) po kalendaru organizacije — isto ponašanje kao prije T1-7, kad je
+    /// ExpiresAt bio početak tog dana. Treba li fond vrijediti i na dan isteka: otvoreno pitanje (T1 dnevnik).</summary>
+    public static bool IsExpired(LeaveFund fund, DateOnly today) => fund.ExpiresAt <= today;
+
+    private static DateOnly SafeDate(int year, int month, int day)
     {
         int daysInMonth = DateTime.DaysInMonth(year, month);
-        return new DateTime(year, month, Math.Min(day, daysInMonth));
+        return new DateOnly(year, month, Math.Min(day, daysInMonth));
     }
 }

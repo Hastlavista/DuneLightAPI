@@ -38,7 +38,7 @@ public static class SingleSegmentTestExtensions
             RoomId = roomId,
             PlannedStart = plannedStart,
             PlannedEnd = plannedStart.AddMinutes(durationMinutes),
-            CreatedAt = DateTimeOffset.UtcNow
+            CreatedAt = TestClock.UtcNow
         };
         if (employeeId.HasValue)
             segment.Employees.Add(new AppointmentSegmentEmployee { AppointmentSegmentId = segment.Id.Value, EmployeeId = employeeId.Value });

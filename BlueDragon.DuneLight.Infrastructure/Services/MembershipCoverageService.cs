@@ -30,12 +30,14 @@ public class MembershipCoverageService : IMembershipCoverageService
     private readonly IGrantResolver _grantResolver;
     private readonly IAppointmentAuditLogHandler _auditLogHandler;
     private readonly IUnitOfWorkFactory _unitOfWorkFactory;
+    private readonly TimeProvider _timeProvider;
 
     public MembershipCoverageService(
         IClientMembershipHandler membershipHandler, IOrganizationCalendarService calendars, IOrganizationSettingsService settings,
         IGrantResolver grantResolver,
         IAppointmentAuditLogHandler auditLogHandler,
-        IUnitOfWorkFactory unitOfWorkFactory)
+        IUnitOfWorkFactory unitOfWorkFactory,
+        TimeProvider timeProvider)
     {
         _unitOfWorkFactory = unitOfWorkFactory;
         _auditLogHandler = auditLogHandler;
@@ -43,6 +45,7 @@ public class MembershipCoverageService : IMembershipCoverageService
         _membershipHandler = membershipHandler;
         _calendars = calendars;
         _settings = settings;
+        _timeProvider = timeProvider;
     }
 
     /// <summary>Kontekst jedne operacije: trenutak, "danas" u zoni organizacije, kalendari i postavke.</summary>
@@ -61,7 +64,7 @@ public class MembershipCoverageService : IMembershipCoverageService
 
     private async Task<Run> Start(Guid organizationId, Guid? userId, DateOnly? today = null)
     {
-        DateTimeOffset now = DateTimeOffset.UtcNow;
+        DateTimeOffset now = _timeProvider.GetUtcNow();
         OrganizationCalendar calendar = await _calendars.GetCalendar(organizationId);
         OrganizationSettingsDto settings = await _settings.GetSettings(organizationId);
         return new Run
@@ -99,7 +102,7 @@ public class MembershipCoverageService : IMembershipCoverageService
         MembershipUsage claim = await ActiveClaimOf(uow, participationId);
         bool hasProjection = participation.MembershipCoverage != null
                              || await uow.Context.ParticipationMembershipCoverages.AnyAsync(c => c.ParticipationId == participationId);
-        if (claim == null && !hasProjection && !await HasRelevantMembership(uow, organizationId, view.ClientId))
+        if (claim == null && !hasProjection && !await HasRelevantMembership(uow, organizationId, view.ClientId, _timeProvider.GetUtcNow()))
             return null;
 
         Run run = await Start(organizationId, userId);
@@ -387,7 +390,7 @@ public class MembershipCoverageService : IMembershipCoverageService
     public async Task<Guid?> BlockingMembership(
         IUnitOfWork uow, Guid organizationId, Guid clientId, Guid serviceId, Guid companyId, DateTimeOffset startsAt)
     {
-        if (!await HasRelevantMembership(uow, organizationId, clientId))
+        if (!await HasRelevantMembership(uow, organizationId, clientId, _timeProvider.GetUtcNow()))
             return null;
         Run run = await Start(organizationId, null);
         if (run.DebtBehavior != MembershipDebtBehavior.BlockBooking)
@@ -411,7 +414,7 @@ public class MembershipCoverageService : IMembershipCoverageService
             .ToListAsync();
         if (claimed.Count == 0)
             return 0;
-        DateTimeOffset now = DateTimeOffset.UtcNow;
+        DateTimeOffset now = _timeProvider.GetUtcNow();
         return await uow.Context.BookingSegmentParticipations.CountAsync(p =>
             claimed.Contains(p.Id.Value) && (p.Status != ParticipationStatus.Confirmed || p.Segment.PlannedStart <= now));
     }
@@ -522,7 +525,7 @@ public class MembershipCoverageService : IMembershipCoverageService
     {
         ParticipationExecutionContextView view = ViewOf(appointment, booking, participation);
         bool relevant = participation.MembershipCoverage != null || participation.AdjustmentType != null
-                        || await HasRelevantMembership(uow, organizationId, view.ClientId);
+                        || await HasRelevantMembership(uow, organizationId, view.ClientId, _timeProvider.GetUtcNow());
         if (!relevant)
             return;
 
@@ -658,7 +661,7 @@ public class MembershipCoverageService : IMembershipCoverageService
         decimal oldAmount = participation.Amount;
         ParticipationPrice.Apply(participation, new BookingPricing(
             suggested, suggested, false, participation.BaseAmount, participation.BaseAmountSource, participation.PricingMode,
-            participation.PricingEmployeeId));
+            participation.PricingEmployeeId), run.Now);
         participation.AdjustmentAmount = adjustmentAmount;
         participation.AdjustmentType = applied?.Type;
         participation.AdjustmentSourceId = applied?.SourceId;
@@ -856,10 +859,10 @@ public class MembershipCoverageService : IMembershipCoverageService
     private static MembershipClaimView ViewOf(MembershipUsage usage) =>
         new(usage.Id, usage.ParticipationId, usage.ServiceId, usage.ServiceDate, usage.PeriodDate);
 
-    private static Task<bool> HasRelevantMembership(IUnitOfWork uow, Guid organizationId, Guid clientId)
+    private static Task<bool> HasRelevantMembership(IUnitOfWork uow, Guid organizationId, Guid clientId, DateTimeOffset now)
     {
         // Dan ranije kao zaštita od razlike UTC datuma i zone organizacije (točna provjera slijedi pod "danas" organizacije).
-        DateOnly floor = DateOnly.FromDateTime(DateTime.UtcNow).AddDays(-1);
+        DateOnly floor = DateOnly.FromDateTime(now.UtcDateTime).AddDays(-1);
         return uow.Context.ClientMemberships.AnyAsync(m => m.OrganizationId == organizationId && m.ClientId == clientId
                                                            && m.VoidedAt == null && (m.EndsOn == null || m.EndsOn >= floor));
     }

@@ -39,7 +39,7 @@ public class GroupActiveMemberCountTests
             Id = organizationId,
             Name = $"GroupActiveMemberCountTest-{testName}",
             Slug = $"group-active-member-count-test-{organizationId:N}",
-            CreatedAt = DateTimeOffset.UtcNow
+            CreatedAt = TestClock.UtcNow
         });
         await context.SaveChangesAsync();
 
@@ -61,7 +61,7 @@ public class GroupActiveMemberCountTests
             DefaultPrice = 0,
             IsActive = true,
             SortOrder = 0,
-            CreatedAt = DateTimeOffset.UtcNow
+            CreatedAt = TestClock.UtcNow
         });
         await context.SaveChangesAsync();
 
@@ -75,7 +75,7 @@ public class GroupActiveMemberCountTests
             // Phase M1F: usluga i kapacitet žive na predlošku segmenta.
             SegmentTemplates = new List<GroupSegmentTemplate>
             {
-                new() { Id = Guid.NewGuid(), GroupId = groupId, ServiceId = serviceId, StartOffsetMinutes = 0, DurationMinutes = 60, Capacity = 10, CreatedAt = DateTimeOffset.UtcNow }
+                new() { Id = Guid.NewGuid(), GroupId = groupId, ServiceId = serviceId, StartOffsetMinutes = 0, DurationMinutes = 60, Capacity = 10, CreatedAt = TestClock.UtcNow }
             }
         });
         await context.SaveChangesAsync();
@@ -116,7 +116,7 @@ public class GroupActiveMemberCountTests
             IsActive = isActive,
             IsAnonymized = isAnonymized,
             GdprConsentGiven = true,
-            CreatedAt = DateTimeOffset.UtcNow
+            CreatedAt = TestClock.UtcNow
         });
         await context.SaveChangesAsync();
         return clientId;
@@ -129,9 +129,9 @@ public class GroupActiveMemberCountTests
         {
             GroupId = groupId,
             ClientId = clientId,
-            JoinedAt = DateTimeOffset.UtcNow,
+            JoinedAt = TestClock.UtcNow,
             IsActive = memberIsActive,
-            CreatedAt = DateTimeOffset.UtcNow
+            CreatedAt = TestClock.UtcNow
         });
         await context.SaveChangesAsync();
     }

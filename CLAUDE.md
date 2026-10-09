@@ -51,6 +51,10 @@ docs/
 - Uske poslovne naredbe (PATCH/POST po namjeni), nikad generički `PUT` cijelog agregata (ADR-0014).
 - Komentari i poruke grešaka uglavnom na hrvatskom (prati jezik okolnog koda); nazivi domenskih pojmova na engleskom (Appointment, Segment, Participation...).
 - Instanti u UTC (`DateTimeOffset`), poslovni datumi `DateOnly`; nikad `DateTime.Now` / `TimeZoneInfo.Local`.
+- "Sada" samo kroz injektirani `TimeProvider` (poslovni sat, T1); nikad `DateTime(Offset).Now/UtcNow`. `Utils` primaju `now`
+  parametrom. `TimeProvider.System` samo za sistemsko (JWT istek, outbox obrada). Testovi: `TestClock`, ne `DateTimeOffset.UtcNow`.
+- 403 samo kroz tvorničke metode `ForbiddenAppException` (`MissingGrant(s)`, `MissingAnyGrant`, `OutOfScope`) sa svim grantovima
+  koji nedostaju (T1-5).
 
 ## Pravila rada
 - Prije veće promjene pročitaj `docs/ARCHITECTURE.md` i relevantne ADR-ove.
@@ -63,8 +67,14 @@ docs/
 - Nakon implementacije pokreni build i testove i navedi rezultate u završnom izvještaju.
 - Svako pitanje postavljeno tijekom implementacije i korisnikov odgovor odmah upiši u dnevnik odluka zapisa faze
   (`docs/<faza>/<FAZA>_DECISION_RECORD.md`, vidi `docs/WORKFLOW.md`).
+- **Na kraju svake faze** (backend i frontend) ažuriraj `KONTEKST_ZA_CHAT.md` u korijenu repozitorija (status faza, sljedeći
+  koraci, otvorene teme). Obavezno.
 - Commitove, push i PR-ove radi korisnik (Rider); Claude ne radi git operacije, nego implementira, zapisuje i dokumentira.
   PR-ovi idu na granu `development-claude`. Opseg ovog repozitorija je samo backend.
+- Svaka promjena DTO-a (oblik odgovora/zahtjeva) uključuje ponovno generiranje frontend tipova iz Swaggera u istoj promjeni
+  (frontend FE-ADR-0004); Swagger mora ostati točan (nullable, enumi kao stringovi, formati datuma, oblik grešaka).
+- Frontend je zaseban repozitorij `C:\Users\Silvio\WebstormProjects\BlueDragon.DuneLight` s vlastitim `CLAUDE.md`,
+  `ARCHITECTURE.md`, `docs/adr/` (FE-ADR) i `docs/f<N>/` (ARCHITECTURE.md §9). Poslovna pravila su samo ovdje; frontend ih referencira.
 - Karakterizacijski test koji počne padati = promjena ponašanja. Mijenja se samo ako odluka (ADR) to namjerno mijenja.
 
 ## Na što paziti
@@ -105,5 +115,11 @@ docs/
   učinku (samo `Utils/PolicyOverride`). Override radne snage samo kroz `Utils/AvailabilityOverride` (grant, neovisan o opsegu,
   bez granta 403, audit). Nema uloga ni raspodjele grantova po ulogama, ni u dokumentaciji.
   Redoslijed nakon K2: K3 → P3 → P4 → P5 → P6 → Paketi v2 / P1+ → Payroll.
+- T1 (sat sustava i testni alati) implementiran 2026-10-09 (`docs/t1/`, ADR-0033 – ADR-0035; tipovi: trenutak `DateTimeOffset`, dan
+  `DateOnly`, vrijeme dana `TimeOnly`, trajanje `TimeSpan`; cijena zamrznuta na sudjelovanju, cjenik po danu poslovnice; paket
+  pokriva od dana kupnje, kupnja unatrag traži `clients.packages.write.past`): jedan poslovni sat (`BusinessTimeProvider`,
+  pomak po organizaciji samo kroz testne alate u Managementu), `GET api/organization/clock`, seed iz Managementa, 403 s
+  `details.reason` + `requiredGrants` (own opseg na tuđem = 403 `OutOfScope`, kod `NOT_OWNER`), Core nullable za Swagger (validacija
+  nepromijenjena). Testni alati (`[TestToolsOnly]`, `TestTools:Enabled`) su PRIVREMENI i uklanjaju se prije go-livea.
 - Grantovi su granularni po poslovnoj radnji (ne po polju); novi grant ide migracijom samo Admin grupama (ADR-0023).
 - Nema `UserRole` ni `role` claima (uklonjeno, ADR-0019). Nijedna autorizacijska odluka ne smije ovisiti o ulozi; workforce `Role` je samo poslovna oznaka.

@@ -21,6 +21,6 @@ public class PagedRequest
         set => _pageSize = value < 1 ? DefaultPageSize : System.Math.Min(value, MaxPageSize);
     }
 
-    public string Search { get; set; }
+    public string? Search { get; set; }
     public bool? IsActive { get; set; }
 }

@@ -50,7 +50,7 @@ public class PlatformAccountBootstrapper : IHostedService
             Email = email,
             PasswordHash = passwordHash,
             IsActive = true,
-            CreatedAt = DateTimeOffset.UtcNow,
+            CreatedAt = TimeProvider.System.GetUtcNow(),
         });
 
         _logger.LogInformation(

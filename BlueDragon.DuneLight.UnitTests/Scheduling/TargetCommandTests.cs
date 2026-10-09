@@ -45,9 +45,9 @@ public class TargetCommandTests
         Employee ana = await w.AddEmployee("Ana", assignedToService: false);
         Employee marko = await w.AddEmployee("Marko", assignedToService: false);
         Employee ivana = await w.AddEmployee("Ivana", assignedToService: false);
-        await w.AddPriceListItem(duo, 55m, SchedulingWorld.PastDay.AddYears(-1), companyId: w.Company.Id);
-        await w.AddPriceListItem(duo, 60m, SchedulingWorld.PastDay.AddYears(-1), employeeId: ana.Id);
-        await w.AddPriceListItem(duo, 70m, SchedulingWorld.PastDay.AddYears(-1), companyId: w.Company.Id, employeeId: marko.Id);
+        await w.AddPriceListItem(duo, 55m, SchedulingWorld.Day(SchedulingWorld.PastDay.AddYears(-1)), companyId: w.Company.Id);
+        await w.AddPriceListItem(duo, 60m, SchedulingWorld.Day(SchedulingWorld.PastDay.AddYears(-1)), employeeId: ana.Id);
+        await w.AddPriceListItem(duo, 70m, SchedulingWorld.Day(SchedulingWorld.PastDay.AddYears(-1)), companyId: w.Company.Id, employeeId: marko.Id);
         return new Studio(duo, ana, marko, ivana);
     }
 
@@ -396,7 +396,8 @@ public class TargetCommandTests
         Employee other = await w.AddEmployee("Other");
         AppointmentDto created = await w.CreateAppointment(SchedulingWorld.Future(10));
 
-        await SchedulingAssert.BusinessRule(ErrorCodes.NotOwner, () => w.Appointments.ChangeNote(w.OrganizationId, other.UserId, false, created.Id,
+        // CHANGED in T1: 403 OutOfScope (bilo 409 NOT_OWNER)
+        await SchedulingAssert.OutOfScope(() => w.Appointments.ChangeNote(w.OrganizationId, other.UserId, false, created.Id,
             new AppointmentNoteChangeRequest { Note = "not mine" }));
         AppointmentDto own = await w.Appointments.ChangeNote(w.OrganizationId, w.Employee.UserId, false, created.Id,
             new AppointmentNoteChangeRequest { Note = "mine" });
@@ -489,7 +490,8 @@ public class TargetCommandTests
         Employee other = await w.AddEmployee("Other");
         AppointmentDto created = await w.CreateAppointment(SchedulingWorld.Future(10));
 
-        await SchedulingAssert.BusinessRule(ErrorCodes.NotOwner, () => w.SetParticipationPrice(created.Id, w.Client, 10m, hasFullScope: false, userId: other.UserId));
+        // CHANGED in T1: 403 OutOfScope (bilo 409 NOT_OWNER)
+        await SchedulingAssert.OutOfScope(() => w.SetParticipationPrice(created.Id, w.Client, 10m, hasFullScope: false, userId: other.UserId));
         BookingDto own = await w.SetParticipationPrice(created.Id, w.Client, 10m, hasFullScope: false, userId: w.Employee.UserId);
 
         Assert.Equal(10m, own.Amount);

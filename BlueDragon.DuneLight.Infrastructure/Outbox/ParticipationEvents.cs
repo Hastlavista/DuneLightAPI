@@ -22,7 +22,7 @@ public static class ParticipationEvents
 {
     public static Task WriteCancelled(
         IOutboxWriter outboxWriter, IUnitOfWork uow, Guid organizationId, Appointment appointment, Booking booking,
-        BookingSegmentParticipation participation)
+        BookingSegmentParticipation participation, DateTimeOffset occurredAt)
     {
         Guid participationId = participation.Id.GetValueOrDefault();
         return outboxWriter.Add(
@@ -39,15 +39,15 @@ public static class ParticipationEvents
                 // P1 (D2): sudjelovanje je već otkazano s upisanim initiatorom (metapodaci uvijek odgovaraju statusu).
                 CancellationInitiator = participation.CancellationInitiator
                     ?? throw new InvalidOperationException("Otkazano sudjelovanje nema initiator otkazivanja."),
-                OccurredAt = DateTimeOffset.UtcNow
+                OccurredAt = occurredAt
             },
-            DateTimeOffset.UtcNow,
+            occurredAt,
             idempotencyKey: $"booking-cancelled:{participationId}:{participation.StatusVersion}");
     }
 
     public static Task WriteNoShow(
         IOutboxWriter outboxWriter, IUnitOfWork uow, Guid organizationId, Appointment appointment, Booking booking,
-        BookingSegmentParticipation participation)
+        BookingSegmentParticipation participation, DateTimeOffset occurredAt)
     {
         Guid participationId = participation.Id.GetValueOrDefault();
         return outboxWriter.Add(
@@ -61,9 +61,9 @@ public static class ParticipationEvents
                 ClientId = booking.ClientId,
                 CompanyId = appointment.CompanyId,
                 StatusVersion = participation.StatusVersion,
-                OccurredAt = DateTimeOffset.UtcNow
+                OccurredAt = occurredAt
             },
-            DateTimeOffset.UtcNow,
+            occurredAt,
             idempotencyKey: $"booking-noshow:{participationId}:{participation.StatusVersion}");
     }
 }

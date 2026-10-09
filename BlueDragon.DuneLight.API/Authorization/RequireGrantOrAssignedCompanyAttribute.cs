@@ -46,7 +46,7 @@ public class RequireGrantOrAssignedCompanyAttribute : Attribute, IAsyncAuthoriza
         if (!context.RouteData.Values.TryGetValue("companyId", out object companyIdValue) ||
             !Guid.TryParse(companyIdValue?.ToString(), out Guid companyId))
         {
-            context.Result = new ForbidResult();
+            context.Result = ForbiddenResults.MissingAnyGrant(_grants);
             return;
         }
 
@@ -59,6 +59,6 @@ public class RequireGrantOrAssignedCompanyAttribute : Attribute, IAsyncAuthoriza
         IEmployeeHandler employeeHandler = context.HttpContext.RequestServices.GetRequiredService<IEmployeeHandler>();
         bool isAssigned = await employeeHandler.IsUserAssignedToCompany(organizationId, userId, companyId);
         if (!isAssigned)
-            context.Result = new ForbidResult();
+            context.Result = ForbiddenResults.CompanyNotAssigned(_grants, companyId);
     }
 }

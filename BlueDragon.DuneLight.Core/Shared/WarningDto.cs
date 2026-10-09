@@ -14,14 +14,14 @@ public class WarningDto
     {
     }
 
-    public WarningDto(string code, object details = null)
+    public WarningDto(string code, object? details = null)
     {
         Code = code;
         Details = details;
     }
 
     public string Code { get; set; }
-    public object Details { get; set; }
+    public object? Details { get; set; }
 }
 
 /// <summary>WarningCodes.OutsideWorkingHours details za definiciju grupnog slota (Group Create/Update/AddSlot/
@@ -29,7 +29,7 @@ public class WarningDto
 public class WarningSlotDetails
 {
     public DayOfWeek DayOfWeek { get; set; }
-    public TimeSpan StartTime { get; set; }
+    public TimeOnly StartTime { get; set; }
 }
 
 /// <summary>WarningCodes.GroupCapacityExceeded details.</summary>
@@ -52,10 +52,10 @@ public class WarningRosterOverlapDetails
 {
     public string RosterTypeName { get; set; }
     public bool IsAbsence { get; set; }
-    public DateTimeOffset DateFrom { get; set; }
-    public DateTimeOffset? DateTo { get; set; }
-    public TimeSpan? StartTime { get; set; }
-    public TimeSpan? EndTime { get; set; }
+    public DateOnly DateFrom { get; set; }
+    public DateOnly? DateTo { get; set; }
+    public TimeOnly? StartTime { get; set; }
+    public TimeOnly? EndTime { get; set; }
 }
 
 /// <summary>Phase M1G — GROUP_COMMISSION_RULE_NOT_SUPPORTED: pravilo provizije zaposlenika za uslugu segmenta koje grupna
@@ -192,4 +192,52 @@ public class WarningEligiblePackage
 public class WarningMembershipPlanCompaniesDetails
 {
     public List<Guid> CompanyIds { get; set; } = new();
+}
+
+/// <summary>T1-8 — PRICE_NOT_DEFINED: usluga, dan cjenika (lokalni datum početka u zoni poslovnice termina), korištena cijena,
+/// izvor (uvijek Default) i razlog.</summary>
+public class WarningPriceNotDefinedDetails
+{
+    public Guid ServiceId { get; set; }
+    public string? ServiceName { get; set; }
+    public DateOnly Date { get; set; }
+    public decimal UsedAmount { get; set; }
+    public BlueDragon.DuneLight.Core.DTOs.Catalog.PriceSource Source { get; set; }
+    public BlueDragon.DuneLight.Core.Enums.PriceNotDefinedReason Reason { get; set; }
+}
+
+/// <summary>T1-8 — PRICE_NOT_DEFINED_OCCURRENCES: broj termina i njihovi datumi (uzlazno) te pojedinačne stavke (usluga, dan,
+/// cijena, razlog) bez ponavljanja.</summary>
+public class WarningPriceNotDefinedOccurrencesDetails
+{
+    public int OccurrenceCount { get; set; }
+    public List<DateOnly> Dates { get; set; } = new();
+    public List<WarningPriceNotDefinedDetails> Items { get; set; } = new();
+}
+
+/// <summary>T1-8 — PARTICIPATION_PRICE_CHANGED: sudjelovanje, klijent, stari i novi iznos te promjena koja je uzrokovala novo
+/// čitanje cjenika.</summary>
+public class WarningParticipationPriceChangedDetails
+{
+    public Guid ParticipationId { get; set; }
+    public Guid ClientId { get; set; }
+    public decimal OldAmount { get; set; }
+    public decimal NewAmount { get; set; }
+    public BlueDragon.DuneLight.Core.Enums.ParticipationPriceChangeReason Reason { get; set; }
+}
+
+/// <summary>T1-8 — PRICE_LIST_GAP: prvi i zadnji dan rupe (oba uključena).</summary>
+public class WarningPriceListGapDetails
+{
+    public DateOnly FromDate { get; set; }
+    public DateOnly ToDate { get; set; }
+}
+
+/// <summary>T1-8 — PRICE_LIST_SCHEDULED_KEEP_OLD_PRICE: broj zakazanih budućih sudjelovanja koja zadržavaju spremljenu cijenu i
+/// razdoblje važenja stavke (ValidTo null = otvoreno).</summary>
+public class WarningPriceListScheduledKeepDetails
+{
+    public int Count { get; set; }
+    public DateOnly ValidFrom { get; set; }
+    public DateOnly? ValidTo { get; set; }
 }

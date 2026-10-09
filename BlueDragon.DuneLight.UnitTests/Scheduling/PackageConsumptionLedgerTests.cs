@@ -163,7 +163,7 @@ public class PackageConsumptionLedgerTests
         {
             Id = Guid.NewGuid(), OrganizationId = w.OrganizationId, ClientPackageId = package.Id.Value,
             BookingSegmentParticipationId = existing.BookingSegmentParticipationId, ServiceId = w.Service.Id.Value, Units = 1,
-            ServiceStartsAt = existing.ServiceStartsAt, Status = PackageConsumptionStatus.Consumed, CreatedAt = DateTimeOffset.UtcNow
+            ServiceStartsAt = existing.ServiceStartsAt, Status = PackageConsumptionStatus.Consumed, CreatedAt = TestClock.UtcNow
         });
 
         DbUpdateException ex = await Assert.ThrowsAsync<DbUpdateException>(() => db.SaveChangesAsync());

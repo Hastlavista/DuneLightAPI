@@ -22,7 +22,7 @@ namespace BlueDragon.DuneLight.UnitTests.Memberships;
 /// </summary>
 public class CheckoutItemPriceWarningTests
 {
-    private static DateTimeOffset At(int days, int hour) => new DateTimeOffset(DateTime.UtcNow.Date, TimeSpan.Zero).AddDays(days).AddHours(hour);
+    private static DateTimeOffset At(int days, int hour) => new DateTimeOffset(TestClock.UtcNow.UtcDateTime.Date, TimeSpan.Zero).AddDays(days).AddHours(hour);
 
     private static async Task<(CheckoutDto Checkout, Guid ParticipationId)> CheckoutWith(SchedulingWorld w, AppointmentDto booked)
     {

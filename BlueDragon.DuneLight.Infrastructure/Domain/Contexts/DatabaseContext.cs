@@ -16,6 +16,7 @@ using BlueDragon.DuneLight.Infrastructure.Domain.Models.Outbox;
 using BlueDragon.DuneLight.Infrastructure.Domain.Models.Permissions;
 using BlueDragon.DuneLight.Infrastructure.Domain.Models.Products;
 using BlueDragon.DuneLight.Infrastructure.Domain.Models.Roster;
+using BlueDragon.DuneLight.Infrastructure.Domain.Models.TestTools;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata;
 
@@ -53,6 +54,7 @@ public class DatabaseContext : DbContext
     public DbSet<ClientMembership> ClientMemberships { get; set; }
     public DbSet<MembershipPause> MembershipPauses { get; set; }
     public DbSet<ClientMembershipAuditLog> ClientMembershipAuditLog { get; set; }
+    public DbSet<ClientAuditLog> ClientAuditLogs { get; set; }
     public DbSet<ClientMembershipPeriod> ClientMembershipPeriods { get; set; }
     public DbSet<MembershipCharge> MembershipCharges { get; set; }
     public DbSet<MembershipUsage> MembershipUsages { get; set; }
@@ -127,6 +129,9 @@ public class DatabaseContext : DbContext
     public DbSet<UserRoleAssignment> UserRoleAssignments { get; set; }
 
     public DbSet<PlatformAccount> PlatformAccounts { get; set; }
+
+    /// <summary>T1 — privremeni testni alati (pomak sata, demo organizacije); uklanja se prije go-livea.</summary>
+    public DbSet<TestToolOrganization> TestToolOrganizations { get; set; }
 
     public DatabaseContext(DbContextOptions options) : base(options)
     {
@@ -666,6 +671,16 @@ public class DatabaseContext : DbContext
             .WithMany()
             .HasForeignKey(a => a.ClientMembershipId)
             .OnDelete(DeleteBehavior.Restrict);
+
+        // T1-9: povijest klijenta. Veza bez navigacije (zapis ide NAKON novog klijenta u istom SaveChanges); trajno brisanje
+        // klijenta briše i njegovu povijest (CASCADE u bazi), da postojeće trajno brisanje ostane moguće.
+        modelBuilder.Entity<ClientAuditLog>().HasKey(a => a.Id);
+        modelBuilder.Entity<ClientAuditLog>().HasIndex(a => a.ClientId);
+        modelBuilder.Entity<ClientAuditLog>()
+            .HasOne<Client>()
+            .WithMany()
+            .HasForeignKey(a => a.ClientId)
+            .OnDelete(DeleteBehavior.Cascade);
 
         modelBuilder.Entity<ClientPackageServiceEntry>().HasKey(e => e.Id);
         modelBuilder.Entity<ClientPackageServiceEntry>()

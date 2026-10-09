@@ -9,10 +9,10 @@ public class ServiceDto
     public Guid Id { get; set; }
     public string Name { get; set; }
     public ServiceExecutionMode ExecutionMode { get; set; }
-    public string ColorHex { get; set; }
+    public string? ColorHex { get; set; }
     public int DefaultDurationMinutes { get; set; }
     public decimal DefaultPrice { get; set; }
-    public string Description { get; set; }
+    public string? Description { get; set; }
     public bool IsActive { get; set; }
     public int SortOrder { get; set; }
     public DateTimeOffset CreatedAt { get; set; }
@@ -29,7 +29,7 @@ public class AppointmentServiceOptionDto
     public Guid Id { get; set; }
     public string Name { get; set; }
     public ServiceExecutionMode ExecutionMode { get; set; }
-    public string ColorHex { get; set; }
+    public string? ColorHex { get; set; }
     public int DefaultDurationMinutes { get; set; }
     public decimal DefaultPrice { get; set; }
 }
@@ -53,7 +53,7 @@ public class ServiceCreateRequest
     [Range(0, double.MaxValue, ErrorMessage = "Cijena ne smije biti negativna.")]
     public decimal DefaultPrice { get; set; }
 
-    public string Description { get; set; }
+    public string? Description { get; set; }
 
     public int SortOrder { get; set; }
 }
@@ -77,7 +77,7 @@ public class ServiceUpdateRequest
     [Range(0, double.MaxValue, ErrorMessage = "Cijena ne smije biti negativna.")]
     public decimal DefaultPrice { get; set; }
 
-    public string Description { get; set; }
+    public string? Description { get; set; }
 
     public int SortOrder { get; set; }
 }

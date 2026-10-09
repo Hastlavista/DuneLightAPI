@@ -51,7 +51,7 @@ public static class AppointmentClosure
         if (grant == null)
             return;
         if (!grants.Has(grant))
-            throw new ForbiddenAppException($"Korekcija statusa {from} na zatvorenom terminu zahtijeva ovlast {grant}.");
+            throw ForbiddenAppException.MissingGrant($"Korekcija statusa {from} na zatvorenom terminu zahtijeva ovlast {grant}.", grant);
         EnsureReason(reason, "Korekcija statusa na zatvorenom terminu zahtijeva razlog.");
     }
 
@@ -63,13 +63,14 @@ public static class AppointmentClosure
         if (required.Count == 0)
         {
             if (!grants.HasAny(Grants.AppointmentsCorrectionsCompleted, Grants.AppointmentsCorrectionsNoShow, Grants.AppointmentsCorrectionsCancelled))
-                throw new ForbiddenAppException("Ponovno otvaranje termina zahtijeva ovlast korekcije (appointments.corrections.*).");
+                throw ForbiddenAppException.MissingAnyGrant("Ponovno otvaranje termina zahtijeva ovlast korekcije (appointments.corrections.*).",
+                    Grants.AppointmentsCorrectionsCompleted, Grants.AppointmentsCorrectionsNoShow, Grants.AppointmentsCorrectionsCancelled);
         }
         else
         {
             List<string> missing = required.Where(g => !grants.Has(g)).ToList();
             if (missing.Count > 0)
-                throw new ForbiddenAppException($"Ponovno otvaranje termina zahtijeva ovlast {string.Join(", ", missing)}.");
+                throw ForbiddenAppException.MissingGrants($"Ponovno otvaranje termina zahtijeva ovlast {string.Join(", ", missing)}.", missing);
         }
         EnsureReason(reason, "Ponovno otvaranje termina zahtijeva razlog.");
     }

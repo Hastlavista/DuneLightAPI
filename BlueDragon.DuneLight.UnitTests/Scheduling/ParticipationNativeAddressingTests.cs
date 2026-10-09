@@ -69,7 +69,7 @@ public class ParticipationNativeAddressingTests
 
     private static void Settle(BookingSegmentParticipation participation, decimal amount, PaymentStatus status = PaymentStatus.Completed)
     {
-        Payment payment = new() { Id = Guid.NewGuid(), Amount = amount, Status = status, CreatedAt = DateTimeOffset.UtcNow };
+        Payment payment = new() { Id = Guid.NewGuid(), Amount = amount, Status = status, CreatedAt = TestClock.UtcNow };
         CheckoutItem item = new() { Id = Guid.NewGuid(), Type = CheckoutItemType.Booking, Amount = amount, BookingSegmentParticipationId = participation.Id };
         item.Allocations.Add(new PaymentAllocation { Id = Guid.NewGuid(), Amount = amount, Payment = payment, PaymentId = payment.Id.Value });
         participation.CheckoutItems.Add(item);

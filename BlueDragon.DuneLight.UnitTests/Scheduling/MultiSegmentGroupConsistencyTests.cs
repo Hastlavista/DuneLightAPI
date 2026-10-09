@@ -37,7 +37,7 @@ public class MultiSegmentGroupConsistencyTests
         {
             Name = $"Wellness-{Guid.NewGuid():N}",
             CompanyId = w.Company.Id.Value,
-            Slots = new List<GroupSlotCreateRequest> { new() { DayOfWeek = SchedulingWorld.FutureDay.DayOfWeek, StartTime = TimeSpan.FromHours(9) } },
+            Slots = new List<GroupSlotCreateRequest> { new() { DayOfWeek = SchedulingWorld.FutureDay.DayOfWeek, StartTime = new TimeOnly(9, 0) } },
             SegmentTemplates = new List<GroupSegmentTemplateRequest>
             {
                 new() { ServiceId = yoga.Id.Value, StartOffsetMinutes = 0, Capacity = 10, EmployeeIds = new List<Guid> { w.Employee.Id.Value } },
@@ -106,7 +106,7 @@ public class MultiSegmentGroupConsistencyTests
             race = Task.WhenAll(
                 Task.Run(() => InOwnScope(s => s.GenerateAppointments(w.OrganizationId, w.ActorUserId, new GenerateGroupAppointmentsRequest
                 {
-                    GroupId = group.Id, FromDate = SchedulingWorld.FutureDay, ToDate = SchedulingWorld.FutureDay
+                    GroupId = group.Id, FromDate = SchedulingWorld.Day(SchedulingWorld.FutureDay), ToDate = SchedulingWorld.Day(SchedulingWorld.FutureDay)
                 }))),
                 Task.Run(() => InOwnScope(membershipChange)));
 
@@ -189,7 +189,7 @@ public class MultiSegmentGroupConsistencyTests
 
             Exception[] outcomes = await Task.WhenAll(
                 Task.Run(() => InOwnScope(s => s.GenerateAppointments(w.OrganizationId, w.ActorUserId,
-                    new GenerateGroupAppointmentsRequest { GroupId = g.Group.Id, FromDate = day, ToDate = day }))),
+                    new GenerateGroupAppointmentsRequest { GroupId = g.Group.Id, FromDate = SchedulingWorld.Day(day), ToDate = SchedulingWorld.Day(day) }))),
                 Task.Run(() => InOwnScope(s => s.AddMember(w.OrganizationId, w.ActorUserId, g.Group.Id,
                     new GroupMemberAddRequest { ClientId = client.Id.Value, SegmentTemplateIds = new List<Guid> { g.A, g.C } }))));
 
@@ -223,7 +223,7 @@ public class MultiSegmentGroupConsistencyTests
                 $"SELECT pg_advisory_xact_lock({SchedulingLockOrder.EmployeeKey(w.Employee.Id.Value)})");
 
             generation = Task.Run(() => InOwnScope(s => s.GenerateAppointments(w.OrganizationId, w.ActorUserId,
-                new GenerateGroupAppointmentsRequest { GroupId = g.Group.Id, FromDate = SchedulingWorld.FutureDay, ToDate = SchedulingWorld.FutureDay })));
+                new GenerateGroupAppointmentsRequest { GroupId = g.Group.Id, FromDate = SchedulingWorld.Day(SchedulingWorld.FutureDay), ToDate = SchedulingWorld.Day(SchedulingWorld.FutureDay) })));
             await WaitUntil(async () => await BlockedBehind(w, gatePid) >= 1);
 
             Assert.Null(await InOwnScope(s => s.AddMember(w.OrganizationId, w.ActorUserId, g.Group.Id,
@@ -258,7 +258,7 @@ public class MultiSegmentGroupConsistencyTests
                 $"SELECT pg_advisory_xact_lock({SchedulingLockOrder.EmployeeKey(w.Employee.Id.Value)})");
 
             generation = Task.Run(() => InOwnScope(s => s.GenerateAppointments(w.OrganizationId, w.ActorUserId,
-                new GenerateGroupAppointmentsRequest { GroupId = g.Group.Id, FromDate = SchedulingWorld.FutureDay, ToDate = SchedulingWorld.FutureDay })));
+                new GenerateGroupAppointmentsRequest { GroupId = g.Group.Id, FromDate = SchedulingWorld.Day(SchedulingWorld.FutureDay), ToDate = SchedulingWorld.Day(SchedulingWorld.FutureDay) })));
             await WaitUntil(async () => await BlockedBehind(w, gatePid) >= 1);
 
             Assert.Null(await InOwnScope(s => s.ChangeMemberSegmentTemplates(w.OrganizationId, w.ActorUserId, g.Group.Id, member,
@@ -300,7 +300,7 @@ public class MultiSegmentGroupConsistencyTests
             await WaitUntil(async () => await BlockedBehind(w, gatePid) >= 1);
 
             Assert.Null(await InOwnScope(s => s.GenerateAppointments(w.OrganizationId, w.ActorUserId,
-                new GenerateGroupAppointmentsRequest { GroupId = g.Group.Id, FromDate = SchedulingWorld.FutureDay, ToDate = SchedulingWorld.FutureDay })));
+                new GenerateGroupAppointmentsRequest { GroupId = g.Group.Id, FromDate = SchedulingWorld.Day(SchedulingWorld.FutureDay), ToDate = SchedulingWorld.Day(SchedulingWorld.FutureDay) })));
             Assert.Equal(0, (await ClientOn(w, g.Group, ana)).Bookings); // generated from the old membership
 
             await gate.CommitAsync();

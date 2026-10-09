@@ -96,7 +96,7 @@ public static class ParticipationOccupancy
 /// </summary>
 public static class ParticipationLifecycle
 {
-    public static bool TrySetStatus(BookingSegmentParticipation participation, ParticipationStatus target)
+    public static bool TrySetStatus(BookingSegmentParticipation participation, ParticipationStatus target, DateTimeOffset now)
     {
         ArgumentNullException.ThrowIfNull(participation);
         if (participation.Status == target)
@@ -104,7 +104,7 @@ public static class ParticipationLifecycle
 
         participation.Status = target;
         participation.StatusVersion++;
-        participation.UpdatedAt = DateTimeOffset.UtcNow;
+        participation.UpdatedAt = now;
         return true;
     }
 }
@@ -116,11 +116,28 @@ public static class ParticipationLifecycle
 /// </summary>
 public static class ParticipationPrice
 {
-    public static void Apply(BookingSegmentParticipation participation, BookingPricing pricing)
+    public static void Apply(BookingSegmentParticipation participation, BookingPricing pricing, DateTimeOffset now)
     {
         ArgumentNullException.ThrowIfNull(participation);
         ApplyTo(participation, pricing);
-        participation.UpdatedAt = DateTimeOffset.UtcNow;
+        participation.UpdatedAt = now;
+    }
+
+    /// <summary>T1-8 — SPREMLJENA cijena sudjelovanja (zamrznuta pri upisu) uz opcionalni ručni iznos: predložena cijena i snapshot
+    /// razrješavanja cjenika (osnovica, izvor, način, zaposlenik izvora) ostaju netaknuti — cjenik se NE čita ponovno (grupna
+    /// prisutnost, odrađivanje s ručnim iznosom). Bez ručnog iznosa iznos je predložena cijena; ručni iznos jednak predloženoj
+    /// cijeni nije ručna promjena (isto pravilo kao <see cref="BookingPricing.FromResolution"/>).</summary>
+    public static BookingPricing Stored(BookingSegmentParticipation participation, decimal? manualAmount)
+    {
+        ArgumentNullException.ThrowIfNull(participation);
+        return new BookingPricing(
+            manualAmount ?? participation.SuggestedAmount,
+            participation.SuggestedAmount,
+            manualAmount.HasValue && manualAmount.Value != participation.SuggestedAmount,
+            participation.BaseAmount,
+            participation.BaseAmountSource,
+            participation.PricingMode,
+            participation.PricingEmployeeId);
     }
 
     /// <summary>Upis cjenovnog stanja na sudjelovanje — dijele ga Apply i BookingFactory (nastanak).</summary>

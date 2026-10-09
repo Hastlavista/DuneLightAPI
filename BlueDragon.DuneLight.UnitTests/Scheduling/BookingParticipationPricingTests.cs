@@ -27,7 +27,7 @@ namespace BlueDragon.DuneLight.UnitTests.Scheduling;
 public class BookingParticipationPricingTests
 {
     private static DateTimeOffset Z(int h, int mi = 0) => SchedulingWorld.Future(h, mi);
-    private static readonly DateTimeOffset LongAgo = new(2030, 1, 1, 0, 0, 0, TimeSpan.Zero);
+    private static readonly DateOnly LongAgo = new(2030, 1, 1);
 
     private static async Task<BookingSegmentParticipation> ParticipationOf(SchedulingWorld w, Guid appointmentId, Client client)
     {
@@ -108,7 +108,7 @@ public class BookingParticipationPricingTests
         {
             RecurrenceType = RecurrenceType.Weekly, ServiceId = w.Service.Id.Value, EmployeeId = w.Employee.Id.Value,
             CompanyId = w.Company.Id.Value, ClientIds = new List<Guid> { w.Client.Id.Value },
-            FirstOccurrenceStartsAt = Z(9), EndDate = Z(9).AddDays(14)
+            FirstOccurrenceStartsAt = Z(9), EndDate = SchedulingWorld.Day(Z(9).AddDays(14))
         });
         await w.CompleteNew(w.CompleteRequest(Z(13)));
         await w.AddClientToOnlySegment(single.Id, added);

@@ -2,6 +2,11 @@
 
     <PropertyGroup>
         <TargetFramework>net10.0</TargetFramework>
+        <!-- T1-6: nullable anotacije su ugovor za Swagger i frontend tipove (FE-ADR-0004). CS8618: DTO-ovi su podatkovni ugovori koje
+             puni System.Text.Json; ne-nullable svojstvo bez inicijalizatora je namjerno (ponašanje se ne mijenja). -->
+        <Nullable>enable</Nullable>
+        <GenerateDocumentationFile>true</GenerateDocumentationFile>
+        <NoWarn>$(NoWarn);CS8618;CS1591</NoWarn>
     </PropertyGroup>
 
     <ItemGroup>

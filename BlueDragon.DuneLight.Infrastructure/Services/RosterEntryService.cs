@@ -30,6 +30,7 @@ public class RosterEntryService : IRosterEntryService
 
     private readonly IOrganizationCalendarService _organizationCalendarService;
     private readonly IGrantResolver _grantResolver;
+    private readonly TimeProvider _timeProvider;
 
     public RosterEntryService(
         IRosterEntryHandler rosterEntryHandler,
@@ -42,7 +43,8 @@ public class RosterEntryService : IRosterEntryService
         IEmployeeLeaveSettingsHandler employeeLeaveSettingsHandler,
         IUnitOfWorkFactory unitOfWorkFactory,
         IOrganizationCalendarService organizationCalendarService,
-        IGrantResolver grantResolver)
+        IGrantResolver grantResolver,
+        TimeProvider timeProvider)
     {
         _grantResolver = grantResolver;
         _organizationCalendarService = organizationCalendarService;
@@ -55,13 +57,14 @@ public class RosterEntryService : IRosterEntryService
         _leaveFundHandler = leaveFundHandler;
         _employeeLeaveSettingsHandler = employeeLeaveSettingsHandler;
         _unitOfWorkFactory = unitOfWorkFactory;
+        _timeProvider = timeProvider;
     }
 
     public async Task<PagedResult<RosterEntryDto>> GetPaged(
-        Guid organizationId, PagedRequest request, Guid? employeeId, Guid? rosterTypeId, DateTimeOffset? from, DateTimeOffset? to)
+        Guid organizationId, PagedRequest request, Guid? employeeId, Guid? rosterTypeId, DateOnly? from, DateOnly? to)
     {
         (List<RosterEntry> items, int totalCount) = await _rosterEntryHandler.GetPaged(
-            organizationId, request, employeeId, rosterTypeId, CalendarDates.FromWallDate(from), CalendarDates.FromWallDate(to));
+            organizationId, request, employeeId, rosterTypeId, from, to);
         return PagedResult<RosterEntryDto>.Create(items.Select(ToDto).ToList(), totalCount, request.Page, request.PageSize);
     }
 
@@ -90,7 +93,7 @@ public class RosterEntryService : IRosterEntryService
         if (!type.IsActive)
             throw new BusinessRuleException(ErrorCodes.InactiveType, "Vrsta rostera nije aktivna.");
 
-        (DateOnly dateFrom, DateOnly? dateTo, TimeSpan? startTime, TimeSpan? endTime, decimal? durationHours) =
+        (DateOnly dateFrom, DateOnly? dateTo, TimeOnly? startTime, TimeOnly? endTime, decimal? durationHours) =
             ValidateAndCompute(type, request.DateFrom, request.DateTo, request.StartTime, request.EndTime);
 
         await EnsurePastAllowed(organizationId, userId, dateFrom);
@@ -117,7 +120,7 @@ public class RosterEntryService : IRosterEntryService
             DurationHours = durationHours,
             Note = request.Note,
             IsOverride = isOverride,
-            CreatedAt = DateTimeOffset.UtcNow,
+            CreatedAt = _timeProvider.GetUtcNow(),
             CreatedBy = userId
         };
 
@@ -132,7 +135,7 @@ public class RosterEntryService : IRosterEntryService
                 ChangeType = "Created",
                 OldValue = null,
                 NewValue = BuildAuditSummary(entry, employee, type),
-                ChangedAt = DateTimeOffset.UtcNow,
+                ChangedAt = _timeProvider.GetUtcNow(),
                 ChangedBy = userId
             });
 
@@ -156,7 +159,7 @@ public class RosterEntryService : IRosterEntryService
 
         await ValidateOwnership(organizationId, userId, hasFullScope, existing.EmployeeId);
         if (!hasFullScope && request.EmployeeId != existing.EmployeeId)
-            throw new BusinessRuleException(ErrorCodes.NotOwner, "Smijete upravljati samo svojim vlastitim zapisima rostera.");
+            throw ForbiddenAppException.OutOfScope("Smijete upravljati samo svojim vlastitim zapisima rostera.", Grants.RosterEntriesWriteAll);
 
         Employee employee = await _employeeHandler.GetById(organizationId, request.EmployeeId);
         if (employee == null)
@@ -172,7 +175,7 @@ public class RosterEntryService : IRosterEntryService
 
         string oldSummary = BuildAuditSummary(existing, existing.Employee, existing.RosterType);
 
-        (DateOnly dateFrom, DateOnly? dateTo, TimeSpan? startTime, TimeSpan? endTime, decimal? durationHours) =
+        (DateOnly dateFrom, DateOnly? dateTo, TimeOnly? startTime, TimeOnly? endTime, decimal? durationHours) =
             ValidateAndCompute(type, request.DateFrom, request.DateTo, request.StartTime, request.EndTime);
 
         await EnsurePastAllowed(organizationId, userId, existing.DateFrom, dateFrom);
@@ -195,7 +198,7 @@ public class RosterEntryService : IRosterEntryService
         entry.DurationHours = durationHours;
         entry.Note = request.Note;
         entry.IsOverride = isOverride;
-        entry.UpdatedAt = DateTimeOffset.UtcNow;
+        entry.UpdatedAt = _timeProvider.GetUtcNow();
         entry.UpdatedBy = userId;
 
         await using (IUnitOfWork uow = await _unitOfWorkFactory.Begin())
@@ -213,7 +216,7 @@ public class RosterEntryService : IRosterEntryService
                 ChangeType = "Updated",
                 OldValue = oldSummary,
                 NewValue = BuildAuditSummary(entry, employee, type),
-                ChangedAt = DateTimeOffset.UtcNow,
+                ChangedAt = _timeProvider.GetUtcNow(),
                 ChangedBy = userId
             });
 
@@ -253,7 +256,7 @@ public class RosterEntryService : IRosterEntryService
             ChangeType = "Deleted",
             OldValue = BuildAuditSummary(existing, existing.Employee, existing.RosterType),
             NewValue = null,
-            ChangedAt = DateTimeOffset.UtcNow,
+            ChangedAt = _timeProvider.GetUtcNow(),
             ChangedBy = userId
         });
 
@@ -291,7 +294,7 @@ public class RosterEntryService : IRosterEntryService
 
         // "Danas" (granica Assumed/Planned) je kalendarski dan u efektivnoj zoni primarne poslovnice zaposlenika
         // (poslovnice mogu biti u različitim zonama), a bez primarne poslovnice u zoni organizacije — nikad UTC dan.
-        DateOnly organizationToday = (await _organizationCalendarService.GetCalendar(organizationId)).LocalDate(DateTimeOffset.UtcNow);
+        DateOnly organizationToday = (await _organizationCalendarService.GetCalendar(organizationId)).LocalDate(_timeProvider.GetUtcNow());
         Dictionary<Guid, OrganizationCalendar> calendarsByCompany =
             await _organizationCalendarService.GetCompanyCalendars(organizationId, primaryCompanyIds);
         RosterTeamMonthlyDto result = new RosterTeamMonthlyDto { Year = year, Month = month };
@@ -302,7 +305,7 @@ public class RosterEntryService : IRosterEntryService
             templateByEmployee.TryGetValue(employee.Id.GetValueOrDefault(), out WorkingHoursTemplate employeeTemplate);
             Guid? employeeCompanyId = primaryCompanyByEmployee[employee.Id.GetValueOrDefault()];
             DateOnly today = employeeCompanyId.HasValue
-                ? calendarsByCompany[employeeCompanyId.Value].LocalDate(DateTimeOffset.UtcNow)
+                ? calendarsByCompany[employeeCompanyId.Value].LocalDate(_timeProvider.GetUtcNow())
                 : organizationToday;
 
             RosterEmployeeMonthDto employeeDto = new RosterEmployeeMonthDto
@@ -334,7 +337,7 @@ public class RosterEntryService : IRosterEntryService
                         RosterTypeColorHex = entry.RosterType.ColorHex,
                         IsAbsence = entry.RosterType.IsAbsence,
                         Hours = entry.DurationHours,
-                        TimeRange = entry.RosterType.IsAbsence ? null : $"{entry.StartTime:hh\\:mm}-{entry.EndTime:hh\\:mm}"
+                        TimeRange = entry.RosterType.IsAbsence ? null : $"{entry.StartTime:HH\\:mm}-{entry.EndTime:HH\\:mm}" // T1-7: TimeOnly → HH (24 h)
                     });
                 }
 
@@ -371,20 +374,17 @@ public class RosterEntryService : IRosterEntryService
             return;
 
         cell.Source = dayDate <= today ? RosterCellSource.Assumed : RosterCellSource.Planned;
-        cell.PlannedIntervals = intervals.Select(i => new RosterPlannedIntervalDto { Start = i.Start, End = i.End }).ToList();
+        cell.PlannedIntervals = intervals.Select(i => new RosterPlannedIntervalDto { Start = WorkingHoursCalculator.ToTimeOnly(i.Start), End = WorkingHoursCalculator.ToTimeOnly(i.End) }).ToList();
     }
 
     public async Task<RosterPersonalReviewDto> GetPersonal(
-        Guid organizationId, Guid userId, bool hasFullScope, Guid employeeId, DateTimeOffset from, DateTimeOffset to)
+        Guid organizationId, Guid userId, bool hasFullScope, Guid employeeId, DateOnly fromDate, DateOnly toDate)
     {
         await ValidateOwnership(organizationId, userId, hasFullScope, employeeId);
 
         Employee employee = await _employeeHandler.GetById(organizationId, employeeId);
         if (employee == null)
             throw new NotFoundAppException("Employee", employeeId);
-
-        DateOnly fromDate = CalendarDates.FromWallDate(from);
-        DateOnly toDate = CalendarDates.FromWallDate(to);
 
         List<RosterEntry> entries = await _rosterEntryHandler.GetForPeriod(organizationId, new List<Guid> { employeeId }, fromDate, toDate);
         WorkingHoursTemplate template = await _workingHoursTemplateHandler.GetForEmployee(organizationId, employeeId);
@@ -394,7 +394,7 @@ public class RosterEntryService : IRosterEntryService
         OrganizationCalendar calendar = employeeCompanyId.HasValue
             ? await _organizationCalendarService.GetCompanyCalendar(organizationId, employeeCompanyId.Value)
             : await _organizationCalendarService.GetCalendar(organizationId);
-        DateOnly today = calendar.LocalDate(DateTimeOffset.UtcNow);
+        DateOnly today = calendar.LocalDate(_timeProvider.GetUtcNow());
         List<CompanyHoliday> holidays = employeeCompanyId.HasValue
             ? await _companyHolidayHandler.GetForCompaniesInRange(organizationId, new List<Guid> { employeeCompanyId.Value }, fromDate, toDate)
             : new List<CompanyHoliday>();
@@ -403,8 +403,8 @@ public class RosterEntryService : IRosterEntryService
         {
             EmployeeId = employeeId,
             EmployeeName = $"{employee.FirstName} {employee.LastName}",
-            From = from,
-            To = to,
+            From = fromDate,
+            To = toDate,
             Entries = entries.Select(ToDto).ToList()
         };
 
@@ -439,8 +439,8 @@ public class RosterEntryService : IRosterEntryService
 
             plannedDays.Add(new RosterPlannedDayDto
             {
-                Date = CalendarDates.ToUtcMidnight(date),
-                Intervals = intervals.Select(i => new RosterPlannedIntervalDto { Start = i.Start, End = i.End }).ToList()
+                Date = date,
+                Intervals = intervals.Select(i => new RosterPlannedIntervalDto { Start = WorkingHoursCalculator.ToTimeOnly(i.Start), End = WorkingHoursCalculator.ToTimeOnly(i.End) }).ToList()
             });
         }
 
@@ -451,12 +451,13 @@ public class RosterEntryService : IRosterEntryService
     /// roster.entries.write.past uz own/all opseg. Bez vremenske granice (ARCH §7.3); svaku promjenu bilježi RosterAuditLog.</summary>
     private async Task EnsurePastAllowed(Guid organizationId, Guid userId, params DateOnly[] dateFroms)
     {
-        DateOnly today = (await _organizationCalendarService.GetCalendar(organizationId)).LocalDate(DateTimeOffset.UtcNow);
+        DateOnly today = (await _organizationCalendarService.GetCalendar(organizationId)).LocalDate(_timeProvider.GetUtcNow());
         if (dateFroms.All(d => d >= today))
             return;
         GrantContext grants = await _grantResolver.Resolve(organizationId, userId);
         if (!grants.Has(Grants.RosterEntriesWritePast))
-            throw new ForbiddenAppException("Upis ili izmjena roster zapisa u prošlosti zahtijeva ovlast roster.entries.write.past.");
+            throw ForbiddenAppException.MissingGrant(
+                "Upis ili izmjena roster zapisa u prošlosti zahtijeva ovlast roster.entries.write.past.", Grants.RosterEntriesWritePast);
     }
 
     private async Task ValidateOwnership(Guid organizationId, Guid userId, bool hasFullScope, Guid employeeId)
@@ -466,7 +467,7 @@ public class RosterEntryService : IRosterEntryService
 
         Employee employee = await _employeeHandler.GetByUserId(organizationId, userId);
         if (employee == null || employee.Id != employeeId)
-            throw new BusinessRuleException(ErrorCodes.NotOwner, "Smijete upravljati samo svojim vlastitim zapisima rostera.");
+            throw ForbiddenAppException.OutOfScope("Smijete upravljati samo svojim vlastitim zapisima rostera.", Grants.RosterEntriesWriteAll);
     }
 
     /// <summary>Tip koji troši fond godišnjeg odmora zahtijeva zatvoren raspon — beskonačna ("otvorena") odsutnost ne može oduzeti određen broj dana od fonda.</summary>
@@ -504,7 +505,9 @@ public class RosterEntryService : IRosterEntryService
         if (toYear != fromYear)
             await _leaveFundHandler.GetOrCreateForYear(uow, organizationId, employeeId, settings, toYear, userId);
 
-        List<LeaveFund> eligible = await _leaveFundHandler.GetEligible(uow, organizationId, employeeId, DateTimeOffset.UtcNow);
+        // T1-7: fond se smije trošiti do dana prije ExpiresAt (danas po kalendaru organizacije, kao IsExpired u LeaveFundService).
+        DateOnly today = (await _organizationCalendarService.GetCalendar(organizationId)).LocalDate(_timeProvider.GetUtcNow());
+        List<LeaveFund> eligible = await _leaveFundHandler.GetEligible(uow, organizationId, employeeId, today);
         List<(LeaveFund Fund, int Days)> allocation = LeaveFundAllocator.Deduct(eligible, requestedDays);
 
         foreach ((LeaveFund fund, int days) in allocation)
@@ -517,7 +520,7 @@ public class RosterEntryService : IRosterEntryService
                 RosterEntryId = rosterEntryId,
                 LeaveFundId = fund.Id!.Value,
                 Days = days,
-                CreatedAt = DateTimeOffset.UtcNow
+                CreatedAt = _timeProvider.GetUtcNow()
             });
         }
     }
@@ -586,12 +589,10 @@ public class RosterEntryService : IRosterEntryService
     /// <summary>
     /// Oblik zapisa (rad/odsutnost) određuje isključivo RosterType.IsAbsence. Vraća normalizirane (datum-only) vrijednosti.
     /// </summary>
-    private static (DateOnly DateFrom, DateOnly? DateTo, TimeSpan? StartTime, TimeSpan? EndTime, decimal? DurationHours) ValidateAndCompute(
-        RosterType type, DateTimeOffset requestedFrom, DateTimeOffset? requestedTo, TimeSpan? startTime, TimeSpan? endTime)
+    private static (DateOnly DateFrom, DateOnly? DateTo, TimeOnly? StartTime, TimeOnly? EndTime, decimal? DurationHours) ValidateAndCompute(
+        RosterType type, DateOnly dateFrom, DateOnly? dateTo, TimeOnly? startTime, TimeOnly? endTime)
     {
-        // Kalendarski datumi kako ih je klijent napisao (prije: DateTime -> DateTimeOffset s offsetom hosta, F-19).
-        DateOnly dateFrom = CalendarDates.FromWallDate(requestedFrom);
-        DateOnly? dateTo = CalendarDates.FromWallDate(requestedTo);
+        // T1-7: kalendarski dani su DateOnly, vremena dana TimeOnly — bez ikakve pretvorbe zone ili offseta.
 
         if (type.IsAbsence)
         {
@@ -634,7 +635,7 @@ public class RosterEntryService : IRosterEntryService
 
     private async Task<List<WarningDto>> ComputeOverlapWarnings(
         Guid organizationId, Guid employeeId, RosterType candidateType,
-        DateOnly dateFrom, DateOnly? dateTo, TimeSpan? startTime, TimeSpan? endTime, Guid? excludeId)
+        DateOnly dateFrom, DateOnly? dateTo, TimeOnly? startTime, TimeOnly? endTime, Guid? excludeId)
     {
         (DateTime candidateFrom, DateTime? candidateTo) = ComputeBounds(candidateType.IsAbsence, dateFrom, dateTo, startTime, endTime);
 
@@ -654,8 +655,8 @@ public class RosterEntryService : IRosterEntryService
                 {
                     RosterTypeName = candidate.RosterType.Name,
                     IsAbsence = candidate.RosterType.IsAbsence,
-                    DateFrom = CalendarDates.ToUtcMidnight(candidate.DateFrom),
-                    DateTo = CalendarDates.ToUtcMidnight(candidate.DateTo),
+                    DateFrom = candidate.DateFrom,
+                    DateTo = candidate.DateTo,
                     StartTime = candidate.StartTime,
                     EndTime = candidate.EndTime
                 }));
@@ -668,7 +669,7 @@ public class RosterEntryService : IRosterEntryService
     /// istog dana (dvokratni) ne prijavljuju lažno preklapanje, dok rad unutar odsutnosti ispravno prijavljuje.</summary>
     /// <summary>Lokalna zidna vremena (bez offseta) u poslovnom kalendaru organizacije — samo za međusobnu usporedbu roster raspona.</summary>
     private static (DateTime From, DateTime? To) ComputeBounds(
-        bool isAbsence, DateOnly dateFrom, DateOnly? dateTo, TimeSpan? startTime, TimeSpan? endTime)
+        bool isAbsence, DateOnly dateFrom, DateOnly? dateTo, TimeOnly? startTime, TimeOnly? endTime)
     {
         DateTime dayStart = dateFrom.ToDateTime(TimeOnly.MinValue);
         if (isAbsence)
@@ -677,7 +678,7 @@ public class RosterEntryService : IRosterEntryService
             return (dayStart, to);
         }
 
-        return (dayStart + startTime!.Value, dayStart + endTime!.Value);
+        return (dateFrom.ToDateTime(startTime!.Value), dateFrom.ToDateTime(endTime!.Value));
     }
 
     /// <summary>Sentinel RosterTypeId za sintetički "Pretpostavljeno" redak u WorkHoursByType — nema stvaran
@@ -800,8 +801,8 @@ public class RosterEntryService : IRosterEntryService
             RosterTypeColorHex = entry.RosterType.ColorHex,
             IsAbsence = entry.RosterType.IsAbsence,
             CountsAsWork = entry.RosterType.CountsAsWork,
-            DateFrom = CalendarDates.ToUtcMidnight(entry.DateFrom),
-            DateTo = CalendarDates.ToUtcMidnight(entry.DateTo),
+            DateFrom = entry.DateFrom,
+            DateTo = entry.DateTo,
             StartTime = entry.StartTime,
             EndTime = entry.EndTime,
             DurationHours = entry.DurationHours,
@@ -819,7 +820,7 @@ public class RosterEntryService : IRosterEntryService
         string employeeName = employee != null ? $"{employee.FirstName} {employee.LastName}" : entry.EmployeeId.ToString();
         string range = type.IsAbsence
             ? $"{entry.DateFrom:dd.MM.yyyy.} - {(entry.DateTo.HasValue ? entry.DateTo.Value.ToString("dd.MM.yyyy.") : "otvoreno")}"
-            : $"{entry.DateFrom:dd.MM.yyyy.} {entry.StartTime:hh\\:mm}-{entry.EndTime:hh\\:mm}";
+            : $"{entry.DateFrom:dd.MM.yyyy.} {entry.StartTime:HH\\:mm}-{entry.EndTime:HH\\:mm}"; // T1-7: TimeOnly → HH (24 h)
 
         return $"Zaposlenik={employeeName}; Vrsta={type.Name}; {range}; Napomena={entry.Note ?? "-"}";
     }

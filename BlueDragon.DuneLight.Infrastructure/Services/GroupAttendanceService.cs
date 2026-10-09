@@ -28,9 +28,11 @@ public class GroupAttendanceService : IGroupAttendanceService
     private readonly IAppointmentHandler _appointmentHandler;
     private readonly IBookingService _bookingService;
     private readonly IGroupHandler _groupHandler;
+    private readonly TimeProvider _timeProvider;
 
-    public GroupAttendanceService(IAppointmentHandler appointmentHandler, IBookingService bookingService, IGroupHandler groupHandler)
+    public GroupAttendanceService(IAppointmentHandler appointmentHandler, IBookingService bookingService, IGroupHandler groupHandler, TimeProvider timeProvider)
     {
+        _timeProvider = timeProvider;
         _appointmentHandler = appointmentHandler;
         _bookingService = bookingService;
         _groupHandler = groupHandler;
@@ -39,7 +41,7 @@ public class GroupAttendanceService : IGroupAttendanceService
     public async Task<GroupAttendanceListDto> GetAttendance(Guid organizationId, Guid appointmentId)
     {
         Appointment appointment = await LoadGroupAppointmentOrThrow(organizationId, appointmentId);
-        return BuildListDto(appointment, await LoadGroup(organizationId, appointment));
+        return BuildListDto(appointment, await LoadGroup(organizationId, appointment), _timeProvider.GetUtcNow());
     }
 
     /// <summary>Grupa s aktivnim članovima, njihovim odabirom predložaka i predlošcima (usluga) — izvor "očekivanih".</summary>
@@ -69,7 +71,7 @@ public class GroupAttendanceService : IGroupAttendanceService
         });
 
         Appointment refreshed = await LoadGroupAppointmentOrThrow(organizationId, appointmentId);
-        GroupAttendanceListDto dto = BuildListDto(refreshed, await LoadGroup(organizationId, refreshed));
+        GroupAttendanceListDto dto = BuildListDto(refreshed, await LoadGroup(organizationId, refreshed), _timeProvider.GetUtcNow());
         dto.Warnings = result.Warnings;
         return dto;
     }
@@ -92,9 +94,8 @@ public class GroupAttendanceService : IGroupAttendanceService
     /// segment: sudjelovanja su jedina istina (današnje članstvo ne prepisuje povijest).</item>
     /// </list>
     /// </summary>
-    private static GroupAttendanceListDto BuildListDto(Appointment appointment, Group group)
+    private static GroupAttendanceListDto BuildListDto(Appointment appointment, Group group, DateTimeOffset now)
     {
-        DateTimeOffset now = DateTimeOffset.UtcNow;
         List<GroupMember> activeMembers = group?.Members.Where(m => m.IsActive).ToList() ?? new List<GroupMember>();
 
         bool SelectsTemplate(Guid clientId, Guid? templateId) => templateId.HasValue && activeMembers.Any(m =>

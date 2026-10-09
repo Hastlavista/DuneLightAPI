@@ -35,7 +35,7 @@ public class AppointmentRecurringCharacterizationTests
             RoomId = room?.Id,
             ClientIds = new List<Guid> { (client ?? w.Client).Id.Value },
             FirstOccurrenceStartsAt = SchedulingWorld.Future(10),
-            EndDate = SchedulingWorld.Future(10).AddDays(stepDays * (occurrences - 1)),
+            EndDate = SchedulingWorld.Day(SchedulingWorld.Future(10).AddDays(stepDays * (occurrences - 1))),
             Note = "series"
         };
     }
@@ -90,7 +90,7 @@ public class AppointmentRecurringCharacterizationTests
     {
         await using SchedulingWorld w = await SchedulingWorld.Create(nameof(AnEndDateBeforeTheFirstOccurrence_IsAValidationError));
         RecurringAppointmentCreateRequest request = Series(w, RecurrenceType.Weekly, 2);
-        request.EndDate = request.FirstOccurrenceStartsAt.AddDays(-1);
+        request.EndDate = SchedulingWorld.Day(request.FirstOccurrenceStartsAt.AddDays(-1));
 
         await SchedulingAssert.Validation(() => w.Appointments.CreateRecurring(w.OrganizationId, w.ActorUserId, true, request));
     }
@@ -99,7 +99,7 @@ public class AppointmentRecurringCharacterizationTests
     public async Task EachOccurrence_ResolvesItsOwnPriceSnapshotForItsOwnDate()
     {
         await using SchedulingWorld w = await SchedulingWorld.Create(nameof(EachOccurrence_ResolvesItsOwnPriceSnapshotForItsOwnDate));
-        await w.AddPriceListItem(w.Service, 80m, SchedulingWorld.FutureDay.AddDays(10), companyId: w.Company.Id); // effective from week 3
+        await w.AddPriceListItem(w.Service, 80m, SchedulingWorld.Day(SchedulingWorld.FutureDay.AddDays(10)), companyId: w.Company.Id); // effective from week 3
 
         List<AppointmentDto> created = await w.Appointments.CreateRecurring(w.OrganizationId, w.ActorUserId, true, Series(w, RecurrenceType.Weekly, 3));
 
@@ -173,8 +173,8 @@ public class AppointmentRecurringCharacterizationTests
         await using SchedulingWorld w = await SchedulingWorld.Create(nameof(ARecurringSeries_IsOwnershipCheckedAgainstTheRequestedEmployee));
         Employee other = await w.AddEmployee("Other");
 
-        await SchedulingAssert.BusinessRule(ErrorCodes.NotOwner,
-            () => w.Appointments.CreateRecurring(w.OrganizationId, other.UserId, false, Series(w, RecurrenceType.Weekly, 2)));
+        // CHANGED in T1: 403 OutOfScope (bilo 409 NOT_OWNER)
+        await SchedulingAssert.OutOfScope(() => w.Appointments.CreateRecurring(w.OrganizationId, other.UserId, false, Series(w, RecurrenceType.Weekly, 2)));
 
         Assert.Equal(0, await w.CountAppointments());
     }

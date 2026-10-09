@@ -200,8 +200,8 @@ public class GroupAttendanceCharacterizationTests
         await using SchedulingWorld _w = w;
         Employee other = await w.AddEmployee("Other");
 
-        await SchedulingAssert.BusinessRule(ErrorCodes.NotOwner,
-            () => Set(w, occurrence.Id.Value, w.Client, attended: true, hasFullScope: false, userId: other.UserId));
+        // CHANGED in T1: 403 OutOfScope (bilo 409 NOT_OWNER)
+        await SchedulingAssert.OutOfScope(() => Set(w, occurrence.Id.Value, w.Client, attended: true, hasFullScope: false, userId: other.UserId));
     }
 
     [Fact]
@@ -214,8 +214,8 @@ public class GroupAttendanceCharacterizationTests
         Appointment occurrence = await w.GenerateSingleOccurrence(group);
 
         // There is no owning employee to compare with, so only full-scope callers can operate the occurrence.
-        await SchedulingAssert.BusinessRule(ErrorCodes.NotOwner,
-            () => Set(w, occurrence.Id.Value, w.Client, attended: true, hasFullScope: false, userId: w.Employee.UserId));
+        // CHANGED in T1: 403 OutOfScope (bilo 409 NOT_OWNER)
+        await SchedulingAssert.OutOfScope(() => Set(w, occurrence.Id.Value, w.Client, attended: true, hasFullScope: false, userId: w.Employee.UserId));
     }
 
     #endregion

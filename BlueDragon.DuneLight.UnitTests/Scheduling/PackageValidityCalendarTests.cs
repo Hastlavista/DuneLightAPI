@@ -201,7 +201,7 @@ public class PackageValidityCalendarTests
         {
             Id = Guid.NewGuid(), OrganizationId = w.OrganizationId, Name = $"Sale-{Guid.NewGuid():N}",
             EntryMode = PackageEntryMode.PerService, ValidityType = type, ValidityDays = days,
-            DefaultPrice = 100m, IsActive = true, CreatedAt = DateTimeOffset.UtcNow
+            DefaultPrice = 100m, IsActive = true, CreatedAt = TestClock.UtcNow
         };
         package.Services.Add(new PackageServiceItem { Id = Guid.NewGuid(), PackageId = package.Id.Value, ServiceId = w.Service.Id.Value, EntryCount = 5 });
         db.Packages.Add(package);
@@ -209,10 +209,10 @@ public class PackageValidityCalendarTests
         return package;
     }
 
-    private static Task<ClientPackageDto> Sell(SchedulingWorld w, Package package, DateTimeOffset purchasedAt, Guid? companyId) =>
+    private static Task<ClientPackageDto> Sell(SchedulingWorld w, Package package, DateOnly? purchasedOn, Guid? companyId) =>
         w.ClientPackages.Create(w.OrganizationId, w.ActorUserId, w.Client.Id.Value, new ClientPackageCreateRequest
         {
-            PackageId = package.Id.Value, PurchaseDate = purchasedAt, PaidPrice = 100m, CompanyId = companyId
+            PackageId = package.Id.Value, PurchaseDate = purchasedOn, PaidPrice = 100m, CompanyId = companyId
         });
 
     [Fact]
@@ -222,16 +222,28 @@ public class PackageValidityCalendarTests
         await SetTimeZone(w, w.Company, Zagreb);
         Package dayCount = await CatalogPackage(w, PackageValidityType.DayCount, days: 10);
         Package endOfMonth = await CatalogPackage(w, PackageValidityType.EndOfMonth);
+        // CHANGED in T1: PurchaseDate je poslovni DAN kupnje (DateOnly). Zadan dan se koristi točno takav (bez zone); bez njega je
+        // to današnji dan po poslovnom satu u zoni poslovnice prodaje (organizacije kad prodaja nema poslovnicu).
         // 31 Jan 23:30 UTC = 1 Feb 00:30 in Zagreb (the sale company) = 31 Jan 18:30 in New York (the organization).
-        DateTimeOffset purchasedAt = new(2031, 1, 31, 23, 30, 0, TimeSpan.Zero);
+        using (w.ClockAt(new DateTimeOffset(2031, 1, 31, 23, 30, 0, TimeSpan.Zero)))
+        {
+            ClientPackageDto atCompany = await Sell(w, dayCount, null, w.Company.Id);
+            Assert.Equal((new DateOnly(2031, 2, 1), new DateOnly(2031, 2, 11)), (atCompany.PurchaseDate, atCompany.ValidUntilDate));
+            Assert.Equal(new DateOnly(2031, 2, 28), (await Sell(w, endOfMonth, null, w.Company.Id)).ValidUntilDate);
+            ClientPackageDto withoutCompany = await Sell(w, dayCount, null, null);
+            Assert.Equal((new DateOnly(2031, 1, 31), new DateOnly(2031, 2, 10)), (withoutCompany.PurchaseDate, withoutCompany.ValidUntilDate));
+            Assert.Equal(new DateOnly(2031, 1, 31), (await Sell(w, endOfMonth, null, null)).ValidUntilDate);
+        }
 
-        Assert.Equal(new DateOnly(2031, 2, 11), (await Sell(w, dayCount, purchasedAt, w.Company.Id)).ValidUntilDate);
-        Assert.Equal(new DateOnly(2031, 2, 28), (await Sell(w, endOfMonth, purchasedAt, w.Company.Id)).ValidUntilDate);
-        Assert.Equal(new DateOnly(2031, 2, 10), (await Sell(w, dayCount, purchasedAt, null)).ValidUntilDate);
-        Assert.Equal(new DateOnly(2031, 1, 31), (await Sell(w, endOfMonth, purchasedAt, null)).ValidUntilDate);
-        // The incoming value's own offset is irrelevant — only the instant and the sale calendar count.
-        Assert.Equal(new DateOnly(2031, 2, 11),
-            (await Sell(w, dayCount, purchasedAt.ToOffset(TimeSpan.FromHours(-10)), w.Company.Id)).ValidUntilDate);
+        // An explicit day is used as-is, whatever the zones.
+        // CHANGED in T1 (T1-9): ručni dan kupnje ne smije biti nakon današnjeg dana ni prije njega bez granta, a paket ne smije biti
+        // istekao pri upisu — sat se postavlja na taj dan (31 Jan 12:00 UTC = 13:00 u Zagrebu, zona poslovnice prodaje).
+        using (w.ClockAt(new DateTimeOffset(2031, 1, 31, 12, 0, 0, TimeSpan.Zero)))
+        {
+            ClientPackageDto explicitDay = await Sell(w, dayCount, new DateOnly(2031, 1, 31), w.Company.Id);
+            Assert.Equal((new DateOnly(2031, 1, 31), new DateOnly(2031, 2, 10)), (explicitDay.PurchaseDate, explicitDay.ValidUntilDate));
+            Assert.Equal(new DateOnly(2031, 1, 31), (await Sell(w, endOfMonth, new DateOnly(2031, 1, 31), w.Company.Id)).ValidUntilDate);
+        }
     }
 
     [Fact]
@@ -244,11 +256,11 @@ public class PackageValidityCalendarTests
         Assert.Equal(new DateOnly(2032, 2, 29), PackageExpiryCalculator.CalculateValidUntilDate(PackageValidityType.EndOfMonth, new DateOnly(2032, 2, 1), null, null));
         Assert.Equal(new DateOnly(2031, 6, 30), PackageExpiryCalculator.CalculateValidUntilDate(PackageValidityType.FixedDate, purchase, null, new DateOnly(2031, 6, 30)));
 
-        // D3B3A.2: FixedDate is already a calendar date — used as-is whatever the sale calendar.
+        // D3B3A.2: FixedDate is already a calendar date — used as-is whatever the purchase day.
+        // CHANGED in T1: ForSale prima poslovni dan kupnje (DateOnly, ClientPackage.PurchaseDate) umjesto instanta + kalendara.
         Package fixedDate = new() { ValidityType = PackageValidityType.FixedDate, ValidityFixedDate = new DateOnly(2031, 6, 30) };
-        foreach (string zone in new[] { "UTC", Zagreb, NewYork, "Pacific/Auckland" })
-            Assert.Equal(new DateOnly(2031, 6, 30), PackageExpiryCalculator.ForSale(
-                fixedDate, new DateTimeOffset(2031, 1, 31, 23, 30, 0, TimeSpan.Zero), OrganizationCalendar.For(zone)));
+        Assert.Equal(new DateOnly(2031, 6, 30), PackageExpiryCalculator.ForSale(fixedDate, new DateOnly(2031, 1, 31)));
+        Assert.Equal(new DateOnly(2031, 6, 30), PackageExpiryCalculator.ForSale(fixedDate, new DateOnly(2031, 2, 1)));
     }
 
     #endregion
@@ -261,7 +273,7 @@ public class PackageValidityCalendarTests
         await using SchedulingWorld w = await SchedulingWorld.Create(nameof(Eligible_RequiresAnExistingCompany_AndTheEndpointBindsItAsRequired));
 
         await SchedulingAssert.NotFound(() => w.ClientPackages.GetEligibleForService(
-            w.OrganizationId, w.Client.Id.Value, w.Service.Id.Value, DateTimeOffset.UtcNow, Guid.NewGuid()));
+            w.OrganizationId, w.Client.Id.Value, w.Service.Id.Value, TestClock.UtcNow, Guid.NewGuid()));
 
         ParameterInfo companyId = typeof(ClientPackagesController).GetMethod(nameof(ClientPackagesController.GetEligible))!
             .GetParameters().Single(p => p.Name == "companyId");

@@ -46,7 +46,7 @@ public class BookingSegmentParticipationTests
             AppointmentSegment segment = new()
             {
                 Id = Guid.NewGuid(), OrganizationId = w.OrganizationId, AppointmentId = dto.Id, ServiceId = w.Service.Id.Value,
-                PlannedStart = Z(hour, i * 15), PlannedEnd = Z(hour, i * 15 + 15), CreatedAt = DateTimeOffset.UtcNow
+                PlannedStart = Z(hour, i * 15), PlannedEnd = Z(hour, i * 15 + 15), CreatedAt = TestClock.UtcNow
             };
             await w.Resolve<IAppointmentSegmentHandler>().Add(segment);
             created.Add(segment);
@@ -66,14 +66,14 @@ public class BookingSegmentParticipationTests
         Status = status,
         // P1: current-state metadata always matches the status (DB CHECK).
         CancellationInitiator = status == ParticipationStatus.Cancelled ? CancellationInitiator.Business : null,
-        CancelledAt = status == ParticipationStatus.Cancelled ? DateTimeOffset.UtcNow : null,
-        NoShowAt = status == ParticipationStatus.NoShow ? DateTimeOffset.UtcNow : null,
+        CancelledAt = status == ParticipationStatus.Cancelled ? TestClock.UtcNow : null,
+        NoShowAt = status == ParticipationStatus.NoShow ? TestClock.UtcNow : null,
         BaseAmount = 50m,
         BaseAmountSource = PriceSource.Default,
         SuggestedAmount = 50m,
         Amount = 50m,
         IsAmountManuallyOverridden = false, // D3B1: nullable (snapshot optional until D3B2) — a full snapshot sets it
-        CreatedAt = DateTimeOffset.UtcNow
+        CreatedAt = TestClock.UtcNow
     };
 
     /// <summary>Participations added by these tests: every production booking owns exactly one, the rest are extra.</summary>
@@ -329,7 +329,7 @@ public class BookingSegmentParticipationTests
         {
             BookingSegmentParticipation tracked = await db.BookingSegmentParticipations.SingleAsync(x => x.Id == p.Id);
             tracked.Status = ParticipationStatus.NoShow;
-            tracked.NoShowAt = DateTimeOffset.UtcNow;
+            tracked.NoShowAt = TestClock.UtcNow;
             tracked.StatusVersion = 3;
             await db.SaveChangesAsync();
         }
@@ -598,7 +598,7 @@ public class BookingSegmentParticipationTests
         {
             RecurrenceType = RecurrenceType.Weekly, ServiceId = w.Service.Id.Value, EmployeeId = w.Employee.Id.Value,
             CompanyId = w.Company.Id.Value, ClientIds = new List<Guid> { w.Client.Id.Value },
-            FirstOccurrenceStartsAt = Z(9), EndDate = Z(9).AddDays(14)
+            FirstOccurrenceStartsAt = Z(9), EndDate = SchedulingWorld.Day(Z(9).AddDays(14))
         });
         AppointmentDto toCancel = await w.CreateAppointment(Z(11));
         await w.SetBookingStatus(toCancel.Id, w.Client, BookingStatus.Cancelled, "changed plans");

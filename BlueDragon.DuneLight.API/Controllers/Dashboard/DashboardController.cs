@@ -22,11 +22,11 @@ public class DashboardController : ControllerBase
         _dashboardService = dashboardService;
     }
 
-    /// <summary>Datum je opcionalan — izostavljen znači tekući UTC kalendarski dan (vidi
-    /// IOperationalDashboardService.GetDashboard).</summary>
+    /// <summary>Dan ("yyyy-MM-dd", T1-7: DateOnly) je opcionalan — izostavljen znači današnji dan po poslovnom satu u efektivnoj
+    /// zoni poslovnice (vidi IOperationalDashboardService.GetDashboard).</summary>
     [HttpGet("operational")]
     [RequireGrant(Grants.DashboardView)]
-    public async Task<ActionResult<OperationalDashboardDto>> GetOperational([FromQuery] Guid companyId, [FromQuery] DateTimeOffset? date)
+    public async Task<ActionResult<OperationalDashboardDto>> GetOperational([FromQuery] Guid companyId, [FromQuery] DateOnly? date)
     {
         return Ok(await _dashboardService.GetDashboard(this.CurrentOrganizationId(), companyId, date));
     }

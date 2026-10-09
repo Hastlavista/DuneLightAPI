@@ -11,5 +11,5 @@ public class AuthResponse
     public string OrganizationName { get; set; }
     public string OrganizationSlug { get; set; }
     public string Token { get; set; }
-    public DateTime? TokenExpiration { get; set; }
+    public DateTimeOffset? TokenExpiration { get; set; }
 }

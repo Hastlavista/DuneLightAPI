@@ -23,16 +23,16 @@ public class PriceListItemHistory
     public decimal NewPrice { get; set; }
 
     [Column("old_valid_from")]
-    public DateTimeOffset OldValidFrom { get; set; }
+    public DateOnly OldValidFrom { get; set; }
 
     [Column("new_valid_from")]
-    public DateTimeOffset NewValidFrom { get; set; }
+    public DateOnly NewValidFrom { get; set; }
 
     [Column("old_valid_to")]
-    public DateTimeOffset? OldValidTo { get; set; }
+    public DateOnly? OldValidTo { get; set; }
 
     [Column("new_valid_to")]
-    public DateTimeOffset? NewValidTo { get; set; }
+    public DateOnly? NewValidTo { get; set; }
 
     [Column("changed_at")]
     public DateTimeOffset ChangedAt { get; set; }

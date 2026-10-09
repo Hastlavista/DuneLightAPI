@@ -36,10 +36,11 @@ public class TimezoneSchedulingTests
 
     private static AvailableSlotsQuery SlotsOn(SchedulingWorld w, DateTimeOffset day) => new()
     {
-        ServiceId = w.Service.Id.Value, CompanyId = w.Company.Id.Value, Date = day
+        ServiceId = w.Service.Id.Value, CompanyId = w.Company.Id.Value, Date = DateOnly.FromDateTime(day.Date) // T1-7: zidni datum kao DateOnly
     };
 
-    private static async Task<TimeSpan[]> SlotStarts(SchedulingWorld w, DateTimeOffset day) =>
+    // CHANGED in T1: lokalna vremena slotova su TimeOnly, ne TimeSpan.
+    private static async Task<TimeOnly[]> SlotStarts(SchedulingWorld w, DateTimeOffset day) =>
         Assert.Single(await w.Appointments.GetAvailableSlots(w.OrganizationId, SlotsOn(w, day))).Slots.Select(s => s.Start).ToArray();
 
     #region Absences are local calendar dates
@@ -154,15 +155,15 @@ public class TimezoneSchedulingTests
 
         foreach (DateTimeOffset day in new[] { Day(2031, 3, 3), Day(2031, 7, 14) })
         {
-            TimeSpan[] starts = await SlotStarts(w, day);
+            TimeOnly[] starts = await SlotStarts(w, day);
 
-            Assert.Equal(new TimeSpan(8, 0, 0), starts.First());
-            Assert.Equal(new TimeSpan(19, 30, 0), starts.Last());
-            Assert.Contains(new TimeSpan(9, 30, 0), starts);
-            Assert.DoesNotContain(new TimeSpan(9, 45, 0), starts);
-            Assert.DoesNotContain(new TimeSpan(10, 0, 0), starts);
-            Assert.DoesNotContain(new TimeSpan(10, 15, 0), starts);
-            Assert.Contains(new TimeSpan(10, 30, 0), starts);
+            Assert.Equal(new TimeOnly(8, 0), starts.First());
+            Assert.Equal(new TimeOnly(19, 30), starts.Last());
+            Assert.Contains(new TimeOnly(9, 30), starts);
+            Assert.DoesNotContain(new TimeOnly(9, 45), starts);
+            Assert.DoesNotContain(new TimeOnly(10, 0), starts);
+            Assert.DoesNotContain(new TimeOnly(10, 15), starts);
+            Assert.Contains(new TimeOnly(10, 30), starts);
         }
     }
 
@@ -172,12 +173,12 @@ public class TimezoneSchedulingTests
         await using SchedulingWorld w = await ZagrebWorld(nameof(AvailableSlots_WithABreak_ExcludeTheLocalBreakWindow));
         await w.AddScheduleBreak(w.Employee, Z(2031, 3, 3, 13), 60); // 14:00-15:00 local
 
-        TimeSpan[] starts = await SlotStarts(w, Day(2031, 3, 3));
+        TimeOnly[] starts = await SlotStarts(w, Day(2031, 3, 3));
 
-        Assert.Contains(new TimeSpan(13, 30, 0), starts);
-        Assert.DoesNotContain(new TimeSpan(13, 45, 0), starts);
-        Assert.DoesNotContain(new TimeSpan(14, 30, 0), starts);
-        Assert.Contains(new TimeSpan(15, 0, 0), starts);
+        Assert.Contains(new TimeOnly(13, 30), starts);
+        Assert.DoesNotContain(new TimeOnly(13, 45), starts);
+        Assert.DoesNotContain(new TimeOnly(14, 30), starts);
+        Assert.Contains(new TimeOnly(15, 0), starts);
     }
 
     [Fact]
@@ -189,12 +190,12 @@ public class TimezoneSchedulingTests
 
         foreach (DateTimeOffset day in new[] { Day(2031, 3, 30), Day(2031, 10, 26) })
         {
-            TimeSpan[] starts = await SlotStarts(w, day);
+            TimeOnly[] starts = await SlotStarts(w, day);
 
-            Assert.Equal(new TimeSpan(8, 0, 0), starts.First());
-            Assert.Contains(new TimeSpan(9, 30, 0), starts);
-            Assert.DoesNotContain(new TimeSpan(10, 0, 0), starts);
-            Assert.Contains(new TimeSpan(10, 30, 0), starts);
+            Assert.Equal(new TimeOnly(8, 0), starts.First());
+            Assert.Contains(new TimeOnly(9, 30), starts);
+            Assert.DoesNotContain(new TimeOnly(10, 0), starts);
+            Assert.Contains(new TimeOnly(10, 30), starts);
         }
     }
 
@@ -225,7 +226,7 @@ public class TimezoneSchedulingTests
             CompanyId = w.Company.Id.Value,
             ClientIds = new List<Guid> { w.Client.Id.Value },
             FirstOccurrenceStartsAt = Z(2031, 3, 24, 9), // Monday 10:00 CET
-            EndDate = Z(2031, 4, 7, 12)
+            EndDate = new DateOnly(2031, 4, 7) // CHANGED in T1: zadnji dan niza (DateOnly, uključivo)
         });
 
         Assert.Equal(new[] { Z(2031, 3, 24, 9), Z(2031, 3, 31, 8), Z(2031, 4, 7, 8) },

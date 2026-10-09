@@ -26,7 +26,7 @@ public class MembershipCompanyClosureTests
 {
     private static IClientMembershipService Memberships(SchedulingWorld w) => w.Resolve<IClientMembershipService>();
     private static IMembershipRenewalService Renewal(SchedulingWorld w) => w.Resolve<IMembershipRenewalService>();
-    private static DateOnly Today => DateOnly.FromDateTime(DateTime.UtcNow);
+    private static DateOnly Today => DateOnly.FromDateTime(TestClock.UtcNow.UtcDateTime);
 
     private static Task<MembershipPlanDto> Plan(SchedulingWorld w, MembershipRenewalAnchor anchor, bool extendsPeriod = true,
         MembershipCompanyScope scope = MembershipCompanyScope.AllCompanies, params Guid[] companyIds) =>
@@ -60,8 +60,8 @@ public class MembershipCompanyClosureTests
         DateOnly boundary = Today.AddMonths(1);
         await w.SetCompanyActive(w.Company, false);
 
-        await Renewal(w).RunForOrganization(w.OrganizationId, boundary);
-        await Renewal(w).RunForOrganization(w.OrganizationId, boundary.AddDays(10));
+        await Renewal(w).RunForOrganizationOn(w.OrganizationId, boundary);
+        await Renewal(w).RunForOrganizationOn(w.OrganizationId, boundary.AddDays(10));
 
         ClientMembershipDto standing = await Memberships(w).GetById(w.OrganizationId, sold.Id);
         Assert.Equal(boundary, standing.StandingStillSince);
@@ -73,7 +73,7 @@ public class MembershipCompanyClosureTests
         // Ponovna aktivacija: od toga dana novi period, bez zaduženja za propušteno; tekući period ostaje kakav jest.
         DateOnly reactivated = boundary.AddDays(20);
         await w.SetCompanyActive(w.Company, true);
-        await Renewal(w).RunForOrganization(w.OrganizationId, reactivated);
+        await Renewal(w).RunForOrganizationOn(w.OrganizationId, reactivated);
 
         List<MembershipPeriodDto> periods = await Periods(w, sold.Id);
         Assert.Equal(new[] { (Today, boundary.AddDays(-1)), (reactivated, reactivated.AddMonths(1).AddDays(-1)) },
@@ -96,7 +96,7 @@ public class MembershipCompanyClosureTests
         AppointmentDto booked = await w.CreateAppointment(w.CreateRequest(start, overrideAvailability: true));
 
         await w.SetCompanyActive(w.Company, false);
-        await Renewal(w).RunForOrganization(w.OrganizationId, boundary);
+        await Renewal(w).RunForOrganizationOn(w.OrganizationId, boundary);
 
         ClientMembershipDto standing = await Memberships(w).GetById(w.OrganizationId, sold.Id);
         Assert.Equal((MembershipState.StandingStill, (DateOnly?)boundary), (standing.State, standing.StandingStillSince));
@@ -112,14 +112,14 @@ public class MembershipCompanyClosureTests
         ClientMembershipDto sold = await Sell(w, (await Plan(w, MembershipRenewalAnchor.CalendarMonth)).Id);
         DateOnly nextMonth = new DateOnly(Today.Year, Today.Month, 1).AddMonths(1);
         await w.SetCompanyActive(w.Company, false);
-        await Renewal(w).RunForOrganization(w.OrganizationId, nextMonth);
+        await Renewal(w).RunForOrganizationOn(w.OrganizationId, nextMonth);
 
         await w.SetCompanyActive(w.Company, true);
-        await Renewal(w).RunForOrganization(w.OrganizationId, nextMonth.AddDays(9));
+        await Renewal(w).RunForOrganizationOn(w.OrganizationId, nextMonth.AddDays(9));
         Assert.Single(await Periods(w, sold.Id));
         Assert.Null((await Memberships(w).GetById(w.OrganizationId, sold.Id)).StandingStillSince);
 
-        await Renewal(w).RunForOrganization(w.OrganizationId, nextMonth.AddMonths(1));
+        await Renewal(w).RunForOrganizationOn(w.OrganizationId, nextMonth.AddMonths(1));
         List<MembershipPeriodDto> periods = await Periods(w, sold.Id);
         Assert.Equal(nextMonth.AddMonths(1), periods[^1].StartsOn);
         Assert.Equal(2, await PeriodCharges(w, sold.Id));
@@ -134,7 +134,7 @@ public class MembershipCompanyClosureTests
             scope: MembershipCompanyScope.SelectedCompanies, companyIds: new[] { w.Company.Id.Value, other.Id.Value })).Id);
         await w.SetCompanyActive(w.Company, false);
 
-        await Renewal(w).RunForOrganization(w.OrganizationId, Today.AddMonths(1));
+        await Renewal(w).RunForOrganizationOn(w.OrganizationId, Today.AddMonths(1));
 
         Assert.Equal(2, (await Periods(w, sold.Id)).Count);
         Assert.Null((await Memberships(w).GetById(w.OrganizationId, sold.Id)).StandingStillSince);
@@ -146,7 +146,7 @@ public class MembershipCompanyClosureTests
         await using SchedulingWorld w = await SchedulingWorld.Create(nameof(WhileStandingStill_NoNewPause_AndCancellationEndsImmediatelyWithItsOwnReason));
         ClientMembershipDto sold = await Sell(w, (await Plan(w, MembershipRenewalAnchor.PurchaseDate)).Id);
         await w.SetCompanyActive(w.Company, false);
-        await Renewal(w).RunForOrganization(w.OrganizationId, Today.AddMonths(1));
+        await Renewal(w).RunForOrganizationOn(w.OrganizationId, Today.AddMonths(1));
 
         await SchedulingAssert.BusinessRule(ErrorCodes.MembershipPauseNotAllowed, () => Memberships(w).Pause(w.OrganizationId, w.ActorUserId, sold.Id,
             new ClientMembershipPauseRequest { StartsOn = Today.AddMonths(2), EndsOn = Today.AddMonths(2).AddDays(3) }));
@@ -170,9 +170,9 @@ public class MembershipCompanyClosureTests
         Assert.Equal(30 - 16, (await Memberships(w).GetById(w.OrganizationId, sold.Id)).PauseAllowance.RemainingDays);
 
         await w.SetCompanyActive(w.Company, false);
-        await Renewal(w).RunForOrganization(w.OrganizationId, boundary);
+        await Renewal(w).RunForOrganizationOn(w.OrganizationId, boundary);
         await w.SetCompanyActive(w.Company, true);
-        await Renewal(w).RunForOrganization(w.OrganizationId, boundary.AddDays(5)); // stajanje boundary..boundary+4 (5 dana)
+        await Renewal(w).RunForOrganizationOn(w.OrganizationId, boundary.AddDays(5)); // stajanje boundary..boundary+4 (5 dana)
 
         ClientMembershipDto after = await Memberships(w).GetById(w.OrganizationId, sold.Id);
         Assert.Equal(30 - (16 - 5), after.PauseAllowance.RemainingDays);

@@ -25,15 +25,17 @@ public class ResourceService : IResourceService
     private readonly ICompanyHandler _companyHandler;
     private readonly ISchedulingOccupancyHandler _schedulingOccupancyHandler;
     private readonly IUnitOfWorkFactory _unitOfWorkFactory;
+    private readonly TimeProvider _timeProvider;
 
     public ResourceService(
         IResourceHandler resourceHandler, ICompanyHandler companyHandler, ISchedulingOccupancyHandler schedulingOccupancyHandler,
-        IUnitOfWorkFactory unitOfWorkFactory)
+        IUnitOfWorkFactory unitOfWorkFactory, TimeProvider timeProvider)
     {
         _resourceHandler = resourceHandler;
         _companyHandler = companyHandler;
         _schedulingOccupancyHandler = schedulingOccupancyHandler;
         _unitOfWorkFactory = unitOfWorkFactory;
+        _timeProvider = timeProvider;
     }
 
     public async Task<PagedResult<ResourceDto>> GetPaged(Guid organizationId, Guid? companyId, PagedRequest request)
@@ -75,7 +77,7 @@ public class ResourceService : IResourceService
             Note = request.Note,
             SortOrder = request.SortOrder,
             IsActive = true,
-            CreatedAt = DateTimeOffset.UtcNow,
+            CreatedAt = _timeProvider.GetUtcNow(),
             CreatedBy = userId
         };
 
@@ -104,14 +106,14 @@ public class ResourceService : IResourceService
                 throw new NotFoundAppException("Resource", id);
 
             await CapacityChangeGuard.EnsureResourceCapacityChange(
-                _schedulingOccupancyHandler, uow, organizationId, id, resource.Name, resource.Capacity, request.Capacity, DateTimeOffset.UtcNow);
+                _schedulingOccupancyHandler, uow, organizationId, id, resource.Name, resource.Capacity, request.Capacity, _timeProvider.GetUtcNow());
 
             // Id, OrganizationId i CompanyId se namjerno ne diraju — Resource nikad ne mijenja poslovnicu.
             resource.Name = name;
             resource.Capacity = request.Capacity;
             resource.Note = request.Note;
             resource.SortOrder = request.SortOrder;
-            resource.UpdatedAt = DateTimeOffset.UtcNow;
+            resource.UpdatedAt = _timeProvider.GetUtcNow();
             resource.UpdatedBy = userId;
             await uow.CommitAsync();
         }
@@ -140,7 +142,7 @@ public class ResourceService : IResourceService
         }
 
         resource.IsActive = isActive;
-        resource.UpdatedAt = DateTimeOffset.UtcNow;
+        resource.UpdatedAt = _timeProvider.GetUtcNow();
         resource.UpdatedBy = userId;
         await _resourceHandler.Update(resource);
 

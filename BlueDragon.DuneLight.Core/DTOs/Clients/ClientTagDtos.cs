@@ -7,7 +7,7 @@ public class ClientTagDto
 {
     public Guid Id { get; set; }
     public string Name { get; set; }
-    public string ColorHex { get; set; }
+    public string? ColorHex { get; set; }
     public bool IsActive { get; set; }
     public int SortOrder { get; set; }
     public DateTimeOffset CreatedAt { get; set; }
@@ -23,7 +23,7 @@ public class ClientTagCreateRequest
     public string Name { get; set; }
 
     [MaxLength(7)]
-    public string ColorHex { get; set; }
+    public string? ColorHex { get; set; }
 
     public int SortOrder { get; set; }
 }
@@ -35,7 +35,7 @@ public class ClientTagUpdateRequest
     public string Name { get; set; }
 
     [MaxLength(7)]
-    public string ColorHex { get; set; }
+    public string? ColorHex { get; set; }
 
     public int SortOrder { get; set; }
 }

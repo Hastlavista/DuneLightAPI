@@ -18,8 +18,10 @@ public class ResolvedPrice
 /// 2) stavka zaposlenika za "sve tvrtke"; zatim (i jedino za <c>employeeId</c> = null, izvor Standard)
 /// 3) aktivna stavka za konkretnu tvrtku, 4) aktivna stavka za "sve tvrtke" (CompanyId == null), 5) zadana (default)
 /// cijena usluge/paketa. Stavke DRUGIH zaposlenika se nikad ne razmatraju; Standard preskače sve razine zaposlenika.
+/// T1-7: <c>date</c> je POSLOVNI dan (lokalni datum početka termina u zoni poslovnice termina; termin preko ponoći pripada
+/// danu početka); stavka vrijedi kad je ValidFrom &lt;= date &lt;= ValidTo (oba kraja uključena, ValidTo null = otvoreno).
 /// </summary>
 public interface IPriceResolutionService
 {
-    ResolvedPrice Resolve(IEnumerable<PriceCandidate> candidates, decimal defaultPrice, Guid? companyId, Guid? employeeId, DateTimeOffset date);
+    ResolvedPrice Resolve(IEnumerable<PriceCandidate> candidates, decimal defaultPrice, Guid? companyId, Guid? employeeId, DateOnly date);
 }

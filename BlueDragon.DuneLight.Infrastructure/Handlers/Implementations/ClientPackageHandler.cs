@@ -21,10 +21,12 @@ public class ClientPackageHandler : IClientPackageHandler
         _databaseSettings = databaseSettings;
     }
 
-    public async Task Add(ClientPackage clientPackage)
+    public async Task Add(ClientPackage clientPackage, ClientAuditLog audit = null)
     {
         await using DatabaseContext context = DatabaseContext.GenerateContext(_databaseSettings.ConnectionString);
         context.ClientPackages.Add(clientPackage);
+        if (audit != null)
+            context.ClientAuditLogs.Add(audit);
         await context.SaveChangesAsync();
     }
 
@@ -111,6 +113,7 @@ public class ClientPackageHandler : IClientPackageHandler
             .Include(cp => cp.ServiceEntries).ThenInclude(e => e.Service)
             .Where(cp => cp.OrganizationId == organizationId && cp.ClientId == clientId)
             .OrderByDescending(cp => cp.PurchaseDate)
+            .ThenByDescending(cp => cp.CreatedAt) // T1-7: PurchaseDate je dan — isti dan razlikuje trenutak upisa
             .ToListAsync();
     }
 
@@ -124,7 +127,7 @@ public class ClientPackageHandler : IClientPackageHandler
                 cp.OrganizationId == organizationId &&
                 cp.ClientId == clientId &&
                 cp.Status == ClientPackageStatus.Active &&
-                cp.ValidUntilDate >= serviceDate && // PackageValidity.IsValidOn (usporedba datuma), izraženo u SQL-u
+                cp.PurchaseDate <= serviceDate && cp.ValidUntilDate >= serviceDate && // PackageValidity.IsValidOn (usporedba datuma, T1-9: od PurchaseDate), izraženo u SQL-u
                 cp.ServiceEntries.Any(se => se.ServiceId == serviceId) &&
                 (
                     (cp.EntryMode == PackageEntryMode.SharedPool && (cp.RemainingSharedEntries == null || cp.RemainingSharedEntries > 0)) ||

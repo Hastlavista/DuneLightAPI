@@ -110,7 +110,7 @@ public class ParticipationSettlementTests
         {
             Id = Guid.NewGuid(), OrganizationId = w.OrganizationId, CheckoutId = mine.Id, Type = CheckoutItemType.Booking,
             Description = "x", UnitPrice = 50m, Quantity = 1, Amount = 50m, BookingSegmentParticipationId = theirParticipation,
-            CreatedAt = DateTimeOffset.UtcNow
+            CreatedAt = TestClock.UtcNow
         });
         DbUpdateException ex = await Assert.ThrowsAsync<DbUpdateException>(() => db.SaveChangesAsync());
         Assert.Contains("fk_checkout_items_participation_organization", ex.InnerException?.Message);
@@ -351,11 +351,11 @@ public class ParticipationSettlementTests
         await w.CompleteParticipations(covered.Id, w.CompleteRequest(Z(12), client: second, clientPackageId: package.Id));
         IOperationalDashboardService dashboard = w.Resolve<IOperationalDashboardService>();
 
-        DashboardFinancialDto onServiceDay = (await dashboard.GetDashboard(w.OrganizationId, w.Company.Id.Value, Z(10))).Financial;
+        DashboardFinancialDto onServiceDay = (await dashboard.GetDashboard(w.OrganizationId, w.Company.Id.Value, SchedulingWorld.Day(Z(10)))).Financial;
         Assert.Equal(30m, onServiceDay.OutstandingAmount); // 50 - 20 on the paid one; the package-covered one owes nothing
         Assert.Equal(1, onServiceDay.UnpaidBookingCount);
 
-        DashboardFinancialDto today = (await dashboard.GetDashboard(w.OrganizationId, w.Company.Id.Value, DateTimeOffset.UtcNow)).Financial;
+        DashboardFinancialDto today = (await dashboard.GetDashboard(w.OrganizationId, w.Company.Id.Value, SchedulingWorld.Day(TestClock.UtcNow))).Financial;
         Assert.Equal(20m, today.TodayRevenue); // only real Payments — the package consumption is not cash
     }
 

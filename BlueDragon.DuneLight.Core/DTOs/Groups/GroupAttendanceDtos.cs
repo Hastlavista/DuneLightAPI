@@ -8,7 +8,7 @@ namespace BlueDragon.DuneLight.Core.DTOs.Groups;
 public class GroupAttendanceEntryDto
 {
     public Guid ClientId { get; set; }
-    public string ClientName { get; set; }
+    public string? ClientName { get; set; }
     public bool? Attended { get; set; }
     public AttendanceCoverageType? CoverageType { get; set; }
     public Guid? ClientPackageId { get; set; }
@@ -24,7 +24,7 @@ public class GroupAttendanceEntryDto
     /// <summary>P1 (D7): max(PaidAmount − MonetaryDue, 0) — informativno, nije kredit klijenta.</summary>
     public decimal SurplusAmount { get; set; }
     public bool IsPaid { get; set; }
-    public string Note { get; set; }
+    public string? Note { get; set; }
 
     /// <summary>P1 — stanje najnovije posljedice politike (npr. izostanak) ako postoji, inače null.</summary>
     public PolicyConsequenceStatus? PolicyConsequenceStatus { get; set; }
@@ -47,7 +47,7 @@ public class GroupSegmentAttendanceDto
     public Guid SegmentId { get; set; }
     public Guid? SegmentTemplateId { get; set; }
     public Guid ServiceId { get; set; }
-    public string ServiceName { get; set; }
+    public string? ServiceName { get; set; }
     public DateTimeOffset PlannedStart { get; set; }
     public DateTimeOffset PlannedEnd { get; set; }
     public List<GroupAttendanceEntryDto> Expected { get; set; } = new();
@@ -85,7 +85,7 @@ public class SetGroupAttendanceRequest
 
     public bool IsPaid { get; set; } = true;
 
-    public string Note { get; set; }
+    public string? Note { get; set; }
 
     /// <summary>Segment occurrencea čija se prisutnost bilježi — uvijek obavezan.</summary>
     [Required]
@@ -96,16 +96,16 @@ public class SetGroupAttendanceRequest
     public bool WaivePolicyConsequence { get; set; }
 
     [MaxLength(500)]
-    public string WaiverReason { get; set; }
+    public string? WaiverReason { get; set; }
 
     /// <summary>P1 (D3) — opcionalan razlog izostanka (Attended=false).</summary>
     [MaxLength(500)]
-    public string NoShowReason { get; set; }
+    public string? NoShowReason { get; set; }
 
     /// <summary>K1-4 — šifra razloga izostanka (Attended=false).</summary>
     public Guid? NoShowReasonCodeId { get; set; }
 
     /// <summary>P1 (D12) — razlog korekcije kad prijelaz poništava aktivnu posljedicu sa stvarnim učinkom.</summary>
     [MaxLength(500)]
-    public string CorrectionReason { get; set; }
+    public string? CorrectionReason { get; set; }
 }

@@ -29,14 +29,14 @@ public class ClientMembershipDto
     public DateOnly StartsOn { get; set; }
 
     /// <summary>Tekući period na današnji dan (za Scheduled prvi period); null kad je članstvo završilo ili poništeno.</summary>
-    public MembershipPeriodDto CurrentPeriod { get; set; }
+    public MembershipPeriodDto? CurrentPeriod { get; set; }
 
     /// <summary>Zadnji dan članstva (uključivo) kad je završetak zakazan ili nastupio; null = traje i obnavlja se.</summary>
     public DateOnly? EndsOn { get; set; }
     public MembershipEndReason? EndReason { get; set; }
     public DateTimeOffset? CancellationRequestedAt { get; set; }
     public Guid? CancellationRequestedBy { get; set; }
-    public string CancellationReason { get; set; }
+    public string? CancellationReason { get; set; }
 
     /// <summary>Q15 — stanje duga iz najstarijeg nekonačnog zaduženja (Current / InGrace / Delinquent).</summary>
     public MembershipStanding Standing { get; set; }
@@ -44,18 +44,18 @@ public class ClientMembershipDto
     /// <summary>Ukupan preostali dug otvorenih zaduženja.</summary>
     public decimal OutstandingAmount { get; set; }
 
-    public MembershipPendingChangeDto PendingChange { get; set; }
+    public MembershipPendingChangeDto? PendingChange { get; set; }
 
     /// <summary>Izmjena plana koju je istisnula klijentova promjena plana (izvorni datum); vraća se ako se promjena povuče.</summary>
-    public MembershipPendingChangeDto DisplacedPlanUpdate { get; set; }
+    public MembershipPendingChangeDto? DisplacedPlanUpdate { get; set; }
 
     /// <summary>Trajna oznaka: izmjena plana nije primijenjena na ovo članstvo (i zašto), dok je kasnija izmjena ne riješi.</summary>
-    public MembershipPlanUpdateNotAppliedDto PlanUpdateNotApplied { get; set; }
+    public MembershipPlanUpdateNotAppliedDto? PlanUpdateNotApplied { get; set; }
     public List<MembershipPauseDto> Pauses { get; set; } = new();
 
     /// <summary>Q5.4 — preostali dani/periodi i broj pauza u tekućih 12 mjeseci od početka članstva; null kad plan ne dopušta
     /// pauzu.</summary>
-    public MembershipPauseAllowanceDto PauseAllowance { get; set; }
+    public MembershipPauseAllowanceDto? PauseAllowance { get; set; }
 
     public Guid SoldCompanyId { get; set; }
     public MembershipSaleChannel SoldVia { get; set; }
@@ -68,7 +68,7 @@ public class ClientMembershipDto
 
     public DateTimeOffset? VoidedAt { get; set; }
     public Guid? VoidedBy { get; set; }
-    public string VoidReason { get; set; }
+    public string? VoidReason { get; set; }
 
     /// <summary>Neblokirajuća upozorenja naredbe koja je vratila ovaj odgovor (npr. plan ne vrijedi u poslovnici prodaje,
     /// poništena zakazana pauza).</summary>
@@ -108,7 +108,7 @@ public class MembershipChargeDto
     public string Description { get; set; }
     public decimal Amount { get; set; }
     public DateOnly DueOn { get; set; }
-    public MembershipPeriodDto Period { get; set; }
+    public MembershipPeriodDto? Period { get; set; }
     public MembershipChargeStatus Status { get; set; }
     public decimal SettledAmount { get; set; }
     public decimal OutstandingAmount { get; set; }
@@ -118,7 +118,7 @@ public class MembershipChargeDto
 
     public DateTimeOffset? WrittenOffAt { get; set; }
     public Guid? WrittenOffBy { get; set; }
-    public string WriteOffReason { get; set; }
+    public string? WriteOffReason { get; set; }
     public DateTimeOffset? VoidedAt { get; set; }
     public DateTimeOffset CreatedAt { get; set; }
 }
@@ -153,7 +153,7 @@ public class MembershipPauseDto
     /// <summary>Null = otvorena sustavna pauza (poslovnice još zatvorene; kraj se zna tek pri ponovnoj aktivaciji).</summary>
     public DateOnly? PlannedEndsOn { get; set; }
     public DateOnly? ActualEndsOn { get; set; }
-    public string Reason { get; set; }
+    public string? Reason { get; set; }
     public DateTimeOffset? CancelledAt { get; set; }
     public Guid? CancelledBy { get; set; }
     public MembershipPauseCancellationReason? CancellationReason { get; set; }
@@ -196,7 +196,7 @@ public class ClientMembershipSellRequest
 public class ClientMembershipCancelRequest
 {
     [MaxLength(500)]
-    public string Reason { get; set; }
+    public string? Reason { get; set; }
 }
 
 public class ClientMembershipPauseRequest
@@ -212,7 +212,7 @@ public class ClientMembershipPauseRequest
     public int? Periods { get; set; }
 
     [MaxLength(500)]
-    public string Reason { get; set; }
+    public string? Reason { get; set; }
 }
 
 /// <summary>Q47 — raniji povratak iz pauze. Kod kalendarskog plana bez Confirm odgovor vraća samo pregled (koji se period
@@ -227,7 +227,7 @@ public class ClientMembershipPauseEndEarlyResultDto
     public bool Applied { get; set; }
 
     /// <summary>Kalendarski plan: period koji se otvara od dana povratka i njegov puni iznos.</summary>
-    public MembershipPeriodDto OpensPeriod { get; set; }
+    public MembershipPeriodDto? OpensPeriod { get; set; }
     public decimal? OpensPeriodAmount { get; set; }
 
     public ClientMembershipDto Membership { get; set; }

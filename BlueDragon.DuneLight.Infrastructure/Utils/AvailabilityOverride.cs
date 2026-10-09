@@ -33,14 +33,15 @@ public static class AvailabilityOverride
             return false;
         GrantContext grants = await grantResolver.Resolve(organizationId, userId);
         if (!grants.Has(Grants.AppointmentsAvailabilityOverride))
-            throw new ForbiddenAppException(
-                "Rad izvan radnog vremena ili dostupnosti zahtijeva ovlast appointments.availability.override.");
+            throw ForbiddenAppException.MissingGrant(
+                "Rad izvan radnog vremena ili dostupnosti zahtijeva ovlast appointments.availability.override.", Grants.AppointmentsAvailabilityOverride);
         return true;
     }
 
     /// <summary>Audit zapis termina kad je override zaobišao barem jednu provjeru dostupnosti (upozorenja u odgovoru).</summary>
     public static Task Audit(
-        IAppointmentAuditLogHandler auditLogHandler, IUnitOfWork uow, Guid appointmentId, IEnumerable<WarningDto> warnings, Guid userId)
+        IAppointmentAuditLogHandler auditLogHandler, IUnitOfWork uow, Guid appointmentId, IEnumerable<WarningDto> warnings, Guid userId,
+        DateTimeOffset now)
     {
         List<string> codes = (warnings ?? Enumerable.Empty<WarningDto>())
             .Select(w => w.Code)
@@ -50,16 +51,16 @@ public static class AvailabilityOverride
             .ToList();
         if (codes.Count == 0)
             return Task.CompletedTask;
-        return auditLogHandler.Add(uow, Entry(appointmentId, codes, userId));
+        return auditLogHandler.Add(uow, Entry(appointmentId, codes, userId, now));
     }
 
-    public static AppointmentAuditLog Entry(Guid appointmentId, IReadOnlyCollection<string> codes, Guid userId) => new()
+    public static AppointmentAuditLog Entry(Guid appointmentId, IReadOnlyCollection<string> codes, Guid userId, DateTimeOffset now) => new()
     {
         Id = Guid.NewGuid(),
         AppointmentId = appointmentId,
         ChangeType = AuditChangeType,
         NewValue = string.Join(",", codes),
-        ChangedAt = DateTimeOffset.UtcNow,
+        ChangedAt = now,
         ChangedBy = userId
     };
 }

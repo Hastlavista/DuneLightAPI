@@ -37,6 +37,7 @@ public class MembershipPlanService : IMembershipPlanService
     private readonly IUnitOfWorkFactory _unitOfWorkFactory;
     private readonly IMembershipCoverageService _coverage;
     private readonly IPricingService _pricingService;
+    private readonly TimeProvider _timeProvider;
 
     public MembershipPlanService(
         IMembershipPlanHandler handler,
@@ -47,7 +48,8 @@ public class MembershipPlanService : IMembershipPlanService
         IOrganizationSettingsService organizationSettingsService,
         IUnitOfWorkFactory unitOfWorkFactory,
         IMembershipCoverageService coverage,
-        IPricingService pricingService)
+        IPricingService pricingService,
+        TimeProvider timeProvider)
     {
         _pricingService = pricingService;
         _handler = handler;
@@ -58,6 +60,7 @@ public class MembershipPlanService : IMembershipPlanService
         _organizationSettingsService = organizationSettingsService;
         _unitOfWorkFactory = unitOfWorkFactory;
         _coverage = coverage;
+        _timeProvider = timeProvider;
     }
 
     public async Task<List<MembershipPlanDto>> GetAll(Guid organizationId)
@@ -83,7 +86,7 @@ public class MembershipPlanService : IMembershipPlanService
         MembershipPlanRules.Validate(request);
         await EnsureReferences(organizationId, request, grandfathered: null);
 
-        DateTimeOffset now = DateTimeOffset.UtcNow;
+        DateTimeOffset now = _timeProvider.GetUtcNow();
         MembershipPlan plan = new MembershipPlan
         {
             Id = Guid.NewGuid(),
@@ -119,7 +122,7 @@ public class MembershipPlanService : IMembershipPlanService
                 await EnsureActiveNameFree(uow, organizationId, name, exceptId: id);
             plan.Name = name;
             plan.Description = NormalizeDescription(request.Description);
-            Touch(plan, userId);
+            Touch(plan, userId, _timeProvider.GetUtcNow());
             await SaveTranslatingDuplicates(uow, name);
             await uow.CommitAsync();
         }
@@ -135,7 +138,7 @@ public class MembershipPlanService : IMembershipPlanService
             MembershipPlan plan = await _handler.GetForUpdate(uow, organizationId, id)
                 ?? throw new NotFoundAppException("MembershipPlan", id);
             plan.MaxActiveMemberships = request?.MaxActiveMemberships;
-            Touch(plan, userId);
+            Touch(plan, userId, _timeProvider.GetUtcNow());
             await uow.Context.SaveChangesAsync();
             await uow.CommitAsync();
         }
@@ -148,7 +151,7 @@ public class MembershipPlanService : IMembershipPlanService
     {
         MembershipPlanRules.Validate(request);
         MembershipPlanVersionPublishResultDto result = new() { ApplyTo = request.ApplyTo };
-        DateOnly today = (await _organizationCalendarService.GetCalendar(organizationId)).LocalDate(DateTimeOffset.UtcNow);
+        DateOnly today = (await _organizationCalendarService.GetCalendar(organizationId)).LocalDate(_timeProvider.GetUtcNow());
         int noticeDays = await _organizationSettingsService.GetMembershipChangeNoticeDays(organizationId);
 
         await using (IUnitOfWork uow = await _unitOfWorkFactory.Begin())
@@ -160,10 +163,10 @@ public class MembershipPlanService : IMembershipPlanService
             MembershipPlanVersion latest = await _handler.GetLatestVersion(uow, id);
             await EnsureReferences(organizationId, request, latest);
 
-            DateTimeOffset now = DateTimeOffset.UtcNow;
+            DateTimeOffset now = _timeProvider.GetUtcNow();
             MembershipPlanVersion version = NewVersion(plan, (latest?.Version ?? 0) + 1, request, userId, now);
             uow.Context.MembershipPlanVersions.Add(version);
-            Touch(plan, userId);
+            Touch(plan, userId, now);
 
             (result.Classification, result.WorsenedDimensions) = latest == null
                 ? (MembershipPlanChangeClassification.Favorable, new List<string>())
@@ -212,7 +215,7 @@ public class MembershipPlanService : IMembershipPlanService
 
             MembershipPlanAffectedMembershipDto entry = new() { MembershipId = membership.Id, ClientId = membership.ClientId, EffectiveOn = effectiveOn };
             affected.Add(entry);
-            DateTimeOffset now = DateTimeOffset.UtcNow;
+            DateTimeOffset now = _timeProvider.GetUtcNow();
             membership.UpdatedAt = now;
             membership.UpdatedBy = userId;
 
@@ -223,7 +226,7 @@ public class MembershipPlanService : IMembershipPlanService
                 (entry.Skipped, entry.SkipReason) = (true, ErrorCodes.MembershipOverlappingCoverage);
                 MembershipTimelines.MarkPlanUpdateNotApplied(membership, version.Id, ErrorCodes.MembershipOverlappingCoverage, now);
                 _membershipHandler.AddAudit(uow, MembershipTimelines.Audit(membership, userId, "PlanUpdateNotApplied", null,
-                    version.Id.ToString(), ErrorCodes.MembershipOverlappingCoverage));
+                    version.Id.ToString(), now, ErrorCodes.MembershipOverlappingCoverage));
                 continue;
             }
 
@@ -236,7 +239,7 @@ public class MembershipPlanService : IMembershipPlanService
                 membership.DisplacedPlanVersionId = version.Id;
                 membership.DisplacedEffectiveOn = effectiveOn;
                 _membershipHandler.AddAudit(uow, MembershipTimelines.Audit(membership, userId, "PlanUpdateHeldByClientPlanChange", oldDisplaced,
-                    $"{version.Id}@{effectiveOn:yyyy-MM-dd}", classification.ToString()));
+                    $"{version.Id}@{effectiveOn:yyyy-MM-dd}", now, classification.ToString()));
                 continue;
             }
 
@@ -245,7 +248,7 @@ public class MembershipPlanService : IMembershipPlanService
             membership.PendingEffectiveOn = effectiveOn;
             membership.PendingSource = MembershipPendingChangeSource.PlanUpdate;
             _membershipHandler.AddAudit(uow, MembershipTimelines.Audit(membership, userId, "PlanUpdateScheduled", old,
-                $"{version.Id}@{effectiveOn:yyyy-MM-dd}", classification.ToString()));
+                $"{version.Id}@{effectiveOn:yyyy-MM-dd}", now, classification.ToString()));
         }
 
         return affected;
@@ -261,7 +264,7 @@ public class MembershipPlanService : IMembershipPlanService
             {
                 await EnsureActiveNameFree(uow, organizationId, plan.Name, exceptId: id);
                 plan.IsActive = true;
-                Touch(plan, userId);
+                Touch(plan, userId, _timeProvider.GetUtcNow());
                 await SaveTranslatingDuplicates(uow, plan.Name);
             }
 
@@ -282,7 +285,7 @@ public class MembershipPlanService : IMembershipPlanService
             if (plan.IsActive)
             {
                 plan.IsActive = false;
-                Touch(plan, userId);
+                Touch(plan, userId, _timeProvider.GetUtcNow());
                 await uow.Context.SaveChangesAsync();
             }
 
@@ -292,7 +295,7 @@ public class MembershipPlanService : IMembershipPlanService
         // 2C — članstva završavaju na sljedećoj obnovi ako plan tada još nije aktivan; odgovor nosi broj, popis je na
         // GET /api/membership-plans/{id}/memberships-ending.
         MembershipPlanDto result = await GetById(organizationId, id);
-        DateOnly today = (await _organizationCalendarService.GetCalendar(organizationId)).LocalDate(DateTimeOffset.UtcNow);
+        DateOnly today = (await _organizationCalendarService.GetCalendar(organizationId)).LocalDate(_timeProvider.GetUtcNow());
         int ending = (await _membershipHandler.GetActiveForPlan(organizationId, id, today)).Count(ClientMembershipService.WillEndDueToDeactivation);
         if (ending > 0)
             result.Warnings.Add(new WarningDto(WarningCodes.MembershipPlanMembershipsEnding, new WarningMembershipsEndingDetails { Count = ending }));
@@ -452,7 +455,6 @@ public class MembershipPlanService : IMembershipPlanService
             allServiceIds = await uow.Context.Services.Where(s => s.OrganizationId == organizationId && s.IsActive).Select(s => s.Id.Value).ToListAsync();
         }
 
-        DateTimeOffset now = DateTimeOffset.UtcNow;
         List<WarningMembershipBenefitPrice> prices = new();
         foreach (MembershipPlanPriceBenefit rule in fixedPrices)
         {
@@ -464,7 +466,7 @@ public class MembershipPlanService : IMembershipPlanService
             {
                 Core.DTOs.Catalog.ResolvePriceResponse resolved = await _pricingService.ResolvePrice(organizationId, new ResolvePriceRequest
                 {
-                    SubjectType = PricingSubjectType.Service, SubjectId = serviceId, CompanyId = companyId, Date = now
+                    SubjectType = PricingSubjectType.Service, SubjectId = serviceId, CompanyId = companyId // T1-7: Date null = danas u zoni poslovnice
                 });
                 if (rule.Value >= resolved.Price)
                     prices.Add(new WarningMembershipBenefitPrice { ServiceId = serviceId, CompanyId = companyId, ListPrice = resolved.Price, MemberPrice = rule.Value });
@@ -476,9 +478,9 @@ public class MembershipPlanService : IMembershipPlanService
         return dto;
     }
 
-    private static void Touch(MembershipPlan plan, Guid userId)
+    private static void Touch(MembershipPlan plan, Guid userId, DateTimeOffset now)
     {
-        plan.UpdatedAt = DateTimeOffset.UtcNow;
+        plan.UpdatedAt = now;
         plan.UpdatedBy = userId;
     }
 

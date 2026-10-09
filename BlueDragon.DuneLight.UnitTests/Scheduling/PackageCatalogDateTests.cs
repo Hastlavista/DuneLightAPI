@@ -47,11 +47,16 @@ public class PackageCatalogDateTests
         await db.SaveChangesAsync();
     }
 
-    private static Task<ClientPackageDto> Sell(SchedulingWorld w, PackageDto package, DateTimeOffset purchasedAt, Guid? companyId) =>
-        w.ClientPackages.Create(w.OrganizationId, w.ActorUserId, w.Client.Id.Value, new ClientPackageCreateRequest
+    // CHANGED in T1 (T1-9): ručni dan kupnje mora biti današnji dan (unatrag samo uz grant, nikad u budućnosti) — prodaja se radi uz
+    // sat postavljen na taj dan u 10:00 UTC, što je isti lokalni dan u svim zonama ovih testova (Auckland 23:00, New York 05:00).
+    private static async Task<ClientPackageDto> Sell(SchedulingWorld w, PackageDto package, DateOnly purchasedOn, Guid? companyId)
+    {
+        using IDisposable clock = w.ClockAt(new DateTimeOffset(purchasedOn.ToDateTime(new TimeOnly(10, 0)), TimeSpan.Zero));
+        return await w.ClientPackages.Create(w.OrganizationId, w.ActorUserId, w.Client.Id.Value, new ClientPackageCreateRequest
         {
-            PackageId = package.Id, PurchaseDate = purchasedAt, PaidPrice = 100m, CompanyId = companyId
+            PackageId = package.Id, PurchaseDate = purchasedOn, PaidPrice = 100m, CompanyId = companyId
         });
+    }
 
     [Fact]
     public async Task FixedDate_PersistsAsAPostgresDate_AndRoundTripsWithoutTimeOrZone()
@@ -82,7 +87,7 @@ public class PackageCatalogDateTests
     {
         await using SchedulingWorld w = await SchedulingWorld.Create(nameof(FixedDateSale_UsesTheConfiguredDateExactly_WhateverTheOrganizationOrCompanyZone));
         PackageDto package = await CreateFixedDatePackage(w);
-        DateTimeOffset purchasedAt = new(2031, 1, 31, 23, 30, 0, TimeSpan.Zero);
+        DateOnly purchasedAt = new(2031, 1, 31); // CHANGED in T1: PurchaseDate je poslovni dan (DateOnly), ne instant
 
         Assert.Equal(FixedDate, (await Sell(w, package, purchasedAt, w.Company.Id)).ValidUntilDate);
 
@@ -102,7 +107,7 @@ public class PackageCatalogDateTests
         await using SchedulingWorld w = await SchedulingWorld.Create(nameof(FixedDatePackage_IsStillJudgedOnTheServiceLocalDateInTheCompanyZone));
         await SetCompanyTimeZone(w, "Europe/Zagreb"); // +02:00 in June
         PackageDto package = await CreateFixedDatePackage(w);
-        ClientPackageDto sold = await Sell(w, package, new DateTimeOffset(2031, 1, 10, 12, 0, 0, TimeSpan.Zero), w.Company.Id);
+        ClientPackageDto sold = await Sell(w, package, new DateOnly(2031, 1, 10), w.Company.Id);
 
         // 30 June 21:30 UTC = 23:30 local (last valid day); 30 June 22:30 UTC = 1 July 00:30 local.
         Assert.Single(await w.ClientPackages.GetEligibleForService(w.OrganizationId, w.Client.Id.Value, w.Service.Id.Value,

@@ -32,7 +32,7 @@ public class BookingStatusVersioningCharacterizationTests
     {
         Booking booking = SingleSegmentTestExtensions.InMemoryBooking(BookingStatus.Confirmed, 0);
 
-        bool changed = ParticipationLifecycle.TrySetStatus(Assert.Single(booking.Participations), ParticipationStatus.Completed);
+        bool changed = ParticipationLifecycle.TrySetStatus(Assert.Single(booking.Participations), ParticipationStatus.Completed, TestClock.UtcNow);
 
         Assert.True(changed);
         Assert.Equal(BookingStatus.Completed, booking.Status);
@@ -48,7 +48,7 @@ public class BookingStatusVersioningCharacterizationTests
     {
         Booking booking = SingleSegmentTestExtensions.InMemoryBooking(status, 7);
 
-        bool changed = ParticipationLifecycle.TrySetStatus(Assert.Single(booking.Participations), BookingParticipations.ToParticipationStatus(status));
+        bool changed = ParticipationLifecycle.TrySetStatus(Assert.Single(booking.Participations), BookingParticipations.ToParticipationStatus(status), TestClock.UtcNow);
 
         Assert.False(changed);
         Assert.Equal(status, booking.Status);
@@ -60,11 +60,11 @@ public class BookingStatusVersioningCharacterizationTests
     {
         Booking booking = SingleSegmentTestExtensions.InMemoryBooking(BookingStatus.Confirmed);
 
-        ParticipationLifecycle.TrySetStatus(Assert.Single(booking.Participations), ParticipationStatus.NoShow);      // 1
-        ParticipationLifecycle.TrySetStatus(Assert.Single(booking.Participations), ParticipationStatus.NoShow);      // repeat: no change
-        ParticipationLifecycle.TrySetStatus(Assert.Single(booking.Participations), ParticipationStatus.Confirmed);   // 2
-        ParticipationLifecycle.TrySetStatus(Assert.Single(booking.Participations), ParticipationStatus.NoShow);      // 3 — a NEW occurrence of NoShow
-        ParticipationLifecycle.TrySetStatus(Assert.Single(booking.Participations), ParticipationStatus.Cancelled);   // 4
+        ParticipationLifecycle.TrySetStatus(Assert.Single(booking.Participations), ParticipationStatus.NoShow, TestClock.UtcNow);      // 1
+        ParticipationLifecycle.TrySetStatus(Assert.Single(booking.Participations), ParticipationStatus.NoShow, TestClock.UtcNow);      // repeat: no change
+        ParticipationLifecycle.TrySetStatus(Assert.Single(booking.Participations), ParticipationStatus.Confirmed, TestClock.UtcNow);   // 2
+        ParticipationLifecycle.TrySetStatus(Assert.Single(booking.Participations), ParticipationStatus.NoShow, TestClock.UtcNow);      // 3 — a NEW occurrence of NoShow
+        ParticipationLifecycle.TrySetStatus(Assert.Single(booking.Participations), ParticipationStatus.Cancelled, TestClock.UtcNow);   // 4
 
         Assert.Equal(4, booking.StatusVersion);
         Assert.Equal(BookingStatus.Cancelled, booking.Status);
@@ -74,14 +74,14 @@ public class BookingStatusVersioningCharacterizationTests
     public void TrySetStatus_DoesNotTouchAnyOtherBookingField()
     {
         Booking booking = SingleSegmentTestExtensions.InMemoryBooking(BookingStatus.Confirmed, cancellationReason: "r");
-        ParticipationPrice.Apply(Assert.Single(booking.Participations), new BookingPricing(50m, 50m, false)); // D3B2: price lives on the participation
+        ParticipationPrice.Apply(Assert.Single(booking.Participations), new BookingPricing(50m, 50m, false), TestClock.UtcNow); // D3B2: price lives on the participation
         booking.Note = "n";
         Assert.Single(booking.Participations).PackageConsumptions.Add(new PackageConsumption
         {
             Id = Guid.NewGuid(), Status = PackageConsumptionStatus.Consumed, Units = 1 // D3B3A: package usage is ledger state
         });
 
-        ParticipationLifecycle.TrySetStatus(Assert.Single(booking.Participations), ParticipationStatus.Cancelled);
+        ParticipationLifecycle.TrySetStatus(Assert.Single(booking.Participations), ParticipationStatus.Cancelled, TestClock.UtcNow);
 
         Assert.Equal(50m, booking.Amount);
         Assert.Equal("n", booking.Note);

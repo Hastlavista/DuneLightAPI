@@ -146,7 +146,7 @@ public class GroupOccurrenceGenerationCharacterizationTests
     {
         (SchedulingWorld w, ServiceEntity svc) = await Arrange(nameof(Generate_ResolvesTheBookingPriceForTheOccurrenceDateAndCompany));
         await using SchedulingWorld _ = w;
-        await w.AddPriceListItem(svc, 22m, new DateTimeOffset(2030, 1, 1, 0, 0, 0, TimeSpan.Zero), companyId: w.Company.Id);
+        await w.AddPriceListItem(svc, 22m, new DateOnly(2030, 1, 1), companyId: w.Company.Id);
         GroupDto group = await w.CreateGroup(svc, capacity: 5);
         await w.AddGroupMember(group, w.Client);
 
@@ -310,7 +310,7 @@ public class GroupOccurrenceGenerationCharacterizationTests
         // plus a re-check of existing (slot, start) pairs before inserting. A duplicate write is refused and nothing is saved.
         AppointmentSegment existingSegment = existing.Segments.Single();
         Appointment duplicate = AppointmentFactory.CreateGroupOccurrence(
-            w.OrganizationId, existing.CompanyId, existing.GroupId.Value, existing.GroupSlotId.Value, w.ActorUserId, DateTimeOffset.UtcNow,
+            w.OrganizationId, existing.CompanyId, existing.GroupId.Value, existing.GroupSlotId.Value, w.ActorUserId, TestClock.UtcNow,
             new[]
             {
                 new SegmentPlan(existingSegment.ServiceId, existingSegment.PlannedStart, existingSegment.PlannedEnd,

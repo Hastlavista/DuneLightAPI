@@ -8,11 +8,11 @@ namespace BlueDragon.DuneLight.Core.DTOs.Organization;
 /// </summary>
 public class OrganizationBrandingDto
 {
-    public string Logo { get; set; }
-    public string Favicon { get; set; }
-    public string PrimaryColor { get; set; }
-    public string SecondaryColor { get; set; }
-    public string SurfaceColor { get; set; }
+    public string? Logo { get; set; }
+    public string? Favicon { get; set; }
+    public string? PrimaryColor { get; set; }
+    public string? SecondaryColor { get; set; }
+    public string? SurfaceColor { get; set; }
 }
 
 /// <summary>Puni branding koji dobiva organizacija prilikom uređivanja u settingsima.</summary>
@@ -42,7 +42,7 @@ public class BrandingColorsUpdateRequest
     /// <summary>Neobavezna — smije biti null (nema custom boju površine) ili validan HEX.</summary>
     [RegularExpression(@"^#([0-9A-Fa-f]{6})$", ErrorMessage = "Boja površine mora biti u HEX formatu (npr. #F5F5F5).")]
     [MaxLength(7)]
-    public string SurfaceColor { get; set; }
+    public string? SurfaceColor { get; set; }
 }
 
 /// <summary>Odgovor nakon uspješnog uploada logo/favicona.</summary>

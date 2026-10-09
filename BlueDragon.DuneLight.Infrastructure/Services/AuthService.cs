@@ -48,7 +48,7 @@ public class AuthService : IAuthService
         organization.Id = Guid.NewGuid();
         organization.Name = request.OrganizationName;
         organization.Slug = slug;
-        organization.CreatedAt = DateTimeOffset.UtcNow;
+        organization.CreatedAt = TimeProvider.System.GetUtcNow(); // T1: nova organizacija još nema pomak sata
 
         User user = new User();
         user.Id = Guid.NewGuid();
@@ -57,7 +57,7 @@ public class AuthService : IAuthService
         user.PasswordHash = PasswordHasher.Hash(request.Password);
         user.ApiKey = Guid.NewGuid().ToString("N");
         user.IsActive = true;
-        user.CreatedAt = DateTimeOffset.UtcNow;
+        user.CreatedAt = TimeProvider.System.GetUtcNow();
 
         try
         {
@@ -167,7 +167,7 @@ public class AuthService : IAuthService
         response.OrganizationName = organization.Name;
         response.OrganizationSlug = organization.Slug;
         response.Token = token;
-        response.TokenExpiration = DateTime.UtcNow.AddHours(_jwtSettings.ExpirationHours);
+        response.TokenExpiration = TimeProvider.System.GetUtcNow().AddHours(_jwtSettings.ExpirationHours); // T1-7: instant po sistemskom satu
         return response;
     }
 }

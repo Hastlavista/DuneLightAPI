@@ -288,7 +288,7 @@ public class AppointmentReadModelCharacterizationTests
 
     private static AvailableSlotsQuery SlotsFor(SchedulingWorld w, Guid? employeeId = null) => new()
     {
-        ServiceId = w.Service.Id.Value, CompanyId = w.Company.Id.Value, Date = SchedulingWorld.FutureDay, EmployeeId = employeeId
+        ServiceId = w.Service.Id.Value, CompanyId = w.Company.Id.Value, Date = SchedulingWorld.Day(SchedulingWorld.FutureDay), EmployeeId = employeeId
     };
 
     [Fact]
@@ -301,9 +301,10 @@ public class AppointmentReadModelCharacterizationTests
         Assert.Equal(w.Employee.Id, row.EmployeeId);
         // 08:00-20:00 window, 30-minute service, 15-minute step: first 08:00, last 19:30 -> 47 slots.
         Assert.Equal(47, row.Slots.Count);
-        Assert.Equal(TimeSpan.FromHours(8), row.Slots.First().Start);
-        Assert.Equal(TimeSpan.FromHours(8).Add(TimeSpan.FromMinutes(30)), row.Slots.First().End);
-        Assert.Equal(new TimeSpan(19, 30, 0), row.Slots.Last().Start);
+        // CHANGED in T1: slot Start/End su TimeOnly ("HH:mm:ss"), ne TimeSpan.
+        Assert.Equal(new TimeOnly(8, 0), row.Slots.First().Start);
+        Assert.Equal(new TimeOnly(8, 30), row.Slots.First().End);
+        Assert.Equal(new TimeOnly(19, 30), row.Slots.Last().Start);
     }
 
     [Fact]
@@ -315,15 +316,15 @@ public class AppointmentReadModelCharacterizationTests
 
         EmployeeAvailableSlotsDto row = Assert.Single(await w.Appointments.GetAvailableSlots(w.OrganizationId, SlotsFor(w)));
 
-        TimeSpan[] starts = row.Slots.Select(s => s.Start).ToArray();
-        Assert.DoesNotContain(new TimeSpan(9, 45, 0), starts);   // ends 10:15 -> overlaps the appointment
-        Assert.DoesNotContain(new TimeSpan(10, 0, 0), starts);
-        Assert.DoesNotContain(new TimeSpan(10, 15, 0), starts);
-        Assert.Contains(new TimeSpan(9, 30, 0), starts);         // ends exactly at 10:00
-        Assert.Contains(new TimeSpan(10, 30, 0), starts);        // starts exactly at 10:30
-        Assert.DoesNotContain(new TimeSpan(13, 45, 0), starts);  // overlaps the break
-        Assert.DoesNotContain(new TimeSpan(14, 30, 0), starts);
-        Assert.Contains(new TimeSpan(15, 0, 0), starts);
+        TimeOnly[] starts = row.Slots.Select(s => s.Start).ToArray(); // CHANGED in T1: TimeOnly umjesto TimeSpan
+        Assert.DoesNotContain(new TimeOnly(9, 45), starts);   // ends 10:15 -> overlaps the appointment
+        Assert.DoesNotContain(new TimeOnly(10, 0), starts);
+        Assert.DoesNotContain(new TimeOnly(10, 15), starts);
+        Assert.Contains(new TimeOnly(9, 30), starts);         // ends exactly at 10:00
+        Assert.Contains(new TimeOnly(10, 30), starts);        // starts exactly at 10:30
+        Assert.DoesNotContain(new TimeOnly(13, 45), starts);  // overlaps the break
+        Assert.DoesNotContain(new TimeOnly(14, 30), starts);
+        Assert.Contains(new TimeOnly(15, 0), starts);
     }
 
     [Fact]
@@ -336,10 +337,11 @@ public class AppointmentReadModelCharacterizationTests
 
         List<EmployeeAvailableSlotsDto> rows = await w.Appointments.GetAvailableSlots(w.OrganizationId, SlotsFor(w));
 
+        // CHANGED in T1: slot Start je TimeOnly.
         // The main employee still offers 10:00 (the room/client being used elsewhere is invisible to this search),
         // while the busy employee does not.
-        Assert.Contains(new TimeSpan(10, 0, 0), rows.Single(r => r.EmployeeId == w.Employee.Id).Slots.Select(s => s.Start));
-        Assert.DoesNotContain(new TimeSpan(10, 0, 0), rows.Single(r => r.EmployeeId == otherEmployee.Id).Slots.Select(s => s.Start));
+        Assert.Contains(new TimeOnly(10, 0), rows.Single(r => r.EmployeeId == w.Employee.Id).Slots.Select(s => s.Start));
+        Assert.DoesNotContain(new TimeOnly(10, 0), rows.Single(r => r.EmployeeId == otherEmployee.Id).Slots.Select(s => s.Start));
     }
 
     [Fact]
@@ -363,7 +365,7 @@ public class AppointmentReadModelCharacterizationTests
     {
         await using SchedulingWorld w = await SchedulingWorld.Create(nameof(AvailableSlots_ForAPastDay_AreEmpty_AndForAnInactiveOrUnofferedService_AreEmpty));
         AvailableSlotsQuery past = SlotsFor(w);
-        past.Date = SchedulingWorld.PastDay;
+        past.Date = SchedulingWorld.Day(SchedulingWorld.PastDay);
         Assert.Empty(await w.Appointments.GetAvailableSlots(w.OrganizationId, past));
 
         ServiceEntityAlias unoffered = await w.AddService(30, 10m, availableAtCompany: false);
@@ -400,7 +402,7 @@ public class AppointmentReadModelCharacterizationTests
         await using (DatabaseContext db = w.NewDb())
         {
             Appointment tracked = await db.Appointments.SingleAsync(a => a.Id == created.Id);
-            tracked.CreatedAt = DateTimeOffset.UtcNow.AddDays(-1);
+            tracked.CreatedAt = TestClock.UtcNow.AddDays(-1);
             await db.SaveChangesAsync();
         }
 

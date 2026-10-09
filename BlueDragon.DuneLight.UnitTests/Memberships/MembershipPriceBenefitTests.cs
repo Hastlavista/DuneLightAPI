@@ -27,8 +27,8 @@ namespace BlueDragon.DuneLight.UnitTests.Memberships;
 /// </summary>
 public class MembershipPriceBenefitTests
 {
-    private static DateTimeOffset At(int days, int hour) => new DateTimeOffset(DateTime.UtcNow.Date, TimeSpan.Zero).AddDays(days).AddHours(hour);
-    private static DateOnly Today => DateOnly.FromDateTime(DateTime.UtcNow);
+    private static DateTimeOffset At(int days, int hour) => new DateTimeOffset(TestClock.UtcNow.UtcDateTime.Date, TimeSpan.Zero).AddDays(days).AddHours(hour);
+    private static DateOnly Today => DateOnly.FromDateTime(TestClock.UtcNow.UtcDateTime);
 
     private static MembershipPriceBenefitDto All(MembershipPriceBenefitType type, decimal value) =>
         new() { Scope = MembershipPriceBenefitScope.AllServices, Type = type, Value = value };

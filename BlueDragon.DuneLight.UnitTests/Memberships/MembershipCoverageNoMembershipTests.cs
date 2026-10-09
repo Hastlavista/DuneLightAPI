@@ -28,7 +28,7 @@ namespace BlueDragon.DuneLight.UnitTests.Memberships;
 /// </summary>
 public class MembershipCoverageNoMembershipTests
 {
-    private static DateTimeOffset NearFuture(int days, int hour) => new DateTimeOffset(DateTime.UtcNow.Date, TimeSpan.Zero).AddDays(days).AddHours(hour);
+    private static DateTimeOffset NearFuture(int days, int hour) => new DateTimeOffset(TestClock.UtcNow.UtcDateTime.Date, TimeSpan.Zero).AddDays(days).AddHours(hour);
 
     private static async Task<BookingParticipationDto> OnlyParticipation(SchedulingWorld w, Guid appointmentId) =>
         (await w.Appointments.GetById(w.OrganizationId, appointmentId)).Bookings.Single().Participations.Single();
@@ -57,7 +57,7 @@ public class MembershipCoverageNoMembershipTests
 
         // P1 late cancellation (40 % fee) of a near-future booking: the fee is the only due.
         DateTimeOffset start = NearFuture(2, 10);
-        await w.PublishDefaultPolicyVersion((int)(start - DateTimeOffset.UtcNow).TotalMinutes + 60, CancellationFeeType.Percentage, 40m,
+        await w.PublishDefaultPolicyVersion((int)(start - TestClock.UtcNow).TotalMinutes + 60, CancellationFeeType.Percentage, 40m,
             noShowFeeType: CancellationFeeType.Fixed, noShowFeeValue: 15m);
         AppointmentDto lateCancelled = await w.CreateAppointment(w.CreateRequest(start, overrideAvailability: true));
         await w.SetBookingStatus(lateCancelled.Id, w.Client, BookingStatus.Cancelled, "sick");

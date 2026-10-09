@@ -160,7 +160,7 @@ public class AppointmentCreateCharacterizationTests
     {
         await using SchedulingWorld w = await SchedulingWorld.Create(nameof(Create_ResolvesPriceFromCompanySpecificPriceListRow_ValidOnTheAppointmentDate));
         // Pricing is resolved for Service + Company + the APPOINTMENT's StartsAt (not "today").
-        await w.AddPriceListItem(w.Service, 70m, validFrom: new DateTimeOffset(2030, 1, 1, 0, 0, 0, TimeSpan.Zero), companyId: w.Company.Id);
+        await w.AddPriceListItem(w.Service, 70m, validFrom: new DateOnly(2030, 1, 1), companyId: w.Company.Id);
 
         AppointmentDto dto = await w.CreateAppointment(SchedulingWorld.Future(10));
 
@@ -173,7 +173,7 @@ public class AppointmentCreateCharacterizationTests
     public async Task Create_PriceListRowNotYetValidOnTheAppointmentDate_FallsBackToDefaultPrice()
     {
         await using SchedulingWorld w = await SchedulingWorld.Create(nameof(Create_PriceListRowNotYetValidOnTheAppointmentDate_FallsBackToDefaultPrice));
-        await w.AddPriceListItem(w.Service, 99m, validFrom: new DateTimeOffset(2040, 1, 1, 0, 0, 0, TimeSpan.Zero), companyId: w.Company.Id);
+        await w.AddPriceListItem(w.Service, 99m, validFrom: new DateOnly(2040, 1, 1), companyId: w.Company.Id);
 
         AppointmentDto dto = await w.CreateAppointment(SchedulingWorld.Future(10));
 
@@ -187,7 +187,7 @@ public class AppointmentCreateCharacterizationTests
 
         AppointmentDto dto = await w.CreateAppointment(SchedulingWorld.Future(10));
         await w.UpdateService(w.Service, defaultPrice: 999m);
-        await w.AddPriceListItem(w.Service, 888m, validFrom: new DateTimeOffset(2030, 1, 1, 0, 0, 0, TimeSpan.Zero));
+        await w.AddPriceListItem(w.Service, 888m, validFrom: new DateOnly(2030, 1, 1));
 
         Booking b = (await w.LoadAppointment(dto.Id)).Bookings.Single();
         Assert.Equal(SchedulingWorld.DefaultServicePrice, b.Amount);
@@ -451,8 +451,8 @@ public class AppointmentCreateCharacterizationTests
         await using SchedulingWorld w = await SchedulingWorld.Create(nameof(Create_OwnScopeCaller_CannotCreateForAnotherEmployee));
         Employee other = await w.AddEmployee();
 
-        await SchedulingAssert.BusinessRule(ErrorCodes.NotOwner,
-            () => w.Appointments.Create(
+        // CHANGED in T1: 403 OutOfScope (bilo 409 NOT_OWNER)
+        await SchedulingAssert.OutOfScope(() => w.Appointments.Create(
                 w.OrganizationId, w.Employee.UserId, hasFullScope: false, w.CreateRequest(SchedulingWorld.Future(10), employee: other).ToTarget()));
 
         Assert.Equal(0, await w.CountAppointments());
@@ -463,8 +463,8 @@ public class AppointmentCreateCharacterizationTests
     {
         await using SchedulingWorld w = await SchedulingWorld.Create(nameof(Create_OwnScopeCaller_WithoutAnEmployeeRecord_IsNotOwner));
 
-        await SchedulingAssert.BusinessRule(ErrorCodes.NotOwner,
-            () => w.Appointments.Create(
+        // CHANGED in T1: 403 OutOfScope (bilo 409 NOT_OWNER)
+        await SchedulingAssert.OutOfScope(() => w.Appointments.Create(
                 w.OrganizationId, w.ActorUserId, hasFullScope: false, w.CreateRequest(SchedulingWorld.Future(10)).ToTarget()));
     }
 

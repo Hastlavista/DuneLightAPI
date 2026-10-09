@@ -36,7 +36,7 @@ public class Client
     public string LastName { get; set; }
 
     [Column("date_of_birth")]
-    public DateTimeOffset? DateOfBirth { get; set; }
+    public DateOnly? DateOfBirth { get; set; }
 
     [Column("occupation")]
     public string Occupation { get; set; }
@@ -58,7 +58,7 @@ public class Client
     public bool GdprConsentGiven { get; set; }
 
     [Column("gdpr_consent_date")]
-    public DateTimeOffset? GdprConsentDate { get; set; }
+    public DateOnly? GdprConsentDate { get; set; }
 
     [Column("home_company_id")]
     public Guid? HomeCompanyId { get; set; }

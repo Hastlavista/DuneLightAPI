@@ -13,7 +13,7 @@ public class PriceCandidate
     /// <summary>Phase M1G — razina zaposlenika (samo stavke usluge); null = stavka bez zaposlenika.</summary>
     public Guid? EmployeeId { get; set; }
     public decimal Price { get; set; }
-    public DateTimeOffset ValidFrom { get; set; }
-    public DateTimeOffset? ValidTo { get; set; }
+    public DateOnly ValidFrom { get; set; }
+    public DateOnly? ValidTo { get; set; }
     public bool IsActive { get; set; }
 }

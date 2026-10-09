@@ -151,7 +151,7 @@ public class UniqueEmailTests
         LastName = "Client",
         Email = email,
         IsActive = true,
-        CreatedAt = DateTimeOffset.UtcNow
+        CreatedAt = TestClock.UtcNow
     };
 
     #endregion
@@ -198,7 +198,7 @@ public class UniqueEmailTests
                 FirstName = "Novi",
                 LastName = "Zaposlenik",
                 Email = " TAKEN@test.hr ",
-                EmploymentStartDate = DateTimeOffset.UtcNow,
+                EmploymentStartDate = SchedulingWorld.Day(TestClock.UtcNow),
                 EngagementTypeId = w.Employee.EngagementTypeId,
                 CompanyIds = new List<Guid> { w.Company.Id.Value },
                 PrimaryCompanyId = w.Company.Id.Value,
@@ -242,7 +242,7 @@ public class UniqueEmailTests
             PasswordHash = passwordHash,
             ApiKey = $"unique-email-test-{id:N}",
             IsActive = true,
-            CreatedAt = DateTimeOffset.UtcNow
+            CreatedAt = TestClock.UtcNow
         };
     }
 

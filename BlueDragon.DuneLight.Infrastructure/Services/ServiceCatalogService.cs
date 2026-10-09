@@ -22,11 +22,13 @@ public class ServiceCatalogService : IServiceCatalogService
 {
     private readonly IServiceHandler _serviceHandler;
     private readonly ICommissionRuleHandler _commissionRuleHandler;
+    private readonly TimeProvider _timeProvider;
 
-    public ServiceCatalogService(IServiceHandler serviceHandler, ICommissionRuleHandler commissionRuleHandler)
+    public ServiceCatalogService(IServiceHandler serviceHandler, ICommissionRuleHandler commissionRuleHandler, TimeProvider timeProvider)
     {
         _serviceHandler = serviceHandler;
         _commissionRuleHandler = commissionRuleHandler;
+        _timeProvider = timeProvider;
     }
 
     public async Task<PagedResult<ServiceDto>> GetPaged(Guid organizationId, PagedRequest request, ServiceExecutionMode? executionMode)
@@ -61,7 +63,7 @@ public class ServiceCatalogService : IServiceCatalogService
             Description = request.Description,
             SortOrder = request.SortOrder,
             IsActive = true,
-            CreatedAt = DateTimeOffset.UtcNow,
+            CreatedAt = _timeProvider.GetUtcNow(),
             CreatedBy = userId
         };
 
@@ -89,7 +91,7 @@ public class ServiceCatalogService : IServiceCatalogService
         service.DefaultPrice = request.DefaultPrice;
         service.Description = request.Description;
         service.SortOrder = request.SortOrder;
-        service.UpdatedAt = DateTimeOffset.UtcNow;
+        service.UpdatedAt = _timeProvider.GetUtcNow();
         service.UpdatedBy = userId;
 
         await _serviceHandler.Update(service);
@@ -106,7 +108,7 @@ public class ServiceCatalogService : IServiceCatalogService
             await EnsureNameIsUnique(organizationId, service.Name, excludeId: id);
 
         service.IsActive = isActive;
-        service.UpdatedAt = DateTimeOffset.UtcNow;
+        service.UpdatedAt = _timeProvider.GetUtcNow();
         service.UpdatedBy = userId;
 
         await _serviceHandler.Update(service);

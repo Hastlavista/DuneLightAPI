@@ -44,14 +44,12 @@ public static class PackageExpiryCalculator
         }
     }
 
-    /// <summary>ValidUntilDate paketa prodanog u trenutku <paramref name="purchasedAt"/> (UTC instant): poslovni datum
-    /// kupnje u kalendaru prodaje (<paramref name="saleCalendar"/> = poslovnica prodaje, inače organizacija).
+    /// <summary>ValidUntilDate paketa prodanog na POSLOVNI dan <paramref name="purchaseDate"/> (T1-7: ClientPackage.PurchaseDate,
+    /// lokalni dan kupnje u zoni poslovnice prodaje, organizacije kad je nema — pozivatelj ga određuje kroz kalendar).
     /// Package.ValidityFixedDate je već kalendarski datum (Phase D3B3A.2) i koristi se izravno, bez ikakve pretvorbe.</summary>
-    public static DateOnly ForSale(Package package, DateTimeOffset purchasedAt, OrganizationCalendar saleCalendar)
+    public static DateOnly ForSale(Package package, DateOnly purchaseDate)
     {
         ArgumentNullException.ThrowIfNull(package);
-        ArgumentNullException.ThrowIfNull(saleCalendar);
-        return CalculateValidUntilDate(
-            package.ValidityType, saleCalendar.LocalDate(purchasedAt), package.ValidityDays, package.ValidityFixedDate);
+        return CalculateValidUntilDate(package.ValidityType, purchaseDate, package.ValidityDays, package.ValidityFixedDate);
     }
 }

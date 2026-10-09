@@ -14,10 +14,12 @@ namespace BlueDragon.DuneLight.Infrastructure.Handlers.Implementations;
 public class CompanyHandler : ICompanyHandler
 {
     private readonly DatabaseSettings _databaseSettings;
+    private readonly TimeProvider _timeProvider;
 
-    public CompanyHandler(DatabaseSettings databaseSettings)
+    public CompanyHandler(DatabaseSettings databaseSettings, TimeProvider timeProvider)
     {
         _databaseSettings = databaseSettings;
+        _timeProvider = timeProvider;
     }
 
     public async Task<(List<Company> Items, int TotalCount)> GetPaged(Guid organizationId, PagedRequest request)
@@ -61,6 +63,14 @@ public class CompanyHandler : ICompanyHandler
         await using DatabaseContext context = DatabaseContext.GenerateContext(_databaseSettings.ConnectionString);
         return await context.Companies
             .Where(l => l.OrganizationId == organizationId && l.Id.HasValue && ids.Contains(l.Id.Value))
+            .ToDictionaryAsync(l => l.Id.Value, l => l.TimeZone);
+    }
+
+    public async Task<Dictionary<Guid, string>> GetAllTimeZoneOverrides(Guid organizationId)
+    {
+        await using DatabaseContext context = DatabaseContext.GenerateContext(_databaseSettings.ConnectionString);
+        return await context.Companies
+            .Where(l => l.OrganizationId == organizationId && l.Id.HasValue && l.TimeZone != null)
             .ToDictionaryAsync(l => l.Id.Value, l => l.TimeZone);
     }
 
@@ -110,7 +120,7 @@ public class CompanyHandler : ICompanyHandler
             return CompanyDeactivationOutcome.AlreadyInactive;
 
         target.IsActive = false;
-        target.UpdatedAt = DateTimeOffset.UtcNow;
+        target.UpdatedAt = _timeProvider.GetUtcNow();
         target.UpdatedBy = userId;
 
         await context.SaveChangesAsync();

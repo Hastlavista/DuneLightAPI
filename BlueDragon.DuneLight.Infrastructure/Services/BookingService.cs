@@ -56,6 +56,7 @@ public class BookingService : IBookingService, IParticipationLifecycleService
     private readonly IMembershipCoverageService _membershipCoverage;
     private readonly ICancellationReasonService _cancellationReasonService;
     private readonly IOrganizationCalendarService _organizationCalendarService;
+    private readonly TimeProvider _timeProvider;
 
     public BookingService(
         IAppointmentHandler appointmentHandler,
@@ -78,9 +79,11 @@ public class BookingService : IBookingService, IParticipationLifecycleService
         IGrantResolver grantResolver,
         IMembershipCoverageService membershipCoverage,
         ICancellationReasonService cancellationReasonService,
-        IOrganizationCalendarService organizationCalendarService)
+        IOrganizationCalendarService organizationCalendarService,
+        TimeProvider timeProvider)
     {
         _organizationCalendarService = organizationCalendarService;
+        _timeProvider = timeProvider;
         _cancellationReasonService = cancellationReasonService;
         _grantResolver = grantResolver;
         _membershipCoverage = membershipCoverage;
@@ -110,14 +113,8 @@ public class BookingService : IBookingService, IParticipationLifecycleService
     private Task<ResolvePriceResponse> ResolveServicePrice(
         Guid organizationId, Guid serviceId, Guid companyId, Guid? pricingEmployeeId, DateTimeOffset date)
     {
-        return _pricingService.ResolvePrice(organizationId, new ResolvePriceRequest
-        {
-            SubjectType = PricingSubjectType.Service,
-            SubjectId = serviceId,
-            CompanyId = companyId,
-            EmployeeId = pricingEmployeeId,
-            Date = date
-        });
+        // T1-7: dan cjenika = lokalni datum početka u zoni poslovnice termina (vidi IPricingService.ResolveForServiceStart).
+        return _pricingService.ResolveForServiceStart(organizationId, serviceId, companyId, pricingEmployeeId, date);
     }
 
     public async Task<List<BookingDto>> GetForAppointment(Guid organizationId, Guid appointmentId)
@@ -163,7 +160,7 @@ public class BookingService : IBookingService, IParticipationLifecycleService
             await GroupCapacityGuard.EnsureAvailable(
                     _appointmentHandler, uow, organizationId, appointmentId, segment.Id.GetValueOrDefault(), request.OverrideCapacity);
 
-            DateTimeOffset now = DateTimeOffset.UtcNow;
+            DateTimeOffset now = _timeProvider.GetUtcNow();
             BookingSegmentParticipation added;
             if (existing == null)
             {
@@ -184,12 +181,15 @@ public class BookingService : IBookingService, IParticipationLifecycleService
                 MembershipCoverageEvent.Booking, MembershipCoverageMode.Interactive);
 
             // Novo Confirmed sudjelovanje — termin se ponovno izvodi (npr. Closed -> Scheduled).
-            await AppointmentLifecycle.Refresh(_appointmentHandler, _auditLogHandler, uow, organizationId, appointmentId, userId);
+            await AppointmentLifecycle.Refresh(_appointmentHandler, _auditLogHandler, uow, organizationId, appointmentId, userId, now);
             await uow.CommitAsync();
         }
 
         existing.Client = client;
-        return ToDto(existing, appointment.Form);
+        BookingDto dto = ToDto(existing, appointment.Form);
+        // T1-8: cijena gosta iz zadane cijene usluge uz rupu u cjeniku.
+        PriceWarnings.AddNotDefined(dto.Warnings, resolvedPrice);
+        return dto;
     }
 
     /// <summary>Phase M1H — grupni occurrence, adresa (termin, klijent, EKSPLICITNI segment): prijelaz sudjelovanja klijenta na
@@ -278,6 +278,8 @@ public class BookingService : IBookingService, IParticipationLifecycleService
         await AppointmentOwnership.EnsureCallerOwnsSegments(_employeeHandler, organizationId, userId, hasFullScope,
             appointment.Segments.Where(s => affectedSegmentIds.Contains(s.Id.GetValueOrDefault())), NotOwnerMessage);
 
+        // T1-8: upozorenja promocije liste čekanja (cijena promoviranog iz zadane cijene uz rupu u cjeniku).
+        List<WarningDto> promotionWarnings = new();
         try
         {
             await using IUnitOfWork uow = await _unitOfWorkFactory.Begin();
@@ -302,11 +304,11 @@ public class BookingService : IBookingService, IParticipationLifecycleService
             if (active.Any(p => !affectedSegmentIds.Contains(p.AppointmentSegmentId)))
                 throw new BusinessRuleException(
                     ErrorCodes.ConcurrencyConflict, "Podaci su upravo promijenjeni od strane drugog zahtjeva — pokušajte ponovno.");
-            DateTimeOffset eventAt = DateTimeOffset.UtcNow;
+            DateTimeOffset eventAt = _timeProvider.GetUtcNow();
             foreach (BookingSegmentParticipation participation in active)
                 await ApplyTransitionInTransaction(uow, organizationId, userId, lockedAppointment, locked, participation,
                     ParticipationPackageSelections.ForParticipation(cancel, packageSelections, participation.Id.GetValueOrDefault()),
-                    new TransitionOptions(IsNewGuestBooking: false, IsCascade: false, eventAt));
+                    new TransitionOptions(IsNewGuestBooking: false, IsCascade: false, eventAt, promotionWarnings));
 
             await uow.CommitAsync();
         }
@@ -317,7 +319,9 @@ public class BookingService : IBookingService, IParticipationLifecycleService
         }
 
         Booking refreshed = await _appointmentHandler.GetBooking(organizationId, appointmentId, clientId);
-        return ToDto(refreshed, appointment.Form);
+        BookingDto dto = ToDto(refreshed, appointment.Form);
+        dto.Warnings.AddRange(promotionWarnings);
+        return dto;
     }
 
     /// <summary>Phase M1H — ručni konačni iznos JEDNOG sudjelovanja (participation-native, ista semantika kao ručni iznos
@@ -364,24 +368,13 @@ public class BookingService : IBookingService, IParticipationLifecycleService
 
             if (newAmount != oldAmount || participation.IsAmountManuallyOverridden != (newAmount != participation.SuggestedAmount))
             {
-                ParticipationPrice.Apply(participation, new BookingPricing(
-                    newAmount, participation.SuggestedAmount, newAmount != participation.SuggestedAmount,
-                    participation.BaseAmount, participation.BaseAmountSource, participation.PricingMode, participation.PricingEmployeeId));
-                booking.UpdatedAt = DateTimeOffset.UtcNow;
+                ParticipationPrice.Apply(participation, ParticipationPrice.Stored(participation, request?.Amount), _timeProvider.GetUtcNow());
+                booking.UpdatedAt = _timeProvider.GetUtcNow();
                 booking.UpdatedBy = userId;
                 await _appointmentHandler.UpdateBooking(uow, booking);
-                await _auditLogHandler.Add(uow, new AppointmentAuditLog
-                {
-                    Id = Guid.NewGuid(),
-                    AppointmentId = appointmentId,
-                    BookingId = booking.Id,
-                    BookingSegmentParticipationId = participation.Id,
-                    ChangeType = "Amount",
-                    OldValue = oldAmount.ToString(System.Globalization.CultureInfo.InvariantCulture),
-                    NewValue = newAmount.ToString(System.Globalization.CultureInfo.InvariantCulture),
-                    ChangedAt = DateTimeOffset.UtcNow,
-                    ChangedBy = userId
-                });
+                // T1-8: uz "Amount" (stari → novi) upisani ručni iznos bilježi i predloženu cijenu ("ManualAmount").
+                await AuditAmount(uow, userId, appointmentId, booking, participation, oldAmount, newAmount,
+                    manualAmountEntered: request?.Amount != null, alwaysAmountRow: true);
             }
 
             await uow.CommitAsync();
@@ -409,10 +402,10 @@ public class BookingService : IBookingService, IParticipationLifecycleService
             if (participation.ArrivedAt.HasValue)
                 return;
 
-            participation.ArrivedAt = DateTimeOffset.UtcNow;
+            participation.ArrivedAt = _timeProvider.GetUtcNow();
             participation.ArrivedBy = userId;
             await _auditLogHandler.Add(uow, ArrivalAudit(appointmentId, booking, participation, userId,
-                oldValue: null, newValue: participation.ArrivedAt.Value.ToString("O")));
+                oldValue: null, newValue: participation.ArrivedAt.Value.ToString("O"), _timeProvider.GetUtcNow()));
         });
 
         Booking refreshed = await _appointmentHandler.GetBooking(organizationId, appointment.Id.GetValueOrDefault(), clientId);
@@ -456,7 +449,7 @@ public class BookingService : IBookingService, IParticipationLifecycleService
             clientId = booking.ClientId;
 
             await mutate(uow, appointmentId, booking, participation);
-            booking.UpdatedAt = DateTimeOffset.UtcNow;
+            booking.UpdatedAt = _timeProvider.GetUtcNow();
             await _appointmentHandler.UpdateBooking(uow, booking);
             await uow.CommitAsync();
         }
@@ -477,11 +470,12 @@ public class BookingService : IBookingService, IParticipationLifecycleService
         string old = $"{participation.ArrivedAt.Value:O}|{participation.ArrivedBy}";
         participation.ArrivedAt = null;
         participation.ArrivedBy = null;
-        await _auditLogHandler.Add(uow, ArrivalAudit(appointmentId, booking, participation, userId, old, reason));
+        await _auditLogHandler.Add(uow, ArrivalAudit(appointmentId, booking, participation, userId, old, reason, _timeProvider.GetUtcNow()));
     }
 
     private static AppointmentAuditLog ArrivalAudit(
-        Guid appointmentId, Booking booking, BookingSegmentParticipation participation, Guid userId, string oldValue, string newValue) => new()
+        Guid appointmentId, Booking booking, BookingSegmentParticipation participation, Guid userId, string oldValue, string newValue,
+        DateTimeOffset now) => new()
     {
         Id = Guid.NewGuid(),
         AppointmentId = appointmentId,
@@ -491,7 +485,7 @@ public class BookingService : IBookingService, IParticipationLifecycleService
         OldValue = oldValue,
         NewValue = newValue,
         StatusVersion = participation.StatusVersion,
-        ChangedAt = DateTimeOffset.UtcNow,
+        ChangedAt = now,
         ChangedBy = userId
     };
 
@@ -513,7 +507,9 @@ public class BookingService : IBookingService, IParticipationLifecycleService
         bool fullScope = grants.Has(Grants.AppointmentsWriteAll) || (isGroup && grants.Has(Grants.GroupsAttendanceAll));
         bool ownScope = grants.Has(Grants.AppointmentsWriteOwn) || (isGroup && grants.Has(Grants.GroupsAttendanceOwn));
         if (!fullScope && !ownScope)
-            throw new ForbiddenAppException("Nemate pristup ovom sudjelovanju.");
+            throw ForbiddenAppException.MissingAnyGrant("Nemate pristup ovom sudjelovanju.", isGroup
+                ? new[] { Grants.AppointmentsWriteOwn, Grants.AppointmentsWriteAll, Grants.GroupsAttendanceOwn, Grants.GroupsAttendanceAll }
+                : new[] { Grants.AppointmentsWriteOwn, Grants.AppointmentsWriteAll });
 
         Booking preloaded = appointment.Bookings.First(b => b.Participations.Any(p => p.Id == participationId));
         BookingSegmentParticipation addressed = BookingParticipations.ById(preloaded, participationId);
@@ -535,7 +531,7 @@ public class BookingService : IBookingService, IParticipationLifecycleService
                 PolicyOverride.EnsureWaiverAllowed(grants, PolicyOverride.EffectOf(participation, active));
 
             await _participationPolicyService.WaiveActive(
-                uow, organizationId, userId, lockedAppointment, booking, participation, request.WaiverReason, DateTimeOffset.UtcNow);
+                uow, organizationId, userId, lockedAppointment, booking, participation, request.WaiverReason, _timeProvider.GetUtcNow());
             // P2 (Q31.3): otpis vraća claim zadržan uz posljedicu (i oslobađa mjesto); bez članarine no-op.
             await _membershipCoverage.SyncParticipation(uow, organizationId, userId, lockedAppointment, booking, participation,
                 MembershipCoverageEvent.PolicyEvent, MembershipCoverageMode.Automatic);
@@ -579,7 +575,8 @@ public class BookingService : IBookingService, IParticipationLifecycleService
                         throw new ValidationAppException("Poslovno (Business) otkazivanje zahtijeva razlog.");
                     grants = await _grantResolver.Resolve(organizationId, userId);
                     if (!grants.Has(Grants.AppointmentsWriteAll))
-                        throw new ForbiddenAppException("Poslovno (Business) otkazivanje zahtijeva ovlast appointments.write.all.");
+                        throw ForbiddenAppException.MissingGrant(
+                            "Poslovno (Business) otkazivanje zahtijeva ovlast appointments.write.all.", Grants.AppointmentsWriteAll);
                     break;
             }
         }
@@ -664,6 +661,8 @@ public class BookingService : IBookingService, IParticipationLifecycleService
         bool targetOccupies = ParticipationOccupancy.Occupies(BookingParticipations.ToParticipationStatus(request.Status));
         bool claimsSchedule = targetOccupies && !ParticipationOccupancy.Occupies(addressed.Status);
 
+        // T1-8: upozorenja promocije liste čekanja (cijena promoviranog iz zadane cijene uz rupu u cjeniku).
+        List<WarningDto> promotionWarnings = new();
         try
         {
             await using IUnitOfWork uow = await _unitOfWorkFactory.Begin();
@@ -698,7 +697,7 @@ public class BookingService : IBookingService, IParticipationLifecycleService
                     ErrorCodes.ConcurrencyConflict, "Podaci su upravo promijenjeni od strane drugog zahtjeva — pokušajte ponovno.");
 
             await ApplyTransitionInTransaction(uow, organizationId, userId, lockedAppointment, booking, participation, request,
-                new TransitionOptions(IsNewGuestBooking: false, IsCascade: false, DateTimeOffset.UtcNow));
+                new TransitionOptions(IsNewGuestBooking: false, IsCascade: false, _timeProvider.GetUtcNow(), promotionWarnings));
 
             await uow.CommitAsync();
         }
@@ -710,6 +709,7 @@ public class BookingService : IBookingService, IParticipationLifecycleService
 
         Booking refreshed = await _appointmentHandler.GetBooking(organizationId, appointmentId, preloaded.ClientId);
         BookingDto dto = ToDto(refreshed, appointment.Form);
+        dto.Warnings.AddRange(promotionWarnings);
         // K1-9: odrada sesije s neplaćenim dugom (nije pokrivena ni paketom ni članarinom) upozorava recepciju.
         if (request.Status == BookingStatus.Completed)
             dto.Warnings.AddRange(await ParticipationCoverageWarnings.For(
@@ -742,7 +742,7 @@ public class BookingService : IBookingService, IParticipationLifecycleService
         await LoadEligibleClient(organizationId, clientId);
 
         if ((request.Status == BookingStatus.Completed || request.Status == BookingStatus.NoShow) &&
-            segment.PlannedStart > DateTimeOffset.UtcNow)
+            segment.PlannedStart > _timeProvider.GetUtcNow())
         {
             throw new BusinessRuleException(
                 ErrorCodes.AttendanceBeforeStart,
@@ -753,10 +753,12 @@ public class BookingService : IBookingService, IParticipationLifecycleService
         ResolvePriceResponse guestPrice = await ResolveServicePrice(
             organizationId, guestExecution.ServiceId, guestExecution.CompanyId, guestExecution.PricingEmployeeId, guestExecution.StartsAt);
 
-        DateTimeOffset now = DateTimeOffset.UtcNow;
+        DateTimeOffset now = _timeProvider.GetUtcNow();
         Booking booking = existingBooking ?? BookingFactory.CreateConfirmed(
             organizationId, segment, clientId, BookingPricing.AtSuggested(guestPrice), now);
 
+        // T1-8: upozorenja promocije liste čekanja (cijena promoviranog iz zadane cijene uz rupu u cjeniku).
+        List<WarningDto> promotionWarnings = new();
         try
         {
             await using IUnitOfWork uow = await _unitOfWorkFactory.Begin();
@@ -771,12 +773,12 @@ public class BookingService : IBookingService, IParticipationLifecycleService
                 ?? throw new NotFoundAppException("Appointment", appointmentId);
 
             BookingSegmentParticipation participation;
-            DateTimeOffset eventAt = DateTimeOffset.UtcNow;
+            DateTimeOffset eventAt = _timeProvider.GetUtcNow();
             if (existingBooking == null)
             {
                 participation = booking.Participations.Single();
                 await ApplyTransitionInTransaction(uow, organizationId, userId, lockedAppointment, booking, participation, request,
-                    new TransitionOptions(IsNewGuestBooking: true, IsCascade: false, eventAt));
+                    new TransitionOptions(IsNewGuestBooking: true, IsCascade: false, eventAt, promotionWarnings));
             }
             else
             {
@@ -797,10 +799,10 @@ public class BookingService : IBookingService, IParticipationLifecycleService
                 await _membershipCoverage.SyncParticipation(uow, organizationId, userId, lockedAppointment, tracked, participation,
                     MembershipCoverageEvent.Booking, MembershipCoverageMode.Interactive);
                 await ApplyTransitionInTransaction(uow, organizationId, userId, lockedAppointment, tracked, participation, request,
-                    new TransitionOptions(IsNewGuestBooking: false, IsCascade: false, eventAt));
+                    new TransitionOptions(IsNewGuestBooking: false, IsCascade: false, eventAt, promotionWarnings));
                 // Novo Confirmed sudjelovanje je isti status (pravi no-op prijelaza, D12) — termin se ipak ponovno izvodi.
                 if (request.Status == BookingStatus.Confirmed)
-                    await AppointmentLifecycle.Refresh(_appointmentHandler, _auditLogHandler, uow, organizationId, appointmentId, userId);
+                    await AppointmentLifecycle.Refresh(_appointmentHandler, _auditLogHandler, uow, organizationId, appointmentId, userId, eventAt);
             }
 
             await uow.CommitAsync();
@@ -813,6 +815,9 @@ public class BookingService : IBookingService, IParticipationLifecycleService
 
         Booking refreshed = await _appointmentHandler.GetBooking(organizationId, appointmentId, clientId);
         BookingDto dto = ToDto(refreshed, appointment.Form);
+        // T1-8: cijena gosta iz zadane cijene usluge uz rupu u cjeniku.
+        PriceWarnings.AddNotDefined(dto.Warnings, guestPrice);
+        dto.Warnings.AddRange(promotionWarnings);
         // K1-9: isto upozorenje kao odrada postojećeg sudjelovanja.
         if (request.Status == BookingStatus.Completed)
             foreach (BookingParticipationDto participation in dto.Participations.Where(p => p.AppointmentSegmentId == segment.Id))
@@ -824,7 +829,7 @@ public class BookingService : IBookingService, IParticipationLifecycleService
     /// <summary>P1 — opcije jednog prijelaza: jedan serverski timestamp događaja (klasifikacija, metapodaci, posljedica);
     /// IsNewGuestBooking = Booking gosta još nije persistiran; IsCascade = appointment-wide kaskada (pozivatelj sam radi
     /// istek/promociju liste čekanja i izvođenje statusa termina nakon svih sudjelovanja).</summary>
-    private sealed record TransitionOptions(bool IsNewGuestBooking, bool IsCascade, DateTimeOffset EventAt);
+    private sealed record TransitionOptions(bool IsNewGuestBooking, bool IsCascade, DateTimeOffset EventAt, List<WarningDto> Warnings = null);
 
     /// <summary>Phase M0 — prijelaz JEDNOG sudjelovanja unutar pozivateljeve transakcije (pozivatelj je već zaključao
     /// Appointment i to sudjelovanje). Sve nuspojave (kapacitet, paket, plaćanje, provizija, posljedica politike, audit,
@@ -834,7 +839,7 @@ public class BookingService : IBookingService, IParticipationLifecycleService
         IUnitOfWork uow, Guid organizationId, Guid userId, Appointment appointment, Booking booking,
         BookingSegmentParticipation participation, BookingSetStatusRequest request) =>
         ApplyTransitionInTransaction(uow, organizationId, userId, appointment, booking, participation, request,
-            new TransitionOptions(IsNewGuestBooking: false, IsCascade: false, DateTimeOffset.UtcNow));
+            new TransitionOptions(IsNewGuestBooking: false, IsCascade: false, _timeProvider.GetUtcNow()));
 
     /// <summary>P1 — appointment-wide kaskada (otkazivanje/izostanak cijelog termina): isti prijelaz, isti timestamp događaja
     /// za sva sudjelovanja; pozivatelj nakon svih sudjelovanja izvodi status termina i istječe listu čekanja.</summary>
@@ -876,7 +881,7 @@ public class BookingService : IBookingService, IParticipationLifecycleService
                     _appointmentHandler, uow, organizationId, appointmentId, participation.AppointmentSegmentId, request.OverrideCapacity);
             EnsureTargetEventGuards(target, request, participationStartsAt, eventAt);
             booking.Note = request.Note ?? booking.Note;
-            booking.UpdatedAt = DateTimeOffset.UtcNow;
+            booking.UpdatedAt = _timeProvider.GetUtcNow();
             booking.UpdatedBy = userId;
             await _appointmentHandler.AddBooking(uow, booking);
             // P2 (2D): claim na nastanku novog gosta (no-op bez članarine); prijelaz zatim odlučuje kao za svaku rezervaciju.
@@ -884,7 +889,7 @@ public class BookingService : IBookingService, IParticipationLifecycleService
                 MembershipCoverageEvent.Booking, MembershipCoverageMode.Interactive);
             if (target == ParticipationStatus.Confirmed)
             {
-                await AppointmentLifecycle.Refresh(_appointmentHandler, _auditLogHandler, uow, organizationId, appointmentId, userId);
+                await AppointmentLifecycle.Refresh(_appointmentHandler, _auditLogHandler, uow, organizationId, appointmentId, userId, eventAt);
                 return;
             }
             // K2: gost evidentiran nakon zatvaranja termina — označavanje, audit "MarkedAfterClose".
@@ -898,7 +903,7 @@ public class BookingService : IBookingService, IParticipationLifecycleService
             if (request.Note != null && request.Note != booking.Note)
             {
                 booking.Note = request.Note;
-                booking.UpdatedAt = DateTimeOffset.UtcNow;
+                booking.UpdatedAt = _timeProvider.GetUtcNow();
                 booking.UpdatedBy = userId;
                 await _appointmentHandler.UpdateBooking(uow, booking);
             }
@@ -913,7 +918,7 @@ public class BookingService : IBookingService, IParticipationLifecycleService
             // Kapacitet se provjerava kad POSTOJEĆE sudjelovanje administrativno vraća na Confirmed (novo zauzeto mjesto) —
             // namjerno future-only (početak segmenta u budućnosti); nakon početka nominalni kapacitet više ne ograničava
             // korekciju povijesne prisutnosti. Phase M1F: meki kapacitet SEGMENTA; prekoračenje samo eksplicitno.
-            if (isGroup && target == ParticipationStatus.Confirmed && participationStartsAt > DateTimeOffset.UtcNow)
+            if (isGroup && target == ParticipationStatus.Confirmed && participationStartsAt > _timeProvider.GetUtcNow())
                 await GroupCapacityGuard.EnsureAvailable(
                     _appointmentHandler, uow, organizationId, appointmentId, participation.AppointmentSegmentId, request.OverrideCapacity);
 
@@ -927,7 +932,7 @@ public class BookingService : IBookingService, IParticipationLifecycleService
         // je i kada označio i da je obrisan zbog prijelaza (trag za prigovore na naknadu).
         if (!ParticipationOccupancy.Occupies(target) && participation.ArrivedAt.HasValue)
             await ClearArrivalInTransaction(uow, appointmentId, booking, participation, userId, $"Cleared:{target}");
-        ParticipationLifecycle.TrySetStatus(participation, target);
+        ParticipationLifecycle.TrySetStatus(participation, target, eventAt);
 
         // P2 (2D): ulazak u zauzimajuće stanje (ponovna aktivacija, check-in) — claim PRIJE efekata completiona, da članarina
         // ima prednost pred paketom i novcem. Korekcije i check-in nikad ne odbijaju (postavka "odbij" vrijedi za rezervaciju).
@@ -978,7 +983,7 @@ public class BookingService : IBookingService, IParticipationLifecycleService
                 MembershipCoverageEvent.ParticipationCancelled, MembershipCoverageMode.Automatic);
 
         booking.Note = request.Note ?? booking.Note;
-        booking.UpdatedAt = DateTimeOffset.UtcNow;
+        booking.UpdatedAt = _timeProvider.GetUtcNow();
         booking.UpdatedBy = userId;
         await _appointmentHandler.UpdateBooking(uow, booking);
 
@@ -1010,16 +1015,16 @@ public class BookingService : IBookingService, IParticipationLifecycleService
             OldValue = oldStatus.ToString(),
             NewValue = target.ToString(),
             StatusVersion = participation.StatusVersion,
-            ChangedAt = DateTimeOffset.UtcNow,
+            ChangedAt = _timeProvider.GetUtcNow(),
             ChangedBy = userId
         });
 
         // Notification-producing Outbox događaj za SVAKI stvarni ulaz u Cancelled/NoShow (P1 odluka 2026-10-06: i za terminal →
         // terminal korekciju); identitet pojave je (sudjelovanje, StatusVersion). Ista uow transakcija kao domenska mutacija.
         if (target == ParticipationStatus.Cancelled)
-            await ParticipationEvents.WriteCancelled(_outboxWriter, uow, organizationId, appointment, booking, participation);
+            await ParticipationEvents.WriteCancelled(_outboxWriter, uow, organizationId, appointment, booking, participation, eventAt);
         else if (target == ParticipationStatus.NoShow)
-            await ParticipationEvents.WriteNoShow(_outboxWriter, uow, organizationId, appointment, booking, participation);
+            await ParticipationEvents.WriteNoShow(_outboxWriter, uow, organizationId, appointment, booking, participation, eventAt);
 
         // Izlazak iz Cancelled/NoShow cilja TOČNO pojavu koja se korigira (oldStatusVersion, pročitan PRIJE inkrementa): ako je
         // njezin Notification već obrađen kao Pending, markira ga Cancelled u ISTOJ transakciji; ako Outbox još nije stigao
@@ -1039,12 +1044,12 @@ public class BookingService : IBookingService, IParticipationLifecycleService
         // Oslobođeno mjesto na grupnom terminu -> pokušaj promocije liste čekanja (D9) — samo za otkazivanje sudjelovanja koje
         // je stvarno zauzimalo mjesto; izostanak ne promovira.
         if (isGroup && ParticipationOccupancy.Occupies(oldStatus) && target == ParticipationStatus.Cancelled)
-            await _waitlistPromotionService.PromoteEligibleWaiters(uow, organizationId, appointmentId, userId);
+            options.Warnings?.AddRange(await _waitlistPromotionService.PromoteEligibleWaiters(uow, organizationId, appointmentId, userId));
 
         // Phase M1A: životni ciklus termina se izvodi iz SVIH sudjelovanja tek NAKON prijelaza i svih nuspojava (uključujući
         // promociju liste čekanja, koja može dodati Confirmed sudjelovanje — zato i dolazi prije izvođenja). Korekcija koja
         // vrati sudjelovanje na Confirmed time automatski vraća Closed/Cancelled termin u Scheduled.
-        await AppointmentLifecycle.Refresh(_appointmentHandler, _auditLogHandler, uow, organizationId, appointmentId, userId);
+        await AppointmentLifecycle.Refresh(_appointmentHandler, _auditLogHandler, uow, organizationId, appointmentId, userId, eventAt);
     }
 
     /// <summary>P1 (D12) — korak (1) korekcije: reverzija SVIH aktivnih efekata prethodnog stanja, u istoj transakciji.
@@ -1074,7 +1079,7 @@ public class BookingService : IBookingService, IParticipationLifecycleService
                     ChangeType = "BookingPackageCoverageReturned",
                     OldValue = "Applied",
                     NewValue = "Returned",
-                    ChangedAt = DateTimeOffset.UtcNow,
+                    ChangedAt = _timeProvider.GetUtcNow(),
                     ChangedBy = userId
                 });
             }
@@ -1147,9 +1152,10 @@ public class BookingService : IBookingService, IParticipationLifecycleService
         BookingSegmentParticipation participation, BookingSetStatusRequest request)
     {
         ParticipationExecutionContext execution = ExecutionContextResolver.ForParticipation(appointment, booking, participation);
+        // T1-8 (CHANGED in T1): ručni iznos pri odrađivanju ne čita cjenik ponovno — predložena cijena i osnovica ostaju spremljene
+        // (prije: osvježavane iz trenutnog cjenika). Upis ručnog iznosa se bilježi u audit.
         if (request.Amount.HasValue)
-            ParticipationPrice.Apply(participation, BookingPricing.FromResolution(
-                await ResolveServicePrice(organizationId, execution.ServiceId, execution.CompanyId, execution.PricingEmployeeId, execution.StartsAt), request.Amount));
+            await ApplyManualAmount(uow, userId, appointment.Id.GetValueOrDefault(), booking, participation, request.Amount.Value);
 
         // P2 (2D): usluga pokrivena članarinom — članarina ima prednost (pravilo pokrića 1): paket se ne može primijeniti, a novac
         // se ne naplaćuje (dug je 0). Bez članarine no-op.
@@ -1180,7 +1186,7 @@ public class BookingService : IBookingService, IParticipationLifecycleService
                 ChangeType = "BookingPackageCoverageApplied",
                 OldValue = null,
                 NewValue = request.ClientPackageId.Value.ToString(),
-                ChangedAt = DateTimeOffset.UtcNow,
+                ChangedAt = _timeProvider.GetUtcNow(),
                 ChangedBy = userId
             });
             return null;
@@ -1189,6 +1195,62 @@ public class BookingService : IBookingService, IParticipationLifecycleService
         return request.PaymentMethod.HasValue && request.IsPaid && participation.Amount > 0m
             ? (request.PaymentMethod.Value, participation.Amount)
             : null;
+    }
+
+    /// <summary>T1-8 — cijena grupnog check-ina: spremljena cijena sudjelovanja (bez ručnog iznosa iznos = spremljena predložena
+    /// cijena, kao i dosad kad se cijena postavljala iz razrješavanja), uz ručni iznos isto kao odrađivanje s ručnim iznosom.</summary>
+    private async Task ApplyCheckInPrice(
+        IUnitOfWork uow, Guid userId, Appointment appointment, Booking booking, BookingSegmentParticipation participation, decimal? manualAmount)
+    {
+        if (manualAmount.HasValue)
+            await ApplyManualAmount(uow, userId, appointment.Id.GetValueOrDefault(), booking, participation, manualAmount.Value);
+        else
+            ParticipationPrice.Apply(participation, ParticipationPrice.Stored(participation, null), _timeProvider.GetUtcNow());
+    }
+
+    /// <summary>T1-8 — ručni iznos pri odrađivanju (individualno i grupno): spremljena predložena cijena i osnovica ostaju (cjenik
+    /// se ne čita ponovno), audit kao kod ručne cijene sudjelovanja.</summary>
+    private async Task ApplyManualAmount(
+        IUnitOfWork uow, Guid userId, Guid appointmentId, Booking booking, BookingSegmentParticipation participation, decimal amount)
+    {
+        decimal oldAmount = participation.Amount;
+        ParticipationPrice.Apply(participation, ParticipationPrice.Stored(participation, amount), _timeProvider.GetUtcNow());
+        await AuditAmount(uow, userId, appointmentId, booking, participation, oldAmount, amount, manualAmountEntered: true);
+    }
+
+    /// <summary>T1-8 — audit iznosa sudjelovanja: "Amount" (stari → novi iznos, kad se promijenio) i, kad je upisan ručni iznos,
+    /// "ManualAmount" (predložena cijena → upisani iznos); tko i kada su na zapisu (ChangedBy/ChangedAt).</summary>
+    private async Task AuditAmount(
+        IUnitOfWork uow, Guid userId, Guid appointmentId, Booking booking, BookingSegmentParticipation participation,
+        decimal oldAmount, decimal newAmount, bool manualAmountEntered, bool alwaysAmountRow = false)
+    {
+        DateTimeOffset now = _timeProvider.GetUtcNow();
+        if (oldAmount != newAmount || alwaysAmountRow)
+            await _auditLogHandler.Add(uow, new AppointmentAuditLog
+            {
+                Id = Guid.NewGuid(),
+                AppointmentId = appointmentId,
+                BookingId = booking.Id,
+                BookingSegmentParticipationId = participation.Id,
+                ChangeType = "Amount",
+                OldValue = oldAmount.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                NewValue = newAmount.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                ChangedAt = now,
+                ChangedBy = userId
+            });
+        if (manualAmountEntered)
+            await _auditLogHandler.Add(uow, new AppointmentAuditLog
+            {
+                Id = Guid.NewGuid(),
+                AppointmentId = appointmentId,
+                BookingId = booking.Id,
+                BookingSegmentParticipationId = participation.Id,
+                ChangeType = "ManualAmount",
+                OldValue = participation.SuggestedAmount.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                NewValue = newAmount.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                ChangedAt = now,
+                ChangedBy = userId
+            });
     }
 
     /// <summary>Razrješava CoverageType/ClientPackageId za prvi (ili ponovljeni nakon vraćanja) check-in — skida
@@ -1211,8 +1273,8 @@ public class BookingService : IBookingService, IParticipationLifecycleService
         {
             if (request.ClientPackageId.HasValue)
                 SettlementExclusivityPolicy.EnsureNotMembershipCovered(participation);
-            ParticipationPrice.Apply(participation, BookingPricing.FromResolution(
-                await ResolveServicePrice(organizationId, execution.ServiceId, execution.CompanyId, execution.PricingEmployeeId, execution.StartsAt), request.Amount));
+            // T1-8 (CHANGED in T1): spremljena cijena iz upisa, bez ponovnog čitanja cjenika.
+            await ApplyCheckInPrice(uow, userId, appointment, booking, participation, request.Amount);
             return null;
         }
 
@@ -1239,9 +1301,10 @@ public class BookingService : IBookingService, IParticipationLifecycleService
             selected = null;
         }
 
-        BookingPricing pricing = BookingPricing.FromResolution(
-            await ResolveServicePrice(organizationId, execution.ServiceId, execution.CompanyId, execution.PricingEmployeeId, execution.StartsAt), request.Amount);
-        ParticipationPrice.Apply(participation, pricing);
+        // T1-8 (CHANGED in T1): prisutnost koristi cijenu spremljenu na sudjelovanju pri upisu (stalni polaznik pri generiranju,
+        // kasniji upis = cijena važeća za dan termina u trenutku upisa); trenutni cjenik se ne čita ponovno. Prije: ponovno
+        // razrješavanje iz trenutnog cjenika pri check-inu.
+        await ApplyCheckInPrice(uow, userId, appointment, booking, participation, request.Amount);
         // P2 (2E): pogodnost članarine na nepokrivenu sesiju (paket ili pokriće članarinom = cjenik, Q2); bez članarine no-op, pa je
         // iznos jednak razriješenoj cijeni kao i prije.
         await _membershipCoverage.PriceOnCompletion(uow, organizationId, userId, appointment, booking, participation, packageCovered: selected != null);
@@ -1285,7 +1348,7 @@ public class BookingService : IBookingService, IParticipationLifecycleService
             ChangeType = "BookingPackageCoverageApplied",
             OldValue = null,
             NewValue = selected.Id.ToString(),
-            ChangedAt = DateTimeOffset.UtcNow,
+            ChangedAt = _timeProvider.GetUtcNow(),
             ChangedBy = userId
         });
 

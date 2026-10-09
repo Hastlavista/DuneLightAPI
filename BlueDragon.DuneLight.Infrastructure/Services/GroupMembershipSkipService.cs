@@ -28,6 +28,7 @@ public class GroupMembershipSkipService : IGroupMembershipSkipService
     private readonly IMembershipCoverageService _membershipCoverage;
     private readonly IUnitOfWorkFactory _unitOfWorkFactory;
     private readonly ILogger<GroupMembershipSkipService> _logger;
+    private readonly TimeProvider _timeProvider;
 
     public GroupMembershipSkipService(
         IAppointmentHandler appointmentHandler,
@@ -36,8 +37,10 @@ public class GroupMembershipSkipService : IGroupMembershipSkipService
         IPricingService pricingService,
         IMembershipCoverageService membershipCoverage,
         IUnitOfWorkFactory unitOfWorkFactory,
-        ILogger<GroupMembershipSkipService> logger)
+        ILogger<GroupMembershipSkipService> logger,
+        TimeProvider timeProvider)
     {
+        _timeProvider = timeProvider;
         _appointmentHandler = appointmentHandler;
         _auditLogHandler = auditLogHandler;
         _schedulingOccupancyHandler = schedulingOccupancyHandler;
@@ -128,18 +131,18 @@ public class GroupMembershipSkipService : IGroupMembershipSkipService
         if (skip.Resolution != null)
             return SkipOutcome.Resolved;
 
-        DateTimeOffset now = DateTimeOffset.UtcNow;
+        DateTimeOffset now = _timeProvider.GetUtcNow();
         Appointment preloaded = await _appointmentHandler.GetWithBookingsForMutation(organizationId, skip.AppointmentId);
         AppointmentSegment segment = preloaded?.Segments.SingleOrDefault(s => s.Id == skip.AppointmentSegmentId);
         bool stillMember = await uow.Context.GroupMembers.AnyAsync(m => m.GroupId == skip.GroupId && m.ClientId == skip.ClientId && m.IsActive);
         if (segment == null || preloaded.Status == AppointmentStatus.Cancelled || segment.PlannedStart <= now || !stillMember)
-            return await Resolve(uow, skip, GroupMembershipSkipResolution.NotApplicable, null);
+            return await Resolve(uow, skip, GroupMembershipSkipResolution.NotApplicable, null, now);
 
         if (await _membershipCoverage.BlockingMembership(uow, organizationId, skip.ClientId, segment.ServiceId, preloaded.CompanyId, segment.PlannedStart) != null)
             return SkipOutcome.StillBlocked;
 
         if (preloaded.Bookings.Any(b => b.ClientId == skip.ClientId && b.Participations.Any(p => p.AppointmentSegmentId == segment.Id)))
-            return await Resolve(uow, skip, GroupMembershipSkipResolution.AlreadyParticipating, null);
+            return await Resolve(uow, skip, GroupMembershipSkipResolution.AlreadyParticipating, null, now);
 
         try
         {
@@ -149,7 +152,7 @@ public class GroupMembershipSkipService : IGroupMembershipSkipService
         }
         catch (BusinessRuleException)
         {
-            return await Resolve(uow, skip, GroupMembershipSkipResolution.Conflict, null);
+            return await Resolve(uow, skip, GroupMembershipSkipResolution.Conflict, null, now);
         }
 
         try
@@ -158,20 +161,14 @@ public class GroupMembershipSkipService : IGroupMembershipSkipService
         }
         catch (BusinessRuleException)
         {
-            return await Resolve(uow, skip, GroupMembershipSkipResolution.CapacityFull, null);
+            return await Resolve(uow, skip, GroupMembershipSkipResolution.CapacityFull, null, now);
         }
 
         Appointment locked = await _appointmentHandler.GetForSegmentMutation(uow, organizationId, skip.AppointmentId)
             ?? throw new NotFoundAppException("Appointment", skip.AppointmentId);
         AppointmentSegment lockedSegment = locked.Segments.Single(s => s.Id == segment.Id);
-        ResolvePriceResponse price = await _pricingService.ResolvePrice(organizationId, new ResolvePriceRequest
-        {
-            SubjectType = PricingSubjectType.Service,
-            SubjectId = lockedSegment.ServiceId,
-            CompanyId = locked.CompanyId,
-            EmployeeId = SegmentPricingSource.PricingEmployeeOf(lockedSegment),
-            Date = lockedSegment.PlannedStart
-        });
+        ResolvePriceResponse price = await _pricingService.ResolveForServiceStart(
+            organizationId, lockedSegment.ServiceId, locked.CompanyId, SegmentPricingSource.PricingEmployeeOf(lockedSegment), lockedSegment.PlannedStart);
 
         Booking booking = locked.Bookings.FirstOrDefault(b => b.ClientId == skip.ClientId);
         BookingSegmentParticipation participation;
@@ -197,16 +194,16 @@ public class GroupMembershipSkipService : IGroupMembershipSkipService
             Id = Guid.NewGuid(), AppointmentId = skip.AppointmentId, BookingId = booking.Id, BookingSegmentParticipationId = participation.Id,
             ChangeType = "MembershipSkipBackfilled", OldValue = skip.Id.ToString(), ChangedAt = now, ChangedBy = userId
         });
-        await AppointmentLifecycle.Refresh(_appointmentHandler, _auditLogHandler, uow, organizationId, skip.AppointmentId, userId ?? Guid.Empty);
-        await Resolve(uow, skip, GroupMembershipSkipResolution.Added, participation.Id);
+        await AppointmentLifecycle.Refresh(_appointmentHandler, _auditLogHandler, uow, organizationId, skip.AppointmentId, userId ?? Guid.Empty, now);
+        await Resolve(uow, skip, GroupMembershipSkipResolution.Added, participation.Id, now);
         return SkipOutcome.Added;
     }
 
     private static async Task<SkipOutcome> Resolve(
-        IUnitOfWork uow, GroupOccurrenceMembershipSkip skip, GroupMembershipSkipResolution resolution, Guid? participationId)
+        IUnitOfWork uow, GroupOccurrenceMembershipSkip skip, GroupMembershipSkipResolution resolution, Guid? participationId, DateTimeOffset now)
     {
         skip.Resolution = resolution;
-        skip.ResolvedAt = DateTimeOffset.UtcNow;
+        skip.ResolvedAt = now;
         skip.ParticipationId = participationId;
         await uow.Context.SaveChangesAsync();
         await uow.CommitAsync();

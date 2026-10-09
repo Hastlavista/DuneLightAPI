@@ -8,9 +8,9 @@ namespace BlueDragon.DuneLight.Core.DTOs.Products;
 public class ProductStockDto
 {
     public Guid ProductId { get; set; }
-    public string ProductName { get; set; }
+    public string? ProductName { get; set; }
     public Guid CompanyId { get; set; }
-    public string CompanyName { get; set; }
+    public string? CompanyName { get; set; }
     public int Quantity { get; set; }
     public DateTimeOffset UpdatedAt { get; set; }
 }
@@ -21,13 +21,13 @@ public class StockMovementDto
     public Guid Id { get; set; }
     public Guid ProductId { get; set; }
     public Guid CompanyId { get; set; }
-    public string CompanyName { get; set; }
+    public string? CompanyName { get; set; }
     public StockMovementType Type { get; set; }
     public int QuantityDelta { get; set; }
-    public string Reason { get; set; }
+    public string? Reason { get; set; }
     public Guid? CheckoutItemId { get; set; }
     public Guid? RelatedCompanyId { get; set; }
-    public string RelatedCompanyName { get; set; }
+    public string? RelatedCompanyName { get; set; }
     public Guid? TransferCorrelationId { get; set; }
     public DateTimeOffset CreatedAt { get; set; }
     public Guid? CreatedBy { get; set; }

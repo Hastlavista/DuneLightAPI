@@ -480,6 +480,6 @@ public class AppointmentWorkforceAvailabilityCharacterizationTests
         CompanyId = w.Company.Id.Value,
         ClientIds = new List<Guid> { w.Client.Id.Value },
         FirstOccurrenceStartsAt = SchedulingWorld.Future(10),
-        EndDate = SchedulingWorld.Future(10).AddDays(days - 1)
+        EndDate = SchedulingWorld.Day(SchedulingWorld.Future(10).AddDays(days - 1))
     };
 }

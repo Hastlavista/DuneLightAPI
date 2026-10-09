@@ -38,13 +38,13 @@ public class PriceListController : ControllerBase
         return Ok(await _pricingService.GetById(this.CurrentOrganizationId(), id));
     }
 
-    /// <summary>Trenutno važeći cjenik za tvrtku (pregledni prikaz).</summary>
+    /// <summary>Važeći cjenik za tvrtku na dan <paramref name="date"/> (pregledni prikaz). T1-7: dan je "yyyy-MM-dd"; bez njega
+    /// današnji dan po poslovnom satu u zoni poslovnice (bez poslovnice zona organizacije).</summary>
     [HttpGet("effective")]
     [RequireGrant(Grants.CatalogPriceListView)]
-    public async Task<ActionResult<List<EffectivePriceDto>>> GetEffective([FromQuery] Guid? companyId, [FromQuery] DateTimeOffset? date)
+    public async Task<ActionResult<List<EffectivePriceDto>>> GetEffective([FromQuery] Guid? companyId, [FromQuery] DateOnly? date)
     {
-        DateTimeOffset effectiveDate = date ?? DateTimeOffset.UtcNow;
-        return Ok(await _pricingService.GetEffectivePriceList(this.CurrentOrganizationId(), companyId, effectiveDate));
+        return Ok(await _pricingService.GetEffectivePriceList(this.CurrentOrganizationId(), companyId, date));
     }
 
     /// <summary>Razriješena cijena za (usluga/paket, tvrtka, datum).</summary>

@@ -19,7 +19,10 @@
    > Ažuriraj ARCHITECTURE.md prema ovoj promjeni. Ako smo donijeli novu
    > arhitektonsku odluku, napiši ADR prema predlošku u docs/decisions/.
 
-5. **Commit** koda i dokumenata zajedno — radi korisnik iz Ridera (Claude ne commita).
+5. **Kraj faze:** završni pregled faze (`docs/<faza>/<FAZA>_ZAVRSNI_PREGLED.md`) i ažuriran `KONTEKST_ZA_CHAT.md` u
+   korijenu repozitorija (vrijedi i za frontend faze, vidi frontend `CLAUDE.md`).
+
+6. **Commit** koda i dokumenata zajedno — radi korisnik iz Ridera (Claude ne commita).
 
 ## Zapis faze (`docs/<faza>/`)
 

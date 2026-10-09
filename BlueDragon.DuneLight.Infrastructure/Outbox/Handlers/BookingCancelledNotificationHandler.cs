@@ -24,9 +24,11 @@ public class BookingCancelledNotificationHandler : IOutboxMessageHandler
 {
     private readonly IBookingSegmentParticipationHandler _participationHandler;
     private readonly INotificationHandler _notificationHandler;
+    private readonly TimeProvider _timeProvider;
 
-    public BookingCancelledNotificationHandler(IBookingSegmentParticipationHandler participationHandler, INotificationHandler notificationHandler)
+    public BookingCancelledNotificationHandler(IBookingSegmentParticipationHandler participationHandler, INotificationHandler notificationHandler, TimeProvider timeProvider)
     {
+        _timeProvider = timeProvider;
         _participationHandler = participationHandler;
         _notificationHandler = notificationHandler;
     }
@@ -84,7 +86,7 @@ public class BookingCancelledNotificationHandler : IOutboxMessageHandler
             Status = status,
             Data = data,
             OccurredAt = @event.OccurredAt,
-            CreatedAt = DateTimeOffset.UtcNow
+            CreatedAt = _timeProvider.GetUtcNow()
         });
     }
 }

@@ -21,6 +21,10 @@ public interface IOrganizationCalendarService
     /// <summary>Kalendar u efektivnoj zoni poslovnice.</summary>
     Task<OrganizationCalendar> GetCompanyCalendar(Guid organizationId, Guid companyId);
 
+    /// <summary>T1-7: kalendar poslovnice kad je zadana, inače kalendar organizacije (npr. cjenik "za sve tvrtke", prodaja bez
+    /// poslovnice).</summary>
+    Task<OrganizationCalendar> GetCompanyOrOrganizationCalendar(Guid organizationId, Guid? companyId);
+
     /// <summary>Kalendari više poslovnica odjednom (dva upita ukupno) — za operacije koje obuhvaćaju više poslovnica.</summary>
     Task<Dictionary<Guid, OrganizationCalendar>> GetCompanyCalendars(Guid organizationId, IEnumerable<Guid> companyIds);
 }

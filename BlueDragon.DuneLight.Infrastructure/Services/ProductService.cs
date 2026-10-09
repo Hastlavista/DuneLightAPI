@@ -17,10 +17,12 @@ namespace BlueDragon.DuneLight.Infrastructure.Services;
 public class ProductService : IProductService
 {
     private readonly IProductHandler _productHandler;
+    private readonly TimeProvider _timeProvider;
 
-    public ProductService(IProductHandler productHandler)
+    public ProductService(IProductHandler productHandler, TimeProvider timeProvider)
     {
         _productHandler = productHandler;
+        _timeProvider = timeProvider;
     }
 
     public async Task<PagedResult<ProductDto>> GetPaged(Guid organizationId, PagedRequest request)
@@ -55,7 +57,7 @@ public class ProductService : IProductService
             Sku = sku,
             DefaultPrice = request.DefaultPrice,
             IsActive = true,
-            CreatedAt = DateTimeOffset.UtcNow,
+            CreatedAt = _timeProvider.GetUtcNow(),
             CreatedBy = userId
         };
 
@@ -80,7 +82,7 @@ public class ProductService : IProductService
         product.Description = request.Description;
         product.Sku = sku;
         product.DefaultPrice = request.DefaultPrice;
-        product.UpdatedAt = DateTimeOffset.UtcNow;
+        product.UpdatedAt = _timeProvider.GetUtcNow();
         product.UpdatedBy = userId;
 
         await _productHandler.Update(product);
@@ -97,7 +99,7 @@ public class ProductService : IProductService
             await EnsureNameIsUnique(organizationId, product.Name, excludeId: id);
 
         product.IsActive = isActive;
-        product.UpdatedAt = DateTimeOffset.UtcNow;
+        product.UpdatedAt = _timeProvider.GetUtcNow();
         product.UpdatedBy = userId;
 
         await _productHandler.Update(product);

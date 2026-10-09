@@ -91,10 +91,8 @@ public class WorkingHoursTemplateService : IWorkingHoursTemplateService
     /// (Source=Inactive/NotAssignedToCompany), NE grešku — ovo je upit za planiranje (npr. "pronađi slobodan
     /// termin"), ne mutacija, pa fail-soft umjesto fail-closed (usporedi sa ScheduleBreakService koji na CREATE
     /// baca tvrdu grešku za isto stanje).</summary>
-    public async Task<AvailabilityDto> GetAvailability(Guid organizationId, Guid employeeId, Guid companyId, DateTimeOffset date)
+    public async Task<AvailabilityDto> GetAvailability(Guid organizationId, Guid employeeId, Guid companyId, DateOnly day)
     {
-        // Kalendarski datum kako ga je klijent napisao — ne DateTime -> DateTimeOffset konverzija s offsetom hosta.
-        DateOnly day = CalendarDates.FromWallDate(date);
 
         Employee employee = await _employeeHandler.GetByIdLight(organizationId, employeeId);
         if (employee == null)
@@ -108,7 +106,7 @@ public class WorkingHoursTemplateService : IWorkingHoursTemplateService
         {
             return new AvailabilityDto
             {
-                Date = CalendarDates.ToUtcMidnight(day),
+                Date = day,
                 EmployeeSource = employee.IsActive ? AvailabilitySource.None : AvailabilitySource.Inactive,
                 CompanySource = company.IsActive ? AvailabilitySource.None : AvailabilitySource.Inactive
             };
@@ -119,7 +117,7 @@ public class WorkingHoursTemplateService : IWorkingHoursTemplateService
         {
             return new AvailabilityDto
             {
-                Date = CalendarDates.ToUtcMidnight(day),
+                Date = day,
                 EmployeeSource = AvailabilitySource.NotAssignedToCompany,
                 CompanySource = AvailabilitySource.None
             };
@@ -144,7 +142,7 @@ public class WorkingHoursTemplateService : IWorkingHoursTemplateService
 
         return new AvailabilityDto
         {
-            Date = CalendarDates.ToUtcMidnight(day),
+            Date = day,
             EmployeeIntervals = employeeIntervals.Select(ToDto).ToList(),
             CompanyIntervals = companyIntervals.Select(ToDto).ToList(),
             EffectiveIntervals = effective.Select(ToDto).ToList(),
@@ -154,9 +152,8 @@ public class WorkingHoursTemplateService : IWorkingHoursTemplateService
     }
 
     /// <summary>Monday istog tjedna kao anchorDate (ne "kronološki najbliži") — poravnava sve predloške na predvidljivu tjednu granicu za admin UI.</summary>
-    private static DateOnly NormalizeToMonday(DateTimeOffset anchorDate)
+    private static DateOnly NormalizeToMonday(DateOnly date)
     {
-        DateOnly date = CalendarDates.FromWallDate(anchorDate);
         int diff = (7 + (int)date.DayOfWeek - (int)DayOfWeek.Monday) % 7;
         return date.AddDays(-diff);
     }
@@ -210,7 +207,7 @@ public class WorkingHoursTemplateService : IWorkingHoursTemplateService
             CompanyId = template.CompanyId,
             CompanyName = template.Company?.Name,
             CycleType = template.CycleType,
-            AnchorDate = CalendarDates.ToUtcMidnight(template.AnchorDate),
+            AnchorDate = template.AnchorDate,
             Intervals = template.Intervals
                 .OrderBy(i => i.CycleWeekIndex).ThenBy(i => i.DayOfWeek).ThenBy(i => i.StartTime)
                 .Select(i => new WorkingHoursIntervalDto
@@ -229,6 +226,6 @@ public class WorkingHoursTemplateService : IWorkingHoursTemplateService
 
     private static AvailabilityIntervalDto ToDto(WorkingHoursCalculator.Interval interval)
     {
-        return new AvailabilityIntervalDto { Start = interval.Start, End = interval.End };
+        return new AvailabilityIntervalDto { Start = WorkingHoursCalculator.ToTimeOnly(interval.Start), End = WorkingHoursCalculator.ToTimeOnly(interval.End) };
     }
 }

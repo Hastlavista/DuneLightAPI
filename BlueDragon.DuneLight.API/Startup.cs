@@ -10,6 +10,8 @@ using System.Text.Json.Serialization;
 using System.IdentityModel.Tokens.Jwt;
 using BlueDragon.DuneLight.API.Authentication;
 using BlueDragon.DuneLight.API.Middleware;
+using BlueDragon.DuneLight.API.Swagger;
+using BlueDragon.DuneLight.API.TestTools;
 using BlueDragon.DuneLight.Core.Interfaces;
 using BlueDragon.DuneLight.Core.Interfaces.Appointments;
 using BlueDragon.DuneLight.Core.Interfaces.Capabilities;
@@ -37,6 +39,7 @@ using BlueDragon.DuneLight.Infrastructure.Outbox;
 using BlueDragon.DuneLight.Infrastructure.Outbox.Handlers;
 using BlueDragon.DuneLight.Infrastructure.Services;
 using BlueDragon.DuneLight.Infrastructure.Services.Management;
+using BlueDragon.DuneLight.Infrastructure.Time;
 using BlueDragon.DuneLight.Infrastructure.UnitOfWork;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
@@ -76,15 +79,20 @@ public class Startup
     {
         #region Mvc
 
+        // T1: testni alati (pomak sata, seed) samo uz izričitu postavku; u Production okruženju uključena postavka zaustavlja pokretanje.
+        TestToolsSettings testToolsSettings = Configuration.GetSection("TestTools").Get<TestToolsSettings>() ?? new TestToolsSettings();
+        TestToolsStartupGuard.Ensure(testToolsSettings, Environment);
+
         services.AddCors();
-        services.AddControllers()
+        // T1-6: nullable anotacije u Core su samo ugovor za Swagger; validacija zahtjeva se NE mijenja (bez implicitnog [Required]).
+        services.AddControllers(o => o.SuppressImplicitRequiredAttributeForNonNullableReferenceTypes = true)
             .AddJsonOptions(ConfigureJsonOptions)
             .ConfigureApiBehaviorOptions(ConfigureApiBehavior)
-            // Razvojni alati ([DevelopmentOnly], npr. simulacija vremena članarina) izvan Developmenta fizički ne postoje (404).
+            // Testni alati ([TestToolsOnly]) bez uključene postavke fizički ne postoje (404).
             .ConfigureApplicationPartManager(manager =>
             {
-                if (!Environment.IsDevelopment())
-                    manager.FeatureProviders.Add(new Development.DevelopmentOnlyControllers());
+                if (!testToolsSettings.Enabled)
+                    manager.FeatureProviders.Add(new TestToolsOnlyControllers());
             });
         services.AddOptions();
         services.AddMemoryCache();
@@ -113,6 +121,17 @@ public class Startup
 
         PlatformSettings platformSettings = Configuration.GetSection("PlatformSettings").Get<PlatformSettings>() ?? new PlatformSettings();
         services.AddSingleton(platformSettings);
+
+        services.AddSingleton(testToolsSettings);
+
+        #endregion
+
+        #region Time
+
+        // T1: jedan poslovni sat (TimeProvider) za cijeli sustav — stvarni sat + simulirani pomak organizacije (samo uz testne alate).
+        services.AddSingleton<IClockOffsetStore, ClockOffsetStore>();
+        services.AddSingleton<BusinessTimeProvider>(sp => new BusinessTimeProvider(sp.GetRequiredService<IClockOffsetStore>()));
+        services.AddSingleton<TimeProvider>(sp => sp.GetRequiredService<BusinessTimeProvider>());
 
         #endregion
 
@@ -256,6 +275,9 @@ public class Startup
         services.AddScoped<IMembershipPlanService, MembershipPlanService>();
         services.AddScoped<IClientMembershipService, ClientMembershipService>();
         services.AddScoped<IMembershipRenewalService, MembershipRenewalService>();
+        // T1: privremeni testni alati (Management); uklanjaju se prije go-livea.
+        services.AddScoped<ITestToolsService, TestToolsService>();
+        services.AddScoped<IDemoSeedService, DemoSeedService>();
         services.AddScoped<IMembershipCoverageService, MembershipCoverageService>();
         services.AddScoped<IGroupMembershipSkipService, GroupMembershipSkipService>();
         services.AddScoped<IParticipationPolicyService, ParticipationPolicyService>();
@@ -319,6 +341,7 @@ public class Startup
         services.AddScoped<IBrandingFileStorage, BrandingFileStorage>();
         services.AddScoped<IOrganizationSettingsService, OrganizationSettingsService>();
         services.AddScoped<IOrganizationCalendarService, OrganizationCalendarService>();
+        services.AddScoped<IOrganizationClockService, OrganizationClockService>();
 
         services.AddScoped<IOperationalDashboardService, OperationalDashboardService>();
 
@@ -390,6 +413,7 @@ public class Startup
         services.AddSingleton<IClientTagHandler, ClientTagHandler>();
         services.AddSingleton<IClientHandler, ClientHandler>();
         services.AddSingleton<IClientPackageHandler, ClientPackageHandler>();
+        services.AddSingleton<IClientAuditLogHandler, ClientAuditLogHandler>();
 
         services.AddSingleton<IAppointmentHandler, AppointmentHandler>();
         services.AddSingleton<ISchedulingOccupancyHandler, SchedulingOccupancyHandler>();
@@ -426,6 +450,8 @@ public class Startup
         services.AddSingleton<IOrganizationBrandingHandler, OrganizationBrandingHandler>();
         services.AddSingleton<IOrganizationBrandingAuditLogHandler, OrganizationBrandingAuditLogHandler>();
         services.AddSingleton<IOrganizationSettingsHandler, OrganizationSettingsHandler>();
+        services.AddSingleton<ITestToolOrganizationHandler, TestToolOrganizationHandler>();
+        services.AddSingleton<IDemoSeedHandler, DemoSeedHandler>();
 
         services.AddSingleton<IOutboxHandler, OutboxHandler>();
         services.AddSingleton<INotificationHandler, NotificationHandler>();
@@ -472,10 +498,16 @@ public class Startup
             Description = "Postman collection: Not available"
         });
         swaggerGenOptions.CustomSchemaIds(x => x.FullName);
+        // T1-6: nullable anotacije (Core) se prenose u shemu; ne-nullable svojstvo je obavezno u shemi (frontend tipovi, FE-ADR-0004).
+        swaggerGenOptions.SupportNonNullableReferenceTypes();
+        swaggerGenOptions.NonNullableReferenceTypesAsRequired();
+        swaggerGenOptions.OperationFilter<ErrorResponsesOperationFilter>();
 
         string xmlFile = $"{Assembly.GetExecutingAssembly().GetName().Name}.xml";
         string xmlPath = Path.Combine(AppContext.BaseDirectory, xmlFile);
         swaggerGenOptions.IncludeXmlComments(xmlPath);
+        // T1-6: opisi DTO-ova iz Core projekta.
+        swaggerGenOptions.IncludeXmlComments(Path.Combine(AppContext.BaseDirectory, "BlueDragon.DuneLight.Core.xml"));
 
         swaggerGenOptions.AddSecurityDefinition("Bearer", new OpenApiSecurityScheme
         {
@@ -500,6 +532,8 @@ public class Startup
         app.UseCors(ConfigureCors);
 
         app.UseAuthentication();
+        // T1: poslovni sat zahtjeva = sat organizacije iz tokena (simulirani pomak testnih alata).
+        app.UseMiddleware<OrganizationClockMiddleware>();
         app.UseAuthorization();
         if (env.IsDevelopment())
         {

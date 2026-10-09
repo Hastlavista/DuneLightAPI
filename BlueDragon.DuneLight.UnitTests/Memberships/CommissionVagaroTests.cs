@@ -38,8 +38,8 @@ namespace BlueDragon.DuneLight.UnitTests.Memberships;
 /// </summary>
 public class CommissionVagaroTests
 {
-    private static DateTimeOffset At(int days, int hour) => new DateTimeOffset(DateTime.UtcNow.Date, TimeSpan.Zero).AddDays(days).AddHours(hour);
-    private static int LateWindow() => (int)(SchedulingWorld.Future(10) - DateTimeOffset.UtcNow).TotalMinutes + 60;
+    private static DateTimeOffset At(int days, int hour) => new DateTimeOffset(TestClock.UtcNow.UtcDateTime.Date, TimeSpan.Zero).AddDays(days).AddHours(hour);
+    private static int LateWindow() => (int)(SchedulingWorld.Future(10) - TestClock.UtcNow).TotalMinutes + 60;
 
     private static ICommissionRuleService Rules(SchedulingWorld w) => w.Resolve<ICommissionRuleService>();
     private static ICommissionService Ledger(SchedulingWorld w) => w.Resolve<ICommissionService>();
@@ -234,7 +234,7 @@ public class CommissionVagaroTests
 
         CommissionEntry fromGeneral = Assert.Single(entries, e => e.AppointmentId == byGeneral);
         Assert.Equal((CommissionRuleScope.AllServices, general.Id, 2m), (fromGeneral.AppliedRuleScope.Value, fromGeneral.CommissionRuleId, fromGeneral.CommissionAmount));
-        CommissionEntryDto listed = (await Ledger(w).GetEntries(w.OrganizationId, new CommissionEntryQuery { From = DateTimeOffset.UtcNow.AddHours(-1), To = DateTimeOffset.UtcNow.AddHours(1) }))
+        CommissionEntryDto listed = (await Ledger(w).GetEntries(w.OrganizationId, new CommissionEntryQuery { From = SchedulingWorld.Day(TestClock.UtcNow), To = SchedulingWorld.Day(TestClock.UtcNow) } /* CHANGED in T1: From/To su dani organizacije (DateOnly, oba uključena) */))
             .Items.Single(e => e.Id == fromGeneral.Id);
         Assert.Equal(general.Id, listed.RuleEvaluation.Applied.RuleId);
         Assert.Empty(listed.RuleEvaluation.NotApplied);
@@ -259,7 +259,7 @@ public class CommissionVagaroTests
 
         WarningDto warning = Assert.Single(deactivated.Warnings);
         WarningCommissionGeneralRuleAppliesDetails details = Assert.IsType<WarningCommissionGeneralRuleAppliesDetails>(warning.Details);
-        Assert.Equal((WarningCodes.CommissionServiceRuleGeneralApplies, general.Id, DateOnly.FromDateTime(DateTime.UtcNow), 10m),
+        Assert.Equal((WarningCodes.CommissionServiceRuleGeneralApplies, general.Id, DateOnly.FromDateTime(TestClock.UtcNow.UtcDateTime), 10m),
             (warning.Code, details.GeneralRuleId, details.EffectiveOn, details.Value));
         CommissionEntry entry = Assert.Single(await w.LoadCommissionEntries());
         Assert.Equal((CommissionRuleScope.AllServices, 5m), (entry.AppliedRuleScope.Value, entry.CommissionAmount));
@@ -282,7 +282,7 @@ public class CommissionVagaroTests
         Assert.Equal(10m, Assert.Single(entries, e => e.AppointmentId == future.Id).CommissionAmount);
 
         CommissionRuleDto deactivated = await Rules(w).SetActive(w.OrganizationId, w.ActorUserId, second.Id, false);
-        Assert.Equal(DateOnly.FromDateTime(DateTime.UtcNow), deactivated.DeactivatedFrom);
+        Assert.Equal(DateOnly.FromDateTime(TestClock.UtcNow.UtcDateTime), deactivated.DeactivatedFrom);
         AppointmentDto later = await w.CreateAppointment(SchedulingWorld.Future(12));
         await w.CompleteParticipations(later.Id, w.CompleteRequest(SchedulingWorld.Future(12)));
         Assert.DoesNotContain(await w.LoadCommissionEntries(), e => e.AppointmentId == later.Id); // no fallback to the 10 % version
@@ -398,17 +398,18 @@ public class CommissionVagaroTests
         await using (DatabaseContext db = w.NewDb())
         {
             CommissionEntry row = await db.CommissionEntries.SingleAsync(e => e.Id == sale.Id);
-            row.ReversedAt = DateTimeOffset.UtcNow.AddDays(10);
+            row.ReversedAt = TestClock.UtcNow.AddDays(10);
             await db.SaveChangesAsync();
         }
-        DateTimeOffset now = DateTimeOffset.UtcNow;
-        CommissionSummaryResultDto thisPeriod = await Ledger(w).GetSummary(w.OrganizationId, new CommissionSummaryQuery { From = now.AddDays(-1), To = now.AddDays(1) });
-        CommissionSummaryResultDto nextPeriod = await Ledger(w).GetSummary(w.OrganizationId, new CommissionSummaryQuery { From = now.AddDays(1), To = now.AddDays(20) });
+        // CHANGED in T1: From/To su dani organizacije (DateOnly, oba kraja uključena) umjesto instanata — razdoblja [jučer, danas] i [sutra, +20].
+        DateOnly today = SchedulingWorld.Day(TestClock.UtcNow);
+        CommissionSummaryResultDto thisPeriod = await Ledger(w).GetSummary(w.OrganizationId, new CommissionSummaryQuery { From = today.AddDays(-1), To = today });
+        CommissionSummaryResultDto nextPeriod = await Ledger(w).GetSummary(w.OrganizationId, new CommissionSummaryQuery { From = today.AddDays(1), To = today.AddDays(20) });
         EmployeeCommissionSummaryDto sellerNow = thisPeriod.Employees.Single(e => e.EmployeeId == seller.Id);
         Assert.Equal((10m, 0m, 15m), (sellerNow.EarnedAmount, sellerNow.ReversedAmount, thisPeriod.TotalNetAmount));
         EmployeeCommissionSummaryDto sellerNext = nextPeriod.Employees.Single();
         Assert.Equal((0m, 10m, -10m), (sellerNext.EarnedAmount, sellerNext.ReversedAmount, sellerNext.NetAmount));
-        Assert.Equal(-10m, (await Ledger(w).GetEntries(w.OrganizationId, new CommissionEntryQuery { From = now.AddDays(1), To = now.AddDays(20) })).Items.Single().PeriodAmount);
+        Assert.Equal(-10m, (await Ledger(w).GetEntries(w.OrganizationId, new CommissionEntryQuery { From = today.AddDays(1), To = today.AddDays(20) })).Items.Single().PeriodAmount);
     }
 
     [Fact]

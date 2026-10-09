@@ -430,7 +430,7 @@ public class AppointmentOverlapCharacterizationTests
         db.Bookings.Add(new Booking
         {
             Id = Guid.NewGuid(), OrganizationId = w.OrganizationId, AppointmentId = seeded.Id.Value, ClientId = w.Client.Id.Value,
-            CreatedAt = DateTimeOffset.UtcNow
+            CreatedAt = TestClock.UtcNow
         });
 
         DbUpdateException ex = await Assert.ThrowsAsync<DbUpdateException>(() => db.SaveChangesAsync());

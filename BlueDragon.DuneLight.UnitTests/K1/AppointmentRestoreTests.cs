@@ -49,7 +49,7 @@ public class AppointmentRestoreTests
     {
         await using SchedulingWorld w = await SchedulingWorld.Create(nameof(Restore_ReevaluatesMembershipCoverage_OverTheHistoricalPrice));
         await w.GrantUser(w.ActorUserId, Grants.AppointmentsWriteAll, Grants.AppointmentsCorrectionsCancelled); // K2
-        DateTimeOffset start = new DateTimeOffset(DateTime.UtcNow.Date, TimeSpan.Zero).AddDays(2).AddHours(10);
+        DateTimeOffset start = new DateTimeOffset(TestClock.UtcNow.UtcDateTime.Date, TimeSpan.Zero).AddDays(2).AddHours(10);
         AppointmentDto created = await w.CreateAppointment(w.CreateRequest(start, overrideAvailability: true));
         Assert.Equal(SchedulingWorld.DefaultServicePrice, Assert.Single(Assert.Single(created.Bookings).Participations).OutstandingAmount);
         await w.Appointments.Cancel(w.OrganizationId, w.ActorUserId, true, created.Id, SchedulingWorld.BusinessCancel());

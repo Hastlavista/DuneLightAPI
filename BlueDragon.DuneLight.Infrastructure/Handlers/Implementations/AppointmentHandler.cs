@@ -20,10 +20,12 @@ namespace BlueDragon.DuneLight.Infrastructure.Handlers.Implementations;
 public class AppointmentHandler : IAppointmentHandler
 {
     private readonly DatabaseSettings _databaseSettings;
+    private readonly TimeProvider _timeProvider;
 
-    public AppointmentHandler(DatabaseSettings databaseSettings)
+    public AppointmentHandler(DatabaseSettings databaseSettings, TimeProvider timeProvider)
     {
         _databaseSettings = databaseSettings;
+        _timeProvider = timeProvider;
     }
 
     /// <summary>Booking statusi koji "zauzimaju" klijentov raspored — Cancelled/NoShow namjerno isključeni
@@ -311,7 +313,7 @@ public class AppointmentHandler : IAppointmentHandler
     /// (vidi GroupCapacityGuard/WaitlistService.PromoteEligibleWaiters).</summary>
     public Task<List<Appointment>> GetFutureScheduledForGroup(IUnitOfWork uow, Guid organizationId, Guid groupId)
     {
-        DateTimeOffset now = DateTimeOffset.UtcNow;
+        DateTimeOffset now = _timeProvider.GetUtcNow();
         return IncludeFrame(uow.Context.Appointments)
             .Include(a => a.Bookings)
             .Where(a =>
@@ -326,7 +328,7 @@ public class AppointmentHandler : IAppointmentHandler
     public async Task<bool> HasFutureScheduledForEmployee(Guid organizationId, Guid employeeId)
     {
         await using DatabaseContext context = DatabaseContext.GenerateContext(_databaseSettings.ConnectionString);
-        DateTimeOffset now = DateTimeOffset.UtcNow;
+        DateTimeOffset now = _timeProvider.GetUtcNow();
         return await context.AppointmentSegments.AnyAsync(s =>
             s.OrganizationId == organizationId &&
             s.Employees.Any(e => e.EmployeeId == employeeId) &&
@@ -348,7 +350,7 @@ public class AppointmentHandler : IAppointmentHandler
     public async Task<bool> HasFutureScheduledForClient(Guid organizationId, Guid clientId)
     {
         await using DatabaseContext context = DatabaseContext.GenerateContext(_databaseSettings.ConnectionString);
-        DateTimeOffset now = DateTimeOffset.UtcNow;
+        DateTimeOffset now = _timeProvider.GetUtcNow();
         // Phase M0/M1A: segmentno — Confirmed sudjelovanje na budućem SEGMENTU (Confirmed sudjelovanje po izvođenju znači da je termin Scheduled).
         return await context.BookingSegmentParticipations.AnyAsync(p =>
             p.OrganizationId == organizationId &&
@@ -455,7 +457,7 @@ public class AppointmentHandler : IAppointmentHandler
     public async Task<ClientAppointmentStatsDto> GetStatsForClient(Guid organizationId, Guid clientId, List<Guid> activeGroupIds)
     {
         await using DatabaseContext context = DatabaseContext.GenerateContext(_databaseSettings.ConnectionString);
-        DateTimeOffset now = DateTimeOffset.UtcNow;
+        DateTimeOffset now = _timeProvider.GetUtcNow();
 
         // Phase M0: povijest klijenta broji IZVRŠNE jedinice (sudjelovanja) i čita vrijeme njihovog segmenta.
         IQueryable<BookingSegmentParticipation> participations = context.BookingSegmentParticipations

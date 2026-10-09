@@ -62,9 +62,10 @@ public sealed class OrganizationCalendar
     public DateTimeOffset StartOfDay(DateOnly date) => ToInstant(date, TimeSpan.Zero);
 
     /// <summary>Ponavljanje po lokalnom zidnom vremenu organizacije: svakih <paramref name="stepDays"/> kalendarskih dana
-    /// u ISTO lokalno vrijeme kao <paramref name="first"/> (i preko DST prijelaza), dok god je instant &lt;= end.
-    /// Prvi element je točno <paramref name="first"/>.</summary>
-    public List<DateTimeOffset> RepeatAtLocalTime(DateTimeOffset first, DateTimeOffset end, int stepDays)
+    /// u ISTO lokalno vrijeme kao <paramref name="first"/> (i preko DST prijelaza), dok god je lokalni datum pojave
+    /// &lt;= <paramref name="lastDate"/> (T1-7: zadnji dan niza, uključivo, u ovom kalendaru). Prvi element je točno
+    /// <paramref name="first"/>.</summary>
+    public List<DateTimeOffset> RepeatAtLocalTime(DateTimeOffset first, DateOnly lastDate, int stepDays)
     {
         if (stepDays < 1)
             throw new ArgumentOutOfRangeException(nameof(stepDays));
@@ -75,9 +76,10 @@ public sealed class OrganizationCalendar
         List<DateTimeOffset> occurrences = new List<DateTimeOffset>();
         for (int i = 0; ; i++)
         {
-            DateTimeOffset occurrence = i == 0 ? first : ToInstant(firstDate.AddDays(i * stepDays), localTime);
-            if (occurrence > end)
+            DateOnly date = firstDate.AddDays(i * stepDays);
+            if (date > lastDate)
                 break;
+            DateTimeOffset occurrence = i == 0 ? first : ToInstant(date, localTime);
             occurrences.Add(occurrence);
         }
 

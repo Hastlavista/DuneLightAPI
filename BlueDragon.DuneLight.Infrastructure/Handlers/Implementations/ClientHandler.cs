@@ -91,7 +91,7 @@ public class ClientHandler : IClientHandler
             .ToListAsync();
     }
 
-    public async Task Add(Client client, bool assignMemberNumber)
+    public async Task Add(Client client, bool assignMemberNumber, IReadOnlyList<ClientAuditLog> audit = null)
     {
         await using DatabaseContext context = DatabaseContext.GenerateContext(_databaseSettings.ConnectionString);
         await using IDbContextTransaction transaction = await context.Database.BeginTransactionAsync();
@@ -105,11 +105,13 @@ public class ClientHandler : IClientHandler
                 .MaxAsync(c => (int?)c.MemberNumber) ?? 0) + 1;
 
         context.Clients.Add(client);
+        if (audit != null)
+            context.ClientAuditLogs.AddRange(audit);
         await context.SaveChangesAsync();
         await transaction.CommitAsync();
     }
 
-    public async Task Update(Client client, List<ClientTagAssignment> newTags)
+    public async Task Update(Client client, List<ClientTagAssignment> newTags, IReadOnlyList<ClientAuditLog> audit = null)
     {
         await using DatabaseContext context = DatabaseContext.GenerateContext(_databaseSettings.ConnectionString);
 
@@ -155,6 +157,8 @@ public class ClientHandler : IClientHandler
                 context.ClientTagAssignments.Add(tag);
             }
 
+        if (audit != null)
+            context.ClientAuditLogs.AddRange(audit);
         await context.SaveChangesAsync();
     }
 
@@ -172,7 +176,7 @@ public class ClientHandler : IClientHandler
         await context.SaveChangesAsync();
     }
 
-    public async Task Anonymize(Guid organizationId, Guid clientId, DateTimeOffset anonymizedAt, Guid? anonymizedBy)
+    public async Task Anonymize(Guid organizationId, Guid clientId, DateTimeOffset anonymizedAt, Guid? anonymizedBy, IReadOnlyList<ClientAuditLog> audit = null)
     {
         await using DatabaseContext context = DatabaseContext.GenerateContext(_databaseSettings.ConnectionString);
         Client client = await context.Clients.SingleOrDefaultAsync(c => c.Id == clientId && c.OrganizationId == organizationId);
@@ -203,6 +207,8 @@ public class ClientHandler : IClientHandler
         client.UpdatedAt = anonymizedAt;
         client.UpdatedBy = anonymizedBy;
 
+        if (audit != null)
+            context.ClientAuditLogs.AddRange(audit);
         await context.SaveChangesAsync();
     }
 

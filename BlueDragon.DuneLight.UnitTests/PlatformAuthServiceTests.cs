@@ -34,8 +34,9 @@ public class PlatformAuthServiceTests
 
     private class FakePlatformJwtService : IPlatformJwtService
     {
-        public (string Token, DateTime Expiration) GenerateToken(Guid platformAccountId, string email) =>
-            ("fake-token", DateTime.UtcNow.AddHours(1));
+        // CHANGED in T1: istek tokena je instant (DateTimeOffset), ne DateTime.
+        public (string Token, DateTimeOffset Expiration) GenerateToken(Guid platformAccountId, string email) =>
+            ("fake-token", TestClock.UtcNow.AddHours(1));
     }
 
     private static PlatformAccount ActiveAccount(string email, string password) => new()
@@ -44,7 +45,7 @@ public class PlatformAuthServiceTests
         Email = email,
         PasswordHash = PlatformPasswordHasher.Hash(password),
         IsActive = true,
-        CreatedAt = DateTimeOffset.UtcNow,
+        CreatedAt = TestClock.UtcNow,
     };
 
     [Fact]

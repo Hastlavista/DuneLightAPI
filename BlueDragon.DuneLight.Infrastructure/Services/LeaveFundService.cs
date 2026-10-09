@@ -20,15 +20,20 @@ public class LeaveFundService : ILeaveFundService
     private readonly IEmployeeLeaveSettingsHandler _settingsHandler;
     private readonly IEmployeeHandler _employeeHandler;
     private readonly IUnitOfWorkFactory _unitOfWorkFactory;
+    private readonly TimeProvider _timeProvider;
+    private readonly IOrganizationCalendarService _calendars;
 
     public LeaveFundService(
         ILeaveFundHandler leaveFundHandler, IEmployeeLeaveSettingsHandler settingsHandler,
-        IEmployeeHandler employeeHandler, IUnitOfWorkFactory unitOfWorkFactory)
+        IEmployeeHandler employeeHandler, IUnitOfWorkFactory unitOfWorkFactory, TimeProvider timeProvider,
+        IOrganizationCalendarService calendars)
     {
+        _calendars = calendars;
         _leaveFundHandler = leaveFundHandler;
         _settingsHandler = settingsHandler;
         _employeeHandler = employeeHandler;
         _unitOfWorkFactory = unitOfWorkFactory;
+        _timeProvider = timeProvider;
     }
 
     public async Task<EmployeeLeaveFundsDto> GetForEmployee(Guid organizationId, Guid userId, bool hasFullScope, Guid employeeId)
@@ -41,9 +46,10 @@ public class LeaveFundService : ILeaveFundService
 
         EmployeeLeaveSettings settings = await _settingsHandler.GetForEmployee(organizationId, employeeId);
 
+        DateOnly today = await Today(organizationId);
         if (settings != null)
         {
-            int currentYear = LeaveFundYearCalculator.ResolveFundYear(settings, DateTimeOffset.UtcNow);
+            int currentYear = LeaveFundYearCalculator.ResolveFundYear(settings, today);
             await using IUnitOfWork uow = await _unitOfWorkFactory.Begin();
             await _leaveFundHandler.GetOrCreateForYear(uow, organizationId, employeeId, settings, currentYear, userId);
             await uow.CommitAsync();
@@ -56,7 +62,7 @@ public class LeaveFundService : ILeaveFundService
             EmployeeId = employeeId,
             EmployeeName = $"{employee.FirstName} {employee.LastName}",
             Settings = settings != null ? ToDto(settings) : null,
-            Funds = funds.Select(ToDto).ToList()
+            Funds = funds.Select(f => ToDto(f, today)).ToList()
         };
     }
 
@@ -80,8 +86,12 @@ public class LeaveFundService : ILeaveFundService
                 $"Novi broj dodijeljenih dana ({request.AllocatedDays}) je manji od već potrošenih ({existingFund.UsedDays}) — prvo stornirajte/izmijenite povezane roster zapise.");
 
         LeaveFund saved = await _leaveFundHandler.ManualUpsert(organizationId, employeeId, settings, request.FundYear, request.AllocatedDays, userId);
-        return ToDto(saved);
+        return ToDto(saved, await Today(organizationId));
     }
+
+    /// <summary>T1-7: današnji poslovni dan u zoni organizacije (poslovni sat) — fond nije vezan uz poslovnicu.</summary>
+    private async Task<DateOnly> Today(Guid organizationId) =>
+        (await _calendars.GetCalendar(organizationId)).LocalDate(_timeProvider.GetUtcNow());
 
     private async Task ValidateOwnership(Guid organizationId, Guid userId, bool hasFullScope, Guid employeeId)
     {
@@ -90,7 +100,7 @@ public class LeaveFundService : ILeaveFundService
 
         Employee employee = await _employeeHandler.GetByUserId(organizationId, userId);
         if (employee == null || employee.Id != employeeId)
-            throw new BusinessRuleException(ErrorCodes.NotOwner, "Smijete pregledavati samo vlastiti fond godišnjeg odmora.");
+            throw ForbiddenAppException.OutOfScope("Smijete pregledavati samo vlastiti fond godišnjeg odmora.", Grants.RosterLeaveFundViewAll);
     }
 
     private static EmployeeLeaveSettingsDto ToDto(EmployeeLeaveSettings s)
@@ -110,7 +120,7 @@ public class LeaveFundService : ILeaveFundService
         };
     }
 
-    private static LeaveFundDto ToDto(LeaveFund f)
+    private static LeaveFundDto ToDto(LeaveFund f, DateOnly today)
     {
         return new LeaveFundDto
         {
@@ -120,7 +130,7 @@ public class LeaveFundService : ILeaveFundService
             ExpiresAt = f.ExpiresAt,
             AllocatedDays = f.AllocatedDays,
             UsedDays = f.UsedDays,
-            IsExpired = f.ExpiresAt < DateTimeOffset.UtcNow
+            IsExpired = LeaveFundYearCalculator.IsExpired(f, today)
         };
     }
 }

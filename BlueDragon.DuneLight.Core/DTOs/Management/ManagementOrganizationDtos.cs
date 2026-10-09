@@ -23,8 +23,8 @@ public class ManagementOrganizationDetailDto
     public Guid OrganizationId { get; set; }
     public string Name { get; set; }
     public string Slug { get; set; }
-    public string PrimaryColor { get; set; }
-    public string SecondaryColor { get; set; }
+    public string? PrimaryColor { get; set; }
+    public string? SecondaryColor { get; set; }
     public DateTimeOffset? CreatedAt { get; set; }
     public int UserCount { get; set; }
     public List<ManagementOrganizationCompanyDto> Companies { get; set; } = new();

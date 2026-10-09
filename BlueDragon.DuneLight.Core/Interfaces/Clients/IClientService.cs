@@ -20,7 +20,7 @@ public interface IClientService
     Task<ClientDto> Anonymize(Guid organizationId, Guid userId, Guid id);
 
     /// <summary>Klijenti kojima je rođendan u zadanom razdoblju, sortirano po datumu. Godina se zanemaruje.</summary>
-    Task<List<ClientBirthdayDto>> GetBirthdays(Guid organizationId, DateTimeOffset from, DateTimeOffset to);
+    Task<List<ClientBirthdayDto>> GetBirthdays(Guid organizationId, DateOnly from, DateOnly to);
 
     /// <summary>Prijedlog sljedećeg slobodnog broja člana — admin/trener ga može promijeniti.</summary>
     Task<int> GetNextMemberNumberSuggestion(Guid organizationId);

@@ -43,7 +43,7 @@ public static class AppointmentOwnership
         List<AppointmentSegment> list = segments.ToList();
         Employee employee = await employeeHandler.GetByUserId(organizationId, userId);
         if (employee == null || !employee.Id.HasValue || list.Count == 0 || !list.All(s => IsAssignedToSegment(s, employee.Id.Value)))
-            throw new BusinessRuleException(ErrorCodes.NotOwner, notOwnerMessage);
+            throw ForbiddenAppException.OutOfScope(notOwnerMessage, Grants.AppointmentsWriteAll);
     }
 
     /// <summary>Phase M1E (zaključano pravilo): operacije nad CIJELIM terminom (otkazivanje termina, bulk no-show) djeluju na
@@ -52,7 +52,7 @@ public static class AppointmentOwnership
     public static void EnsureWholeAppointmentScope(bool hasFullScope, string notOwnerMessage)
     {
         if (!hasFullScope)
-            throw new BusinessRuleException(ErrorCodes.NotOwner, notOwnerMessage);
+            throw ForbiddenAppException.OutOfScope(notOwnerMessage, Grants.AppointmentsWriteAll);
     }
 
     /// <summary>Own-scope za NOVI termin: pozivatelj smije zakazati samo za sebe — svaki zatraženi zaposlenik (svih
@@ -67,6 +67,6 @@ public static class AppointmentOwnership
         List<Guid> requested = requestedEmployeeIds.ToList();
         Employee employee = await employeeHandler.GetByUserId(organizationId, userId);
         if (employee == null || requested.Count == 0 || requested.Any(id => id != employee.Id))
-            throw new BusinessRuleException(ErrorCodes.NotOwner, notOwnerMessage);
+            throw ForbiddenAppException.OutOfScope(notOwnerMessage, Grants.AppointmentsWriteAll);
     }
 }

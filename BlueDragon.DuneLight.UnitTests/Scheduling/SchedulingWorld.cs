@@ -26,6 +26,7 @@ using BlueDragon.DuneLight.Infrastructure.Domain.Models.Organizations;
 using BlueDragon.DuneLight.Infrastructure.Domain.Models.Outbox;
 using BlueDragon.DuneLight.Infrastructure.Domain.Models.Roster;
 using BlueDragon.DuneLight.Infrastructure.Services;
+using BlueDragon.DuneLight.Infrastructure.Time;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using ServiceEntity = BlueDragon.DuneLight.Infrastructure.Domain.Models.Catalog.Service;
@@ -94,6 +95,26 @@ public sealed class SchedulingWorld : IAsyncDisposable
     public IClientPackageService ClientPackages => _scope.ServiceProvider.GetRequiredService<IClientPackageService>();
     public T Resolve<T>() => _scope.ServiceProvider.GetRequiredService<T>();
 
+    /// <summary>T1-7: poslovni sat OVE organizacije postavljen na <paramref name="instant"/> (+1 ms po čitanju, vidi TestClock) dok se
+    /// rezultat ne odbaci — isti mehanizam kao pomak sata u Managementu (pomak po organizaciji + kontekst sata).</summary>
+    public IDisposable ClockAt(DateTimeOffset instant)
+    {
+        IClockOffsetStore offsets = Resolve<IClockOffsetStore>();
+        TimeSpan previous = offsets.GetOffset(OrganizationId);
+        offsets.Set(OrganizationId, instant - TestClock.UtcNow);
+        IDisposable context = OrganizationClockContext.Use(OrganizationId);
+        return new ClockRestore(() =>
+        {
+            context.Dispose();
+            offsets.Set(OrganizationId, previous);
+        });
+    }
+
+    private sealed class ClockRestore(Action restore) : IDisposable
+    {
+        public void Dispose() => restore();
+    }
+
     #endregion
 
     #region Creation / cleanup
@@ -128,7 +149,7 @@ public sealed class SchedulingWorld : IAsyncDisposable
             Name = $"SchedTest-{TestName}",
             Slug = $"sched-test-{OrganizationId:N}",
             TimeZone = timeZone,
-            CreatedAt = DateTimeOffset.UtcNow
+            CreatedAt = TestClock.UtcNow
         });
         await db.SaveChangesAsync();
 
@@ -139,7 +160,7 @@ public sealed class SchedulingWorld : IAsyncDisposable
             Name = "Full time",
             IsActive = true,
             SortOrder = 0,
-            CreatedAt = DateTimeOffset.UtcNow
+            CreatedAt = TestClock.UtcNow
         });
         await db.SaveChangesAsync();
 
@@ -229,6 +250,9 @@ public sealed class SchedulingWorld : IAsyncDisposable
 
     #region Time helpers
 
+    /// <summary>T1-7: kalendarski dan (DateOnly) zidnog datuma vrijednosti — za DateOnly ugovore (cjenik, generiranje grupa, ...).</summary>
+    public static DateOnly Day(DateTimeOffset value) => DateOnly.FromDateTime(value.Date);
+
     public static DateTimeOffset Future(int hour, int minute = 0) => FutureDay.AddHours(hour).AddMinutes(minute);
     public static DateTimeOffset Past(int hour, int minute = 0) => PastDay.AddHours(hour).AddMinutes(minute);
 
@@ -248,7 +272,7 @@ public sealed class SchedulingWorld : IAsyncDisposable
             PasswordHash = "not-a-real-hash",
             ApiKey = $"sched-test-key-{id:N}",
             IsActive = true,
-            CreatedAt = DateTimeOffset.UtcNow
+            CreatedAt = TestClock.UtcNow
         });
         await db.SaveChangesAsync();
         return id;
@@ -264,7 +288,7 @@ public sealed class SchedulingWorld : IAsyncDisposable
             Name = $"{name}-{Guid.NewGuid():N}",
             Country = "HR",
             IsActive = isActive,
-            CreatedAt = DateTimeOffset.UtcNow
+            CreatedAt = TestClock.UtcNow
         };
         db.Companies.Add(company);
         await db.SaveChangesAsync();
@@ -290,7 +314,7 @@ public sealed class SchedulingWorld : IAsyncDisposable
             DefaultPrice = price,
             IsActive = isActive,
             SortOrder = 0,
-            CreatedAt = DateTimeOffset.UtcNow
+            CreatedAt = TestClock.UtcNow
         };
         db.Services.Add(service);
         await db.SaveChangesAsync();
@@ -325,12 +349,12 @@ public sealed class SchedulingWorld : IAsyncDisposable
             OrganizationId = OrganizationId,
             FirstName = name,
             LastName = "Tester",
-            EmploymentStartDate = new DateTimeOffset(2019, 1, 1, 0, 0, 0, TimeSpan.Zero),
+            EmploymentStartDate = new DateOnly(2019, 1, 1),
             EngagementTypeId = EngagementTypeId,
             IsActive = isActive,
             UserId = userId,
             SortOrder = 0,
-            CreatedAt = DateTimeOffset.UtcNow
+            CreatedAt = TestClock.UtcNow
         });
         await db.SaveChangesAsync();
 
@@ -427,7 +451,7 @@ public sealed class SchedulingWorld : IAsyncDisposable
             CompanyId = companyId,
             CycleType = WorkingHoursCycleType.Weekly,
             AnchorDate = new DateOnly(2020, 1, 6),
-            CreatedAt = DateTimeOffset.UtcNow
+            CreatedAt = TestClock.UtcNow
         };
         foreach (DayOfWeek day in Enum.GetValues<DayOfWeek>())
             template.Intervals.Add(new WorkingHoursInterval
@@ -436,8 +460,8 @@ public sealed class SchedulingWorld : IAsyncDisposable
                 WorkingHoursTemplateId = templateId,
                 CycleWeekIndex = 0,
                 DayOfWeek = day,
-                StartTime = start ?? WorkStart,
-                EndTime = end ?? WorkEnd
+                StartTime = TimeOnly.FromTimeSpan(start ?? WorkStart),
+                EndTime = TimeOnly.FromTimeSpan(end ?? WorkEnd)
             });
 
         db.WorkingHoursTemplates.Add(template);
@@ -482,7 +506,7 @@ public sealed class SchedulingWorld : IAsyncDisposable
             IsActive = isActive,
             IsAnonymized = isAnonymized,
             GdprConsentGiven = true,
-            CreatedAt = DateTimeOffset.UtcNow
+            CreatedAt = TestClock.UtcNow
         };
         db.Clients.Add(client);
         await db.SaveChangesAsync();
@@ -503,7 +527,7 @@ public sealed class SchedulingWorld : IAsyncDisposable
             Capacity = capacity,
             IsActive = isActive,
             SortOrder = 0,
-            CreatedAt = DateTimeOffset.UtcNow
+            CreatedAt = TestClock.UtcNow
         };
         db.Rooms.Add(room);
         await db.SaveChangesAsync();
@@ -523,7 +547,7 @@ public sealed class SchedulingWorld : IAsyncDisposable
             Capacity = capacity,
             IsActive = isActive,
             SortOrder = 0,
-            CreatedAt = DateTimeOffset.UtcNow
+            CreatedAt = TestClock.UtcNow
         };
         db.Resources.Add(resource);
         await db.SaveChangesAsync();
@@ -532,7 +556,7 @@ public sealed class SchedulingWorld : IAsyncDisposable
 
     /// <summary>Price-list row (Service, optionally company-specific) effective from <paramref name="validFrom"/>.</summary>
     public async Task AddPriceListItem(
-        ServiceEntity service, decimal price, DateTimeOffset validFrom, Guid? companyId = null, DateTimeOffset? validTo = null, Guid? employeeId = null)
+        ServiceEntity service, decimal price, DateOnly validFrom, Guid? companyId = null, DateOnly? validTo = null, Guid? employeeId = null)
     {
         await using DatabaseContext db = NewDb();
         db.PriceListItems.Add(new PriceListItem
@@ -546,7 +570,7 @@ public sealed class SchedulingWorld : IAsyncDisposable
             ValidFrom = validFrom,
             ValidTo = validTo,
             IsActive = true,
-            CreatedAt = DateTimeOffset.UtcNow
+            CreatedAt = TestClock.UtcNow
         });
         await db.SaveChangesAsync();
     }
@@ -634,7 +658,7 @@ public sealed class SchedulingWorld : IAsyncDisposable
             LateCancellationMembershipAction = CancellationPolicyRules.MembershipActionFor(lateMembershipAction, lateFeeType, lateFeeValue),
             NoShowFeeType = noShowFeeType, NoShowFeeValue = noShowFeeValue, NoShowPackageAction = noShowPackageAction,
             NoShowMembershipAction = CancellationPolicyRules.MembershipActionFor(noShowMembershipAction, noShowFeeType, noShowFeeValue),
-            CreatedAt = DateTimeOffset.UtcNow
+            CreatedAt = TestClock.UtcNow
         });
         await db.SaveChangesAsync();
     }
@@ -648,7 +672,7 @@ public sealed class SchedulingWorld : IAsyncDisposable
         db.CancellationPolicies.Add(new CancellationPolicy
         {
             Id = DefaultPolicyId, OrganizationId = OrganizationId, Name = "Zadana politika", IsActive = true,
-            IsOrganizationDefault = true, CreatedAt = DateTimeOffset.UtcNow
+            IsOrganizationDefault = true, CreatedAt = TestClock.UtcNow
         });
         db.CancellationPolicyVersions.Add(new CancellationPolicyVersion
         {
@@ -659,7 +683,7 @@ public sealed class SchedulingWorld : IAsyncDisposable
             // P2 (pregled 2D #8): politika bez naknade ne kažnjava ni članove.
             LateCancellationMembershipAction = CancellationMembershipAction.ReturnCreditChargeFee,
             NoShowMembershipAction = CancellationMembershipAction.ReturnCreditChargeFee,
-            CreatedAt = DateTimeOffset.UtcNow
+            CreatedAt = TestClock.UtcNow
         });
         await db.SaveChangesAsync();
     }
@@ -677,7 +701,7 @@ public sealed class SchedulingWorld : IAsyncDisposable
             RequiresTime = !isAbsence,
             IsActive = true,
             SortOrder = 0,
-            CreatedAt = DateTimeOffset.UtcNow
+            CreatedAt = TestClock.UtcNow
         };
         db.RosterTypes.Add(type);
         await db.SaveChangesAsync();
@@ -704,7 +728,7 @@ public sealed class SchedulingWorld : IAsyncDisposable
             DateFrom = DateOnly.FromDateTime(from.Date),
             DateTo = to.HasValue ? DateOnly.FromDateTime(to.Value.Date) : null,
             IsOverride = false,
-            CreatedAt = DateTimeOffset.UtcNow
+            CreatedAt = TestClock.UtcNow
         });
         await db.SaveChangesAsync();
     }
@@ -720,7 +744,7 @@ public sealed class SchedulingWorld : IAsyncDisposable
             CompanyId = Company.Id.Value,
             StartsAt = startsAt,
             DurationMinutes = durationMinutes,
-            CreatedAt = DateTimeOffset.UtcNow
+            CreatedAt = TestClock.UtcNow
         });
         await db.SaveChangesAsync();
     }
@@ -736,7 +760,7 @@ public sealed class SchedulingWorld : IAsyncDisposable
             Date = DateOnly.FromDateTime(day.Date),
             Name = "Holiday",
             IsAutoGenerated = false,
-            CreatedAt = DateTimeOffset.UtcNow
+            CreatedAt = TestClock.UtcNow
         });
         await db.SaveChangesAsync();
     }
@@ -754,7 +778,7 @@ public sealed class SchedulingWorld : IAsyncDisposable
             CalculationType = type,
             Value = value,
             IsActive = true,
-            CreatedAt = DateTimeOffset.UtcNow
+            CreatedAt = TestClock.UtcNow
         });
         await db.SaveChangesAsync();
     }
@@ -793,7 +817,7 @@ public sealed class SchedulingWorld : IAsyncDisposable
             DefaultPrice = 100m,
             IsActive = true,
             SortOrder = 0,
-            CreatedAt = DateTimeOffset.UtcNow
+            CreatedAt = TestClock.UtcNow
         };
         db.Packages.Add(package);
         await db.SaveChangesAsync();
@@ -805,7 +829,9 @@ public sealed class SchedulingWorld : IAsyncDisposable
             OrganizationId = OrganizationId,
             ClientId = client.Id.Value,
             PackageId = package.Id.Value,
-            PurchaseDate = new DateTimeOffset(2025, 1, 1, 0, 0, 0, TimeSpan.Zero),
+            // CHANGED in T1 (T1-9): paket pokriva tek od PurchaseDate — fiksni dan kupnje je prije svih dana suite (PastDay 2020-03-02),
+            // pa testovi i dalje opisuju pokriće unutar valjanosti (prije: 2025-01-01, kad donja granica nije postojala).
+            PurchaseDate = new DateOnly(2020, 1, 1),
             PaidPrice = 100m,
             EntryMode = mode,
             TotalEntryCount = mode == PackageEntryMode.SharedPool ? entries : null,
@@ -813,7 +839,7 @@ public sealed class SchedulingWorld : IAsyncDisposable
             ValidityType = PackageValidityType.FixedDate,
             ValidUntilDate = validUntil,
             Status = status,
-            CreatedAt = DateTimeOffset.UtcNow
+            CreatedAt = TestClock.UtcNow
         };
         clientPackage.ServiceEntries.Add(new ClientPackageServiceEntry
         {
@@ -1003,7 +1029,7 @@ public sealed class SchedulingWorld : IAsyncDisposable
                 }
             },
             Slots = (slots is { Length: > 0 } ? slots : new (DayOfWeek Day, TimeSpan Start)[] { (FutureDay.DayOfWeek, TimeSpan.FromHours(10)) })
-                .Select(x => new GroupSlotCreateRequest { DayOfWeek = x.Day, StartTime = x.Start }).ToList()
+                .Select(x => new GroupSlotCreateRequest { DayOfWeek = x.Day, StartTime = TimeOnly.FromTimeSpan(x.Start) }).ToList()
         };
         return Groups.Create(OrganizationId, ActorUserId, request);
     }
@@ -1042,8 +1068,9 @@ public sealed class SchedulingWorld : IAsyncDisposable
         Groups.GenerateAppointments(OrganizationId, ActorUserId, new GenerateGroupAppointmentsRequest
         {
             GroupId = group.Id,
-            FromDate = from,
-            ToDate = to ?? from,
+            // T1-7: raspon je DateOnly — zidni datum vrijednosti (isto kao dosadašnji FromWallDate; svijet je u UTC-u).
+            FromDate = Day(from),
+            ToDate = Day(to ?? from),
             OverrideAvailability = overrideAvailability
         });
 
@@ -1079,7 +1106,7 @@ public sealed class SchedulingWorld : IAsyncDisposable
         Guid groupId = Guid.NewGuid();
         db.GrantGroups.Add(new BlueDragon.DuneLight.Infrastructure.Domain.Models.Permissions.GrantGroup
         {
-            Id = groupId, OrganizationId = OrganizationId, Name = $"test-{groupId:N}", CreatedAt = DateTimeOffset.UtcNow,
+            Id = groupId, OrganizationId = OrganizationId, Name = $"test-{groupId:N}", CreatedAt = TestClock.UtcNow,
             Grants = grants.Select(g => new BlueDragon.DuneLight.Infrastructure.Domain.Models.Permissions.GrantGroupGrant { GrantGroupId = groupId, GrantKey = g }).ToList()
         });
         db.UserGrantGroups.Add(new BlueDragon.DuneLight.Infrastructure.Domain.Models.Permissions.UserGrantGroup { UserId = userId, GrantGroupId = groupId });
@@ -1129,10 +1156,10 @@ public sealed class SchedulingWorld : IAsyncDisposable
             Status = status,
             // M1A.1/M1C: a Cancelled appointment is an EXPLICITLY cancelled one (the production shape) — segment occupancy
             // reads the explicit marker, never the aggregate status.
-            CancelledAt = status == AppointmentStatus.Cancelled ? DateTimeOffset.UtcNow : null,
+            CancelledAt = status == AppointmentStatus.Cancelled ? TestClock.UtcNow : null,
             GroupId = groupId,
             GroupSlotId = groupSlotId,
-            CreatedAt = DateTimeOffset.UtcNow
+            CreatedAt = TestClock.UtcNow
         };
         // D3A: the execution frame lives on the single authoritative segment (same shape production creates).
         SingleSegmentTestExtensions.AddTestSegment(appointment,
@@ -1157,7 +1184,7 @@ public sealed class SchedulingWorld : IAsyncDisposable
                 OrganizationId = OrganizationId,
                 AppointmentId = appointmentId,
                 ClientId = client.Id.Value,
-                CreatedAt = DateTimeOffset.UtcNow
+                CreatedAt = TestClock.UtcNow
             };
             // P1: current-state metadata always matches the status (DB CHECK) — a seeded Cancelled participation is a
             // business cancellation, a seeded NoShow carries its no-show stamp.
@@ -1244,7 +1271,7 @@ public sealed class SchedulingWorld : IAsyncDisposable
             BookingSegmentParticipationId = participation.Id.Value, ServiceId = participation.Segment.ServiceId,
             Units = entry.RemainingEntries.HasValue ? 1 : 0, ServiceStartsAt = participation.Segment.PlannedStart,
             ServiceDate = DateOnly.FromDateTime(participation.Segment.PlannedStart.UtcDateTime), // seeded worlds are UTC organizations
-            Status = PackageConsumptionStatus.Consumed, CreatedAt = DateTimeOffset.UtcNow
+            Status = PackageConsumptionStatus.Consumed, CreatedAt = TestClock.UtcNow
         });
         await db.SaveChangesAsync();
     }
@@ -1266,7 +1293,7 @@ public sealed class SchedulingWorld : IAsyncDisposable
         AppointmentSegment segment = new()
         {
             Id = Guid.NewGuid(), OrganizationId = OrganizationId, AppointmentId = appointmentId, ServiceId = existing.ServiceId,
-            PlannedStart = plannedStart, PlannedEnd = plannedStart.AddMinutes(durationMinutes), CreatedAt = DateTimeOffset.UtcNow
+            PlannedStart = plannedStart, PlannedEnd = plannedStart.AddMinutes(durationMinutes), CreatedAt = TestClock.UtcNow
         };
         segment.Employees.Add(new AppointmentSegmentEmployee { AppointmentSegmentId = segment.Id.Value, EmployeeId = Employee.Id.Value });
         db.AppointmentSegments.Add(segment);
@@ -1276,9 +1303,9 @@ public sealed class SchedulingWorld : IAsyncDisposable
             Id = Guid.NewGuid(), OrganizationId = OrganizationId, BookingId = booking.Id.Value, AppointmentSegmentId = segment.Id.Value,
             // P1: current-state metadata always matches the status (DB CHECK).
             CancellationInitiator = status == ParticipationStatus.Cancelled ? CancellationInitiator.Business : null,
-            CancelledAt = status == ParticipationStatus.Cancelled ? DateTimeOffset.UtcNow : null,
-            NoShowAt = status == ParticipationStatus.NoShow ? DateTimeOffset.UtcNow : null,
-            Status = status, StatusVersion = 0, SuggestedAmount = amount, Amount = amount, CreatedAt = DateTimeOffset.UtcNow
+            CancelledAt = status == ParticipationStatus.Cancelled ? TestClock.UtcNow : null,
+            NoShowAt = status == ParticipationStatus.NoShow ? TestClock.UtcNow : null,
+            Status = status, StatusVersion = 0, SuggestedAmount = amount, Amount = amount, CreatedAt = TestClock.UtcNow
         };
         db.BookingSegmentParticipations.Add(participation);
         await db.SaveChangesAsync();

@@ -8,7 +8,7 @@ public class NotificationDto
 {
     public Guid Id { get; set; }
     public Guid? ClientId { get; set; }
-    public string ClientName { get; set; }
+    public string? ClientName { get; set; }
     public NotificationType Type { get; set; }
     public NotificationSourceType SourceType { get; set; }
     public Guid SourceId { get; set; }

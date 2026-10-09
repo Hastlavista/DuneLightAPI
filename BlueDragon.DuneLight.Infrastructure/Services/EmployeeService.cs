@@ -30,6 +30,7 @@ public class EmployeeService : IEmployeeService
     private readonly IGrantGroupHandler _grantGroupHandler;
     private readonly IRoleHandler _roleHandler;
     private readonly IPermissionAdministrationSafetyService _permissionAdministrationSafetyService;
+    private readonly TimeProvider _timeProvider;
 
     public EmployeeService(
         IEmployeeHandler employeeHandler,
@@ -41,7 +42,8 @@ public class EmployeeService : IEmployeeService
         IFutureAppointmentsProvider futureAppointmentsProvider,
         IGrantGroupHandler grantGroupHandler,
         IRoleHandler roleHandler,
-        IPermissionAdministrationSafetyService permissionAdministrationSafetyService)
+        IPermissionAdministrationSafetyService permissionAdministrationSafetyService,
+        TimeProvider timeProvider)
     {
         _employeeHandler = employeeHandler;
         _engagementTypeHandler = engagementTypeHandler;
@@ -53,6 +55,7 @@ public class EmployeeService : IEmployeeService
         _grantGroupHandler = grantGroupHandler;
         _roleHandler = roleHandler;
         _permissionAdministrationSafetyService = permissionAdministrationSafetyService;
+        _timeProvider = timeProvider;
     }
 
     public async Task<PagedResult<EmployeeDto>> GetPaged(
@@ -112,7 +115,7 @@ public class EmployeeService : IEmployeeService
             EngagementTypeId = request.EngagementTypeId,
             UserId = request.UserId,
             IsActive = true,
-            CreatedAt = DateTimeOffset.UtcNow,
+            CreatedAt = _timeProvider.GetUtcNow(),
             CreatedBy = userId
         };
 
@@ -150,7 +153,7 @@ public class EmployeeService : IEmployeeService
             MustChangeCredentialsOnFirstLogin = request.MustChangeCredentialsOnFirstLogin,
             PinHash = string.IsNullOrEmpty(request.Pin) ? null : PasswordHasher.Hash(request.Pin),
             IsActive = true,
-            CreatedAt = DateTimeOffset.UtcNow
+            CreatedAt = _timeProvider.GetUtcNow()
         };
 
         Employee employee = new Employee
@@ -173,7 +176,7 @@ public class EmployeeService : IEmployeeService
             EngagementTypeId = request.EngagementTypeId,
             UserId = user.Id.GetValueOrDefault(),
             IsActive = true,
-            CreatedAt = DateTimeOffset.UtcNow,
+            CreatedAt = _timeProvider.GetUtcNow(),
             CreatedBy = currentUserId,
             Companies = BuildCompanies(request.CompanyIds, request.PrimaryCompanyId),
             Services = BuildServices(request.ServiceIds)
@@ -257,7 +260,7 @@ public class EmployeeService : IEmployeeService
         existing.EmploymentStartDate = request.EmploymentStartDate;
         existing.EmploymentEndDate = request.EmploymentEndDate;
         existing.EngagementTypeId = request.EngagementTypeId;
-        existing.UpdatedAt = DateTimeOffset.UtcNow;
+        existing.UpdatedAt = _timeProvider.GetUtcNow();
         existing.UpdatedBy = userId;
 
         List<EmployeeCompany> newCompanies = BuildCompanies(request.CompanyIds, request.PrimaryCompanyId);
@@ -296,7 +299,7 @@ public class EmployeeService : IEmployeeService
                 throw new BusinessRuleException(ErrorCodes.EmployeeMissingPrimaryCompany, "Zaposlenik nema matičnu tvrtku — nije moguće ponovno aktivirati.");
         }
 
-        DateTimeOffset now = DateTimeOffset.UtcNow;
+        DateTimeOffset now = _timeProvider.GetUtcNow();
         await _employeeHandler.SetActiveWithLogin(organizationId, id, employee.UserId, isActive, now, userId);
 
         await _auditLogHandler.Add(new EmployeeAuditLog
@@ -415,7 +418,7 @@ public class EmployeeService : IEmployeeService
             throw new ValidationAppException("Matična tvrtka mora biti među dodijeljenim tvrtkama.");
     }
 
-    private static void ValidateEmploymentDates(DateTimeOffset start, DateTimeOffset? end)
+    private static void ValidateEmploymentDates(DateOnly start, DateOnly? end)
     {
         if (end.HasValue && end.Value < start)
             throw new ValidationAppException("Datum prestanka ne smije biti prije datuma početka.");

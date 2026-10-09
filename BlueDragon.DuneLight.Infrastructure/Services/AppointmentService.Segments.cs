@@ -32,10 +32,14 @@ namespace BlueDragon.DuneLight.Infrastructure.Services;
 /// </summary>
 public partial class AppointmentService
 {
-    /// <summary>Ciljno stanje segmenta koji se prepisuje. PricingSource null = izvor cijene segmenta se ne mijenja.</summary>
+    /// <summary>Ciljno stanje segmenta koji se prepisuje. PricingSource null = izvor cijene segmenta se ne mijenja.
+    /// T1-8: Reprice = cjenik se ponovno čita SAMO kad se promijeni nešto o čemu cijena ovisi (usluga, izvor cijene, efektivni
+    /// zaposlenik izvora cijene, dan cjenika); PriceReason = vrsta naredbe za upozorenje PARTICIPATION_PRICE_CHANGED (null =
+    /// naredba ne može promijeniti cijenu: prostorija, resursi).</summary>
     private sealed record SegmentTarget(
         DateTimeOffset PlannedStart, DateTimeOffset PlannedEnd, Guid ServiceId, IReadOnlyList<Guid> EmployeeIds, Guid? RoomId,
-        IReadOnlyList<ResourceClaim> Resources, bool Reprice, string Change, PricingSourceValue? PricingSource = null);
+        IReadOnlyList<ResourceClaim> Resources, bool Reprice, string Change, PricingSourceValue? PricingSource = null,
+        ParticipationPriceChangeReason? PriceReason = null);
 
     public Task<AppointmentDto> ChangeSegmentTime(
         Guid organizationId, Guid userId, bool hasFullScope, Guid segmentId, AppointmentSegmentTimeChangeRequest request) =>
@@ -47,8 +51,12 @@ public partial class AppointmentService
             List<Guid> employees = segment.Employees.Select(e => e.EmployeeId).ToList();
             List<WarningDto> warnings = await EnsureWorkforceAvailability(
                 organizationId, employees, appointment.CompanyId, request.PlannedStart, end, await AvailabilityOverride.Resolve(_grantResolver, organizationId, userId, request.OverrideAvailability));
-            return (new SegmentTarget(request.PlannedStart, end, segment.ServiceId, employees, segment.RoomId, resources, Reprice: true,
-                $"time:{request.PlannedStart:O}-{end:O}"), warnings);
+            // T1-8 (CHANGED in T1): cjenik se ponovno čita samo kad novi početak pada na drugi dan cjenika (lokalni datum u zoni
+            // poslovnice termina); pomak unutar istog dana zadržava spremljenu cijenu. Prije: uvijek.
+            bool priceListDayChanged = await _pricingService.PriceListDay(organizationId, appointment.CompanyId, request.PlannedStart)
+                                       != await _pricingService.PriceListDay(organizationId, appointment.CompanyId, segment.PlannedStart);
+            return (new SegmentTarget(request.PlannedStart, end, segment.ServiceId, employees, segment.RoomId, resources, Reprice: priceListDayChanged,
+                $"time:{request.PlannedStart:O}-{end:O}", PriceReason: ParticipationPriceChangeReason.Time), warnings);
         });
 
     public Task<AppointmentDto> ChangeSegmentService(
@@ -75,8 +83,9 @@ public partial class AppointmentService
                 ?? (request.ServiceId == segment.ServiceId ? null : await DefaultResourcesOf(organizationId, request.ServiceId, appointment.CompanyId));
             if (requested != null)
                 targetResources = await ValidatedResourceClaims(organizationId, appointment.CompanyId, requested);
-            return (new SegmentTarget(segment.PlannedStart, end, request.ServiceId, employees, segment.RoomId, targetResources, Reprice: true,
-                $"service:{request.ServiceId}"), warnings);
+            // T1-8: cjenik se ponovno čita kad se usluga stvarno mijenja (ista usluga — samo trajanje/resursi — zadržava cijenu).
+            return (new SegmentTarget(segment.PlannedStart, end, request.ServiceId, employees, segment.RoomId, targetResources,
+                Reprice: request.ServiceId != segment.ServiceId, $"service:{request.ServiceId}", PriceReason: ParticipationPriceChangeReason.Service), warnings);
         });
 
     public Task<AppointmentDto> ChangeSegmentEmployees(
@@ -99,8 +108,13 @@ public partial class AppointmentService
                 await EnsureStructuralEligibility(organizationId, service, appointment.CompanyId, employeeId);
             List<WarningDto> warnings = await EnsureWorkforceAvailability(
                 organizationId, employees, appointment.CompanyId, segment.PlannedStart, segment.PlannedEnd, await AvailabilityOverride.Resolve(_grantResolver, organizationId, userId, request.OverrideAvailability));
-            return (new SegmentTarget(segment.PlannedStart, segment.PlannedEnd, segment.ServiceId, employees, segment.RoomId, resources, Reprice: true,
-                $"employees:{string.Join(",", employees.OrderBy(id => id))};pricing:{pricingSource.Mode}:{pricingSource.EmployeeId}", pricingSource), warnings);
+            // T1-8 (CHANGED in T1): cjenik se ponovno čita samo kad se promijeni efektivni zaposlenik izvora cijene (kontekst cijene);
+            // izmjena ostalih zaposlenika zadržava spremljenu cijenu. Prije: uvijek.
+            bool pricingContextChanged = SegmentPricingSource.PricingEmployeeOf(segment) != pricingSource.PricingEmployeeId;
+            return (new SegmentTarget(segment.PlannedStart, segment.PlannedEnd, segment.ServiceId, employees, segment.RoomId, resources,
+                Reprice: pricingContextChanged,
+                $"employees:{string.Join(",", employees.OrderBy(id => id))};pricing:{pricingSource.Mode}:{pricingSource.EmployeeId}", pricingSource,
+                ParticipationPriceChangeReason.Employees), warnings);
         });
 
     /// <summary>Phase M1G — samo izvor cijene segmenta (skup zaposlenika ostaje isti, zauzetost se ne mijenja — validacija
@@ -114,7 +128,8 @@ public partial class AppointmentService
             List<Guid> employees = segment.Employees.Select(e => e.EmployeeId).ToList();
             PricingSourceValue pricingSource = SegmentPricingSource.Normalize(employees, request.PricingMode, request.PricingEmployeeId);
             return Task.FromResult((new SegmentTarget(segment.PlannedStart, segment.PlannedEnd, segment.ServiceId, employees, segment.RoomId,
-                resources, Reprice: true, $"pricing:{pricingSource.Mode}:{pricingSource.EmployeeId}", pricingSource), new List<WarningDto>()));
+                resources, Reprice: true, $"pricing:{pricingSource.Mode}:{pricingSource.EmployeeId}", pricingSource,
+                ParticipationPriceChangeReason.PricingSource), new List<WarningDto>()));
         });
 
     /// <summary>Phase M1G — povijesno izvršenje se ne prepisuje: zaposlenici segmenta s odrađenim sudjelovanjem (zarađena
@@ -200,7 +215,12 @@ public partial class AppointmentService
                 ?? throw new NotFoundAppException("Segment", segmentId);
             SegmentSnapshot.EnsureUnchanged(snapshot, SegmentSnapshot.CaptureTracked(locked, lockedSegment));
 
-            DateTimeOffset now = DateTimeOffset.UtcNow;
+            // T1-8: iznosi aktivnih sudjelovanja segmenta prije naredbe — promjena se prijavljuje (PARTICIPATION_PRICE_CHANGED).
+            Dictionary<Guid, decimal> amountsBefore = locked.Bookings.SelectMany(b => b.Participations)
+                .Where(p => p.AppointmentSegmentId == segmentId && p.Status == ParticipationStatus.Confirmed)
+                .ToDictionary(p => p.Id.GetValueOrDefault(), p => p.Amount);
+
+            DateTimeOffset now = _timeProvider.GetUtcNow();
             SegmentMutator.ChangeService(lockedSegment, target.ServiceId, now);
             SegmentMutator.ChangeTime(lockedSegment, target.PlannedStart, target.PlannedEnd, now);
             // Phase M1G: povijest se ponovno provjerava POD lockom termina (sudjelovanje je moglo biti odrađeno od čitanja).
@@ -227,7 +247,7 @@ public partial class AppointmentService
                 ChangedBy = userId
             });
             // K2: override radnog vremena koji je stvarno nešto zaobišao.
-            await AvailabilityOverride.Audit(_auditLogHandler, uow, locked.Id.GetValueOrDefault(), warnings, userId);
+            await AvailabilityOverride.Audit(_auditLogHandler, uow, locked.Id.GetValueOrDefault(), warnings, userId, now);
 
             await uow.Context.SaveChangesAsync();
 
@@ -239,7 +259,14 @@ public partial class AppointmentService
                              .Where(p => p.AppointmentSegmentId == segmentId && p.Status == ParticipationStatus.Confirmed))
                     await _membershipCoverage.ReevaluateParticipation(uow, organizationId, userId, locked, booking, participation);
 
-            await AppointmentLifecycle.Refresh(_appointmentHandler, _auditLogHandler, uow, organizationId, locked.Id.GetValueOrDefault(), userId);
+            if (target.PriceReason is ParticipationPriceChangeReason priceReason)
+                foreach (Booking booking in locked.Bookings.OrderBy(b => b.ClientId))
+                foreach (BookingSegmentParticipation participation in booking.Participations.OrderBy(p => p.Id))
+                    if (amountsBefore.TryGetValue(participation.Id.GetValueOrDefault(), out decimal oldAmount) && participation.Amount != oldAmount)
+                        warnings.Add(PriceWarnings.ParticipationPriceChanged(
+                            participation.Id.GetValueOrDefault(), booking.ClientId, oldAmount, participation.Amount, priceReason));
+
+            await AppointmentLifecycle.Refresh(_appointmentHandler, _auditLogHandler, uow, organizationId, locked.Id.GetValueOrDefault(), userId, now);
             await uow.CommitAsync();
         }
 
@@ -273,7 +300,7 @@ public partial class AppointmentService
                 ?? throw new NotFoundAppException("Appointment", appointmentId);
             EnsureExecutionEditable(locked);
 
-            DateTimeOffset now = DateTimeOffset.UtcNow;
+            DateTimeOffset now = _timeProvider.GetUtcNow();
             (AppointmentSegment segment, List<Booking> newBookings, List<BookingSegmentParticipation> added) =
                 AppointmentFactory.AddSegment(locked, validated.Plan, now);
             uow.Context.AppointmentSegments.Add(segment);
@@ -286,7 +313,7 @@ public partial class AppointmentService
                 Id = Guid.NewGuid(), AppointmentId = appointmentId, ChangeType = "SegmentAdded",
                 NewValue = segment.Id.ToString(), ChangedAt = now, ChangedBy = userId
             });
-            await AvailabilityOverride.Audit(_auditLogHandler, uow, appointmentId, warnings, userId);
+            await AvailabilityOverride.Audit(_auditLogHandler, uow, appointmentId, warnings, userId, now);
 
             await uow.Context.SaveChangesAsync();
             // P2 (2D): claim na rezervaciji za nova sudjelovanja segmenta (no-op bez članarine).
@@ -294,12 +321,13 @@ public partial class AppointmentService
                 await _membershipCoverage.SyncParticipation(uow, organizationId, userId, locked,
                     locked.Bookings.Single(b => b.Id == participation.BookingId), participation,
                     MembershipCoverageEvent.Booking, MembershipCoverageMode.Interactive);
-            await AppointmentLifecycle.Refresh(_appointmentHandler, _auditLogHandler, uow, organizationId, appointmentId, userId);
+            await AppointmentLifecycle.Refresh(_appointmentHandler, _auditLogHandler, uow, organizationId, appointmentId, userId, now);
             await uow.CommitAsync();
         }
 
         AppointmentDto dto = await GetByIdInternal(organizationId, appointmentId);
         dto.Warnings = warnings;
+        dto.Warnings.AddRange(validated.PriceWarnings);
         return dto;
     }
 
@@ -329,7 +357,7 @@ public partial class AppointmentService
             uow.Context.AppointmentSegmentEmployees.RemoveRange(lockedSegment.Employees);
             uow.Context.AppointmentSegmentResources.RemoveRange(lockedSegment.Resources);
             uow.Context.AppointmentSegments.Remove(lockedSegment);
-            DateTimeOffset now = DateTimeOffset.UtcNow;
+            DateTimeOffset now = _timeProvider.GetUtcNow();
             locked.UpdatedAt = now;
             locked.UpdatedBy = userId;
             await _auditLogHandler.Add(uow, new AppointmentAuditLog
@@ -339,7 +367,7 @@ public partial class AppointmentService
             });
 
             await uow.Context.SaveChangesAsync();
-            await AppointmentLifecycle.Refresh(_appointmentHandler, _auditLogHandler, uow, organizationId, locked.Id.GetValueOrDefault(), userId);
+            await AppointmentLifecycle.Refresh(_appointmentHandler, _auditLogHandler, uow, organizationId, locked.Id.GetValueOrDefault(), userId, now);
             await uow.CommitAsync();
         }
 
@@ -374,11 +402,15 @@ public partial class AppointmentService
 
         // Cijena PO SUDJELOVANJU: usluga i početak NJEGOVOG segmenta, poslovnica termina, opcionalni ručni iznos.
         List<(AppointmentSegment Segment, SegmentSnapshot.State Snapshot, BookingPricing Pricing, SegmentClaim Claim)> plans = new();
+        List<WarningDto> priceWarnings = new();
         foreach ((AppointmentSegment segment, AppointmentClientParticipationRequest selection) in segments.Zip(selections))
         {
             List<ResourceClaim> resources = await _schedulingOccupancyHandler.GetSegmentResources(segment.Id.GetValueOrDefault());
-            BookingPricing pricing = BookingPricing.FromResolution(
-                await ResolveServicePrice(organizationId, segment.ServiceId, appointment.CompanyId, SegmentPricingSource.PricingEmployeeOf(segment), segment.PlannedStart), selection.Amount);
+            ResolvePriceResponse resolved = await ResolveServicePrice(
+                organizationId, segment.ServiceId, appointment.CompanyId, SegmentPricingSource.PricingEmployeeOf(segment), segment.PlannedStart);
+            // T1-8: rupa u cjeniku (zadana cijena usluge) se prijavljuje u odgovoru.
+            PriceWarnings.AddNotDefined(priceWarnings, resolved);
+            BookingPricing pricing = BookingPricing.FromResolution(resolved, selection.Amount);
             plans.Add((segment, SegmentSnapshot.Capture(appointment, segment, resources), pricing,
                 SegmentClaim.ForParticipationActivation(appointment, segment, request.ClientId, resources)));
         }
@@ -390,7 +422,7 @@ public partial class AppointmentService
 
             Appointment locked = await _appointmentHandler.GetForSegmentMutation(uow, organizationId, appointmentId)
                 ?? throw new NotFoundAppException("Appointment", appointmentId);
-            DateTimeOffset now = DateTimeOffset.UtcNow;
+            DateTimeOffset now = _timeProvider.GetUtcNow();
             Booking booking = locked.Bookings.FirstOrDefault(b => b.ClientId == request.ClientId);
             bool newBooking = booking == null;
             if (newBooking)
@@ -428,11 +460,13 @@ public partial class AppointmentService
                          .OrderBy(p => locked.Segments.Single(s => s.Id == p.AppointmentSegmentId).PlannedStart))
                 await _membershipCoverage.SyncParticipation(uow, organizationId, userId, locked, booking, participation,
                     MembershipCoverageEvent.Booking, MembershipCoverageMode.Interactive);
-            await AppointmentLifecycle.Refresh(_appointmentHandler, _auditLogHandler, uow, organizationId, appointmentId, userId);
+            await AppointmentLifecycle.Refresh(_appointmentHandler, _auditLogHandler, uow, organizationId, appointmentId, userId, now);
             await uow.CommitAsync();
         }
 
-        return await GetByIdInternal(organizationId, appointmentId);
+        AppointmentDto dto = await GetByIdInternal(organizationId, appointmentId);
+        dto.Warnings.AddRange(priceWarnings);
+        return dto;
     }
 
     public async Task<AppointmentDto> RemoveParticipation(Guid organizationId, Guid userId, bool hasFullScope, Guid participationId)
@@ -457,7 +491,7 @@ public partial class AppointmentService
             await ParticipationHistory.RemoveUntouchedParticipations(uow.Context, new[] { booking }, new[] { participation },
                 "Sudjelovanje ima povijest (status, paket, naplata) — ne može se ukloniti; koristite otkazivanje.");
 
-            DateTimeOffset now = DateTimeOffset.UtcNow;
+            DateTimeOffset now = _timeProvider.GetUtcNow();
             await _auditLogHandler.Add(uow, new AppointmentAuditLog
             {
                 Id = Guid.NewGuid(), AppointmentId = appointmentId, ChangeType = "ParticipationRemoved",
@@ -465,7 +499,7 @@ public partial class AppointmentService
             });
 
             await uow.Context.SaveChangesAsync();
-            await AppointmentLifecycle.Refresh(_appointmentHandler, _auditLogHandler, uow, organizationId, appointmentId, userId);
+            await AppointmentLifecycle.Refresh(_appointmentHandler, _auditLogHandler, uow, organizationId, appointmentId, userId, now);
             await uow.CommitAsync();
         }
 
@@ -497,7 +531,8 @@ public partial class AppointmentService
     }
 
     /// <summary>Aktivna (Confirmed) sudjelovanja segmenta se cijene po trenutnoj usluzi segmenta; ručni iznos se čuva (samo
-    /// se osvježava predložena cijena). Terminalna sudjelovanja zadržavaju povijesnu cijenu.</summary>
+    /// se osvježava predložena cijena). Terminalna sudjelovanja zadržavaju povijesnu cijenu. T1-8: poziva se samo kad se
+    /// promijenilo nešto o čemu cijena ovisi (vidi <see cref="SegmentTarget"/>).</summary>
     private async Task RepriceSegment(Guid organizationId, Appointment locked, AppointmentSegment segment)
     {
         ResolvePriceResponse resolved = await ResolveServicePrice(organizationId, segment.ServiceId, locked.CompanyId, SegmentPricingSource.PricingEmployeeOf(segment), segment.PlannedStart);
@@ -505,6 +540,6 @@ public partial class AppointmentService
                      .Where(p => p.AppointmentSegmentId == segment.Id && p.Status == ParticipationStatus.Confirmed))
             ParticipationPrice.Apply(participation, participation.IsAmountManuallyOverridden
                 ? BookingPricing.FromResolution(resolved, participation.Amount)
-                : BookingPricing.AtSuggested(resolved));
+                : BookingPricing.AtSuggested(resolved), _timeProvider.GetUtcNow());
     }
 }

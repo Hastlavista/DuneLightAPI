@@ -52,8 +52,8 @@ public class AppointmentOwnershipCharacterizationTests
         await using SchedulingWorld w = await SchedulingWorld.Create(nameof(EnsureCallerOwnsSegments_AnotherEmployee_IsNotOwner_WithTheGivenMessage));
         Employee other = await w.AddEmployee("Other");
 
-        BusinessRuleException ex = await SchedulingAssert.BusinessRule(ErrorCodes.NotOwner,
-            () => AppointmentOwnership.EnsureCallerOwnsSegments(
+        // CHANGED in T1: 403 OutOfScope (bilo 409 NOT_OWNER)
+        ForbiddenAppException ex = await SchedulingAssert.OutOfScope(() => AppointmentOwnership.EnsureCallerOwnsSegments(
                 Employees(w), w.OrganizationId, other.UserId, false, AssignedTo(w, w.Employee.Id).Segments, Message));
         Assert.Equal(Message, ex.Message);
     }
@@ -63,8 +63,8 @@ public class AppointmentOwnershipCharacterizationTests
     {
         await using SchedulingWorld w = await SchedulingWorld.Create(nameof(EnsureCallerOwnsSegments_AUserWithoutAnEmployeeRecord_IsNotOwner));
 
-        await SchedulingAssert.BusinessRule(ErrorCodes.NotOwner,
-            () => AppointmentOwnership.EnsureCallerOwnsSegments(
+        // CHANGED in T1: 403 OutOfScope (bilo 409 NOT_OWNER)
+        await SchedulingAssert.OutOfScope(() => AppointmentOwnership.EnsureCallerOwnsSegments(
                 Employees(w), w.OrganizationId, Guid.NewGuid(), false, AssignedTo(w, w.Employee.Id).Segments, Message));
     }
 
@@ -73,8 +73,8 @@ public class AppointmentOwnershipCharacterizationTests
     {
         await using SchedulingWorld w = await SchedulingWorld.Create(nameof(EnsureCallerOwnsSegments_ATrainerlessAppointment_BelongsToNobodyInOwnScope));
 
-        await SchedulingAssert.BusinessRule(ErrorCodes.NotOwner,
-            () => AppointmentOwnership.EnsureCallerOwnsSegments(
+        // CHANGED in T1: 403 OutOfScope (bilo 409 NOT_OWNER)
+        await SchedulingAssert.OutOfScope(() => AppointmentOwnership.EnsureCallerOwnsSegments(
                 Employees(w), w.OrganizationId, w.Employee.UserId, false, AssignedTo(w, null).Segments, Message));
     }
 
@@ -94,8 +94,8 @@ public class AppointmentOwnershipCharacterizationTests
         await using SchedulingWorld other = await SchedulingWorld.Create(nameof(EnsureCallerOwnsSegments_TheCallerIsResolvedOnlyInsideTheRequestedOrganization) + "-other");
         Appointment claimed = AssignedTo(w, other.Employee.Id); // an appointment claiming another tenant's employee
 
-        await SchedulingAssert.BusinessRule(ErrorCodes.NotOwner,
-            () => AppointmentOwnership.EnsureCallerOwnsSegments(Employees(w), w.OrganizationId, other.Employee.UserId, false, claimed.Segments, Message));
+        // CHANGED in T1: 403 OutOfScope (bilo 409 NOT_OWNER)
+        await SchedulingAssert.OutOfScope(() => AppointmentOwnership.EnsureCallerOwnsSegments(Employees(w), w.OrganizationId, other.Employee.UserId, false, claimed.Segments, Message));
 
         // Control: in its own organization the same user does resolve to that employee.
         await AppointmentOwnership.EnsureCallerOwnsSegments(Employees(w), other.OrganizationId, other.Employee.UserId, false, claimed.Segments, Message);
@@ -115,21 +115,21 @@ public class AppointmentOwnershipCharacterizationTests
         await AppointmentOwnership.EnsureCallerOwnsSegments(Employees(w), w.OrganizationId, w.Employee.UserId, false, new[] { a }, Message);
         await AppointmentOwnership.EnsureCallerOwnsSegments(Employees(w), w.OrganizationId, other.UserId, false, new[] { b }, Message);
         // ...but not on the other one, nor on an operation that touches both / the whole appointment (requires `all`).
-        await SchedulingAssert.BusinessRule(ErrorCodes.NotOwner,
-            () => AppointmentOwnership.EnsureCallerOwnsSegments(Employees(w), w.OrganizationId, w.Employee.UserId, false, new[] { b }, Message));
-        await SchedulingAssert.BusinessRule(ErrorCodes.NotOwner,
-            () => AppointmentOwnership.EnsureCallerOwnsSegments(Employees(w), w.OrganizationId, w.Employee.UserId, false, new[] { a, b }, Message));
-        await SchedulingAssert.BusinessRule(ErrorCodes.NotOwner,
-            () => AppointmentOwnership.EnsureCallerOwnsSegments(Employees(w), w.OrganizationId, other.UserId, false, appointment.Segments, Message));
+        // CHANGED in T1: 403 OutOfScope (bilo 409 NOT_OWNER)
+        await SchedulingAssert.OutOfScope(() => AppointmentOwnership.EnsureCallerOwnsSegments(Employees(w), w.OrganizationId, w.Employee.UserId, false, new[] { b }, Message));
+        // CHANGED in T1: 403 OutOfScope (bilo 409 NOT_OWNER)
+        await SchedulingAssert.OutOfScope(() => AppointmentOwnership.EnsureCallerOwnsSegments(Employees(w), w.OrganizationId, w.Employee.UserId, false, new[] { a, b }, Message));
+        // CHANGED in T1: 403 OutOfScope (bilo 409 NOT_OWNER)
+        await SchedulingAssert.OutOfScope(() => AppointmentOwnership.EnsureCallerOwnsSegments(Employees(w), w.OrganizationId, other.UserId, false, appointment.Segments, Message));
         // M1E: a whole-appointment operation is never own-scope, even for a caller assigned to every segment.
-        Assert.Equal(ErrorCodes.NotOwner,
-            Assert.Throws<BusinessRuleException>(() => AppointmentOwnership.EnsureWholeAppointmentScope(false, Message)).Code);
+        Assert.Equal(ErrorCodes.NotOwner, // CHANGED in T1: 403 OutOfScope (bilo 409)
+            Assert.Throws<ForbiddenAppException>(() => AppointmentOwnership.EnsureWholeAppointmentScope(false, Message)).Code);
         AppointmentOwnership.EnsureWholeAppointmentScope(true, Message);
         // Full scope passes for any segment set.
         await AppointmentOwnership.EnsureCallerOwnsSegments(Employees(w), w.OrganizationId, other.UserId, true, appointment.Segments, Message);
         // An empty segment set never proves own-scope ownership.
-        await SchedulingAssert.BusinessRule(ErrorCodes.NotOwner,
-            () => AppointmentOwnership.EnsureCallerOwnsSegments(Employees(w), w.OrganizationId, w.Employee.UserId, false, Array.Empty<AppointmentSegment>(), Message));
+        // CHANGED in T1: 403 OutOfScope (bilo 409 NOT_OWNER)
+        await SchedulingAssert.OutOfScope(() => AppointmentOwnership.EnsureCallerOwnsSegments(Employees(w), w.OrganizationId, w.Employee.UserId, false, Array.Empty<AppointmentSegment>(), Message));
     }
 
     [Fact]
@@ -142,11 +142,11 @@ public class AppointmentOwnershipCharacterizationTests
         await AppointmentOwnership.EnsureCallerIsEmployee(employees, w.OrganizationId, w.Employee.UserId, false, new[] { w.Employee.Id.Value }, Message);
         await AppointmentOwnership.EnsureCallerIsEmployee(employees, w.OrganizationId, Guid.NewGuid(), true, new[] { other.Id.Value }, Message);
 
-        BusinessRuleException ex = await SchedulingAssert.BusinessRule(ErrorCodes.NotOwner,
-            () => AppointmentOwnership.EnsureCallerIsEmployee(employees, w.OrganizationId, w.Employee.UserId, false, new[] { other.Id.Value }, Message));
+        // CHANGED in T1: 403 OutOfScope (bilo 409 NOT_OWNER)
+        ForbiddenAppException ex = await SchedulingAssert.OutOfScope(() => AppointmentOwnership.EnsureCallerIsEmployee(employees, w.OrganizationId, w.Employee.UserId, false, new[] { other.Id.Value }, Message));
         Assert.Equal(Message, ex.Message);
-        await SchedulingAssert.BusinessRule(ErrorCodes.NotOwner,
-            () => AppointmentOwnership.EnsureCallerIsEmployee(employees, w.OrganizationId, Guid.NewGuid(), false, new[] { other.Id.Value }, Message));
+        // CHANGED in T1: 403 OutOfScope (bilo 409 NOT_OWNER)
+        await SchedulingAssert.OutOfScope(() => AppointmentOwnership.EnsureCallerIsEmployee(employees, w.OrganizationId, Guid.NewGuid(), false, new[] { other.Id.Value }, Message));
     }
 
     #endregion
@@ -161,14 +161,14 @@ public class AppointmentOwnershipCharacterizationTests
         AppointmentDto mine = await w.CreateAppointment(SchedulingWorld.Future(10));
         AppointmentDto alsoMine = await w.CreateAppointment(SchedulingWorld.Future(12));
 
-        BusinessRuleException ex = await SchedulingAssert.BusinessRule(ErrorCodes.NotOwner,
-            () => w.Appointments.Cancel(w.OrganizationId, other.UserId, false, mine.Id, SchedulingWorld.BusinessCancel()));
+        // CHANGED in T1: 403 OutOfScope (bilo 409 NOT_OWNER)
+        ForbiddenAppException ex = await SchedulingAssert.OutOfScope(() => w.Appointments.Cancel(w.OrganizationId, other.UserId, false, mine.Id, SchedulingWorld.BusinessCancel()));
         Assert.Equal("Trener smije upravljati samo svojim vlastitim terminima.", ex.Message);
 
         // CHANGED in M1E: cancelling the WHOLE appointment requires appointments.write.all even when the caller is assigned to
         // every segment; own scope cancels its own participations (ParticipationId) instead.
-        BusinessRuleException assigned = await SchedulingAssert.BusinessRule(ErrorCodes.NotOwner,
-            () => w.Appointments.Cancel(w.OrganizationId, w.Employee.UserId, false, alsoMine.Id, SchedulingWorld.BusinessCancel()));
+        // CHANGED in T1: 403 OutOfScope (bilo 409 NOT_OWNER)
+        ForbiddenAppException assigned = await SchedulingAssert.OutOfScope(() => w.Appointments.Cancel(w.OrganizationId, w.Employee.UserId, false, alsoMine.Id, SchedulingWorld.BusinessCancel()));
         Assert.Equal("Trener smije upravljati samo svojim vlastitim terminima.", assigned.Message);
 
         AppointmentDto cancelled = await w.Appointments.Cancel(w.OrganizationId, w.ActorUserId, true, alsoMine.Id, SchedulingWorld.BusinessCancel());
@@ -182,8 +182,8 @@ public class AppointmentOwnershipCharacterizationTests
         Employee other = await w.AddEmployee("Other");
         AppointmentDto created = await w.CreateAppointment(SchedulingWorld.Future(10));
 
-        BusinessRuleException ex = await SchedulingAssert.BusinessRule(ErrorCodes.NotOwner,
-            () => w.SetBookingStatus(created.Id, w.Client, BookingStatus.Cancelled, hasFullScope: false, userId: other.UserId));
+        // CHANGED in T1: 403 OutOfScope (bilo 409 NOT_OWNER)
+        ForbiddenAppException ex = await SchedulingAssert.OutOfScope(() => w.SetBookingStatus(created.Id, w.Client, BookingStatus.Cancelled, hasFullScope: false, userId: other.UserId));
         Assert.Equal("Trener smije upravljati samo bookinzima na svojim vlastitim terminima.", ex.Message);
 
         BookingDto cancelled = await w.SetBookingStatus(created.Id, w.Client, BookingStatus.Cancelled, hasFullScope: false, userId: w.Employee.UserId);
@@ -197,8 +197,8 @@ public class AppointmentOwnershipCharacterizationTests
         Appointment occurrence = await w.SeedAppointment(SchedulingWorld.Future(10), form: AppointmentForm.Group, employee: null,
             bookings: (w.Client, BookingStatus.Confirmed, 15m));
 
-        await SchedulingAssert.BusinessRule(ErrorCodes.NotOwner,
-            () => w.SetBookingStatus(occurrence.Id.Value, w.Client, BookingStatus.Cancelled, hasFullScope: false, userId: w.Employee.UserId));
+        // CHANGED in T1: 403 OutOfScope (bilo 409 NOT_OWNER)
+        await SchedulingAssert.OutOfScope(() => w.SetBookingStatus(occurrence.Id.Value, w.Client, BookingStatus.Cancelled, hasFullScope: false, userId: w.Employee.UserId));
 
         BookingDto withFullScope = await w.SetBookingStatus(occurrence.Id.Value, w.Client, BookingStatus.Cancelled, hasFullScope: true);
         Assert.Equal(BookingStatusSummary.Cancelled, withFullScope.Status);
@@ -215,8 +215,8 @@ public class AppointmentOwnershipCharacterizationTests
         Appointment occurrence = await w.GenerateSingleOccurrence(group);
         Client waiter = await w.AddClient("Waiter", "Client");
 
-        BusinessRuleException ex = await SchedulingAssert.BusinessRule(ErrorCodes.NotOwner,
-            () => w.Waitlist.Join(w.OrganizationId, other.UserId, false, occurrence.Id.Value,
+        // CHANGED in T1: 403 OutOfScope (bilo 409 NOT_OWNER)
+        ForbiddenAppException ex = await SchedulingAssert.OutOfScope(() => w.Waitlist.Join(w.OrganizationId, other.UserId, false, occurrence.Id.Value,
                 new WaitlistJoinRequest { ClientId = waiter.Id.Value, SegmentId = Assert.Single(occurrence.Segments).Id }));
         Assert.Equal("Trener smije upravljati samo listom čekanja na svojim vlastitim terminima.", ex.Message);
 

@@ -14,10 +14,12 @@ namespace BlueDragon.DuneLight.Infrastructure.Services;
 public class RoleService : IRoleService
 {
     private readonly IRoleHandler _roleHandler;
+    private readonly TimeProvider _timeProvider;
 
-    public RoleService(IRoleHandler roleHandler)
+    public RoleService(IRoleHandler roleHandler, TimeProvider timeProvider)
     {
         _roleHandler = roleHandler;
+        _timeProvider = timeProvider;
     }
 
     public async Task<List<RoleDto>> GetAll(Guid organizationId)
@@ -46,7 +48,7 @@ public class RoleService : IRoleService
             Id = Guid.NewGuid(),
             OrganizationId = organizationId,
             Name = request.Name,
-            CreatedAt = DateTimeOffset.UtcNow,
+            CreatedAt = _timeProvider.GetUtcNow(),
             CreatedBy = userId
         };
 

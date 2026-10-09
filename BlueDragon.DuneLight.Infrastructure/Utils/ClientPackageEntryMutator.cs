@@ -101,6 +101,9 @@ public static class ClientPackageEntryMutator
         if (clientPackage.Status == ClientPackageStatus.Cancelled)
             throw new BusinessRuleException(ErrorCodes.PackageNotEligible, "Paket je otkazan.");
         if (!PackageValidity.IsValidOn(clientPackage, serviceDate))
-            throw new BusinessRuleException(ErrorCodes.PackageNotEligible, "Paket je istekao.");
+            throw new BusinessRuleException(ErrorCodes.PackageNotEligible, serviceDate < clientPackage.PurchaseDate
+                // T1-9: paket ne pokriva usluge prije dana kupnje (ni kad je upisan unatrag).
+                ? $"Paket je kupljen {clientPackage.PurchaseDate:dd.MM.yyyy.} i ne pokriva uslugu od {serviceDate:dd.MM.yyyy.}."
+                : "Paket je istekao.");
     }
 }

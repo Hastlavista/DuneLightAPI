@@ -38,7 +38,7 @@ public class MultiEmployeeGroupTests
         {
             Name = $"Wellness-{Guid.NewGuid():N}",
             CompanyId = w.Company.Id.Value,
-            Slots = new List<GroupSlotCreateRequest> { new() { DayOfWeek = SchedulingWorld.FutureDay.DayOfWeek, StartTime = TimeSpan.FromHours(9) } },
+            Slots = new List<GroupSlotCreateRequest> { new() { DayOfWeek = SchedulingWorld.FutureDay.DayOfWeek, StartTime = new TimeOnly(9, 0) } },
             SegmentTemplates = templates.ToList()
         });
 

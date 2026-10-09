@@ -9,9 +9,9 @@ public class CommissionEntryDto
 {
     public Guid Id { get; set; }
     public Guid EmployeeId { get; set; }
-    public string EmployeeName { get; set; }
+    public string? EmployeeName { get; set; }
     public Guid CompanyId { get; set; }
-    public string CompanyName { get; set; }
+    public string? CompanyName { get; set; }
     public CommissionSourceType SourceType { get; set; }
     public Guid? AppointmentId { get; set; }
     public Guid? BookingId { get; set; }
@@ -42,12 +42,12 @@ public class CommissionEntryDto
     /// <summary>P2 (2F, Vagaro) — razina primijenjenog pravila i objašnjenje izbora (primijenjeno pravilo, zašto, neprimijenjena
     /// pravila s razlogom). Null za izvore bez izbora pravila (npr. stari zapisi).</summary>
     public CommissionRuleScope? AppliedRuleScope { get; set; }
-    public CommissionRuleEvaluationDto RuleEvaluation { get; set; }
+    public CommissionRuleEvaluationDto? RuleEvaluation { get; set; }
     public bool WasCapped { get; set; }
     public CommissionEntryStatus Status { get; set; }
     public DateTimeOffset EarnedAt { get; set; }
     public DateTimeOffset? ReversedAt { get; set; }
-    public string ReversalReason { get; set; }
+    public string? ReversalReason { get; set; }
     public Guid? CorrectionOfEntryId { get; set; }
 
     /// <summary>P2 (2F) — iznos ovog zapisa unutar traženog razdoblja (brojanje po događajima): +CommissionAmount ako je zarađen u
@@ -61,8 +61,8 @@ public class CommissionEntryQuery
 {
     public Guid? EmployeeId { get; set; }
     public Guid? CompanyId { get; set; }
-    public DateTimeOffset From { get; set; }
-    public DateTimeOffset To { get; set; }
+    public DateOnly From { get; set; }
+    public DateOnly To { get; set; }
     public int Page { get; set; } = 1;
     public int PageSize { get; set; } = 20;
 }
@@ -71,8 +71,8 @@ public class CommissionSummaryQuery
 {
     public Guid? EmployeeId { get; set; }
     public Guid? CompanyId { get; set; }
-    public DateTimeOffset From { get; set; }
-    public DateTimeOffset To { get; set; }
+    public DateOnly From { get; set; }
+    public DateOnly To { get; set; }
 }
 
 /// <summary>P2 (2F, brojanje po događajima): EarnedAmount = zarade nastale u razdoblju (bez obzira na kasniji storno),
@@ -81,7 +81,7 @@ public class CommissionSummaryQuery
 public class EmployeeCommissionSummaryDto
 {
     public Guid EmployeeId { get; set; }
-    public string EmployeeName { get; set; }
+    public string? EmployeeName { get; set; }
     public decimal EarnedAmount { get; set; }
     public decimal ReversedAmount { get; set; }
     public decimal NetAmount { get; set; }
@@ -115,7 +115,7 @@ public class CommissionEntryReassignResultDto
     public CommissionEntryDto Reversed { get; set; }
 
     /// <summary>Null kad novi korisnik nema primjenjivo pravilo (nema pravila = nema provizije).</summary>
-    public CommissionEntryDto Created { get; set; }
+    public CommissionEntryDto? Created { get; set; }
 }
 
 /// <summary>P2 (2F, §18.1/§16.3) — korisnik provizije na prodaju (stavka checkouta ili članstvo); null = bez provizije.</summary>
@@ -162,5 +162,5 @@ public class CommissionSaleAssignmentRequest
 public class CommissionSaleAssignmentResultDto
 {
     /// <summary>Null kad dodijeljeni korisnik nema primjenjivo pravilo (korisnik je zapisan, provizija ne nastaje — konačno).</summary>
-    public CommissionEntryDto Created { get; set; }
+    public CommissionEntryDto? Created { get; set; }
 }

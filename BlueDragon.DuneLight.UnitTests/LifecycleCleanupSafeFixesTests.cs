@@ -29,7 +29,7 @@ public class LifecycleCleanupSafeFixesTests
 {
     private const string LocalConnectionString = "Host=localhost;Database=postgres;Password=root1234;Username=postgres";
 
-    private static CompanyHandler CreateCompanyHandler() => new(new DatabaseSettings { ConnectionString = LocalConnectionString });
+    private static CompanyHandler CreateCompanyHandler() => new(new DatabaseSettings { ConnectionString = LocalConnectionString }, TestClock.Source);
     private static WaitlistHandler CreateWaitlistHandler() => new(new DatabaseSettings { ConnectionString = LocalConnectionString });
 
     private static async Task<(Guid OrganizationId, Guid CompanyId, Guid ServiceId, Guid ClientId, Func<Task> Cleanup)> CreateIsolatedFixture(string testName)
@@ -46,7 +46,7 @@ public class LifecycleCleanupSafeFixesTests
             Id = organizationId,
             Name = $"LifecycleSafeFixesTest-{testName}",
             Slug = $"lifecycle-safe-fixes-test-{organizationId:N}",
-            CreatedAt = DateTimeOffset.UtcNow
+            CreatedAt = TestClock.UtcNow
         });
         await context.SaveChangesAsync();
 
@@ -68,7 +68,7 @@ public class LifecycleCleanupSafeFixesTests
             DefaultPrice = 0,
             IsActive = true,
             SortOrder = 0,
-            CreatedAt = DateTimeOffset.UtcNow
+            CreatedAt = TestClock.UtcNow
         });
         context.Clients.Add(new Client
         {
@@ -79,7 +79,7 @@ public class LifecycleCleanupSafeFixesTests
             LastName = "Client",
             IsActive = true,
             GdprConsentGiven = true,
-            CreatedAt = DateTimeOffset.UtcNow
+            CreatedAt = TestClock.UtcNow
         });
         await context.SaveChangesAsync();
 
@@ -124,7 +124,7 @@ public class LifecycleCleanupSafeFixesTests
                     CompanyId = companyId,
                     ClientId = clientId,
                     Status = CheckoutStatus.Open,
-                    CreatedAt = DateTimeOffset.UtcNow
+                    CreatedAt = TestClock.UtcNow
                 });
                 await context.SaveChangesAsync();
             }
@@ -157,10 +157,10 @@ public class LifecycleCleanupSafeFixesTests
                     OrganizationId = organizationId,
                     CompanyId = companyId,
                     Status = AppointmentStatus.Closed,
-                    CreatedAt = DateTimeOffset.UtcNow
+                    CreatedAt = TestClock.UtcNow
                 };
                 // D3A: the execution frame lives on the appointment's single segment.
-                SingleSegmentTestExtensions.AddTestSegment(appointment, serviceId, null, null, DateTimeOffset.UtcNow.AddDays(-30), 30);
+                SingleSegmentTestExtensions.AddTestSegment(appointment, serviceId, null, null, TestClock.UtcNow.AddDays(-30), 30);
                 context.Appointments.Add(appointment);
                 await context.SaveChangesAsync();
 
@@ -175,8 +175,8 @@ public class LifecycleCleanupSafeFixesTests
                     AppointmentSegmentId = appointment.Segments[0].Id.Value, // M1F: waitlist is per segment
                     ClientId = clientId,
                     Status = WaitlistEntryStatus.Cancelled,
-                    JoinedAt = DateTimeOffset.UtcNow.AddDays(-30),
-                    CreatedAt = DateTimeOffset.UtcNow.AddDays(-30)
+                    JoinedAt = TestClock.UtcNow.AddDays(-30),
+                    CreatedAt = TestClock.UtcNow.AddDays(-30)
                 });
                 await context.SaveChangesAsync();
             }

@@ -14,7 +14,13 @@ namespace BlueDragon.DuneLight.Infrastructure.Utils;
 /// </summary>
 public static class WorkingHoursCalculator
 {
+    /// <summary>Interni interval lokalnog vremena dana kao pomak od ponoći (TimeSpan) — zbog aritmetike; T1-7: entiteti i API
+    /// ugovori koriste TimeOnly, pretvorba je samo na rubu (ToTimeSpan / <see cref="ToTimeOnly"/>).</summary>
     public readonly record struct Interval(TimeSpan Start, TimeSpan End);
+
+    /// <summary>T1-7: pomak od ponoći → TimeOnly za API. Intervali su uvijek unutar jednog dana (izvedeni iz predloška/rostera
+    /// čiji su krajevi TimeOnly), pa je vrijednost uvijek &lt; 24:00.</summary>
+    public static TimeOnly ToTimeOnly(TimeSpan timeOfDay) => TimeOnly.FromTimeSpan(timeOfDay);
 
     /// <summary>0-based tjedan ciklusa za zadani datum, poravnat na dan-u-tjednu AnchorDate-a (ispravan modulo i za datume prije anchora).</summary>
     public static int GetCycleWeekIndex(WorkingHoursCycleType cycleType, DateOnly anchorDate, DateOnly targetDate)
@@ -38,7 +44,7 @@ public static class WorkingHoursCalculator
         int cycleWeekIndex = GetCycleWeekIndex(template.CycleType, template.AnchorDate, date);
         return template.Intervals
             .Where(i => i.CycleWeekIndex == cycleWeekIndex && i.DayOfWeek == date.DayOfWeek)
-            .Select(i => new Interval(i.StartTime, i.EndTime))
+            .Select(i => new Interval(i.StartTime.ToTimeSpan(), i.EndTime.ToTimeSpan()))
             .ToList();
     }
 
@@ -57,7 +63,7 @@ public static class WorkingHoursCalculator
         List<RosterEntry> overrides = rosterEntriesForDate.Where(e => !e.RosterType.IsAbsence && e.IsOverride).ToList();
         if (overrides.Count > 0)
         {
-            List<Interval> overrideIntervals = overrides.Select(e => new Interval(e.StartTime!.Value, e.EndTime!.Value)).ToList();
+            List<Interval> overrideIntervals = overrides.Select(e => new Interval(e.StartTime!.Value.ToTimeSpan(), e.EndTime!.Value.ToTimeSpan())).ToList();
             return (MergeIntervals(overrideIntervals), AvailabilitySource.Override);
         }
 

@@ -17,11 +17,13 @@ public class GrantGroupService : IGrantGroupService
 
     private readonly IGrantGroupHandler _grantGroupHandler;
     private readonly IPermissionAdministrationSafetyService _permissionAdministrationSafetyService;
+    private readonly TimeProvider _timeProvider;
 
-    public GrantGroupService(IGrantGroupHandler grantGroupHandler, IPermissionAdministrationSafetyService permissionAdministrationSafetyService)
+    public GrantGroupService(IGrantGroupHandler grantGroupHandler, IPermissionAdministrationSafetyService permissionAdministrationSafetyService, TimeProvider timeProvider)
     {
         _grantGroupHandler = grantGroupHandler;
         _permissionAdministrationSafetyService = permissionAdministrationSafetyService;
+        _timeProvider = timeProvider;
     }
 
     public async Task<List<GrantGroupDto>> GetAll(Guid organizationId)
@@ -52,7 +54,7 @@ public class GrantGroupService : IGrantGroupService
             Id = Guid.NewGuid(),
             OrganizationId = organizationId,
             Name = request.Name,
-            CreatedAt = DateTimeOffset.UtcNow,
+            CreatedAt = _timeProvider.GetUtcNow(),
             CreatedBy = userId,
             Grants = request.Grants.Distinct().Select(key => new GrantGroupGrant { GrantKey = key }).ToList()
         };
@@ -74,7 +76,7 @@ public class GrantGroupService : IGrantGroupService
             throw new BusinessRuleException(ErrorCodes.DuplicateName, "Grant-grupa s ovim nazivom već postoji.");
 
         existing.Name = request.Name;
-        existing.UpdatedAt = DateTimeOffset.UtcNow;
+        existing.UpdatedAt = _timeProvider.GetUtcNow();
         existing.UpdatedBy = userId;
 
         List<string> newGrantKeys = request.Grants.Distinct().ToList();

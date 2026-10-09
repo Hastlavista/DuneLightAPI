@@ -17,7 +17,7 @@ public class OperationalDashboardDto
     /// <summary>Kalendarski dan poslovnice na koji se sve niže vezano odnosi, serijaliziran kao UTC ponoć tog datuma
     /// (samo datum je značajan). Stvarne granice su lokalne ponoći u efektivnoj zoni poslovnice — vidi napomenu na
     /// IOperationalDashboardService.</summary>
-    public DateTimeOffset Date { get; set; }
+    public DateOnly Date { get; set; }
 
     public List<DashboardScheduleOccurrenceDto> Schedule { get; set; } = new();
     public List<DashboardStaffMemberDto> Staff { get; set; } = new();
@@ -50,13 +50,13 @@ public class DashboardScheduleOccurrenceDto
 
     public bool IsGroup { get; set; }
     public Guid? GroupId { get; set; }
-    public string GroupName { get; set; }
+    public string? GroupName { get; set; }
 
     /// <summary>Popunjeno samo za Form=Individual — vidi spec section 7. Praznо za Form=Group.</summary>
     public List<DashboardBookingSummaryDto> Bookings { get; set; } = new();
 
     /// <summary>Popunjeno samo za Form=Group — vidi spec section 8. Null za Form=Individual.</summary>
-    public DashboardGroupSummaryDto GroupSummary { get; set; }
+    public DashboardGroupSummaryDto? GroupSummary { get; set; }
 }
 
 /// <summary>Booking-razina sažetak jednog klijenta na Individual terminu — vidi spec section 7. Naplata je
@@ -65,7 +65,7 @@ public class DashboardBookingSummaryDto
 {
     public Guid BookingId { get; set; }
     public Guid ClientId { get; set; }
-    public string ClientName { get; set; }
+    public string? ClientName { get; set; }
     public BookingStatusSummary BookingStatus { get; set; }
     public decimal PaidAmount { get; set; }
     public decimal OutstandingAmount { get; set; }
@@ -101,8 +101,8 @@ public class DashboardGroupSummaryDto
 /// <summary>Jedan radni interval unutar dana (HH:mm-HH:mm) — vidi WorkingHoursCalculator.Interval.</summary>
 public class DashboardWorkIntervalDto
 {
-    public TimeSpan Start { get; set; }
-    public TimeSpan End { get; set; }
+    public TimeOnly Start { get; set; }
+    public TimeOnly End { get; set; }
 }
 
 /// <summary>Jedna pauza zaposlenika tog dana — sažeto (bez punog ScheduleBreakDto), vidi spec section 34

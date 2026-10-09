@@ -26,15 +26,17 @@ public class RoomService : IRoomService
     private readonly ICompanyHandler _companyHandler;
     private readonly ISchedulingOccupancyHandler _schedulingOccupancyHandler;
     private readonly IUnitOfWorkFactory _unitOfWorkFactory;
+    private readonly TimeProvider _timeProvider;
 
     public RoomService(
         IRoomHandler roomHandler, ICompanyHandler companyHandler, ISchedulingOccupancyHandler schedulingOccupancyHandler,
-        IUnitOfWorkFactory unitOfWorkFactory)
+        IUnitOfWorkFactory unitOfWorkFactory, TimeProvider timeProvider)
     {
         _roomHandler = roomHandler;
         _companyHandler = companyHandler;
         _schedulingOccupancyHandler = schedulingOccupancyHandler;
         _unitOfWorkFactory = unitOfWorkFactory;
+        _timeProvider = timeProvider;
     }
 
     public async Task<PagedResult<RoomDto>> GetPaged(Guid organizationId, Guid? companyId, PagedRequest request)
@@ -73,7 +75,7 @@ public class RoomService : IRoomService
             Note = request.Note,
             SortOrder = request.SortOrder,
             IsActive = true,
-            CreatedAt = DateTimeOffset.UtcNow,
+            CreatedAt = _timeProvider.GetUtcNow(),
             CreatedBy = userId
         };
 
@@ -102,14 +104,14 @@ public class RoomService : IRoomService
                 throw new NotFoundAppException("Room", id);
 
             await CapacityChangeGuard.EnsureRoomCapacityChange(
-                _schedulingOccupancyHandler, uow, organizationId, id, room.Name, room.Capacity, request.Capacity, DateTimeOffset.UtcNow);
+                _schedulingOccupancyHandler, uow, organizationId, id, room.Name, room.Capacity, request.Capacity, _timeProvider.GetUtcNow());
 
             // Id, OrganizationId i CompanyId se namjerno ne diraju — Room nikad ne mijenja poslovnicu.
             room.Name = name;
             room.Capacity = request.Capacity;
             room.Note = request.Note;
             room.SortOrder = request.SortOrder;
-            room.UpdatedAt = DateTimeOffset.UtcNow;
+            room.UpdatedAt = _timeProvider.GetUtcNow();
             room.UpdatedBy = userId;
             await uow.CommitAsync();
         }
@@ -143,7 +145,7 @@ public class RoomService : IRoomService
             await EnsureNameIsUnique(organizationId, room.CompanyId, room.Name, excludeId: id);
 
             room.IsActive = true;
-            room.UpdatedAt = DateTimeOffset.UtcNow;
+            room.UpdatedAt = _timeProvider.GetUtcNow();
             room.UpdatedBy = userId;
             await _roomHandler.Update(room);
         }
@@ -162,7 +164,7 @@ public class RoomService : IRoomService
         if (room.IsActive)
         {
             room.IsActive = false;
-            room.UpdatedAt = DateTimeOffset.UtcNow;
+            room.UpdatedAt = _timeProvider.GetUtcNow();
             room.UpdatedBy = userId;
             await _roomHandler.Update(room);
         }

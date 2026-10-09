@@ -2,10 +2,12 @@ using System;
 
 namespace BlueDragon.DuneLight.Infrastructure.Utils;
 
-/// <summary>Čista provjera preklapanja dva datumska raspona. Null u "do" polju = otvoreno prema naprijed.</summary>
+/// <summary>Čista provjera preklapanja dva raspona. Null u "do" polju = otvoreno prema naprijed. Oba kraja su uključena: raspon
+/// koji završava na dan kad drugi počinje (A.ValidTo == B.ValidFrom) se PREKLAPA.</summary>
 public static class DateRangeOverlap
 {
-    public static bool Overlaps(DateTimeOffset aFrom, DateTimeOffset? aTo, DateTimeOffset bFrom, DateTimeOffset? bTo)
+    /// <summary>T1-7: kalendarski dani (cjenik ValidFrom/ValidTo), oba kraja uključena.</summary>
+    public static bool Overlaps(DateOnly aFrom, DateOnly? aTo, DateOnly bFrom, DateOnly? bTo)
     {
         bool aStartsBeforeOrOnBEnd = bTo is null || aFrom <= bTo.Value;
         bool aEndsAfterOrOnBStart = aTo is null || aTo.Value >= bFrom;

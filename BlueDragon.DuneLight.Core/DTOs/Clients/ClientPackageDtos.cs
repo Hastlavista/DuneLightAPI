@@ -19,7 +19,7 @@ public class ClientPackageDto
     public Guid ClientId { get; set; }
     public Guid PackageId { get; set; }
     public string PackageName { get; set; }
-    public DateTimeOffset PurchaseDate { get; set; }
+    public DateOnly PurchaseDate { get; set; }
     public decimal PaidPrice { get; set; }
     public PackageEntryMode EntryMode { get; set; }
     public int? TotalEntryCount { get; set; }
@@ -43,7 +43,7 @@ public class ClientPackageCreateRequest
     [Required]
     public Guid PackageId { get; set; }
 
-    public DateTimeOffset? PurchaseDate { get; set; }
+    public DateOnly? PurchaseDate { get; set; }
 
     /// <summary>Ako nije zadano, predlaže se preko IPricingService.ResolvePrice za odabranu tvrtku/datum.</summary>
     [Range(0, double.MaxValue, ErrorMessage = "Cijena ne smije biti negativna.")]

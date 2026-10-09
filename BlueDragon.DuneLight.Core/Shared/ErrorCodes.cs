@@ -39,6 +39,13 @@ public static class ErrorCodes
     public const string NotOwner = "NOT_OWNER";
     public const string PackageNotEligible = "PACKAGE_NOT_ELIGIBLE";
     public const string PackageServiceNotCovered = "PACKAGE_SERVICE_NOT_COVERED";
+    /// <summary>T1-9 — ručni upis paketa s datumom kupnje nakon današnjeg dana (zona poslovnice prodaje, poslovni sat).</summary>
+    public const string PackagePurchaseDateInFuture = "PACKAGE_PURCHASE_DATE_IN_FUTURE";
+    /// <summary>T1-9 — ručni upis paketa koji bi već bio istekao (ValidUntilDate prije današnjeg dana). Details: purchaseDate,
+    /// validUntilDate, today.</summary>
+    public const string PackageExpiredAtIssue = "PACKAGE_EXPIRED_AT_ISSUE";
+    /// <summary>T1-9 — datum GDPR suglasnosti nakon današnjeg dana organizacije.</summary>
+    public const string GdprConsentDateInFuture = "GDPR_CONSENT_DATE_IN_FUTURE";
     public const string InactiveEmployee = "INACTIVE_EMPLOYEE";
     public const string InactiveType = "INACTIVE_TYPE";
     public const string InactiveService = "INACTIVE_SERVICE";
@@ -272,4 +279,11 @@ public static class ErrorCodes
     public const string DuplicateCapabilitySelection = "DUPLICATE_CAPABILITY_SELECTION";
     public const string GrantKeyUnknown = "GRANT_KEY_UNKNOWN";
     public const string GrantAlreadyCapabilityDerived = "GRANT_ALREADY_CAPABILITY_DERIVED";
+
+    // T1 — privremeni testni alati (pomak sata, seed); uklanjaju se prije go-livea
+    public const string TestClockBackwards = "TEST_CLOCK_BACKWARDS";
+    public const string TestClockAdvanceTooLarge = "TEST_CLOCK_ADVANCE_TOO_LARGE";
+    public const string TestClockAdvanceInvalid = "TEST_CLOCK_ADVANCE_INVALID";
+    public const string TestToolsNotDemoOrganization = "TEST_TOOLS_NOT_DEMO_ORGANIZATION";
+    public const string TestToolsNoAdminUser = "TEST_TOOLS_NO_ADMIN_USER";
 }

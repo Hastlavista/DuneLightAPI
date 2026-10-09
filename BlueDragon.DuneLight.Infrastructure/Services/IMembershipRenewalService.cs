@@ -21,9 +21,10 @@ public interface IMembershipRenewalService
 {
     Task CatchUp(IUnitOfWork uow, ClientMembership membership, DateOnly today, MembershipDebtRules rules, Guid? userId);
 
-    /// <summary>Obnova svih članstava organizacije; "danas" je lokalni datum zone organizacije (Q22), a testovi ga smiju
-    /// zadati. Svako članstvo u vlastitoj transakciji; greška jednog ne zaustavlja ostala. Vraća broj obrađenih.</summary>
-    Task<int> RunForOrganization(Guid organizationId, DateOnly? today = null);
+    /// <summary>Obnova svih članstava organizacije; "danas" je lokalni datum zone organizacije (Q22) po poslovnom satu (T1: jedan
+    /// sat, drugi dan samo pomakom sata organizacije). Svako članstvo u vlastitoj transakciji; greška jednog ne zaustavlja ostala.
+    /// Vraća broj obrađenih.</summary>
+    Task<int> RunForOrganization(Guid organizationId);
 
     Task<MembershipDebtRules> GetDebtRules(Guid organizationId);
 }

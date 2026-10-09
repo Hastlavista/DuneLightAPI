@@ -8,7 +8,7 @@ namespace BlueDragon.DuneLight.Core.Interfaces.Roster;
 public interface IRosterEntryService
 {
     Task<PagedResult<RosterEntryDto>> GetPaged(
-        Guid organizationId, PagedRequest request, Guid? employeeId, Guid? rosterTypeId, DateTimeOffset? from, DateTimeOffset? to);
+        Guid organizationId, PagedRequest request, Guid? employeeId, Guid? rosterTypeId, DateOnly? from, DateOnly? to);
 
     Task<RosterEntryDto> GetById(Guid organizationId, Guid id);
 
@@ -21,5 +21,5 @@ public interface IRosterEntryService
     Task<RosterTeamMonthlyDto> GetTeamMonthly(Guid organizationId, int year, int month, Guid? companyId);
 
     Task<RosterPersonalReviewDto> GetPersonal(
-        Guid organizationId, Guid userId, bool hasFullScope, Guid employeeId, DateTimeOffset from, DateTimeOffset to);
+        Guid organizationId, Guid userId, bool hasFullScope, Guid employeeId, DateOnly from, DateOnly to);
 }

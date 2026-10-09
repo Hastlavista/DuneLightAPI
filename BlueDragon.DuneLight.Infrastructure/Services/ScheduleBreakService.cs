@@ -25,6 +25,7 @@ public class ScheduleBreakService : IScheduleBreakService
     private readonly ICompanyHandler _companyHandler;
 
     private readonly IOrganizationCalendarService _organizationCalendarService;
+    private readonly TimeProvider _timeProvider;
 
     public ScheduleBreakService(
         IScheduleBreakHandler scheduleBreakHandler,
@@ -32,8 +33,10 @@ public class ScheduleBreakService : IScheduleBreakService
         ISchedulingOccupancyHandler schedulingOccupancyHandler,
         IEmployeeHandler employeeHandler,
         ICompanyHandler companyHandler,
-        IOrganizationCalendarService organizationCalendarService)
+        IOrganizationCalendarService organizationCalendarService,
+        TimeProvider timeProvider)
     {
+        _timeProvider = timeProvider;
         _organizationCalendarService = organizationCalendarService;
         _scheduleBreakHandler = scheduleBreakHandler;
         _appointmentHandler = appointmentHandler;
@@ -64,7 +67,7 @@ public class ScheduleBreakService : IScheduleBreakService
         scheduleBreak.StartsAt = request.StartsAt;
         scheduleBreak.DurationMinutes = request.DurationMinutes;
         scheduleBreak.Note = request.Note;
-        scheduleBreak.UpdatedAt = DateTimeOffset.UtcNow;
+        scheduleBreak.UpdatedAt = _timeProvider.GetUtcNow();
         scheduleBreak.UpdatedBy = userId;
 
         await EnsureNoOverlap(organizationId, request.EmployeeId, request.StartsAt, request.DurationMinutes, excludeId: id);
@@ -87,14 +90,15 @@ public class ScheduleBreakService : IScheduleBreakService
 
     public async Task<List<ScheduleBreakDto>> CreateRecurring(Guid organizationId, Guid userId, bool hasFullScope, RecurringScheduleBreakCreateRequest request)
     {
-        if (request.EndDate < request.FirstOccurrenceStartsAt)
+        // Isto lokalno vrijeme u efektivnoj zoni poslovnice svaki dan/tjedan, i preko DST prijelaza (ne fiksni offset prve pauze).
+        // T1-7: EndDate je zadnji dan niza (uključivo) u zoni poslovnice — pojava ulazi kad je njezin lokalni datum <= EndDate.
+        OrganizationCalendar calendar = await _organizationCalendarService.GetCompanyCalendar(organizationId, request.CompanyId);
+        if (request.EndDate < calendar.LocalDate(request.FirstOccurrenceStartsAt))
             throw new ValidationAppException("Datum kraja ne smije biti prije prve pauze.");
 
         await ValidateOwnership(organizationId, userId, hasFullScope, request.EmployeeId);
         await EnsureEmployeeAndCompanyOperational(organizationId, request.EmployeeId, request.CompanyId);
 
-        // Isto lokalno vrijeme u efektivnoj zoni poslovnice svaki dan/tjedan, i preko DST prijelaza (ne fiksni offset prve pauze).
-        OrganizationCalendar calendar = await _organizationCalendarService.GetCompanyCalendar(organizationId, request.CompanyId);
         List<DateTimeOffset> occurrences = calendar.RepeatAtLocalTime(
             request.FirstOccurrenceStartsAt, request.EndDate, request.RecurrenceType == RecurrenceType.Daily ? 1 : 7);
 
@@ -115,7 +119,7 @@ public class ScheduleBreakService : IScheduleBreakService
                 DurationMinutes = request.DurationMinutes,
                 Note = request.Note,
                 RecurrenceGroupId = recurrenceGroupId,
-                CreatedAt = DateTimeOffset.UtcNow,
+                CreatedAt = _timeProvider.GetUtcNow(),
                 CreatedBy = userId
             });
         }
@@ -163,7 +167,7 @@ public class ScheduleBreakService : IScheduleBreakService
             DurationMinutes = request.DurationMinutes,
             Note = request.Note,
             RecurrenceGroupId = recurrenceGroupId,
-            CreatedAt = DateTimeOffset.UtcNow,
+            CreatedAt = _timeProvider.GetUtcNow(),
             CreatedBy = userId
         };
 
@@ -234,7 +238,7 @@ public class ScheduleBreakService : IScheduleBreakService
 
         Employee employee = await _employeeHandler.GetByUserId(organizationId, userId);
         if (employee == null || employee.Id != employeeId)
-            throw new BusinessRuleException(ErrorCodes.NotOwner, "Trener smije upravljati samo svojim vlastitim pauzama.");
+            throw ForbiddenAppException.OutOfScope("Smijete upravljati samo svojim vlastitim pauzama.", Grants.ScheduleBreaksWriteAll);
     }
 
     /// <summary>Nova/promijenjena pauza mora imati aktivnog Employee, aktivnu Company, I eksplicitnu EmployeeCompany

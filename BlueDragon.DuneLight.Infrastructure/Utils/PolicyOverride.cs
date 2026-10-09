@@ -33,8 +33,9 @@ public static class PolicyOverride
         AppointmentClosure.EnsureReason(waiverReason, "Otpis posljedice politike zahtijeva razlog.");
         GrantContext grants = await grantResolver.Resolve(organizationId, userId);
         if (!grants.HasAny(Grants.AppointmentsPolicyFeeWaive, Grants.AppointmentsPolicyUnitWaive))
-            throw new ForbiddenAppException(
-                "Otpis posljedice politike zahtijeva ovlast appointments.policy.fee.waive ili appointments.policy.unit.waive.");
+            throw ForbiddenAppException.MissingAnyGrant(
+                "Otpis posljedice politike zahtijeva ovlast appointments.policy.fee.waive ili appointments.policy.unit.waive.",
+                Grants.AppointmentsPolicyFeeWaive, Grants.AppointmentsPolicyUnitWaive);
     }
 
     /// <summary>Točna provjera za poznat učinak posljedice.</summary>
@@ -49,14 +50,15 @@ public static class PolicyOverride
         if (required == null)
         {
             if (!grants.HasAny(Grants.AppointmentsPolicyFeeWaive, Grants.AppointmentsPolicyUnitWaive))
-                throw new ForbiddenAppException(
-                    "Otpis posljedice politike zahtijeva ovlast appointments.policy.fee.waive ili appointments.policy.unit.waive.");
+                throw ForbiddenAppException.MissingAnyGrant(
+                "Otpis posljedice politike zahtijeva ovlast appointments.policy.fee.waive ili appointments.policy.unit.waive.",
+                Grants.AppointmentsPolicyFeeWaive, Grants.AppointmentsPolicyUnitWaive);
             return;
         }
         if (!grants.Has(required))
-            throw new ForbiddenAppException(effect == PolicyWaiverEffect.Fee
+            throw ForbiddenAppException.MissingGrant(effect == PolicyWaiverEffect.Fee
                 ? $"Otpis naknade politike zahtijeva ovlast {required}."
-                : $"Otpis jedinice paketa ili kredita članarine zahtijeva ovlast {required}.");
+                : $"Otpis jedinice paketa ili kredita članarine zahtijeva ovlast {required}.", required);
     }
 
     /// <summary>Učinak POSTOJEĆE posljedice (naknadni otpis): kredit članarine ili aktivna potrošnja paketa → jedinica; inače

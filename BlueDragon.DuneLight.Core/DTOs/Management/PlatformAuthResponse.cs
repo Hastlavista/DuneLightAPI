@@ -9,5 +9,5 @@ public class PlatformAuthResponse
     public Guid PlatformAccountId { get; set; }
     public string Email { get; set; }
     public string Token { get; set; }
-    public DateTime TokenExpiration { get; set; }
+    public DateTimeOffset TokenExpiration { get; set; }
 }

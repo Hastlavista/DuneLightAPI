@@ -478,8 +478,8 @@ public class IndividualCompletionCharacterizationTests
         Employee other = await w.AddEmployee("Other");
         AppointmentDto created = await w.CreateAppointment(SchedulingWorld.Future(10));
 
-        await SchedulingAssert.BusinessRule(ErrorCodes.NotOwner,
-            () => w.SetBookingStatus(created.Id, w.Client, BookingStatus.Completed, hasFullScope: false, userId: other.UserId));
+        // CHANGED in T1: 403 OutOfScope (bilo 409 NOT_OWNER)
+        await SchedulingAssert.OutOfScope(() => w.SetBookingStatus(created.Id, w.Client, BookingStatus.Completed, hasFullScope: false, userId: other.UserId));
 
         Assert.Equal(AppointmentStatus.Scheduled, (await w.LoadAppointment(created.Id)).Status);
     }

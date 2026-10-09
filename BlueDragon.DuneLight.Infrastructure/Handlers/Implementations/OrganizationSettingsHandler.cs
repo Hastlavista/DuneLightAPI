@@ -13,10 +13,12 @@ namespace BlueDragon.DuneLight.Infrastructure.Handlers.Implementations;
 public class OrganizationSettingsHandler : IOrganizationSettingsHandler
 {
     private readonly DatabaseSettings _databaseSettings;
+    private readonly TimeProvider _timeProvider;
 
-    public OrganizationSettingsHandler(DatabaseSettings databaseSettings)
+    public OrganizationSettingsHandler(DatabaseSettings databaseSettings, TimeProvider timeProvider)
     {
         _databaseSettings = databaseSettings;
+        _timeProvider = timeProvider;
     }
 
     public async Task<OrganizationSettings> GetByOrganizationId(Guid organizationId)
@@ -50,7 +52,7 @@ public class OrganizationSettingsHandler : IOrganizationSettingsHandler
     {
         await using DatabaseContext context = DatabaseContext.GenerateContext(_databaseSettings.ConnectionString);
         OrganizationSettings settings = await context.OrganizationSettings.SingleOrDefaultAsync(s => s.OrganizationId == organizationId);
-        DateTimeOffset now = DateTimeOffset.UtcNow;
+        DateTimeOffset now = _timeProvider.GetUtcNow();
         if (settings == null)
         {
             settings = new OrganizationSettings { Id = Guid.NewGuid(), OrganizationId = organizationId, CreatedAt = now, CreatedBy = userId };

@@ -63,13 +63,13 @@ public class MultiEmployeeHttpContractTests : IClassFixture<MultiSegmentHttpCont
         // Employee price list items (services only).
         var anaPrice = await Send(HttpMethod.Post, "/api/catalog/price-list", writeAll, new
         {
-            subjectType = "Service", serviceId = duo.Id, employeeId = ana.Id, price = 60m, validFrom = SchedulingWorld.PastDay
+            subjectType = "Service", serviceId = duo.Id, employeeId = ana.Id, price = 60m, validFrom = SchedulingWorld.Day(SchedulingWorld.PastDay) // CHANGED in T1: "yyyy-MM-dd" (DateOnly)
         });
         Assert.True(anaPrice.Status is HttpStatusCode.OK or HttpStatusCode.Created, anaPrice.Body.ToString());
         Assert.Equal(ana.Id, anaPrice.Body.GetProperty("employeeId").GetGuid());
         await Send(HttpMethod.Post, "/api/catalog/price-list", writeAll, new
         {
-            subjectType = "Service", serviceId = duo.Id, employeeId = marko.Id, price = 70m, validFrom = SchedulingWorld.PastDay
+            subjectType = "Service", serviceId = duo.Id, employeeId = marko.Id, price = 70m, validFrom = SchedulingWorld.Day(SchedulingWorld.PastDay) // CHANGED in T1: "yyyy-MM-dd" (DateOnly)
         });
 
         object Body(object segment) => new { companyId = w.Company.Id, segments = new[] { segment } };
@@ -112,11 +112,11 @@ public class MultiEmployeeHttpContractTests : IClassFixture<MultiSegmentHttpCont
         // Both assigned employees own the segment; others do not; own scope cannot change the roster.
         Assert.Equal(HttpStatusCode.OK, (await Send(HttpMethod.Patch, $"/api/segments/{segmentId}/time", ownAna, new { plannedStart = SchedulingWorld.Future(11) })).Status);
         Assert.Equal(HttpStatusCode.OK, (await Send(HttpMethod.Patch, $"/api/segments/{segmentId}/time", ownMarko, new { plannedStart = SchedulingWorld.Future(12) })).Status);
-        AssertError(HttpStatusCode.Conflict, ErrorCodes.NotOwner,
+        AssertError(HttpStatusCode.Forbidden, ErrorCodes.NotOwner, // CHANGED in T1: 409 -> 403 OutOfScope
             await Send(HttpMethod.Patch, $"/api/segments/{segmentId}/time", ownIvana, new { plannedStart = SchedulingWorld.Future(13) }));
-        AssertError(HttpStatusCode.Conflict, ErrorCodes.NotOwner,
+        AssertError(HttpStatusCode.Forbidden, ErrorCodes.NotOwner, // CHANGED in T1: 409 -> 403 OutOfScope
             await Send(HttpMethod.Patch, $"/api/segments/{segmentId}/employees", ownAna, new { employeeIds = new[] { ana.Id } }));
-        AssertError(HttpStatusCode.Conflict, ErrorCodes.NotOwner,
+        AssertError(HttpStatusCode.Forbidden, ErrorCodes.NotOwner, // CHANGED in T1: 409 -> 403 OutOfScope
             await Send(HttpMethod.Post, $"/api/appointments/{appointmentId}/cancel", ownAna, new { cancellationInitiator = "Business", cancellationReason = "x" }));
 
         // Employee-set change (write.all): 2+ needs a choice; down to one is automatic.
@@ -172,7 +172,7 @@ public class MultiEmployeeHttpContractTests : IClassFixture<MultiSegmentHttpCont
 
         var generated = await Send(HttpMethod.Post, "/api/groups/generate-appointments", manager, new
         {
-            groupId = created.Body.GetProperty("id").GetGuid(), fromDate = SchedulingWorld.FutureDay, toDate = SchedulingWorld.FutureDay
+            groupId = created.Body.GetProperty("id").GetGuid(), fromDate = SchedulingWorld.Day(SchedulingWorld.FutureDay), toDate = SchedulingWorld.Day(SchedulingWorld.FutureDay) // CHANGED in T1: "yyyy-MM-dd"
         });
         Assert.Equal(HttpStatusCode.OK, generated.Status);
         JsonElement occurrence = generated.Body.GetProperty("created").EnumerateArray().Single();

@@ -23,15 +23,18 @@ public interface IClientHandler
 
     /// <summary>K1-3 — dodaje klijenta pod transakcijskim advisory lockom brojeva članova organizacije; uz
     /// <paramref name="assignMemberNumber"/> broj člana = najveći postojeći + 1 (1 za prvog klijenta), izračunat pod lockom.</summary>
-    Task Add(Client client, bool assignMemberNumber);
+    /// <remarks>T1-9: <paramref name="audit"/> (povijest klijenta) se upisuje u istoj transakciji, nakon klijenta.</remarks>
+    Task Add(Client client, bool assignMemberNumber, IReadOnlyList<ClientAuditLog> audit = null);
 
     /// <summary>`client` NE SMIJE imati popunjenu Tags navigacijsku kolekciju (koristiti GetByIdLight).</summary>
-    Task Update(Client client, List<ClientTagAssignment> newTags);
+    /// <remarks>T1-9: <paramref name="audit"/> se upisuje u istom SaveChanges kao i izmjena.</remarks>
+    Task Update(Client client, List<ClientTagAssignment> newTags, IReadOnlyList<ClientAuditLog> audit = null);
 
     Task SetActiveAndStamp(Guid organizationId, Guid clientId, bool isActive, DateTimeOffset updatedAt, Guid? updatedBy);
 
     /// <summary>GDPR pravo na zaborav — briše osobne/zdravstvene podatke i sve oznake, čuva Id/MemberNumber.</summary>
-    Task Anonymize(Guid organizationId, Guid clientId, DateTimeOffset anonymizedAt, Guid? anonymizedBy);
+    /// <remarks>T1-9: <paramref name="audit"/> se upisuje u istom SaveChanges kao i anonimizacija.</remarks>
+    Task Anonymize(Guid organizationId, Guid clientId, DateTimeOffset anonymizedAt, Guid? anonymizedBy, IReadOnlyList<ClientAuditLog> audit = null);
 
     Task Delete(Client client);
 
