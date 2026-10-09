@@ -58,9 +58,24 @@ public static class Grants
     public const string AppointmentsWriteOwn = "appointments.write.own";
     public const string AppointmentsWriteAll = "appointments.write.all";
     public const string AppointmentsDelete = "appointments.delete";
-    /// <summary>P1 (D10/D12) — otpis posljedice politike otkazivanja i korekcija koja poništava posljedicu sa stvarnim
-    /// učinkom. Nikad ne širi own opseg.</summary>
-    public const string AppointmentsPolicyOverride = "appointments.policy.override";
+    /// <summary>K2 (12.2, ADR-0032) — otpis posljedice politike otkazivanja koja naplaćuje NAKNADU (u trenutku događaja ili
+    /// naknadno; razlog obavezan). S AppointmentsPolicyUnitWaive zamjenjuje ugašeni appointments.policy.override. Nikad ne
+    /// širi own opseg.</summary>
+    public const string AppointmentsPolicyFeeWaive = "appointments.policy.fee.waive";
+    /// <summary>K2 (12.2, ADR-0032) — otpis posljedice koja troši JEDINICU paketa ili kredit članarine. Nikad ne širi own opseg.</summary>
+    public const string AppointmentsPolicyUnitWaive = "appointments.policy.unit.waive";
+
+    /// <summary>K2 (14.2, ADR-0032) — korekcija statusa sudjelovanja ZATVORENOG termina po izvornom statusu, ponovno otvaranje
+    /// termina s tim statusom i (Cancelled) "vrati termin". Prije zatvaranja promjena statusa ne traži grant. Nikad ne širi
+    /// own opseg.</summary>
+    public const string AppointmentsCorrectionsCompleted = "appointments.corrections.completed";
+    public const string AppointmentsCorrectionsNoShow = "appointments.corrections.no-show";
+    public const string AppointmentsCorrectionsCancelled = "appointments.corrections.cancelled";
+
+    /// <summary>K2 (P-2, ADR-0032) — rad izvan radnog vremena / dostupnosti (odsutnost, pauza, praznik) uz OverrideAvailability:
+    /// kreiranje, niz, izmjena segmenta, "Upiši odrađeno", "vrati termin" i generiranje grupa. Neovisan o opsegu (own +
+    /// override = samo vlastiti termin).</summary>
+    public const string AppointmentsAvailabilityOverride = "appointments.availability.override";
     /// <summary>P2 (Q54) — rezervacija člana u dugu unatoč postavci "blokiraj rezervaciju" (Q15.4/Q18.3); takvo sudjelovanje je
     /// bez pokrića.</summary>
     public const string AppointmentsMembershipBlockOverride = "appointments.membership-block.override";
@@ -85,6 +100,9 @@ public static class Grants
     public const string RosterEntriesView = "roster.entries.view";
     public const string RosterEntriesWriteOwn = "roster.entries.write.own";
     public const string RosterEntriesWriteAll = "roster.entries.write.all";
+    /// <summary>K2 (P-4, ADR-0032) — upis, izmjena i brisanje roster zapisa koji počinje prije današnjeg dana organizacije (stari
+    /// ili novi datum). Uz own/all opseg, nikad ga ne širi; bez vremenske granice (ARCH §7.3).</summary>
+    public const string RosterEntriesWritePast = "roster.entries.write.past";
     public const string RosterReviewsTeamView = "roster.reviews.team.view";
     public const string RosterReviewsPersonalViewOwn = "roster.reviews.personal.view.own";
     public const string RosterReviewsPersonalViewAll = "roster.reviews.personal.view.all";
@@ -183,7 +201,12 @@ public static class Grants
         new(AppointmentsWriteOwn, "Vlastiti termini", "appointments", "Zakazivanje/uređivanje/otkazivanje vlastitih termina."),
         new(AppointmentsWriteAll, "Svi termini", "appointments", "Zakazivanje/uređivanje/otkazivanje bilo čijih termina."),
         new(AppointmentsDelete, "Brisanje termina", "appointments", "Trajno brisanje termina (isti dan)."),
-        new(AppointmentsPolicyOverride, "Iznimka od politike otkazivanja", "appointments", "Otpis naknade/kazne kasnog otkazivanja ili izostanka i korekcija koja poništava takvu posljedicu."),
+        new(AppointmentsPolicyFeeWaive, "Otpis naknade politike otkazivanja", "appointments", "Otpis naknade kasnog otkazivanja ili izostanka (uz razlog), u trenutku događaja ili naknadno."),
+        new(AppointmentsPolicyUnitWaive, "Otpis jedinice ili kredita politike otkazivanja", "appointments", "Otpis jedinice paketa ili kredita članarine skinutog zbog kasnog otkazivanja ili izostanka (uz razlog); jedinica se vraća."),
+        new(AppointmentsCorrectionsCompleted, "Korekcija odrađenog", "appointments", "Promjena statusa odrađenog sudjelovanja na zatvorenom terminu (uz razlog) i ponovno otvaranje takvog termina."),
+        new(AppointmentsCorrectionsNoShow, "Korekcija izostanka", "appointments", "Promjena statusa izostanka na zatvorenom terminu (uz razlog) i ponovno otvaranje takvog termina."),
+        new(AppointmentsCorrectionsCancelled, "Korekcija otkazanog", "appointments", "Promjena statusa otkazanog sudjelovanja na zatvorenom terminu (uz razlog), ponovno otvaranje takvog termina i vraćanje otkazanog termina."),
+        new(AppointmentsAvailabilityOverride, "Zakazivanje izvan radnog vremena", "appointments", "Zakazivanje i izmjena termina izvan radnog vremena, uz odsutnost, pauzu ili praznik (uz potvrdu), uključujući generiranje grupa."),
         new(AppointmentsMembershipBlockOverride, "Rezervacija unatoč blokadi duga članarine", "appointments", "Rezervacija člana čija je članarina u dugu uz postavku \"blokiraj rezervaciju\"; sesija je bez pokrića."),
         new(AppointmentsArrivalMark, "Označavanje dolaska", "appointments", "Označavanje i poništavanje dolaska klijenta na terminu (bez prava uređivanja termina; bez financijskog učinka)."),
 
@@ -203,6 +226,7 @@ public static class Grants
         new(RosterEntriesView, "Pregled rostera", "roster", "Pregled zapisa rostera (transparentno, svi vide sve)."),
         new(RosterEntriesWriteOwn, "Vlastiti roster", "roster", "Uređivanje vlastitih zapisa rostera."),
         new(RosterEntriesWriteAll, "Roster svih zaposlenika", "roster", "Uređivanje bilo čijih zapisa rostera."),
+        new(RosterEntriesWritePast, "Roster u prošlosti", "roster", "Upis, izmjena i brisanje roster zapisa koji počinje prije današnjeg dana (uz vlastiti ili opseg svih)."),
         new(RosterReviewsTeamView, "Timski pregled rostera", "roster", "Timski mjesečni pregled rostera (transparentno)."),
         new(RosterReviewsPersonalViewOwn, "Osobni pregled rostera (vlastiti)", "roster", "Osobni pregled rostera — samo vlastiti."),
         new(RosterReviewsPersonalViewAll, "Osobni pregled rostera (svi)", "roster", "Osobni pregled rostera — bilo čiji."),

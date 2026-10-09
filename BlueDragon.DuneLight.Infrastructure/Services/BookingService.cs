@@ -55,6 +55,7 @@ public class BookingService : IBookingService, IParticipationLifecycleService
     private readonly IGrantResolver _grantResolver;
     private readonly IMembershipCoverageService _membershipCoverage;
     private readonly ICancellationReasonService _cancellationReasonService;
+    private readonly IOrganizationCalendarService _organizationCalendarService;
 
     public BookingService(
         IAppointmentHandler appointmentHandler,
@@ -76,8 +77,10 @@ public class BookingService : IBookingService, IParticipationLifecycleService
         IUnitOfWorkFactory unitOfWorkFactory,
         IGrantResolver grantResolver,
         IMembershipCoverageService membershipCoverage,
-        ICancellationReasonService cancellationReasonService)
+        ICancellationReasonService cancellationReasonService,
+        IOrganizationCalendarService organizationCalendarService)
     {
+        _organizationCalendarService = organizationCalendarService;
         _cancellationReasonService = cancellationReasonService;
         _grantResolver = grantResolver;
         _membershipCoverage = membershipCoverage;
@@ -494,11 +497,11 @@ public class BookingService : IBookingService, IParticipationLifecycleService
 
     /// <summary>P1 (D10) — naknadni otpis aktivne posljedice politike (vidi IBookingService). Normalan pristup sudjelovanju:
     /// appointments.write.all ili own (segment sudjelovanja); za grupni occurrence i groups.attendance.all/own. Ovlast
-    /// appointments.policy.override nikad ne širi own opseg.</summary>
+    /// appointments.policy.fee.waive / .unit.waive (po učinku posljedice, K2) nikad ne širi own opseg.</summary>
     public async Task<BookingDto> WaivePolicyConsequence(
         Guid organizationId, Guid userId, Guid participationId, PolicyConsequenceWaiveRequest request)
     {
-        await PolicyOverride.EnsureWaiverAllowed(_grantResolver, organizationId, userId, request?.WaiverReason);
+        await PolicyOverride.EnsureWaiverRequestAllowed(_grantResolver, organizationId, userId, request?.WaiverReason);
         GrantContext grants = await _grantResolver.Resolve(organizationId, userId);
 
         Guid appointmentId = await _participationHandler.GetAppointmentIdOf(organizationId, participationId)
@@ -526,6 +529,11 @@ public class BookingService : IBookingService, IParticipationLifecycleService
                 ?? throw new NotFoundAppException("Participation", participationId);
             BookingSegmentParticipation participation = BookingParticipations.ById(booking, participationId);
 
+            // K2 (12.2): grant po učinku aktivne posljedice (naknada ili jedinica/kredit), pod lockom sudjelovanja.
+            ParticipationPolicyConsequence active = PolicyConsequences.ActiveOf(participation);
+            if (active != null)
+                PolicyOverride.EnsureWaiverAllowed(grants, PolicyOverride.EffectOf(participation, active));
+
             await _participationPolicyService.WaiveActive(
                 uow, organizationId, userId, lockedAppointment, booking, participation, request.WaiverReason, DateTimeOffset.UtcNow);
             // P2 (Q31.3): otpis vraća claim zadržan uz posljedicu (i oslobađa mjesto); bez članarine no-op.
@@ -548,7 +556,8 @@ public class BookingService : IBookingService, IParticipationLifecycleService
     /// <summary>P1 (D2/D10) — oblik i autorizacija naredbe koji ne ovise o stanju sudjelovanja (provjera PRIJE transakcije):
     /// otkazivanje traži initiator (Client | Business; System se nikad ne prihvaća iz zahtjeva — postavlja ga samo interni
     /// kod); Business traži appointments.write.all i razlog (initiator se ne može koristiti za zaobilaženje politike); otpis u
-    /// trenutku događaja traži razlog i appointments.policy.override (nikad ne širi own opseg).</summary>
+    /// trenutku događaja traži razlog i grant otpisa (K2: točan grant po učinku provjerava se kad je posljedica izračunata —
+    /// ParticipationPolicyService; nikad ne širi own opseg).</summary>
     private async Task EnsureCommandAllowed(Guid organizationId, Guid userId, BookingSetStatusRequest request)
     {
         if (request == null)
@@ -579,20 +588,41 @@ public class BookingService : IBookingService, IParticipationLifecycleService
         {
             if (target != ParticipationStatus.Cancelled && target != ParticipationStatus.NoShow)
                 throw new ValidationAppException("Otpis posljedice politike postoji samo uz otkazivanje ili izostanak.");
-            await PolicyOverride.EnsureWaiverAllowed(_grantResolver, organizationId, userId, request.WaiverReason);
+            await PolicyOverride.EnsureWaiverRequestAllowed(_grantResolver, organizationId, userId, request.WaiverReason);
         }
     }
 
-    /// <summary>P1 (D12) — korekcija koja poništava AKTIVNU posljedicu sa STVARNIM učinkom (naknada &gt; 0 ili potrošena
-    /// jedinica paketa) traži normalan pristup + appointments.policy.override + razlog korekcije. Posljedica bez učinka traži
-    /// samo normalan pristup.</summary>
-    private async Task EnsureConsequenceReversalAllowed(
-        Guid organizationId, Guid userId, BookingSegmentParticipation participation, BookingSetStatusRequest request)
+    /// <summary>K2 (ADR-0032) — zatvoren termin: korekcija IZ terminalnog statusa traži grant korekcije po izvornom statusu i
+    /// razlog (audit "StatusCorrectedAfterClose"); označavanje Confirmed sudjelovanja je dopušteno bez granta uz audit
+    /// "MarkedAfterClose". Otvoren termin: ništa (normalno označavanje; poništene posljedice bilježi njihov ledger).</summary>
+    private async Task EnsureClosedAppointmentRules(
+        IUnitOfWork uow, Guid organizationId, Guid userId, Appointment appointment, Booking booking,
+        BookingSegmentParticipation participation, ParticipationStatus oldStatus, ParticipationStatus target,
+        BookingSetStatusRequest request, DateTimeOffset eventAt)
     {
-        ParticipationPolicyConsequence active = PolicyConsequences.ActiveOf(participation);
-        if (active == null || !PolicyConsequences.HasRealEffect(participation, active))
+        OrganizationCalendar calendar = await _organizationCalendarService.GetCompanyCalendar(organizationId, appointment.CompanyId);
+        if (!AppointmentClosure.IsClosed(appointment, calendar, eventAt))
             return;
-        await PolicyOverride.EnsureReversalAllowed(_grantResolver, organizationId, userId, request.CorrectionReason);
+
+        bool isCorrection = AppointmentClosure.CorrectionGrantFor(oldStatus) != null;
+        if (isCorrection)
+            AppointmentClosure.EnsureCorrectionAllowed(await _grantResolver.Resolve(organizationId, userId), oldStatus, request.CorrectionReason);
+
+        string reason = isCorrection ? request.CorrectionReason.Trim() : null;
+        string newValue = reason == null ? target.ToString() : $"{target}|{reason}";
+        await _auditLogHandler.Add(uow, new AppointmentAuditLog
+        {
+            Id = Guid.NewGuid(),
+            AppointmentId = appointment.Id.GetValueOrDefault(),
+            BookingId = booking.Id,
+            BookingSegmentParticipationId = participation.Id,
+            ChangeType = isCorrection ? "StatusCorrectedAfterClose" : "MarkedAfterClose",
+            OldValue = oldStatus.ToString(),
+            // audit_log.new_value je varchar(255); puni razlog je na zapisu posljedice / reverzije.
+            NewValue = newValue.Length > 255 ? newValue[..255] : newValue,
+            ChangedAt = eventAt,
+            ChangedBy = userId
+        });
     }
 
     /// <summary>P1 (D3) — guardovi CILJNOG događaja (jedan serverski timestamp, bez backdatinga): klijentsko otkazivanje samo
@@ -857,6 +887,9 @@ public class BookingService : IBookingService, IParticipationLifecycleService
                 await AppointmentLifecycle.Refresh(_appointmentHandler, _auditLogHandler, uow, organizationId, appointmentId, userId);
                 return;
             }
+            // K2: gost evidentiran nakon zatvaranja termina — označavanje, audit "MarkedAfterClose".
+            await EnsureClosedAppointmentRules(uow, organizationId, userId, appointment, booking, participation,
+                ParticipationStatus.Confirmed, target, request, eventAt);
         }
         else if (oldStatus == target)
         {
@@ -874,6 +907,8 @@ public class BookingService : IBookingService, IParticipationLifecycleService
         else
         {
             EnsureTargetEventGuards(target, request, participationStartsAt, eventAt);
+            // K2 (ADR-0032): zatvoren termin — korekcija iz terminalnog statusa traži grant korekcije i razlog.
+            await EnsureClosedAppointmentRules(uow, organizationId, userId, appointment, booking, participation, oldStatus, target, request, eventAt);
 
             // Kapacitet se provjerava kad POSTOJEĆE sudjelovanje administrativno vraća na Confirmed (novo zauzeto mjesto) —
             // namjerno future-only (početak segmenta u budućnosti); nakon početka nominalni kapacitet više ne ograničava
@@ -902,7 +937,9 @@ public class BookingService : IBookingService, IParticipationLifecycleService
 
         // (4) Novi događaj u potpunosti + (5) novi efekti s novim SourceVersionom.
         (PaymentMethod Method, decimal Amount)? pendingPayment = null;
-        PolicyEventOptions policyOptions = new PolicyEventOptions(request.ClientPackageId, request.WaivePolicyConsequence, request.WaiverReason);
+        // K2 (12.2): otpis u trenutku događaja — grant po učinku provjerava servis politike kad je posljedica izračunata.
+        PolicyEventOptions policyOptions = new PolicyEventOptions(request.ClientPackageId, request.WaivePolicyConsequence, request.WaiverReason,
+            request.WaivePolicyConsequence ? await _grantResolver.Resolve(organizationId, userId) : null);
         switch (target)
         {
             case ParticipationStatus.Completed:
@@ -1042,17 +1079,29 @@ public class BookingService : IBookingService, IParticipationLifecycleService
                 });
             }
 
+            // K2: storno nosi razlog s vezom na korekciju (StatusVersion sudjelovanja koji korekcija ostavlja).
             if (appointment.Form != AppointmentForm.Group)
-                await _commissionLedgerService.ReverseForIndividualServiceCorrection(uow, organizationId, userId, participation);
+                await _commissionLedgerService.ReverseForIndividualServiceCorrection(uow, organizationId, userId, participation,
+                    CorrectionReasonText(request, oldStatus, target, participation.StatusVersion + 1));
         }
         else if (!ParticipationOccupancy.Occupies(oldStatus))
         {
-            await EnsureConsequenceReversalAllowed(organizationId, userId, participation, request);
+            // K2 (ADR-0032, izmjena D12): korekcija poništava posljedicu kao ispravak činjenice (Reversed, nikad Waived) i ne traži
+            // grant otpisa; na zatvorenom terminu grant korekcije i razlog je već provjerio EnsureClosedAppointmentRules.
             string reason = string.IsNullOrWhiteSpace(request.CorrectionReason)
                 ? $"Korekcija statusa {oldStatus} -> {target}"
                 : request.CorrectionReason.Trim();
             await _participationPolicyService.ReverseActive(uow, organizationId, userId, participation, reason, eventAt);
         }
+    }
+
+    /// <summary>K2 — razlog storna provizije: korekcija (izvorni → ciljni status, StatusVersion korekcije) i razlog korekcije
+    /// ako je zadan.</summary>
+    private static string CorrectionReasonText(
+        BookingSetStatusRequest request, ParticipationStatus oldStatus, ParticipationStatus target, int correctionStatusVersion)
+    {
+        string text = $"Korekcija statusa {oldStatus} -> {target} (StatusVersion {correctionStatusVersion})";
+        return string.IsNullOrWhiteSpace(request.CorrectionReason) ? text : $"{text}: {request.CorrectionReason.Trim()}";
     }
 
     /// <summary>Centralizira isti tenant/operational eligibility lanac koji koristi AddGroupGuest i direct guest attendance.

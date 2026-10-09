@@ -98,5 +98,12 @@ docs/
   plan faza K2/K3 u `docs/klijent/POVRATNE_INFORMACIJE_v1.md`). Članstvo "stoji" dok su sve poslovnice opsega plana
   neaktivne: sustavna pauza (`source = CompanyClosure`) koju otvara/zatvara samo obnova; otvorena ne ulazi u matematiku perioda.
   Razlog otkaza studija = tekst ILI šifra razloga. `Resources = null` na zakazivanju = zadani resursi usluge.
+- K2 (ovlasti) implementiran 2026-10-09 (`docs/k2/`, ADR-0032). Zatvorenost termina određuje samo `Utils/AppointmentClosure`
+  (ručno ili kraj poslovnog dana, izvedeno, isto za individualni i grupni). Prije zatvaranja promjena statusa je označavanje bez
+  granta; nakon zatvaranja korekcija iz terminalnog statusa traži `appointments.corrections.<izvorni status>` i razlog.
+  Korekcija ≠ otpis: korekcija posljedicu poništava (Reversed), otpis (Waived) traži `policy.fee.waive` ili `policy.unit.waive` po
+  učinku (samo `Utils/PolicyOverride`). Override radne snage samo kroz `Utils/AvailabilityOverride` (grant, neovisan o opsegu,
+  bez granta 403, audit). Nema uloga ni raspodjele grantova po ulogama, ni u dokumentaciji.
+  Redoslijed nakon K2: K3 → P3 → P4 → P5 → P6 → Paketi v2 / P1+ → Payroll.
 - Grantovi su granularni po poslovnoj radnji (ne po polju); novi grant ide migracijom samo Admin grupama (ADR-0023).
 - Nema `UserRole` ni `role` claima (uklonjeno, ADR-0019). Nijedna autorizacijska odluka ne smije ovisiti o ulozi; workforce `Role` je samo poslovna oznaka.

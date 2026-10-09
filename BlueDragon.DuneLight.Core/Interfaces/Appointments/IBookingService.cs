@@ -47,6 +47,7 @@ public interface IBookingService
 
     /// <summary>P1 (D10) — naknadni otpis AKTIVNE posljedice politike sudjelovanja: u jednoj transakciji vraća jedinicu paketa
     /// potrošenu kao kaznu, zapis prelazi u Waived (razlog obavezan, nepovratno) i piše audit PolicyConsequenceWaived. Novac se
-    /// ne pomiče, klasifikacija se ne mijenja. Traži normalan pristup sudjelovanju + appointments.policy.override.</summary>
+    /// ne pomiče, klasifikacija se ne mijenja. Traži normalan pristup sudjelovanju + grant po učinku (K2: naknada →
+    /// appointments.policy.fee.waive, jedinica paketa / kredit članarine → appointments.policy.unit.waive).</summary>
     Task<BookingDto> WaivePolicyConsequence(Guid organizationId, Guid userId, Guid participationId, PolicyConsequenceWaiveRequest request);
 }

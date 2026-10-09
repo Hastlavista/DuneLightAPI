@@ -848,6 +848,9 @@ nova razina (klasa zaposlenika), povezana s klasama iz Payrolla.
   više termina nego što ima ulazaka (to se može riješiti "rezervacijom jedinice" bez promjene trenutka potrošnje)?
 - **P-20 (10)** Kad recepcija označi dolazak: smije li trener kasnije još staviti "nije se pojavio"? Je li "stigao" uvjet za
   "odrađeno"? Želite li vidjeti tko kasni (vrijeme dolaska)?
+- **P-21 (13.2, dug B; dodano 2026-10-09, K2)** Dobiva li trener proviziju za grupni trening na koji nitko nije došao (svi
+  NoShow ili nitko upisan)? Treba li to biti postavka studija? (Danas: grupna provizija je po sesiji i nastaje pri prvom ručnom
+  zatvaranju neovisno o prisutnima. Odgovor treba prije Payroll faze, vidi `docs/payroll/PAYROLL_QUESTIONS.md` 3.4.)
 
 ## 3. Proturječne stavke — odluke za vlasnika projekta
 
@@ -893,8 +896,8 @@ plus Payroll nakon P2. Prijedlog uklapanja:
 | **P6 Workforce/katalog** | 3.3b zamjena trenera; 3.2 limiti po zaposleniku (**prvo Q37**); 3.3a on-call (nakon P-4); 1.3 / dug M politika deaktivacije (uklj. generiranje grupa i obnovu za neaktivnu poslovnicu) | Q37; P4 za obavijesti o zamjeni; P5 za buduće generirane termine | |
 | **Payroll** | 13.2 provizija kod otkaza grupe i prazne grupe (dug B); podjela provizije više zaposlenika (P-6, ako se traži); klase zaposlenika i cijena po razini (P-17) | ADR-0030 | Već planirano. |
 
-**Predloženi redoslijed:** K1 → K2 → (P3) → K3 → P4 → P5 proširena → P6 → Paketi v2 / P1+ (prema odlukama iz §3) →
-Payroll. K1 i K2 se mogu raditi i prije P3, jer ne ovise o njemu.
+**Redoslijed (odluka 2026-10-09, K2 dnevnik):** K1 → K2 → K3 → P3 → P4 → P5 proširena → P6 → Paketi v2 / P1+ (prema
+odlukama iz §3) → Payroll. K3 ide prije P3: povrat i kredit moraju znati tko je platitelj, inače bi se kredit vezao uz pogrešnu osobu.
 
 ## 5. Tvrdnje u vodiču zastarjele zbog P1/P2 (i ranijih faza) — za v2 vodiča
 

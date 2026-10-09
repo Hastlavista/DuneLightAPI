@@ -24,7 +24,9 @@ public class AuthorizationCatalogConsistencyTests
     private static readonly Dictionary<string, string> CheckedInCodeOnly = new()
     {
         [Grants.GroupsCapacityOverride] = "GroupCapacityGuard: eksplicitno prekoračenje mekog kapaciteta segmenta grupe unutar groups.manage/appointments akcija.",
-        [Grants.AppointmentsMembershipBlockOverride] = "MembershipCoverageService: rezervacija člana u dugu uz postavku \"blokiraj rezervaciju\" unutar appointments/groups akcija (P2 Q54)."
+        [Grants.AppointmentsMembershipBlockOverride] = "MembershipCoverageService: rezervacija člana u dugu uz postavku \"blokiraj rezervaciju\" unutar appointments/groups akcija (P2 Q54).",
+        [Grants.AppointmentsAvailabilityOverride] = "AvailabilityOverride: rad izvan radnog vremena / dostupnosti uz OverrideAvailability unutar appointments/groups akcija (K2, P-2).",
+        [Grants.RosterEntriesWritePast] = "RosterEntryService: upis/izmjena/brisanje roster zapisa u prošlosti unutar roster.entries.write.own/all (K2, P-4)."
     };
 
     private static readonly HashSet<string> CatalogKeys = Grants.Catalog.Select(g => g.Key).ToHashSet();

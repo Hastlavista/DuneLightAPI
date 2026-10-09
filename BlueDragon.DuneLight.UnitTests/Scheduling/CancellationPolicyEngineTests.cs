@@ -211,7 +211,7 @@ public class CancellationPolicyEngineTests
     public async Task ClientCancel_OutsideTheWindow_IsOnTime_AndCreatesNoConsequence_EvenWithAWaiverFlag()
     {
         await using SchedulingWorld w = await SchedulingWorld.Create(nameof(ClientCancel_OutsideTheWindow_IsOnTime_AndCreatesNoConsequence_EvenWithAWaiverFlag));
-        await w.GrantUser(w.ActorUserId, Grants.AppointmentsPolicyOverride);
+        await w.GrantUser(w.ActorUserId, Grants.AppointmentsPolicyFeeWaive);
         await w.PublishDefaultPolicyVersion(0, CancellationFeeType.Fixed, 30m); // window 0: every valid client cancel is on time
         AppointmentDto created = await w.CreateAppointment(SchedulingWorld.Future(10));
 
@@ -336,20 +336,17 @@ public class CancellationPolicyEngineTests
     }
 
     [Fact]
-    public async Task Correction_FromAFeeConsequenceToConfirmed_NeedsTheOverrideAndAReason_ThenReversesIt_AndTheServiceDueReturns()
+    public async Task Correction_FromAFeeConsequenceToConfirmed_BeforeTheAppointmentIsClosed_NeedsNoGrant_ReversesIt_AndTheServiceDueReturns()
     {
-        await using SchedulingWorld w = await SchedulingWorld.Create(nameof(Correction_FromAFeeConsequenceToConfirmed_NeedsTheOverrideAndAReason_ThenReversesIt_AndTheServiceDueReturns));
+        // CHANGED in K2 (ADR-0032, amends D12): before the appointment is closed a correction is a correction of fact — no waiver
+        // grant, the consequence becomes Reversed (never Waived). After closing it needs the correction grant (K2 tests).
+        await using SchedulingWorld w = await SchedulingWorld.Create(nameof(Correction_FromAFeeConsequenceToConfirmed_BeforeTheAppointmentIsClosed_NeedsNoGrant_ReversesIt_AndTheServiceDueReturns));
         await w.PublishDefaultPolicyVersion(LateWindow(), CancellationFeeType.Fixed, 10m);
         AppointmentDto created = await w.CreateAppointment(SchedulingWorld.Future(10));
         Guid bookingId = created.Bookings.Single().Id;
         await w.SetBookingStatus(created.Id, w.Client, BookingStatus.Cancelled);
         await w.PayBookingViaCheckout(bookingId, w.Client, 10m); // the fee is paid
 
-        await SchedulingAssert.Validation(() => w.SetBookingStatus(created.Id, w.Client, BookingStatus.Confirmed));
-        await Assert.ThrowsAsync<ForbiddenAppException>(() => w.SetBookingStatus(created.Id, w.Client, BookingStatus.Confirmed, correctionReason: "client came after all"));
-        Assert.Equal(BookingStatus.Cancelled, (await w.LoadBooking(created.Id, w.Client)).Status);
-
-        await w.GrantUser(w.ActorUserId, Grants.AppointmentsPolicyOverride);
         await w.SetBookingStatus(created.Id, w.Client, BookingStatus.Confirmed, correctionReason: "client came after all");
 
         ParticipationPolicyConsequence c = Assert.Single(await w.LoadPolicyConsequences(created.Id));
@@ -406,8 +403,7 @@ public class CancellationPolicyEngineTests
         Assert.Equal((0m, false), (p.MonetaryDue, p.PackageCovered)); // unit and fee are alternatives; the unit is not service coverage
         Assert.Null((await w.LoadClientPackage(unlimited.Id.Value)).ServiceEntries.Single().RemainingEntries);
 
-        // Correction back to Confirmed reverses the consequence (real effect: override + reason) and returns the unit.
-        await w.GrantUser(w.ActorUserId, Grants.AppointmentsPolicyOverride);
+        // Correction back to Confirmed reverses the consequence and returns the unit (K2: no grant before the appointment closes).
         await w.SetBookingStatus(created.Id, w.Client, BookingStatus.Confirmed, correctionReason: "recorded by mistake");
         Assert.Equal(5, (await w.LoadClientPackage(counted.Id.Value)).ServiceEntries.Single().RemainingEntries);
         Assert.Equal((PackageConsumptionStatus.Reversed, PackageConsumptionReversalReason.PolicyConsequenceReversed),
@@ -553,7 +549,7 @@ public class CancellationPolicyEngineTests
 
         await Assert.ThrowsAsync<ForbiddenAppException>(() => w.SetBookingStatus(created.Id, w.Client, BookingStatus.NoShow,
             waivePolicyConsequence: true, waiverReason: "first visit"));
-        await w.GrantUser(w.ActorUserId, Grants.AppointmentsPolicyOverride);
+        await w.GrantUser(w.ActorUserId, Grants.AppointmentsPolicyUnitWaive);
         await SchedulingAssert.Validation(() => w.SetBookingStatus(created.Id, w.Client, BookingStatus.NoShow, waivePolicyConsequence: true));
 
         await w.SetBookingStatus(created.Id, w.Client, BookingStatus.NoShow, waivePolicyConsequence: true, waiverReason: "first visit");
@@ -579,7 +575,7 @@ public class CancellationPolicyEngineTests
 
         await Assert.ThrowsAsync<ForbiddenAppException>(() => w.Bookings.WaivePolicyConsequence(w.OrganizationId, w.ActorUserId, participationId,
             new PolicyConsequenceWaiveRequest { WaiverReason = "goodwill" }));
-        await w.GrantUser(w.ActorUserId, Grants.AppointmentsPolicyOverride, Grants.AppointmentsWriteAll);
+        await w.GrantUser(w.ActorUserId, Grants.AppointmentsPolicyUnitWaive, Grants.AppointmentsWriteAll);
 
         BookingDto dto = await w.Bookings.WaivePolicyConsequence(w.OrganizationId, w.ActorUserId, participationId,
             new PolicyConsequenceWaiveRequest { WaiverReason = "goodwill" });

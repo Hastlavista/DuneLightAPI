@@ -28,6 +28,7 @@ public class AppointmentRestoreTests
     public async Task Restore_BringsBackOnlyWhatTheAppointmentCancelCancelled()
     {
         await using SchedulingWorld w = await SchedulingWorld.Create(nameof(Restore_BringsBackOnlyWhatTheAppointmentCancelCancelled));
+        await w.GrantUser(w.ActorUserId, Grants.AppointmentsWriteAll, Grants.AppointmentsCorrectionsCancelled); // K2
         Client second = await w.AddClient("Second", "Client");
         AppointmentDto created = await w.CreateAppointment(SchedulingWorld.Future(10), extraClients: second);
         await w.SetBookingStatus(created.Id, second, BookingStatus.Cancelled, "client cancelled earlier");
@@ -47,6 +48,7 @@ public class AppointmentRestoreTests
     public async Task Restore_ReevaluatesMembershipCoverage_OverTheHistoricalPrice()
     {
         await using SchedulingWorld w = await SchedulingWorld.Create(nameof(Restore_ReevaluatesMembershipCoverage_OverTheHistoricalPrice));
+        await w.GrantUser(w.ActorUserId, Grants.AppointmentsWriteAll, Grants.AppointmentsCorrectionsCancelled); // K2
         DateTimeOffset start = new DateTimeOffset(DateTime.UtcNow.Date, TimeSpan.Zero).AddDays(2).AddHours(10);
         AppointmentDto created = await w.CreateAppointment(w.CreateRequest(start, overrideAvailability: true));
         Assert.Equal(SchedulingWorld.DefaultServicePrice, Assert.Single(Assert.Single(created.Bookings).Participations).OutstandingAmount);
@@ -74,6 +76,7 @@ public class AppointmentRestoreTests
     public async Task Restore_OfANotCancelledAppointment_IsRejected()
     {
         await using SchedulingWorld w = await SchedulingWorld.Create(nameof(Restore_OfANotCancelledAppointment_IsRejected));
+        await w.GrantUser(w.ActorUserId, Grants.AppointmentsWriteAll, Grants.AppointmentsCorrectionsCancelled); // K2
         AppointmentDto created = await w.CreateAppointment(SchedulingWorld.Future(10));
 
         await SchedulingAssert.BusinessRule(ErrorCodes.AppointmentNotCancelled,
@@ -84,6 +87,7 @@ public class AppointmentRestoreTests
     public async Task Restore_IsAllOrNothing_WhenTheSlotWasTakenMeanwhile()
     {
         await using SchedulingWorld w = await SchedulingWorld.Create(nameof(Restore_IsAllOrNothing_WhenTheSlotWasTakenMeanwhile));
+        await w.GrantUser(w.ActorUserId, Grants.AppointmentsWriteAll, Grants.AppointmentsCorrectionsCancelled); // K2
         AppointmentDto created = await w.CreateAppointment(SchedulingWorld.Future(10));
         await w.Appointments.Cancel(w.OrganizationId, w.ActorUserId, true, created.Id, SchedulingWorld.BusinessCancel());
         await w.CreateAppointment(SchedulingWorld.Future(10)); // isti zaposlenik i klijent u istom terminu
@@ -97,6 +101,7 @@ public class AppointmentRestoreTests
     public async Task Restore_OfAGroupOccurrence_ListsTheExpiredWaitlist()
     {
         await using SchedulingWorld w = await SchedulingWorld.Create(nameof(Restore_OfAGroupOccurrence_ListsTheExpiredWaitlist));
+        await w.GrantUser(w.ActorUserId, Grants.AppointmentsWriteAll, Grants.AppointmentsCorrectionsCancelled); // K2
         ServiceEntity svc = await w.AddGroupService();
         GroupDto group = await w.CreateGroup(svc, capacity: 1);
         await w.AddGroupMember(group, w.Client);

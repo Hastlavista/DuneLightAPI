@@ -145,8 +145,10 @@ dnevniku ima prednost pred ranijim.
   - `memberships.charges.write-off`;
   - `checkout.manage`;
   - `commissions.manage` / `.view`;
-  - `appointments.policy.override`;
+  - `appointments.policy.fee.waive` i `appointments.policy.unit.waive` (K2; zamjenjuju ugašeni `appointments.policy.override`);
   - `appointments.membership-block.override`;
+  - za K2 tokove (točka 12): `appointments.corrections.completed` / `.no-show` / `.cancelled`,
+    `appointments.availability.override`, `roster.entries.write.past` — i drugi korisnik bez njih (provjera 403);
 - usluge (individualne i jedna grupna), cjenik;
 - politika otkazivanja s naknadom i `MembershipAction`;
 - paket u katalogu.
@@ -238,6 +240,90 @@ dnevniku ima prednost pred ranijim.
     - prva prodaja članarine (dva checkouta, promjena kroz stavku, zabrana promjene nakon evaluacije);
     - korekcija `reassign`, naknadna dodjela `sale-assignments`;
     - sažetak po događajima kroz dva razdoblja.
+12. **K2 ovlasti** (ADR-0032, [K2 record](../k2/K2_DECISION_RECORD.md)). Za svaki korak jednom korisnikom s grantom i jednom bez
+    njega (403 s nazivom granta u poruci):
+    - **korekcija prije zatvaranja:** termin danas → Completed → Confirmed → NoShow bez granta i razloga; `GET` termina:
+      `isClosed = false`, `autoClosesAt` = ponoć na kraju dana; posljedica politike nakon korekcije je `Reversed`;
+    - **ručno zatvaranje:** `POST /api/appointments/{id}/close` → `isClosed = true`, `closedAt/closedBy`; korekcija iz Completed bez
+      `corrections.completed` → 403, bez `correctionReason` → `CORRECTION_REASON_REQUIRED`, s oba → OK; audit
+      `StatusCorrectedAfterClose`; individualna provizija storno s razlogom "Korekcija statusa … (StatusVersion n): …";
+    - **označavanje nakon zatvaranja:** Confirmed sudjelovanje na zatvorenom terminu → NoShow bez granta (audit `MarkedAfterClose`);
+    - **grupa:** prisutnost true/false prije zatvaranja slobodno; `PATCH /api/groups/appointments/{id}/complete` (ili `POST /api/appointments/{id}/close`) zatvara termin; nakon toga promjena prisutnosti
+      traži grant korekcije; grupna provizija se korekcijom ne mijenja;
+    - **ponovno otvaranje:** `POST /api/appointments/{id}/reopen` na otvorenom terminu → `APPOINTMENT_NOT_CLOSED`; bez razloga →
+      400; termin s Completed i NoShow uz samo `corrections.completed` → 403 (poruka navodi `corrections.no-show`); s oba → otvoren,
+      `reopenedAt/By/reopenReason`; ponovno `close` ne zarađuje novu grupnu proviziju;
+    - **"vrati termin":** otkazan termin (`cancel`), `POST /api/appointments/{id}/restore` bez `corrections.cancelled` → 403;
+      izvan radnog vremena bez `overrideAvailability` → `OUTSIDE_WORKING_HOURS`, s njim i grantom → upozorenje + audit;
+    - **otpis:** izostanak s naknadom (bez paketa): `policy-consequence/waive` sa samo `unit.waive` → 403, s `fee.waive` → `Waived`;
+      politika `ConsumeUnit` + brojeni paket: `no-show` s `waivePolicyConsequence` i samo `fee.waive` → 403 i **ništa se ne mijenja**
+      (sudjelovanje ostaje Confirmed), s `unit.waive` → `Waived`, jedinica nije skinuta;
+    - **rad izvan radnog vremena:** kreiranje u 22:00 s `overrideAvailability` bez granta → 403; s grantom → upozorenje + audit
+      `AvailabilityOverride` (tko, kada, kod); korisnik s own opsegom i grantom smije svoj termin, tuđi ne; isto za `complete`,
+      promjenu vremena segmenta, `recurring` i generiranje grupe na praznik (`groups.manage` nije dovoljan);
+    - **roster unatrag:** `POST /api/roster-entries` s `dateFrom` jučer bez `roster.entries.write.past` → 403; danas i budućnost bez
+      njega OK; premještanje budućeg zapisa u prošlost → 403; s grantom OK; `RosterAuditLog` bilježi tko i kada;
+    - **automatsko zatvaranje** (vidi napomenu niže): termin čiji je `autoClosesAt` prošao → `isClosed = true` bez `closedAt`,
+      korekcija traži grant.
+
+> **Automatsko zatvaranje u ručnom testiranju: SQL** (odluka 2026-10-09; bez razvojne rute i bez TimeProvidera zasad).
+> Zatvorenost se računa iz stvarnog sata pri svakom čitanju, a termin upisan danas (i "Upiši odrađeno" za prošli datum) ostaje
+> otvoren do ponoći, jer se računa i od trenutka upisa. Skript dosljedno pomiče SVA vremena jednog termina dva dana unatrag
+> (upis, sve segmente, bookinge i vremena na sudjelovanjima), kao da je termin stvarno bio prije dva dana. Pokrenuti u lokalnoj
+> bazi (psql / pgAdmin / Rider), uz zamijenjen ID termina:
+>
+```sql
+DO $$
+DECLARE
+    v_id    uuid     := '00000000-0000-0000-0000-000000000000';  -- ID termina (zamijeniti)
+    v_shift interval := interval '2 days';
+BEGIN
+    UPDATE dunelight.appointments SET
+        created_at    = created_at    - v_shift,
+        updated_at    = updated_at    - v_shift,
+        cancelled_at  = cancelled_at  - v_shift,
+        closed_out_at = closed_out_at - v_shift,
+        closed_at     = closed_at     - v_shift,
+        reopened_at   = reopened_at   - v_shift
+    WHERE id = v_id;
+
+    UPDATE dunelight.appointment_segments SET
+        planned_start = planned_start - v_shift,
+        planned_end   = planned_end   - v_shift,
+        actual_start  = actual_start  - v_shift,
+        actual_end    = actual_end    - v_shift,
+        created_at    = created_at    - v_shift,
+        updated_at    = updated_at    - v_shift
+    WHERE appointment_id = v_id;
+
+    UPDATE dunelight.bookings SET
+        created_at = created_at - v_shift,
+        updated_at = updated_at - v_shift
+    WHERE appointment_id = v_id;
+
+    UPDATE dunelight.booking_segment_participations p SET
+        arrived_at   = p.arrived_at   - v_shift,
+        cancelled_at = p.cancelled_at - v_shift,
+        no_show_at   = p.no_show_at   - v_shift,
+        created_at   = p.created_at   - v_shift,
+        updated_at   = p.updated_at   - v_shift
+    FROM dunelight.appointment_segments s
+    WHERE p.appointment_segment_id = s.id AND s.appointment_id = v_id;
+
+    RAISE NOTICE 'Pomaknut termin %', v_id;
+END $$;
+```
+>
+> **Očekivano:** `GET /api/appointments/{id}` → `isClosed = true`, `closedAt = null`, `autoClosesAt` u prošlosti; korekcija iz
+> Completed/NoShow/Cancelled traži grant korekcije i razlog; ponovno otvaranje radi normalno (termin otvoren do kraja današnjeg dana).
+>
+> **Samo na terminima namijenjenim testu zatvaranja.** Pomak mijenja i ostale izvedene stvari tog termina (prošli/budući termin,
+> otkazni prozor, dan sesije za proviziju); ručno zatvoren termin (`closedAt`) ostaje zatvoren i nakon pomaka.
+>
+> **Razvojni alat i stvarni sat.** `POST /api/dev/time/membership-renewal-run` pomiče "danas" SAMO za prolaz obnove članarina.
+> Zatvorenost termina, otkazni prozori (P1), grace duga i ostalo gledaju stvarni sat. Kombinacija pomaknutog datuma obnove i
+> zatvaranja termina zato nije dosljedna, i to nije greška. Jedinstven pomak vremena je tehnički dug (`TimeProvider`, ARCHITECTURE
+> §7.4), riješiti prije frontenda / online bookinga.
 
 ---
 

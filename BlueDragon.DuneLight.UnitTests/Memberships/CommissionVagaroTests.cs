@@ -350,7 +350,7 @@ public class CommissionVagaroTests
         Assert.Equal(new[] { (0, CommissionEntryStatus.Reversed), (1, CommissionEntryStatus.Earned) },
             (await w.LoadCommissionEntries()).OrderBy(e => e.SourceVersion).Select(e => (e.SourceVersion, e.Status)));
 
-        await w.GrantUser(w.ActorUserId, Grants.AppointmentsPolicyOverride, Grants.AppointmentsWriteAll);
+        await w.GrantUser(w.ActorUserId, Grants.AppointmentsPolicyFeeWaive, Grants.AppointmentsWriteAll);
         await w.Bookings.WaivePolicyConsequence(w.OrganizationId, w.ActorUserId, participationId, new PolicyConsequenceWaiveRequest { WaiverReason = "goodwill" });
         Assert.All(await w.LoadCommissionEntries(), e => Assert.Equal(CommissionEntryStatus.Reversed, e.Status));
     }

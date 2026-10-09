@@ -93,6 +93,7 @@ public static class CapabilityCatalog
 
         ViewOwnAll("roster.entries.manage", "roster", CapabilitySensitivity.Normal,
             view: Grants.RosterEntriesView, own: Grants.RosterEntriesWriteOwn, all: Grants.RosterEntriesWriteAll),
+        On("roster.entries.write.past", "roster", CapabilitySensitivity.Sensitive, Grants.RosterEntriesWritePast),
         On("roster.leave-fund.manage", "roster", CapabilitySensitivity.Sensitive, Grants.RosterLeaveFundManage),
         ViewManage("roster.leave-fund.settings.manage", "roster", CapabilitySensitivity.Sensitive,
             view: new[] { Grants.RosterLeaveFundSettingsView },
@@ -109,7 +110,12 @@ public static class CapabilityCatalog
             view: new[] { Grants.RosterTypesView },
             manage: new[] { Grants.RosterTypesManage }),
 
-        On("schedule.appointments.policy.override", "schedule", CapabilitySensitivity.Sensitive, Grants.AppointmentsPolicyOverride),
+        On("schedule.appointments.policy.fee.waive", "schedule", CapabilitySensitivity.Sensitive, Grants.AppointmentsPolicyFeeWaive),
+        On("schedule.appointments.policy.unit.waive", "schedule", CapabilitySensitivity.Sensitive, Grants.AppointmentsPolicyUnitWaive),
+        On("schedule.appointments.corrections.completed", "schedule", CapabilitySensitivity.Sensitive, Grants.AppointmentsCorrectionsCompleted),
+        On("schedule.appointments.corrections.no-show", "schedule", CapabilitySensitivity.Sensitive, Grants.AppointmentsCorrectionsNoShow),
+        On("schedule.appointments.corrections.cancelled", "schedule", CapabilitySensitivity.Sensitive, Grants.AppointmentsCorrectionsCancelled),
+        On("schedule.appointments.availability.override", "schedule", CapabilitySensitivity.Sensitive, Grants.AppointmentsAvailabilityOverride),
         On("schedule.appointments.membership-block.override", "schedule", CapabilitySensitivity.Sensitive, Grants.AppointmentsMembershipBlockOverride),
         On("schedule.appointments.arrival.mark", "schedule", CapabilitySensitivity.Normal, Grants.AppointmentsArrivalMark),
         On("schedule.appointments.delete", "schedule", CapabilitySensitivity.HighRisk, Grants.AppointmentsDelete),

@@ -144,6 +144,9 @@ public sealed class SchedulingWorld : IAsyncDisposable
         await db.SaveChangesAsync();
 
         ActorUserId = await AddUser(db);
+        // K2 (ADR-0032): rad izvan radnog vremena je zaseban grant (ne više "full scope"). Akter suite modelira osoblje s punim
+        // ovlastima nad rasporedom (pozivi s hasFullScope: true), pa ga ima od početka; testovi odbijanja koriste AddMemberUser.
+        await GrantUser(ActorUserId, Core.Shared.Grants.AppointmentsAvailabilityOverride);
         await SeedDefaultCancellationPolicy(db);
 
         Company = await AddCompany("Main company");

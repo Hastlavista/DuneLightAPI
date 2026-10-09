@@ -1022,12 +1022,12 @@ public class CommissionService : ICommissionRuleService, ICommissionService, ICo
     /// <summary>Vidi ICommissionLedgerService za puni ugovor. Namjerno BEZ catch/throw na "nema što reverzirati" —
     /// no-op je ispravan odgovor i za "nikad nije bilo primjenjivog pravila" i za "već reverzirano" (idempotentan retry).</summary>
     public async Task ReverseForIndividualServiceCorrection(
-        IUnitOfWork uow, Guid organizationId, Guid userId, BookingSegmentParticipation participation)
+        IUnitOfWork uow, Guid organizationId, Guid userId, BookingSegmentParticipation participation, string reason)
     {
         // Phase M1G: reverziraju se SVI aktivni zapisi sudjelovanja (svaki zaposlenik segmenta), ne samo jedan.
         List<CommissionEntry> entries = await _entryHandler.GetActiveForParticipation(uow, organizationId, participation.Id.GetValueOrDefault());
         foreach (CommissionEntry entry in entries)
-            await Reverse(uow, userId, entry, null);
+            await Reverse(uow, userId, entry, reason);
     }
 
     /// <summary>P2 (2F) — JEDINI put storna provizije (Earned → Reversed na istom retku, snapshot netaknut); izvještaji ga broje

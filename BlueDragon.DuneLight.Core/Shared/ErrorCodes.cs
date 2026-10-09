@@ -107,6 +107,12 @@ public static class ErrorCodes
     /// <summary>K1-5 — "vrati termin" samo za eksplicitno otkazan termin. 409.</summary>
     public const string AppointmentNotCancelled = "APPOINTMENT_NOT_CANCELLED";
 
+    /// <summary>K2 (ADR-0032) — ponovno otvaranje traži zatvoren termin (ručno ili automatski na kraju poslovnog dana). 409.</summary>
+    public const string AppointmentNotClosed = "APPOINTMENT_NOT_CLOSED";
+
+    /// <summary>K2 (ADR-0032) — korekcija statusa na zatvorenom terminu, ponovno otvaranje i otpis traže razlog. 400.</summary>
+    public const string CorrectionReasonRequired = "CORRECTION_REASON_REQUIRED";
+
     /// <summary>K1-4 — postavka organizacije traži odabir šifre razloga za ovaj događaj (a postoji barem jedna aktivna). 400.</summary>
     public const string CancellationReasonRequired = "CANCELLATION_REASON_REQUIRED";
 
@@ -245,7 +251,7 @@ public static class ErrorCodes
     public const string WaitlistEntryNotActive = "WAITLIST_ENTRY_NOT_ACTIVE";
 
     // Termin/Booking eligibility chain (tvrde blokade, vidi AppointmentEligibilityHelper) — mogu se
-    // zaobići samo eksplicitnim OverrideAvailability=true uz appointments.write.all / groups.manage.
+    // zaobići samo eksplicitnim OverrideAvailability=true uz appointments.availability.override (K2).
     public const string EmployeeAbsent = "EMPLOYEE_ABSENT";
     public const string EmployeeOnBreak = "EMPLOYEE_ON_BREAK";
     public const string CompanyClosedHoliday = "COMPANY_CLOSED_HOLIDAY";

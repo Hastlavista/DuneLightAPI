@@ -101,7 +101,8 @@ public class CancellationPolicyHttpContractTests : IClassFixture<MultiSegmentHtt
         AppointmentDto appointment = await w.CreateAppointment(SchedulingWorld.Future(10));
         Guid participationId = appointment.Bookings.Single().Participations.Single().Id;
         string writer = await Token(w, Grants.AppointmentsView, Grants.AppointmentsWriteAll);
-        string overrider = await Token(w, Grants.AppointmentsView, Grants.AppointmentsWriteAll, Grants.AppointmentsPolicyOverride);
+        string overrider = await Token(w, Grants.AppointmentsView, Grants.AppointmentsWriteAll, Grants.AppointmentsPolicyFeeWaive);
+        string unitWaiver = await Token(w, Grants.AppointmentsView, Grants.AppointmentsWriteAll, Grants.AppointmentsPolicyUnitWaive);
 
         AssertError(HttpStatusCode.BadRequest, ErrorCodes.ValidationError,
             await Send(HttpMethod.Patch, $"/api/participations/{participationId}/cancel", writer, new { }));
@@ -114,19 +115,18 @@ public class CancellationPolicyHttpContractTests : IClassFixture<MultiSegmentHtt
         Assert.Equal(("Client", true, "Active", 10m), (p.GetProperty("cancellationInitiator").GetString(), p.GetProperty("isLateCancellation").GetBoolean(),
             p.GetProperty("policyConsequence").GetProperty("status").GetString(), p.GetProperty("monetaryDue").GetDecimal()));
 
-        // Correction of a consequence with a real effect: the reason travels in the BODY, and the override is required.
-        AssertError(HttpStatusCode.BadRequest, ErrorCodes.ValidationError,
-            await Send(HttpMethod.Patch, $"/api/participations/{participationId}/confirm", overrider));
-        AssertError(HttpStatusCode.Forbidden, ErrorCodes.Forbidden,
-            await Send(HttpMethod.Patch, $"/api/participations/{participationId}/confirm", writer, new { correctionReason = "client came" }));
-        var confirmed = await Send(HttpMethod.Patch, $"/api/participations/{participationId}/confirm", overrider, new { correctionReason = "client came" });
+        // K2 (ADR-0032): correction before the appointment is closed needs no waiver grant; the reason travels in the BODY and
+        // the consequence becomes Reversed (never Waived).
+        var confirmed = await Send(HttpMethod.Patch, $"/api/participations/{participationId}/confirm", writer, new { correctionReason = "client came" });
         Assert.Equal(HttpStatusCode.OK, confirmed.Status);
         Assert.Equal("Reversed", confirmed.Body.GetProperty("participations")[0].GetProperty("policyConsequence").GetProperty("status").GetString());
 
-        // Late again -> waive: 403 without the override grant, NO_ACTIVE_POLICY_CONSEQUENCE once nothing is active.
+        // Late again -> waive: a fee needs appointments.policy.fee.waive (403 without it, also with only unit.waive),
+        // NO_ACTIVE_POLICY_CONSEQUENCE once nothing is active.
         await Send(HttpMethod.Patch, $"/api/participations/{participationId}/cancel", writer, new { cancellationInitiator = "Client" });
         string waiveUrl = $"/api/participations/{participationId}/policy-consequence/waive";
         AssertError(HttpStatusCode.Forbidden, ErrorCodes.Forbidden, await Send(HttpMethod.Post, waiveUrl, writer, new { waiverReason = "goodwill" }));
+        AssertError(HttpStatusCode.Forbidden, ErrorCodes.Forbidden, await Send(HttpMethod.Post, waiveUrl, unitWaiver, new { waiverReason = "goodwill" }));
         AssertError(HttpStatusCode.BadRequest, ErrorCodes.ValidationError, await Send(HttpMethod.Post, waiveUrl, overrider, new { }));
         var waived = await Send(HttpMethod.Post, waiveUrl, overrider, new { waiverReason = "goodwill" });
         Assert.Equal(HttpStatusCode.OK, waived.Status);

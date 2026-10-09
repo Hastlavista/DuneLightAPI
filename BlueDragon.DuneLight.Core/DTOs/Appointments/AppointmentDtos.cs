@@ -239,8 +239,8 @@ public class ParticipationPackageSelection
     public Guid? ClientPackageId { get; set; }
 }
 
-/// <summary>P1 (D12) — korekcija natrag na Confirmed; razlog je obavezan kad korekcija poništava aktivnu posljedicu politike
-/// sa stvarnim učinkom (uz appointments.policy.override).</summary>
+/// <summary>P1 (D12) + K2 (ADR-0032) — korekcija natrag na Confirmed; razlog je opcionalan dok termin nije zatvoren, a na
+/// zatvorenom terminu obavezan (uz grant appointments.corrections.* po izvornom statusu).</summary>
 public class ParticipationConfirmRequest
 {
     [MaxLength(500)]
@@ -285,6 +285,24 @@ public class AppointmentDto
 
     /// <summary>Phase M1A.1: kada je grupna sesija zatvorena (close-out) — poslovna činjenica, ne status termina.</summary>
     public DateTimeOffset? ClosedOutAt { get; set; }
+
+    /// <summary>K2 (ADR-0032) — je li termin ZATVOREN: ručno zatvoren ili je prošao trenutak automatskog zatvaranja (kraj
+    /// poslovnog dana), osim ako je nakon toga ponovno otvoren. Na zatvorenom terminu korekcija iz Completed/NoShow/Cancelled
+    /// traži grant korekcije i razlog.</summary>
+    public bool IsClosed { get; set; }
+
+    /// <summary>K2 — ručno zatvaranje (kada/tko); null dok termin nije ručno zatvoren ili nakon ponovnog otvaranja.</summary>
+    public DateTimeOffset? ClosedAt { get; set; }
+    public Guid? ClosedBy { get; set; }
+
+    /// <summary>K2 — trenutak automatskog zatvaranja (kraj poslovnog dana od najkasnijeg od: kraj zadnjeg segmenta, upis termina,
+    /// ponovno otvaranje).</summary>
+    public DateTimeOffset AutoClosesAt { get; set; }
+
+    /// <summary>K2 — zadnje ponovno otvaranje (kada/tko/zašto).</summary>
+    public DateTimeOffset? ReopenedAt { get; set; }
+    public Guid? ReopenedBy { get; set; }
+    public string ReopenReason { get; set; }
 
     public Guid? GroupId { get; set; }
 
@@ -455,7 +473,7 @@ public class AppointmentCompleteNowRequest
 
     public string Note { get; set; }
 
-    /// <summary>Vidi AppointmentCreateRequest.OverrideAvailability (samo uz appointments.write.all; provjera radne snage
+    /// <summary>Vidi AppointmentCreateRequest.OverrideAvailability (K2: appointments.availability.override; provjera radne snage
     /// vrijedi i za prošli početak, K1-1).</summary>
     public bool OverrideAvailability { get; set; }
 
@@ -499,14 +517,26 @@ public class AppointmentCancelRequest
 /// <summary>K1-5 — vraćanje otkazanog termina; razlog je opcionalan (bilježi se u povijesti).</summary>
 public class AppointmentRestoreRequest
 {
+    /// <summary>Opcionalan prije zatvaranja termina, obavezan nakon zatvaranja (K2, ADR-0032).</summary>
+    [MaxLength(500)]
+    public string Reason { get; set; }
+
+    /// <summary>K2 — vraćeni termin prolazi provjere kao novi upis: izvan radnog vremena / dostupnosti samo uz potvrdu i
+    /// appointments.availability.override.</summary>
+    public bool OverrideAvailability { get; set; }
+}
+
+/// <summary>K2 (ADR-0032) — ponovno otvaranje zatvorenog termina; razlog je obavezan.</summary>
+public class AppointmentReopenRequest
+{
     [MaxLength(500)]
     public string Reason { get; set; }
 }
 
 /// <summary>P1 (D3/D10) — izostanak (NoShow): jedno sudjelovanje ili svi aktivni na terminu. NoShow nema initiator; razlog je
 /// opcionalan. ClientPackageId (samo za jedno sudjelovanje) služi odabiru paketa kad politika troši jedinicu.
-/// WaivePolicyConsequence + WaiverReason otpisuju posljedicu odmah (zahtijeva appointments.policy.override).
-/// CorrectionReason je obavezan kad korekcija poništava aktivnu posljedicu sa stvarnim učinkom.</summary>
+/// WaivePolicyConsequence + WaiverReason otpisuju posljedicu odmah (K2: appointments.policy.fee.waive za naknadu,
+/// appointments.policy.unit.waive za jedinicu/kredit). CorrectionReason je obavezan za korekciju na zatvorenom terminu.</summary>
 public class NoShowRequest
 {
     [MaxLength(500)]
@@ -649,7 +679,7 @@ public class BookingCreateRequest
 /// P1 (D2/D3/D10): initiator je obavezan (Client | Business; System se nikad ne prihvaća). Client: politika se evaluira
 /// (kasno/na vrijeme), razlog opcionalan, otkazivanje mora biti prije početka segmenta. Business: zahtijeva
 /// appointments.write.all i razlog, bez posljedice. ClientPackageId služi samo odabiru paketa kad kasno otkazivanje troši
-/// jedinicu; WaivePolicyConsequence + WaiverReason otpisuju posljedicu odmah (appointments.policy.override).</summary>
+/// jedinicu; WaivePolicyConsequence + WaiverReason otpisuju posljedicu odmah (K2: fee.waive / unit.waive po učinku).</summary>
 public class BookingCancelRequest
 {
     [Required]
@@ -732,15 +762,15 @@ public class BookingSetStatusRequest
     /// <summary>K1-4 — šifra razloga izostanka (samo Status=NoShow).</summary>
     public Guid? NoShowReasonCodeId { get; set; }
 
-    /// <summary>P1 (D10) — otpis posljedice politike u trenutku događaja (Cancelled/NoShow); traži WaiverReason i
-    /// appointments.policy.override.</summary>
+    /// <summary>P1 (D10) — otpis posljedice politike u trenutku događaja (Cancelled/NoShow); traži WaiverReason i grant po
+    /// učinku (K2: appointments.policy.fee.waive / appointments.policy.unit.waive); bez granta se cijela naredba odbija.</summary>
     public bool WaivePolicyConsequence { get; set; }
 
     [MaxLength(500)]
     public string WaiverReason { get; set; }
 
-    /// <summary>P1 (D12) — obavezan kad prijelaz poništava aktivnu posljedicu politike sa stvarnim učinkom (naknada &gt; 0 ili
-    /// potrošena jedinica paketa); uz to se traži appointments.policy.override.</summary>
+    /// <summary>K2 (ADR-0032) — razlog korekcije: obavezan za korekciju iz terminalnog statusa na ZATVORENOM terminu (uz grant
+    /// appointments.corrections.* po izvornom statusu); prije zatvaranja opcionalan.</summary>
     [MaxLength(500)]
     public string CorrectionReason { get; set; }
 }
@@ -801,8 +831,9 @@ public class AppointmentCreateRequest
     public string Note { get; set; }
 
     /// <summary>Zaobilazi MEKE radne-snage blokade (izvan radnog vremena, odsutnost, praznik poslovnice, pauza zaposlenika) —
-    /// NIKAD strukturne (neaktivan/nevaljan Company/Service/Employee/Room, sudar). Ignorira se (tretira kao false) ako
-    /// pozivatelj nema appointments.write.all — vidi AppointmentEligibilityHelper.</summary>
+    /// NIKAD strukturne (neaktivan/nevaljan Company/Service/Employee/Room, sudar). K2 (P-2): traži grant
+    /// appointments.availability.override neovisno o opsegu; zatražen bez granta → 403. Stvarni override se bilježi u audit
+    /// termina ("AvailabilityOverride") — vidi Utils/AvailabilityOverride.</summary>
     public bool OverrideAvailability { get; set; }
 
     [Required]
@@ -873,7 +904,7 @@ public class AppointmentParticipantCreateRequest
 /// samo novo sudjelovanje.</summary>
 public class AppointmentSegmentAddRequest : AppointmentSegmentCreateRequest
 {
-    /// <summary>Vidi AppointmentCreateRequest.OverrideAvailability (samo uz appointments.write.all).</summary>
+    /// <summary>Vidi AppointmentCreateRequest.OverrideAvailability (K2: appointments.availability.override).</summary>
     public bool OverrideAvailability { get; set; }
 }
 

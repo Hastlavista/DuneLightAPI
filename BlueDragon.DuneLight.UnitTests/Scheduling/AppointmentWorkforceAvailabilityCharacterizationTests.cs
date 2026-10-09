@@ -338,14 +338,24 @@ public class AppointmentWorkforceAvailabilityCharacterizationTests
     }
 
     [Fact]
-    public async Task Override_IgnoredWithoutFullScope_EvenWhenRequested()
+    public async Task Override_IsAGrantIndependentOfScope_OwnScopeWithTheGrantOverridesItsOwnAppointment()
     {
-        await using SchedulingWorld w = await SchedulingWorld.Create(nameof(Override_IgnoredWithoutFullScope_EvenWhenRequested));
+        // CHANGED in K2 (P-2, ADR-0032): the override needs appointments.availability.override (not full scope). Requested
+        // without the grant it is refused (403) instead of silently ignored; own scope + grant overrides an own appointment.
+        await using SchedulingWorld w = await SchedulingWorld.Create(nameof(Override_IsAGrantIndependentOfScope_OwnScopeWithTheGrantOverridesItsOwnAppointment));
         await w.AddAbsence(w.Employee, SchedulingWorld.FutureDay);
 
-        await SchedulingAssert.BusinessRule(ErrorCodes.EmployeeAbsent,
+        await Assert.ThrowsAsync<BlueDragon.DuneLight.Core.Shared.Exceptions.ForbiddenAppException>(
             () => w.Appointments.Create(w.OrganizationId, w.Employee.UserId, hasFullScope: false,
                 w.CreateRequest(SchedulingWorld.Future(10), overrideAvailability: true).ToTarget()));
+
+        await w.GrantUser(w.Employee.UserId, Grants.AppointmentsAvailabilityOverride);
+        AppointmentDto created = await w.Appointments.Create(w.OrganizationId, w.Employee.UserId, hasFullScope: false,
+            w.CreateRequest(SchedulingWorld.Future(10), overrideAvailability: true).ToTarget());
+
+        Assert.Contains(created.Warnings, x => x.Code == WarningCodes.EmployeeAbsent);
+        Assert.Contains(await w.LoadAuditLog(created.Id), a => a.ChangeType == "AvailabilityOverride"
+            && a.NewValue == WarningCodes.EmployeeAbsent && a.ChangedBy == w.Employee.UserId);
     }
 
     #endregion

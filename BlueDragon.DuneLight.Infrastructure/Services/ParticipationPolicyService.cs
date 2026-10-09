@@ -88,6 +88,21 @@ public class ParticipationPolicyService : IParticipationPolicyService
         bool retainsClaim = membershipClaim != null && !waive && rule.MembershipAction == CancellationMembershipAction.ForfeitCredit;
         bool creditForfeited = retainsClaim && membershipClaim.HasPeriodCredits;
 
+        // K2 (12.2): otpis u trenutku događaja traži grant po učinku koji bi posljedica imala — kredit članarine ili jedinica
+        // paketa (odabir se ne izvršava; i nejednoznačan odabir je jedinica) → unit.waive, inače naknada → fee.waive. Bez granta
+        // cijela naredba pada (403), nikad tiho izvršenje bez otpisa.
+        if (waive)
+        {
+            bool wouldForfeitCredit = membershipClaim != null && rule.MembershipAction == CancellationMembershipAction.ForfeitCredit
+                && membershipClaim.HasPeriodCredits;
+            bool wouldConsumeUnit = !wouldForfeitCredit && rule.PackageAction == CancellationPackageAction.ConsumeUnit
+                && await HasPenaltyPackageCandidate(uow, organizationId, participation, execution);
+            PolicyWaiverEffect effect = wouldForfeitCredit || wouldConsumeUnit
+                ? PolicyWaiverEffect.Unit
+                : fee > 0m ? PolicyWaiverEffect.Fee : PolicyWaiverEffect.None;
+            PolicyOverride.EnsureWaiverAllowed(options.WaiverGrants ?? new GrantContext(new HashSet<string>()), effect);
+        }
+
         Guid? penaltyPackageId = null;
         if (!waive && !creditForfeited && rule.PackageAction == CancellationPackageAction.ConsumeUnit)
             penaltyPackageId = await SelectPenaltyPackage(uow, organizationId, participation, execution, options?.ClientPackageId);
@@ -138,6 +153,20 @@ public class ParticipationPolicyService : IParticipationPolicyService
     /// 2) eksplicitni ClientPackageId → mora biti prihvatljiv brojeni paket (usluga, poslovnica, datum izvođenja), inače
     ///    PACKAGE_NOT_ELIGIBLE; 3) točno jedan prihvatljiv brojeni → automatski; 4) više → PACKAGE_SELECTION_REQUIRED;
     /// 5) nijedan → naknada. Neograničeni paketi nikad nisu izvor kazne.</summary>
+    /// <summary>K2 — bi li kazna bila jedinica paketa (isti uvjeti kao <see cref="SelectPenaltyPackage"/>: bez novčanog namirenja i
+    /// barem jedan prihvatljiv brojeni paket), bez odabira i potrošnje.</summary>
+    private async Task<bool> HasPenaltyPackageCandidate(
+        IUnitOfWork uow, Guid organizationId, BookingSegmentParticipation participation, ParticipationExecutionContext execution)
+    {
+        decimal settled = ParticipationSettlement.SettledAmountOf(
+            await _checkoutHandler.GetItemsForParticipation(uow, organizationId, participation.Id.GetValueOrDefault()));
+        if (settled > 0m)
+            return false;
+        return (await _clientPackageService.GetEligibleForService(
+                organizationId, execution.ClientId, execution.ServiceId, execution.StartsAt, execution.CompanyId))
+            .Any(p => PackageCounting.IsCounted(p, execution.ServiceId));
+    }
+
     private async Task<Guid?> SelectPenaltyPackage(
         IUnitOfWork uow, Guid organizationId, BookingSegmentParticipation participation, ParticipationExecutionContext execution,
         Guid? requestedPackageId)

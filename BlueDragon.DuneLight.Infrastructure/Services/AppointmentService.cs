@@ -278,7 +278,7 @@ public partial class AppointmentService : IAppointmentService
         EnsureSegmentProductLimits(segmentRequest, requireParticipants: true);
         await AppointmentOwnership.EnsureCallerIsEmployee(_employeeHandler, organizationId, userId, hasFullScope,
             segmentRequest.EmployeeIds, NotOwnerMessage);
-        bool overrideAvailability = request.OverrideAvailability && hasFullScope;
+        bool overrideAvailability = await AvailabilityOverride.Resolve(_grantResolver, organizationId, userId, request.OverrideAvailability);
 
         ValidatedSegment validated = await ValidateSegment(organizationId, request.CompanyId, segmentRequest, PricingMode.WithManualOverride);
         SegmentPlan plan = validated.Plan;
@@ -306,6 +306,8 @@ public partial class AppointmentService : IAppointmentService
             });
 
             await _appointmentHandler.Add(uow, appointment);
+            // K2: override radnog vremena koji je stvarno nešto zaobišao bilježi se (tko, kada, što).
+            await AvailabilityOverride.Audit(_auditLogHandler, uow, appointmentId, warnings, userId);
 
             // Odrađivanje kroz jedinu jezgru prijelaza sudjelovanja, stabilnim redoslijedom (po klijentu).
             foreach (AppointmentCompletedClientRequest client in clientRequests.OrderBy(c => c.ClientId))
@@ -428,6 +430,10 @@ public partial class AppointmentService : IAppointmentService
                         uow, organizationId, ExecutionContextResolver.ForSegment(appointment, segment)));
             }
 
+            // K2 (ADR-0032): close-out je i ručno zatvaranje termina (i nakon ponovnog otvaranja — bez nove provizije).
+            if (appointment.ClosedAt == null)
+                await MarkClosed(uow, appointment, userId);
+
             // Status se ne postavlja — izvodi se (no-op kad je već usklađen).
             await AppointmentLifecycle.Refresh(_appointmentHandler, _auditLogHandler, uow, organizationId, id, userId);
 
@@ -447,6 +453,111 @@ public partial class AppointmentService : IAppointmentService
         dto.Warnings.AddRange(commissionWarnings);
 
         return dto;
+    }
+
+    /// <summary>K2 (ADR-0032) — vidi IAppointmentService.Close. Grupni termin ide kroz close-out (CompleteGroupAppointment).</summary>
+    public async Task<AppointmentDto> Close(Guid organizationId, Guid userId, bool hasFullScope, Guid id)
+    {
+        Appointment snapshot = await _appointmentHandler.GetById(organizationId, id)
+            ?? throw new NotFoundAppException("Appointment", id);
+        if (snapshot.Form == AppointmentForm.Group)
+            return await CompleteGroupAppointment(organizationId, userId, hasFullScope, id);
+
+        await using (IUnitOfWork uow = await _unitOfWorkFactory.Begin())
+        {
+            Appointment appointment = await _appointmentHandler.GetForUpdateWithBookings(uow, organizationId, id)
+                ?? throw new NotFoundAppException("Appointment", id);
+            if (appointment.Status == AppointmentStatus.Cancelled)
+                throw new BusinessRuleException(ErrorCodes.AppointmentNotMovable, "Otkazan termin se ne zatvara.");
+            await AppointmentOwnership.EnsureCallerOwnsSegments(
+                _employeeHandler, organizationId, userId, hasFullScope, appointment.Segments, NotOwnerMessage);
+
+            if (appointment.ClosedAt == null)
+                await MarkClosed(uow, appointment, userId);
+            await uow.CommitAsync();
+        }
+
+        return await GetByIdInternal(organizationId, id);
+    }
+
+    /// <summary>K2 (ADR-0032) — vidi IAppointmentService.Reopen. Opseg: appointments.write.own/all, za grupni termin i
+    /// groups.attendance.own/all (kao prisutnost i otpis); grant korekcije nikad ne širi own opseg.</summary>
+    public async Task<AppointmentDto> Reopen(Guid organizationId, Guid userId, Guid id, AppointmentReopenRequest request)
+    {
+        GrantContext grants = await _grantResolver.Resolve(organizationId, userId);
+        await using (IUnitOfWork uow = await _unitOfWorkFactory.Begin())
+        {
+            Appointment appointment = await _appointmentHandler.GetForUpdateWithBookings(uow, organizationId, id)
+                ?? throw new NotFoundAppException("Appointment", id);
+            if (appointment.IsExplicitlyCancelled)
+                throw new BusinessRuleException(ErrorCodes.AppointmentNotMovable, "Otkazan termin se vraća kroz \"Vrati termin\", ne ponovnim otvaranjem.");
+            await AppointmentOwnership.EnsureCallerOwnsSegments(_employeeHandler, organizationId, userId,
+                CorrectionScope(grants, appointment.Form), appointment.Segments, NotOwnerMessage);
+
+            OrganizationCalendar calendar = await _organizationCalendarService.GetCompanyCalendar(organizationId, appointment.CompanyId);
+            DateTimeOffset now = DateTimeOffset.UtcNow;
+            if (!AppointmentClosure.IsClosed(appointment, calendar, now))
+                throw new BusinessRuleException(ErrorCodes.AppointmentNotClosed, "Termin nije zatvoren.");
+            AppointmentClosure.EnsureReopenAllowed(
+                grants, appointment.Bookings.SelectMany(b => b.Participations).Select(p => p.Status), request?.Reason);
+
+            string reason = request.Reason.Trim();
+            string closedBy = appointment.ClosedAt?.ToString("O") ?? "Automatic";
+            appointment.ClosedAt = null;
+            appointment.ClosedBy = null;
+            appointment.ReopenedAt = now;
+            appointment.ReopenedBy = userId;
+            appointment.ReopenReason = reason;
+            appointment.UpdatedAt = now;
+            appointment.UpdatedBy = userId;
+            await _appointmentHandler.UpdateScalar(uow, appointment);
+            await _auditLogHandler.Add(uow, new AppointmentAuditLog
+            {
+                Id = Guid.NewGuid(),
+                AppointmentId = id,
+                ChangeType = "AppointmentReopened",
+                OldValue = closedBy,
+                // audit_log.new_value je varchar(255); puni razlog je na terminu (ReopenReason).
+                NewValue = reason.Length > 255 ? reason[..255] : reason,
+                ChangedAt = now,
+                ChangedBy = userId
+            });
+            await uow.CommitAsync();
+        }
+
+        return await GetByIdInternal(organizationId, id);
+    }
+
+    /// <summary>K2 — opseg korekcijskih naredbi nad cijelim terminom (ponovno otvaranje, vraćanje): true = svi termini; own opseg
+    /// mora posjedovati segmente (provjerava pozivatelj); bez ikakvog opsega 403.</summary>
+    private static bool CorrectionScope(GrantContext grants, AppointmentForm form)
+    {
+        bool isGroup = form == AppointmentForm.Group;
+        if (grants.Has(Grants.AppointmentsWriteAll) || (isGroup && grants.Has(Grants.GroupsAttendanceAll)))
+            return true;
+        if (grants.Has(Grants.AppointmentsWriteOwn) || (isGroup && grants.Has(Grants.GroupsAttendanceOwn)))
+            return false;
+        throw new ForbiddenAppException("Nemate pristup ovom terminu.");
+    }
+
+    /// <summary>K2 — ručno zatvaranje (ClosedAt/By) uz audit "AppointmentClosed"; pozivatelj drži lock termina.</summary>
+    private async Task MarkClosed(IUnitOfWork uow, Appointment appointment, Guid userId)
+    {
+        DateTimeOffset now = DateTimeOffset.UtcNow;
+        appointment.ClosedAt = now;
+        appointment.ClosedBy = userId;
+        appointment.UpdatedAt = now;
+        appointment.UpdatedBy = userId;
+        await _appointmentHandler.UpdateScalar(uow, appointment);
+        await _auditLogHandler.Add(uow, new AppointmentAuditLog
+        {
+            Id = Guid.NewGuid(),
+            AppointmentId = appointment.Id.GetValueOrDefault(),
+            ChangeType = "AppointmentClosed",
+            NewValue = now.ToString("O"),
+            ChangedAt = now,
+            ChangedBy = userId
+        });
     }
 
     /// <summary>Otkazuje CIJELI termin — svi aktivni (Confirmed) sudionici prelaze u Cancelled, a termin se eksplicitno
@@ -475,12 +586,13 @@ public partial class AppointmentService : IAppointmentService
     }
 
     /// <summary>Bulk no-show — svi aktivni sudionici prelaze u NoShow (termin se izvodi u Closed; termin kao okvir NIKAD nije
-    /// NoShow). P1: politika izostanka se evaluira po sudjelovanju; otpis u trenutku događaja traži razlog i
-    /// appointments.policy.override. Za pojedinačni no-show koristi se participation naredba.</summary>
+    /// NoShow). P1: politika izostanka se evaluira po sudjelovanju; otpis u trenutku događaja traži razlog i grant otpisa po
+    /// učinku posljedice svakog sudjelovanja (K2: fee.waive / unit.waive; bilo koji nedostatak odbija cijelu naredbu). Za
+    /// pojedinačni no-show koristi se participation naredba.</summary>
     public async Task<AppointmentDto> MarkNoShow(Guid organizationId, Guid userId, bool hasFullScope, Guid id, NoShowRequest request)
     {
         if (request?.WaivePolicyConsequence == true)
-            await PolicyOverride.EnsureWaiverAllowed(_grantResolver, organizationId, userId, request.WaiverReason);
+            await PolicyOverride.EnsureWaiverRequestAllowed(_grantResolver, organizationId, userId, request.WaiverReason);
 
         return await ChangeToTerminalStatus(organizationId, userId, hasFullScope, id, new BookingSetStatusRequest
         {
@@ -494,14 +606,29 @@ public partial class AppointmentService : IAppointmentService
 
     /// <summary>K1-5 (14.1) — vidi IAppointmentService.Restore. Sudjelovanja otkazana otkazom termina su ona s initiatorom
     /// Business i istim trenutkom otkaza kao termin (MarkExplicitlyCancelled i kaskada dijele timestamp). Business otkaz nema
-    /// posljedicu politike, pa korekcija ne traži appointments.policy.override. Termin se zatim sam vraća u Scheduled
-    /// (AppointmentLifecycle.Refresh briše eksplicitnu otkazanost uz "AppointmentCancellationCleared").</summary>
+    /// posljedicu politike. Termin se zatim sam vraća u Scheduled (AppointmentLifecycle.Refresh briše eksplicitnu otkazanost uz
+    /// "AppointmentCancellationCleared"). K2 (ADR-0032): grant appointments.corrections.cancelled (kontroler) i own/all opseg nad
+    /// svim segmentima; provjere kao novi upis — radna snaga (izvan radnog vremena samo uz override), tvrda preklapanja i
+    /// kapaciteti, meki kapacitet grupe bez overridea (nema upisa u punu grupu), pokriće; na zatvorenom terminu razlog je obavezan
+    /// (jezgra prijelaza).</summary>
     public async Task<AppointmentDto> Restore(Guid organizationId, Guid userId, Guid id, AppointmentRestoreRequest request)
     {
         Appointment snapshot = await _appointmentHandler.GetWithBookingsForMutation(organizationId, id)
             ?? throw new NotFoundAppException("Appointment", id);
         if (!snapshot.IsExplicitlyCancelled)
             throw new BusinessRuleException(ErrorCodes.AppointmentNotCancelled, "Termin nije otkazan.");
+        GrantContext grants = await _grantResolver.Resolve(organizationId, userId);
+        if (!grants.Has(Grants.AppointmentsCorrectionsCancelled))
+            throw new ForbiddenAppException("Vraćanje otkazanog termina zahtijeva ovlast appointments.corrections.cancelled.");
+        await AppointmentOwnership.EnsureCallerOwnsSegments(_employeeHandler, organizationId, userId,
+            CorrectionScope(grants, snapshot.Form), snapshot.Segments, NotOwnerMessage);
+
+        // K2: radna snaga po segmentu kao kod novog upisa (i za prošli termin, K1-1).
+        bool overrideAvailability = await AvailabilityOverride.Resolve(_grantResolver, organizationId, userId, request?.OverrideAvailability == true);
+        List<WarningDto> availabilityWarnings = new();
+        foreach (AppointmentSegment segment in snapshot.Segments.OrderBy(s => s.PlannedStart))
+            availabilityWarnings.AddRange(await EnsureWorkforceAvailability(organizationId, segment.Employees.Select(e => e.EmployeeId).ToList(),
+                snapshot.CompanyId, segment.PlannedStart, segment.PlannedEnd, overrideAvailability));
 
         List<Guid> restoredIds = RestorableParticipations(snapshot).Select(x => x.Participation.Id.GetValueOrDefault()).ToList();
         string reason = string.IsNullOrWhiteSpace(request?.Reason) ? null : request.Reason.Trim();
@@ -548,6 +675,7 @@ public partial class AppointmentService : IAppointmentService
                 ChangedAt = DateTimeOffset.UtcNow,
                 ChangedBy = userId
             });
+            await AvailabilityOverride.Audit(_auditLogHandler, uow, id, availabilityWarnings, userId);
 
             // Korekcija Cancelled → Confirmed kroz jedinu jezgru prijelaza: pokriće članarinom (kao nova rezervacija, uključujući
             // limite) i cijena po pokriću se ponovno evaluiraju; razlog promjene je na sudjelovanju.
@@ -566,6 +694,7 @@ public partial class AppointmentService : IAppointmentService
         }
 
         AppointmentDto dto = await GetByIdInternal(organizationId, id);
+        dto.Warnings.AddRange(availabilityWarnings);
         List<Domain.Models.Groups.WaitlistEntry> expired = (await _waitlistHandler.GetForAppointment(organizationId, id))
             .Where(e => e.Status == WaitlistEntryStatus.Expired && e.ExpiredReason == WaitlistExpiredReasons.AppointmentCancelled)
             .OrderBy(e => e.JoinedAt)
@@ -652,7 +781,7 @@ public partial class AppointmentService : IAppointmentService
             throw new ValidationAppException("Datum kraja ne smije biti prije prvog termina.");
 
         ServiceEntity service = await LoadServiceOrThrow(organizationId, request.ServiceId);
-        bool overrideAvailability = request.OverrideAvailability && hasFullScope;
+        bool overrideAvailability = await AvailabilityOverride.Resolve(_grantResolver, organizationId, userId, request.OverrideAvailability);
         // Isto lokalno vrijeme u efektivnoj zoni poslovnice svaki dan/tjedan, i preko DST prijelaza.
         OrganizationCalendar calendar = await _organizationCalendarService.GetCompanyCalendar(organizationId, request.CompanyId);
         List<DateTimeOffset> occurrences = calendar.RepeatAtLocalTime(
@@ -707,6 +836,10 @@ public partial class AppointmentService : IAppointmentService
             await EnsureRecurringResourceCapacity(uow, organizationId, toCreate.Select(a => a.Segments.Single()).ToList(), defaultResources);
 
         await _appointmentHandler.AddRange(uow, toCreate);
+        // K2: override radnog vremena po occurrenceu (samo gdje je nešto zaobišao).
+        foreach (Appointment appointment in toCreate)
+            if (warningsByOccurrence.TryGetValue(AppointmentRange.Of(appointment).PlannedStart, out List<WarningDto> overridden))
+                await AvailabilityOverride.Audit(_auditLogHandler, uow, appointment.Id.GetValueOrDefault(), overridden, userId);
         // P2 (2D, §11.4): pokriće occurrence po occurrence, redom po vremenu (limit koji presuši usred serije → ostatak na
         // sljedeći izvor; uz postavku "odbij" odbija se cijela serija).
         foreach (Appointment appointment in toCreate)
@@ -908,7 +1041,10 @@ public partial class AppointmentService : IAppointmentService
     public async Task<PagedResult<AppointmentDto>> GetByEmployee(Guid organizationId, Guid employeeId, PagedRequest request)
     {
         (List<Appointment> items, int totalCount) = await _appointmentHandler.GetByEmployee(organizationId, employeeId, request);
-        return PagedResult<AppointmentDto>.Create(items.Select(a => ToDto(a)).ToList(), totalCount, request.Page, request.PageSize);
+        Dictionary<Guid, OrganizationCalendar> calendars =
+            await _organizationCalendarService.GetCompanyCalendars(organizationId, items.Select(a => a.CompanyId).Distinct());
+        return PagedResult<AppointmentDto>.Create(
+            items.Select(a => ToDto(a, calendars[a.CompanyId])).ToList(), totalCount, request.Page, request.PageSize);
     }
 
     public async Task<List<EmployeeAvailableSlotsDto>> GetAvailableSlots(Guid organizationId, AvailableSlotsQuery query)
@@ -1009,7 +1145,7 @@ public partial class AppointmentService : IAppointmentService
         EnsureCurrentProductLimits(request);
         await AppointmentOwnership.EnsureCallerIsEmployee(_employeeHandler, organizationId, userId, hasFullScope,
             request.Segments.SelectMany(s => s.EmployeeIds), NotOwnerMessage);
-        bool overrideAvailability = request.OverrideAvailability && hasFullScope;
+        bool overrideAvailability = await AvailabilityOverride.Resolve(_grantResolver, organizationId, userId, request.OverrideAvailability);
 
         List<ValidatedSegment> segments = new List<ValidatedSegment>();
         foreach (AppointmentSegmentCreateRequest segment in request.Segments)
@@ -1037,6 +1173,7 @@ public partial class AppointmentService : IAppointmentService
                     segment.Clients, segment.Room, ResourcesOf(segment.Plan)))
                 .ToList());
             await _appointmentHandler.Add(uow, appointment);
+            await AvailabilityOverride.Audit(_auditLogHandler, uow, appointmentId, warnings, userId);
             await SyncMembershipCoverage(uow, organizationId, userId, appointment);
             await uow.CommitAsync();
         }
@@ -1435,7 +1572,7 @@ public partial class AppointmentService : IAppointmentService
         if (appointment == null)
             throw new NotFoundAppException("Appointment", id);
 
-        return ToDto(appointment);
+        return ToDto(appointment, await _organizationCalendarService.GetCompanyCalendar(organizationId, appointment.CompanyId));
     }
 
     private static AppointmentScheduleCellDto ToScheduleCellDto(Appointment a)
@@ -1503,10 +1640,11 @@ public partial class AppointmentService : IAppointmentService
         };
     }
 
-    private static AppointmentDto ToDto(Appointment a)
+    private static AppointmentDto ToDto(Appointment a, OrganizationCalendar calendar)
     {
         // Phase M1B: termin = izvedeni raspon + segmenti + Bookinzi; plosnata polja su privremena jednosegmentna projekcija.
         AppointmentRange range = AppointmentRange.Of(a);
+        DateTimeOffset autoClosesAt = AppointmentClosure.AutoClosesAt(a, calendar);
         return new AppointmentDto
         {
             Id = a.Id.GetValueOrDefault(),
@@ -1523,6 +1661,13 @@ public partial class AppointmentService : IAppointmentService
             CancellationReasonCodeName = a.CancellationReasonCodeName,
             CancelledAt = a.CancelledAt,
             ClosedOutAt = a.ClosedOutAt,
+            IsClosed = AppointmentClosure.IsClosed(a, calendar, DateTimeOffset.UtcNow),
+            ClosedAt = a.ClosedAt,
+            ClosedBy = a.ClosedBy,
+            AutoClosesAt = autoClosesAt,
+            ReopenedAt = a.ReopenedAt,
+            ReopenedBy = a.ReopenedBy,
+            ReopenReason = a.ReopenReason,
             GroupId = a.GroupId,
             GroupName = a.Group?.Name,
             RecurrenceGroupId = a.RecurrenceGroupId,

@@ -172,7 +172,7 @@ public class MembershipCoverageTests
     public async Task LateCancellation_WithPeriodCredits_ForfeitsTheCreditInsteadOfTheFee_AndAWaiverReturnsIt()
     {
         await using SchedulingWorld w = await SchedulingWorld.Create(nameof(LateCancellation_WithPeriodCredits_ForfeitsTheCreditInsteadOfTheFee_AndAWaiverReturnsIt));
-        await w.GrantUser(w.ActorUserId, Grants.AppointmentsPolicyOverride, Grants.AppointmentsWriteAll);
+        await w.GrantUser(w.ActorUserId, Grants.AppointmentsPolicyUnitWaive, Grants.AppointmentsWriteAll);
         await Sell(w, await Plan(w, Limit(MembershipUsageWindow.Period, 1)));
         DateTimeOffset start = At(2, 10);
         await w.PublishDefaultPolicyVersion(LateWindow(start), CancellationFeeType.Percentage, 40m);

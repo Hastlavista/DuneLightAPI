@@ -92,7 +92,7 @@ public class SetGroupAttendanceRequest
     public Guid? SegmentId { get; set; }
 
     /// <summary>P1 (D9/D10) — Attended=false je izostanak (NoShow politika); otpis posljedice u trenutku događaja traži
-    /// WaiverReason i appointments.policy.override.</summary>
+    /// WaiverReason i grant po učinku (K2: appointments.policy.fee.waive / appointments.policy.unit.waive).</summary>
     public bool WaivePolicyConsequence { get; set; }
 
     [MaxLength(500)]

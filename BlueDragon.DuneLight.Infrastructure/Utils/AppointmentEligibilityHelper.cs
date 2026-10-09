@@ -16,7 +16,7 @@ namespace BlueDragon.DuneLight.Infrastructure.Utils;
 ///
 /// Prije ovog zahvata sve četiri kategorije bile su isključivo upozorenja (Warnings u odgovoru), nikad
 /// blokada — sad su tvrda blokada (throw) OSIM kad pozivatelj eksplicitno zatraži
-/// OverrideAvailability=true (i ima ovlast, provjereno kod pozivatelja prije poziva ovamo), kad se
+/// OverrideAvailability=true (i ima appointments.availability.override, provjereno u Utils/AvailabilityOverride), kad se
 /// umjesto bacanja iznimke vraća isti WarningDto kao i prije (vidljivost bez blokade).
 /// </summary>
 public static class AppointmentEligibilityHelper

@@ -1,7 +1,7 @@
 # Arhitektura
 
 > Živi dokument. Ažurira se kad se arhitektura promijeni, ne naknadno "kad stignem".
-> Zadnje ažuriranje: 2026-10-08 (K1 dorade iz povratnih informacija klijenta, ADR-0031; prije toga P2 Memberships: faze 2A–2F — katalog planova, članstva, periodi/zaduženja/obnova, pokriće članarinom, cjenovna pogodnost, provizije (Vagaro model), ADR-0025 – ADR-0030; prije toga P1 ADR-0015 – ADR-0018)
+> Zadnje ažuriranje: 2026-10-09 (K2 granularni grantovi i zatvoren termin, ADR-0032; prije toga K1 dorade iz povratnih informacija klijenta, ADR-0031; prije toga P2 Memberships: faze 2A–2F — katalog planova, članstva, periodi/zaduženja/obnova, pokriće članarinom, cjenovna pogodnost, provizije (Vagaro model), ADR-0025 – ADR-0030; prije toga P1 ADR-0015 – ADR-0018)
 
 Izvori ovog dokumenta, redom prednosti: **stvarni kod** → ADR-ovi u `docs/decisions/` i zapisi faza (`docs/p1/`) → povijesni izvori izvan repozitorija
 (sažetak dosadašnjeg arhitekta, Decision Log v1, Target Architecture v1, Business Rules vodič starog
@@ -29,8 +29,10 @@ M0–M1H i **P1 — Cancellation / Late Cancellation / NoShow Policy Engine** (2
 **P2 Memberships** je ZAKLJUČEN 2026-10-08 ([P2 record](p2/P2_DECISION_RECORD.md), [plan](p2/P2_PLAN.md), [završni pregled](p2/P2_ZAVRSNI_PREGLED.md)): dizajn zatvoren 2026-10-07,
 faze 2A–2F implementirane (katalog planova, članstva, periodi i obnova, pokriće, cjenovna pogodnost, provizije); slijedi ručno testiranje.
 **K1** (dorade iz validacije vodiča s klijentom, [K1 record](k1/K1_DECISION_RECORD.md), [povratne informacije](klijent/POVRATNE_INFORMACIJE_v1.md), ADR-0031)
-implementiran i ZAKLJUČEN 2026-10-08. Prijedlog daljnjeg redoslijeda iz povratnih informacija: K2 Ovlasti → K3 Veze klijenata (prije P4) → … Sljedeća faza samo na nalog: P3 Client Credit Ledger → P4 Notifications → P5 Group occurrence propagacija →
-P6 Workforce/catalog integritet.
+implementiran i ZAKLJUČEN 2026-10-08. **K2 Ovlasti** (granularni grantovi, zatvoren termin, [K2 record](k2/K2_DECISION_RECORD.md), ADR-0032) implementiran 2026-10-09.
+Redoslijed nakon K2 (odluka 2026-10-09): K3 Nositelj + podračuni → P3 Client Credit Ledger → P4 Notifications → P5 Group
+occurrence propagacija → P6 Workforce/catalog integritet → Paketi v2 / P1+ → Payroll. K3 ide prije P3 jer povrat i kredit moraju
+znati tko je platitelj.
 
 ## 2. Glavne komponente
 
@@ -314,7 +316,13 @@ Pravila koja se ne krše bez nove odluke (ADR):
   - popis preskočenog pri generiranju grupa;
   - upozorenja `PARTICIPATION_NOT_COVERED` / `PARTICIPATION_PACKAGE_AVAILABLE`.
 
-  Za K2: zaseban grant za rad izvan radnog vremena (i kod grupa) i grant korekcije za "vrati termin".
+  K2 (ADR-0032) je to zamijenio: rad izvan radnog vremena (i kod grupa) traži `appointments.availability.override`, "vrati termin" `appointments.corrections.cancelled`.
+- [x] K2 ovlasti ([K2 record](k2/K2_DECISION_RECORD.md), ADR-0032) — implementirano 2026-10-09 (migracija `20261029000000`):
+  - zatvoren termin (`Utils/AppointmentClosure`: ručno ili kraj poslovnog dana, izvedeno); `POST api/appointments/{id}/close` i
+    `/reopen`; korekcija iz terminalnog statusa na zatvorenom terminu traži `appointments.corrections.*` i razlog;
+  - otpis po učinku (`appointments.policy.fee.waive` / `.unit.waive`, `Utils/PolicyOverride`); korekcija ≠ otpis (Reversed);
+  - `appointments.availability.override` (`Utils/AvailabilityOverride`, audit `AvailabilityOverride`), `roster.entries.write.past`;
+  - `appointments.policy.override` ugašen.
 - [ ] Payroll po Vagaro modelu (zasebna faza nakon P2, [plan §26](p2/P2_PLAN.md), [pitanja](payroll/PAYROLL_QUESTIONS.md)): obračunsko
   razdoblje i zatvaranje, tiered po prometu (nadogradnja općeg pravila, bez migracije), klase, trošak usluge, napojnice, satnica
   ili provizija, ovlasti.
@@ -353,7 +361,13 @@ P1 record je uveden u `docs/p1/`; README je usklađen s kodom.
 - [ ] **Povrat novca iz zatvorenog checkouta** (refund / kredit klijenta) — nije implementiran; dolazi s P3. Do tada ni
   P2 Q51(a) (povrat + poništavanje prodaje članarine prije početka) nije izvediv, samo regularni otkaz (`docs/p2/P2_PLAN.md` §22).
 - [ ] **Platitelj ≠ član** (roditelj plaća djetetu članarinu): stavka zaduženja članarine danas traži istog klijenta kao
-  checkout. **Odlučeno (P-14):** model nositelj + podračuni, nositelj plaća termine, pakete i članarine podračuna — faza K3, prije P4.
+  checkout. **Odlučeno (P-14):** model nositelj + podračuni, nositelj plaća termine, pakete i članarine podračuna — faza K3, prije P3
+  (povrat i kredit se vežu uz platitelja) i P4.
+- [ ] **Granica za roster unatrag** (K2, 2026-10-09): `roster.entries.write.past` zasad nema vremensku granicu, a svaki upis
+  unatrag bilježi tko ga je napravio i kada. Otvoreno: granica (npr. N dana) kao postavka organizacije, zbog utjecaja na provizije.
+- [ ] **Granica za kasno označavanje neoznačenih sudjelovanja** (K2, 2026-10-09): sudjelovanje koje je ostalo Confirmed
+  označava se i nakon zatvaranja termina bez granta (audit bilježi "nakon zatvaranja"). Otvoreno: granica (npr. N dana) kao
+  postavka organizacije, zbog naknada klijentu i provizija.
 - [ ] **P4 — obavijesti o članarinama:** P2 ne piše outbox događaje članarina (događaj bez handlera se nikad ne označi
   obrađenim). Handleri u P4 moraju moći raditi **iz stanja u bazi** (periodi, zaduženja, oznake, povijest članstva), jer
   povijesni događaji iz P2 neće postojati (P2 dnevnik 2026-10-07).
@@ -362,10 +376,14 @@ P1 record je uveden u `docs/p1/`; README je usklađen s kodom.
   - *Princip koji vrijedi odmah (od P2 2B):* grantovi su granularni po poslovnoj RADNJI (ne po polju), posebno za osjetljive
     radnje, da se svaki grant može dati bilo kome; grupe slaže svaki studio sam; nema sistemskih grupa osim Admin ni predložaka
     (ADR-0023 ostaje); novi grantovi se migracijom dodaju samo Admin grupama, ostalima ih studio dodjeljuje kroz editor.
-  - *Za kasnije:* (1) capability kao sloj koji grupira grantove u smislene cjeline u editoru; (2) ovisnosti grantova — uz
-    uključen grant automatski i grantovi bez kojih frontend za tu radnju ne radi (npr. prodaja članarine traži pregled planova i
-    klijenata); (3) predlošci grupa (npr. "Recepcija"), možda, nakon što vidimo koliko je ručnog slaganja u praksi;
-    (4) preporučena raspodjela grantova po tipičnim ulogama u dokumentaciji (za članarine: `docs/p2/P2_PLAN.md` §20).
+  - *Agnostično prema ulogama (odluka 2026-10-09, K2):* sustav ne koristi samo fitness studio — nema zakucanih uloga, predložaka
+    grupa po ulogama ni preporučene raspodjele grantova po ulogama u dokumentaciji. Sve grantove ima samo Admin grupa prvog
+    korisnika koji otvara organizaciju; organizacija dalje sama slaže grupe kroz capabilityje.
+  - *Za kasnije (čeka frontend):* (1) capability kao sloj koji grupira grantove u smislene cjeline u editoru; (2) ovisnosti
+    grantova — uz uključen grant automatski i grantovi bez kojih frontend za tu radnju ne radi (npr. prodaja članarine traži
+    pregled planova i klijenata).
+  - *K2 (ADR-0032, 2026-10-09):* granularni grantovi korekcija po izvornom statusu (na zatvorenom terminu), rad izvan radnog
+    vremena, otpis naknade vs. jedinice, roster u prošlosti; svaki ima svoj `On(...)` capability.
   - *Trenutno stanje (2026-10-07):* `CapabilityCatalog` grupira grantove (View/Manage, Own/All, On); razina Manage uključuje i
     grantove za pregled, što je jedina postojeća "ovisnost". Uloga `CapabilityGrantRole.MandatorySupporting` (prateći grant koji
     se uključuje uz aktivan capability) postoji u modelu i materijalizaciji, ali je nijedan capability ne koristi, a dokumentirana
@@ -384,7 +402,9 @@ P1 record je uveden u `docs/p1/`; README je usklađen s kodom.
 - [ ] Nema apstrakcije vremena (237 poziva `DateTimeOffset.UtcNow`): simulacija sata organizacije za testiranje nije moguća; danas
   postoji samo razvojni prolaz obnove za zadani datum (P2 dnevnik 2026-10-08). Kandidat: `TimeProvider` kroz DI (prihvaćeno kao
   tehnički dug). Potreban je i za ručno testiranje P1 otkaznih prozora (kasni otkaz / izostanak ovise o stvarnom satu), dug grace
-  i "budući termin" u pokriću, koje razvojni prolaz obnove ne pomiče.
+  i "budući termin" u pokriću, koje razvojni prolaz obnove ne pomiče. Od K2 i za automatsko zatvaranje termina (ručno testiranje
+  zasad SQL-om, `docs/p2/P2_ZAVRSNI_PREGLED.md` c) točka 12). **Riješiti prije frontenda / online bookinga; ujedinjuje razvojni
+  pomak vremena (obnova članarina, zatvaranje termina, otkazni prozori)** (odluka 2026-10-09).
 - [ ] Tajne i bootstrap pristupni podaci platforme su u `appsettings.json` pod verzioniranjem — premjestiti u user-secrets /
   varijable okoline.
 - [ ] Seq URL hardkodiran u `Program.cs`.
@@ -445,3 +465,4 @@ pokriva samo backend (Angular frontend se dokumentira u vlastitom repozitoriju);
 | [0029](decisions/0029-p2-cjenovna-pogodnost-i-prilagodbe-cijene.md) | P2: Cjenovna pogodnost članarine i opći mehanizam prilagodbi cijene | Prihvaćeno, 2E implementirano |
 | [0030](decisions/0030-p2-provizije-vagaro-model.md) | P2: Provizije, Vagaro model (proširuje ADR-0010) | Prihvaćeno, 2F implementirano |
 | [0031](decisions/0031-k1-dorade-rasporeda-i-klijenata.md) | K1: dorade rasporeda i klijenata (prošlost, dolazak, razlozi, vraćanje termina, zadani resursi, stajanje članstva) | Prihvaćeno, implementirano |
+| [0032](decisions/0032-k2-granularni-grantovi-i-zatvoren-termin.md) | K2: granularni grantovi (korekcije po izvornom statusu i zatvoren termin, otpis naknade/jedinice, rad izvan radnog vremena, roster u prošlosti) | Prihvaćeno, implementirano |

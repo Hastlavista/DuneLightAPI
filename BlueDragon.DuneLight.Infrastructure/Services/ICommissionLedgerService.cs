@@ -65,8 +65,11 @@ public interface ICommissionLedgerService
         IUnitOfWork uow, Guid organizationId, Guid userId, Guid membershipId, Guid? employeeId, string via);
 
     /// <summary>Reverzira (Earned -&gt; Reversed) SVE IndividualService zapise zarađene TOČNO OVIM completionom sudjelovanja, kao
-    /// dio BookingService korekcije Completed -&gt; drugi status. No-op ako aktivan zapis ne postoji. Snapshot se ne dira.</summary>
-    Task ReverseForIndividualServiceCorrection(IUnitOfWork uow, Guid organizationId, Guid userId, BookingSegmentParticipation participation);
+    /// dio BookingService korekcije Completed -&gt; drugi status. No-op ako aktivan zapis ne postoji. Snapshot se ne dira.
+    /// K2: <paramref name="reason"/> (korekcija, StatusVersion, razlog korekcije) ide u ReversalReason — vidljiva stavka storna
+    /// s vezom na korekciju.</summary>
+    Task ReverseForIndividualServiceCorrection(
+        IUnitOfWork uow, Guid organizationId, Guid userId, BookingSegmentParticipation participation, string reason);
 
     /// <summary>P2 (2F) — korisnik provizije na prodaju mora biti postojeći AKTIVAN zaposlenik u trenutku odabira (INACTIVE_EMPLOYEE).
     /// Kasnija neaktivnost ne poništava odabir.</summary>

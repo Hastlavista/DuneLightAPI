@@ -469,15 +469,21 @@ public class AppointmentCreateCharacterizationTests
     }
 
     [Fact]
-    public async Task Create_OverrideAvailabilityIsIgnoredForOwnScopeCallers()
+    public async Task Create_OverrideAvailabilityWithoutTheGrant_IsRefused_AlsoForOwnScopeCallers()
     {
-        await using SchedulingWorld w = await SchedulingWorld.Create(nameof(Create_OverrideAvailabilityIsIgnoredForOwnScopeCallers));
+        await using SchedulingWorld w = await SchedulingWorld.Create(nameof(Create_OverrideAvailabilityWithoutTheGrant_IsRefused_AlsoForOwnScopeCallers));
 
-        // 22:00 is outside the seeded 08:00-20:00 working hours. overrideAvailability = request flag AND full scope.
-        await SchedulingAssert.BusinessRule(ErrorCodes.OutsideWorkingHours,
+        // 22:00 is outside the seeded 08:00-20:00 working hours. CHANGED in K2 (P-2): the override is the grant
+        // appointments.availability.override, independent of scope; requested without it → 403 (not silently ignored).
+        await Assert.ThrowsAsync<BlueDragon.DuneLight.Core.Shared.Exceptions.ForbiddenAppException>(
             () => w.Appointments.Create(
                 w.OrganizationId, w.Employee.UserId, hasFullScope: false,
                 w.CreateRequest(SchedulingWorld.Future(22), overrideAvailability: true).ToTarget()));
+        // Without the request flag the working-hours rule itself still applies.
+        await SchedulingAssert.BusinessRule(ErrorCodes.OutsideWorkingHours,
+            () => w.Appointments.Create(
+                w.OrganizationId, w.Employee.UserId, hasFullScope: false,
+                w.CreateRequest(SchedulingWorld.Future(22)).ToTarget()));
     }
 
     #endregion

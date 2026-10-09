@@ -166,13 +166,32 @@ public class AppointmentsController : ControllerBase
             this.CurrentOrganizationId(), this.CurrentUserId(), this.HasGrant(Grants.AppointmentsWriteAll), id, request));
     }
 
-    /// <summary>K1-5 (14.1) — vraća otkazan termin u rad (samo sudjelovanja otkazana otkazom termina; sve ili ništa). Grant zasad
-    /// appointments.write.all (K2: grant korekcije). Istekli upisi liste čekanja se ne vraćaju — popis je u upozorenju.</summary>
+    /// <summary>K1-5 (14.1) — vraća otkazan termin u rad (samo sudjelovanja otkazana otkazom termina; sve ili ništa). K2: grant
+    /// appointments.corrections.cancelled + own/all opseg (servis); provjere kao novi upis. Istekli upisi liste čekanja se ne
+    /// vraćaju — popis je u upozorenju.</summary>
     [HttpPost("{id:guid}/restore")]
-    [RequireGrant(Grants.AppointmentsWriteAll)]
+    [RequireGrant(Grants.AppointmentsCorrectionsCancelled)]
     public async Task<ActionResult<AppointmentDto>> Restore(Guid id, [FromBody(EmptyBodyBehavior = Microsoft.AspNetCore.Mvc.ModelBinding.EmptyBodyBehavior.Allow)] AppointmentRestoreRequest request)
     {
         return Ok(await _appointmentService.Restore(this.CurrentOrganizationId(), this.CurrentUserId(), id, request));
+    }
+
+    /// <summary>K2 (ADR-0032) — ručno zatvaranje termina (individualni i grupni; za grupni = close-out).</summary>
+    [HttpPost("{id:guid}/close")]
+    [RequireGrant(Grants.AppointmentsWriteOwn, Grants.AppointmentsWriteAll)]
+    public async Task<ActionResult<AppointmentDto>> Close(Guid id)
+    {
+        return Ok(await _appointmentService.Close(
+            this.CurrentOrganizationId(), this.CurrentUserId(), this.HasGrant(Grants.AppointmentsWriteAll), id));
+    }
+
+    /// <summary>K2 (ADR-0032) — ponovno otvaranje zatvorenog termina: razlog obavezan, grant korekcije za svaki terminalni status
+    /// na terminu (provjerava servis) i own/all opseg.</summary>
+    [HttpPost("{id:guid}/reopen")]
+    [RequireGrant(Grants.AppointmentsCorrectionsCompleted, Grants.AppointmentsCorrectionsNoShow, Grants.AppointmentsCorrectionsCancelled)]
+    public async Task<ActionResult<AppointmentDto>> Reopen(Guid id, [FromBody] AppointmentReopenRequest request)
+    {
+        return Ok(await _appointmentService.Reopen(this.CurrentOrganizationId(), this.CurrentUserId(), id, request));
     }
 
     [HttpPost("{id:guid}/no-show")]

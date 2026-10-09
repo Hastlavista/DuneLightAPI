@@ -1206,6 +1206,8 @@ public class GroupService : IGroupService
     {
         if (request.ToDate < request.FromDate)
             throw new ValidationAppException("Datum kraja ne smije biti prije datuma početka.");
+        // K2 (P-2): radno vrijeme, odsutnost i praznik zaobilaze se samo uz appointments.availability.override (ne groups.manage).
+        bool overrideAvailability = await AvailabilityOverride.Resolve(_grantResolver, organizationId, userId, request.OverrideAvailability);
 
         List<Group> candidateGroups;
         if (request.GroupId.HasValue)
@@ -1274,7 +1276,7 @@ public class GroupService : IGroupService
                     // K1-7 (P-5, bug d): praznik bez potvrde se preskače i navodi; uz OverrideAvailability se generira
                     // uz upozorenje (isti override kao individualni termin).
                     bool holiday = holidaysForCompanies.Any(h => h.CompanyId == group.CompanyId && h.Date == date);
-                    if (holiday && !request.OverrideAvailability)
+                    if (holiday && !overrideAvailability)
                     {
                         skipped++;
                         skippedItems.Add(new GroupGenerationSkipDto
@@ -1342,7 +1344,7 @@ public class GroupService : IGroupService
             candidates.Select(c => c.Group).GroupBy(g => g.Id).Select(g => g.First()).ToList());
 
         Dictionary<(Guid SlotId, DateTimeOffset StartsAt), List<WarningDto>> warningsByCandidate =
-            await EnsureNoTrainerConflicts(organizationId, candidates, request.OverrideAvailability);
+            await EnsureNoTrainerConflicts(organizationId, candidates, overrideAvailability);
         await EnsureNoRoomConflicts(uow, organizationId, candidates);
         await EnsureNoMemberConflicts(organizationId, candidates);
 
@@ -1355,6 +1357,7 @@ public class GroupService : IGroupService
         List<Appointment> toCreate = new List<Appointment>();
         List<AppointmentScheduleCellDto> createdDtos = new List<AppointmentScheduleCellDto>();
         List<GroupOccurrenceMembershipSkip> membershipSkips = new();
+        List<(Guid AppointmentId, List<WarningDto> Warnings)> overriddenOccurrences = new();
 
         foreach (GroupOccurrenceCandidate candidate in candidates)
         {
@@ -1416,6 +1419,7 @@ public class GroupService : IGroupService
             occurrenceWarnings ??= new List<WarningDto>();
             if (candidate.IsHoliday && occurrenceWarnings.All(x => x.Code != WarningCodes.CompanyClosedHoliday))
                 occurrenceWarnings.Add(new WarningDto(WarningCodes.CompanyClosedHoliday));
+            overriddenOccurrences.Add((appointment.Id.GetValueOrDefault(), occurrenceWarnings));
             AppointmentRange range = AppointmentRange.Of(appointment);
 
             createdDtos.Add(new AppointmentScheduleCellDto
@@ -1459,6 +1463,10 @@ public class GroupService : IGroupService
             uow.Context.GroupOccurrenceMembershipSkips.AddRange(membershipSkips);
             await uow.Context.SaveChangesAsync();
         }
+
+        // K2: override radnog vremena / praznika koji je stvarno nešto zaobišao bilježi se po generiranom terminu.
+        foreach ((Guid appointmentId, List<WarningDto> warnings) in overriddenOccurrences)
+            await AvailabilityOverride.Audit(_appointmentAuditLogHandler, uow, appointmentId, warnings, userId);
 
         // P2 (2D, §11.4): pokriće članova redom po vremenu occurrencea; generiranje je automatski proces i nikad ne odbija
         // (iskorišten limit → sljedeći izvor, razlog na sudjelovanju). Bez članarine no-op.

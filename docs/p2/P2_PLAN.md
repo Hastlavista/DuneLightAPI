@@ -1146,6 +1146,9 @@ migraciju podataka.
 Povlačenje otkaza ide pod isti grant kao otkaz (prijedlog): ista radnja u suprotnom smjeru, povoljna za klijenta, niskog rizika.
 
 ### 20.5 Preporučena raspodjela grantova po tipičnim ulogama (dokumentacija; studio dodjeljuje sam)
+> **UKINUTO 2026-10-09 (K2):** sustav je agnostičan prema ulogama — nema zakucanih uloga ni preporučene raspodjele grantova po
+> ulogama; organizacija sama slaže grupe kroz capabilityje (ARCHITECTURE §7.3, K2 record). Tablica ostaje samo kao povijest
+> P2 plana, ne kao preporuka.
 | Grant | Recepcija | Voditelj | Admin |
 |---|---|---|---|
 | `catalog.memberships.view` | ✓ | ✓ | ✓ |

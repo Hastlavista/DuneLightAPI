@@ -120,8 +120,8 @@ public class ParticipationsController : ControllerBase
             }));
     }
 
-    /// <summary>Korekcija natrag na Confirmed. P1 (D12): poništenje aktivne posljedice sa stvarnim učinkom traži
-    /// appointments.policy.override i razlog korekcije (correctionReason u tijelu; tijelo je opcionalno).</summary>
+    /// <summary>Korekcija natrag na Confirmed. K2 (ADR-0032): prije zatvaranja termina bez granta i razloga (poništene posljedice
+    /// su Reversed); na zatvorenom terminu grant appointments.corrections.* po izvornom statusu i correctionReason.</summary>
     [HttpPatch("{participationId:guid}/confirm")]
     [RequireGrant(Grants.AppointmentsWriteOwn, Grants.AppointmentsWriteAll)]
     public async Task<ActionResult<BookingDto>> Confirm(
@@ -133,9 +133,10 @@ public class ParticipationsController : ControllerBase
     }
 
     /// <summary>P1 (D10) — naknadni otpis AKTIVNE posljedice politike (cijele; razlog obavezan; nepovratno). Vraća jedinicu
-    /// paketa potrošenu kao kaznu; novac se ne pomiče. Normalan pristup sudjelovanju se provjerava u servisu.</summary>
+    /// paketa potrošenu kao kaznu; novac se ne pomiče. Normalan pristup sudjelovanju se provjerava u servisu. K2: grant po
+    /// učinku (naknada → fee.waive, jedinica/kredit → unit.waive) provjerava servis.</summary>
     [HttpPost("{participationId:guid}/policy-consequence/waive")]
-    [RequireGrant(Grants.AppointmentsPolicyOverride)]
+    [RequireGrant(Grants.AppointmentsPolicyFeeWaive, Grants.AppointmentsPolicyUnitWaive)]
     public async Task<ActionResult<BookingDto>> WaivePolicyConsequence(Guid participationId, [FromBody] PolicyConsequenceWaiveRequest request)
     {
         return Ok(await _bookingService.WaivePolicyConsequence(

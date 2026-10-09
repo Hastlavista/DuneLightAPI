@@ -442,7 +442,9 @@ public class BookingCorrectionCharacterizationTests
         await w.SetBookingStatus(occurrence.Id.Value, member, BookingStatus.Completed);
         await w.Appointments.CompleteGroupAppointment(w.OrganizationId, w.ActorUserId, true, occurrence.Id.Value);
 
-        await w.SetBookingStatus(occurrence.Id.Value, member, BookingStatus.Confirmed);
+        // K2 (ADR-0032): the close-out closes the appointment — a correction from Completed needs the grant and a reason.
+        await w.GrantUser(w.ActorUserId, Grants.AppointmentsCorrectionsCompleted);
+        await w.SetBookingStatus(occurrence.Id.Value, member, BookingStatus.Confirmed, correctionReason: "marked by mistake");
 
         CommissionEntry entry = Assert.Single(await w.LoadCommissionEntries());
         Assert.Equal(CommissionSourceType.GroupService, entry.SourceType);

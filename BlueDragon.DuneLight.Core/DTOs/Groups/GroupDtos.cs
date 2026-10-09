@@ -221,8 +221,9 @@ public class GenerateGroupAppointmentsRequest
 
     /// <summary>Zaobilazi MEKE radne-snage blokade (izvan radnog vremena, odsutnost, pauza trenera) za sve occurrence u ovom
     /// rasponu — vidi AppointmentCreateRequest.OverrideAvailability. K1-7 (P-5): uz potvrdu se generira i na praznik
-    /// poslovnice (upozorenje COMPANY_CLOSED_HOLIDAY); bez nje se praznik preskače i navodi u Skipped. Nema posebnog grant
-    /// zahtjeva jer je groups.manage već jedini (own/all nepodijeljen) grant ovog endpointa (K2: zaseban grant).</summary>
+    /// poslovnice (upozorenje COMPANY_CLOSED_HOLIDAY); bez nje se praznik preskače i navodi u Skipped. K2 (P-2): traži
+    /// appointments.availability.override (ne više groups.manage); zatražen bez granta → 403; svaki stvarni override se
+    /// bilježi u audit generiranog termina.</summary>
     public bool OverrideAvailability { get; set; }
 }
 

@@ -26,12 +26,6 @@ public static class PolicyConsequences
             c.Trigger == PackageConsumptionTrigger.PolicyConsequence &&
             c.ParticipationPolicyConsequenceId == consequence.Id);
 
-    /// <summary>D12 — posljedica sa STVARNIM učinkom: naknada &gt; 0 ili aktivna povezana potrošnja paketa. Njezino poništenje
-    /// korekcijom traži appointments.policy.override i razlog; posljedica bez učinka traži samo normalan pristup.</summary>
-    public static bool HasRealEffect(BookingSegmentParticipation participation, ParticipationPolicyConsequence consequence) =>
-        consequence.CalculatedFeeAmount > 0m || ActiveConsumptionOf(participation, consequence) != null
-        || consequence.MembershipCreditForfeited;
-
     public static ParticipationPolicyConsequenceDto ToDto(ParticipationPolicyConsequence c) => c == null
         ? null
         : new ParticipationPolicyConsequenceDto

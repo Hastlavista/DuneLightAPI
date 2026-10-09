@@ -61,8 +61,21 @@ public interface IAppointmentService
 
     /// <summary>K1-5 (14.1) — vraća eksplicitno otkazan termin u rad: na Confirmed se vraćaju SAMO sudjelovanja otkazana otkazom
     /// termina (klijentovi raniji otkazi ostaju); sve ili ništa uz ponovnu provjeru preklapanja i kapaciteta; pokriće članarinom i
-    /// cijena se ponovno evaluiraju. Istekli upisi liste čekanja se ne vraćaju (popis u upozorenju).</summary>
+    /// cijena se ponovno evaluiraju. Istekli upisi liste čekanja se ne vraćaju (popis u upozorenju).
+    /// K2 (ADR-0032): grant appointments.corrections.cancelled (provjerava kontroler) i own/all opseg nad svim segmentima
+    /// (appointments.write.*, za grupu i groups.attendance.*); provjere kao novi upis (radno vrijeme uz override, kapacitet
+    /// grupe bez upisa u punu grupu, pokriće).</summary>
     Task<AppointmentDto> Restore(Guid organizationId, Guid userId, Guid id, AppointmentRestoreRequest request);
+
+    /// <summary>K2 (ADR-0032) — ručno zatvaranje termina (oba oblika; own opseg mora posjedovati sve segmente). Za grupni termin
+    /// je to close-out (provizija sesije i istek liste čekanja samo prvi put). Otkazan termin se ne zatvara. Ponovljeno
+    /// zatvaranje je no-op.</summary>
+    Task<AppointmentDto> Close(Guid organizationId, Guid userId, bool hasFullScope, Guid id);
+
+    /// <summary>K2 (ADR-0032) — ponovno otvaranje zatvorenog termina: razlog obavezan, opseg kao inače, grant korekcije za svaki
+    /// terminalni status prisutan na terminu (bez terminalnih sudjelovanja: bilo koji grant korekcije). Otvoren ostaje do ručnog
+    /// zatvaranja ili kraja tog poslovnog dana. Eksplicitno otkazan termin se vraća kroz Restore. Opseg kao Restore.</summary>
+    Task<AppointmentDto> Reopen(Guid organizationId, Guid userId, Guid id, AppointmentReopenRequest request);
 
     /// <summary>Tvrdo brisanje — samo Admin, samo isti dan kad je unesen (provjerava se u servisu).</summary>
     Task Delete(Guid organizationId, Guid userId, Guid id);

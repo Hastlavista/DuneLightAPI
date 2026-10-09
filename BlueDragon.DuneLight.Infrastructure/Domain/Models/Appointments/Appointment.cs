@@ -73,6 +73,25 @@ public class Appointment
     [Column("closed_out_by")]
     public Guid? ClosedOutBy { get; set; }
 
+    /// <summary>K2 (ADR-0032) — RUČNO zatvaranje termina (oba oblika): kada/tko. Briše ga ponovno otvaranje. Za grupu ga postavlja
+    /// i close-out (ClosedOutAt ostaje identitet PRVOG close-outa za proviziju i listu čekanja). Zatvorenost se izvodi u
+    /// Utils/AppointmentClosure (ručno ILI automatski na kraju poslovnog dana).</summary>
+    [Column("closed_at")]
+    public DateTimeOffset? ClosedAt { get; set; }
+
+    [Column("closed_by")]
+    public Guid? ClosedBy { get; set; }
+
+    /// <summary>K2 — zadnje ponovno otvaranje (kada/tko/zašto); pomiče trenutak automatskog zatvaranja na kraj tog dana.</summary>
+    [Column("reopened_at")]
+    public DateTimeOffset? ReopenedAt { get; set; }
+
+    [Column("reopened_by")]
+    public Guid? ReopenedBy { get; set; }
+
+    [Column("reopen_reason")]
+    public string ReopenReason { get; set; }
+
     /// <summary>Je li termin TRENUTNO eksplicitno otkazan (vidi <see cref="CancelledAt"/>).</summary>
     [NotMapped]
     public bool IsExplicitlyCancelled => CancelledAt.HasValue;

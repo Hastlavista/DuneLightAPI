@@ -4,6 +4,7 @@ using System.Linq;
 using System.Threading.Tasks;
 using BlueDragon.DuneLight.Core.DTOs.Roster;
 using BlueDragon.DuneLight.Core.Enums;
+using BlueDragon.DuneLight.Core.Interfaces;
 using BlueDragon.DuneLight.Core.Interfaces.Roster;
 using BlueDragon.DuneLight.Core.Shared;
 using BlueDragon.DuneLight.Core.Shared.Exceptions;
@@ -28,6 +29,7 @@ public class RosterEntryService : IRosterEntryService
     private readonly IUnitOfWorkFactory _unitOfWorkFactory;
 
     private readonly IOrganizationCalendarService _organizationCalendarService;
+    private readonly IGrantResolver _grantResolver;
 
     public RosterEntryService(
         IRosterEntryHandler rosterEntryHandler,
@@ -39,8 +41,10 @@ public class RosterEntryService : IRosterEntryService
         ILeaveFundHandler leaveFundHandler,
         IEmployeeLeaveSettingsHandler employeeLeaveSettingsHandler,
         IUnitOfWorkFactory unitOfWorkFactory,
-        IOrganizationCalendarService organizationCalendarService)
+        IOrganizationCalendarService organizationCalendarService,
+        IGrantResolver grantResolver)
     {
+        _grantResolver = grantResolver;
         _organizationCalendarService = organizationCalendarService;
         _rosterEntryHandler = rosterEntryHandler;
         _rosterTypeHandler = rosterTypeHandler;
@@ -89,6 +93,7 @@ public class RosterEntryService : IRosterEntryService
         (DateOnly dateFrom, DateOnly? dateTo, TimeSpan? startTime, TimeSpan? endTime, decimal? durationHours) =
             ValidateAndCompute(type, request.DateFrom, request.DateTo, request.StartTime, request.EndTime);
 
+        await EnsurePastAllowed(organizationId, userId, dateFrom);
         EnsureLeaveFundEntryHasEndDate(type, dateTo);
 
         bool isOverride = !type.IsAbsence && request.IsOverride;
@@ -170,6 +175,7 @@ public class RosterEntryService : IRosterEntryService
         (DateOnly dateFrom, DateOnly? dateTo, TimeSpan? startTime, TimeSpan? endTime, decimal? durationHours) =
             ValidateAndCompute(type, request.DateFrom, request.DateTo, request.StartTime, request.EndTime);
 
+        await EnsurePastAllowed(organizationId, userId, existing.DateFrom, dateFrom);
         EnsureLeaveFundEntryHasEndDate(type, dateTo);
 
         bool isOverride = !type.IsAbsence && request.IsOverride;
@@ -232,6 +238,7 @@ public class RosterEntryService : IRosterEntryService
         await ValidateOwnership(organizationId, userId, hasFullScope, existing.EmployeeId);
 
         RosterEntry entry = await _rosterEntryHandler.GetByIdLight(organizationId, id);
+        await EnsurePastAllowed(organizationId, userId, entry.DateFrom);
 
         await using IUnitOfWork uow = await _unitOfWorkFactory.Begin();
 
@@ -438,6 +445,18 @@ public class RosterEntryService : IRosterEntryService
         }
 
         return plannedDays;
+    }
+
+    /// <summary>K2 (P-4, ADR-0032) — zapis koji počinje prije današnjeg dana organizacije (stari ili novi datum) traži
+    /// roster.entries.write.past uz own/all opseg. Bez vremenske granice (ARCH §7.3); svaku promjenu bilježi RosterAuditLog.</summary>
+    private async Task EnsurePastAllowed(Guid organizationId, Guid userId, params DateOnly[] dateFroms)
+    {
+        DateOnly today = (await _organizationCalendarService.GetCalendar(organizationId)).LocalDate(DateTimeOffset.UtcNow);
+        if (dateFroms.All(d => d >= today))
+            return;
+        GrantContext grants = await _grantResolver.Resolve(organizationId, userId);
+        if (!grants.Has(Grants.RosterEntriesWritePast))
+            throw new ForbiddenAppException("Upis ili izmjena roster zapisa u prošlosti zahtijeva ovlast roster.entries.write.past.");
     }
 
     private async Task ValidateOwnership(Guid organizationId, Guid userId, bool hasFullScope, Guid employeeId)

@@ -46,7 +46,7 @@ public partial class AppointmentService
                 throw new ValidationAppException("Kraj segmenta mora biti nakon početka.");
             List<Guid> employees = segment.Employees.Select(e => e.EmployeeId).ToList();
             List<WarningDto> warnings = await EnsureWorkforceAvailability(
-                organizationId, employees, appointment.CompanyId, request.PlannedStart, end, request.OverrideAvailability && hasFullScope);
+                organizationId, employees, appointment.CompanyId, request.PlannedStart, end, await AvailabilityOverride.Resolve(_grantResolver, organizationId, userId, request.OverrideAvailability));
             return (new SegmentTarget(request.PlannedStart, end, segment.ServiceId, employees, segment.RoomId, resources, Reprice: true,
                 $"time:{request.PlannedStart:O}-{end:O}"), warnings);
         });
@@ -67,7 +67,7 @@ public partial class AppointmentService
             List<WarningDto> warnings = end == segment.PlannedEnd
                 ? new List<WarningDto>()
                 : await EnsureWorkforceAvailability(
-                    organizationId, employees, appointment.CompanyId, segment.PlannedStart, end, request.OverrideAvailability && hasFullScope);
+                    organizationId, employees, appointment.CompanyId, segment.PlannedStart, end, await AvailabilityOverride.Resolve(_grantResolver, organizationId, userId, request.OverrideAvailability));
 
             // K1-6: bez poslanih resursa nova usluga donosi svoje zadane resurse (zamjena, ne zbrajanje).
             IReadOnlyList<ResourceClaim> targetResources = resources;
@@ -98,7 +98,7 @@ public partial class AppointmentService
             foreach (Guid employeeId in employees)
                 await EnsureStructuralEligibility(organizationId, service, appointment.CompanyId, employeeId);
             List<WarningDto> warnings = await EnsureWorkforceAvailability(
-                organizationId, employees, appointment.CompanyId, segment.PlannedStart, segment.PlannedEnd, request.OverrideAvailability && hasFullScope);
+                organizationId, employees, appointment.CompanyId, segment.PlannedStart, segment.PlannedEnd, await AvailabilityOverride.Resolve(_grantResolver, organizationId, userId, request.OverrideAvailability));
             return (new SegmentTarget(segment.PlannedStart, segment.PlannedEnd, segment.ServiceId, employees, segment.RoomId, resources, Reprice: true,
                 $"employees:{string.Join(",", employees.OrderBy(id => id))};pricing:{pricingSource.Mode}:{pricingSource.EmployeeId}", pricingSource), warnings);
         });
@@ -226,6 +226,8 @@ public partial class AppointmentService
                 ChangedAt = now,
                 ChangedBy = userId
             });
+            // K2: override radnog vremena koji je stvarno nešto zaobišao.
+            await AvailabilityOverride.Audit(_auditLogHandler, uow, locked.Id.GetValueOrDefault(), warnings, userId);
 
             await uow.Context.SaveChangesAsync();
 
@@ -259,7 +261,7 @@ public partial class AppointmentService
         ValidatedSegment validated = await ValidateSegment(organizationId, appointment.CompanyId, request, PricingMode.WithManualOverride);
         List<WarningDto> warnings = await EnsureWorkforceAvailability(
             organizationId, validated.Plan.EmployeeIds, appointment.CompanyId, validated.Plan.PlannedStart, validated.Plan.PlannedEnd,
-            request.OverrideAvailability && hasFullScope);
+            await AvailabilityOverride.Resolve(_grantResolver, organizationId, userId, request.OverrideAvailability));
 
         await using (IUnitOfWork uow = await _unitOfWorkFactory.Begin())
         {
@@ -284,6 +286,7 @@ public partial class AppointmentService
                 Id = Guid.NewGuid(), AppointmentId = appointmentId, ChangeType = "SegmentAdded",
                 NewValue = segment.Id.ToString(), ChangedAt = now, ChangedBy = userId
             });
+            await AvailabilityOverride.Audit(_auditLogHandler, uow, appointmentId, warnings, userId);
 
             await uow.Context.SaveChangesAsync();
             // P2 (2D): claim na rezervaciji za nova sudjelovanja segmenta (no-op bez članarine).
