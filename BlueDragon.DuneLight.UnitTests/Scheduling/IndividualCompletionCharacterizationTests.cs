@@ -354,7 +354,9 @@ public class IndividualCompletionCharacterizationTests
 
         await CreateAndComplete(w, packageId: package.Id);
 
-        Assert.Equal(5m, Assert.Single(await w.LoadCommissionEntries()).CommissionAmount);
+        // CHANGED in T1 (T1-10): sesija pokrivena paketom i dalje zarađuje proviziju, ali od plaćene cijene paketa po jedinici
+        // (100 € / 5 = 20 € → 10 % = 2 €), ne od maloprodajne cijene sesije (prije: 50 € → 5 €).
+        Assert.Equal(2m, Assert.Single(await w.LoadCommissionEntries()).CommissionAmount);
     }
 
     #endregion

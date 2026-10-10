@@ -25,7 +25,7 @@ public class OrganizationSettingsController : ControllerBase
     }
 
     [HttpGet]
-    [RequireGrant(Grants.OrganizationSettingsManage)]
+    [RequireGrant(Grants.OrganizationSettingsView, Grants.OrganizationSettingsManage)]
     public async Task<ActionResult<OrganizationSettingsDto>> GetSettings()
     {
         return Ok(await _organizationSettingsService.GetSettings(this.CurrentOrganizationId()));

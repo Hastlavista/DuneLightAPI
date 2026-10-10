@@ -159,7 +159,8 @@ angažmana; grupe ovlasti "Treneri" (own opseg: `appointments.write.own`, `clien
 ovlasti" (all opseg, sve osim K2 grantova); 4 zaposlenika s loginom: admin (Admin grupa), trener, recepcija i **korisnik bez
 ijedne grupe ovlasti** (prijava radi, svaka zaštićena radnja 403); 20 klijenata s GDPR suglasnošću (datum nikad u budućnosti) i
 datumom rođenja (jedan rođendan "danas", jedan za tri dana). Bez usluga, cjenika, prostorija/resursa, paketa, planova članarina,
-politika i razloga otkazivanja, grupa, termina i checkouta. Grupe "za prvog klijenta" nisu u seedu: mapiranje još nije spremno,
+politika (osim neutralne zadane iz registracije) i razloga otkazivanja, grupa, termina i checkouta; sve što sustav daje sam novoj
+organizaciji je prisutno jer "Osnova" ide kroz stvarnu registraciju (popis i test: T1-10). Grupe "za prvog klijenta" nisu u seedu: mapiranje još nije spremno,
 dolaze kasnije, nakon potvrde korisnika.
 
 **"Puni demo"** (`Full`): sve iz "Osnove" (zaposlenici dobivaju usluge), i:
@@ -381,6 +382,162 @@ i izričitu odluku o već isteklim paketima (danas se odbijaju s `PACKAGE_EXPIRE
 granice); `PackageCatalogDateTests.Sell` i `PackageValidityCalendarTests.Sale_UsesTheSaleCompanysLocalDate…` (izričit dan kupnje)
 prodaju uz sat postavljen na dan kupnje. `T1DemoSeedTests` dopunjen (grupa "bez K2" nema novi grant). Ostala očekivanja nepromijenjena.
 
+### T1-10 Uključiv kraj, provizija i primljeni iznos, "Osnova" = registracija
+Odluke: dnevnik "Tri odluke T1 (1)/(2)/(3)". Bez migracije (nova polja objašnjenja provizije su u postojećem jsonb `rule_evaluation`).
+
+**(1) Uključiv kraj — revizija granica "do" (`DateOnly`)** (putanje relativno na `BlueDragon.DuneLight.Infrastructure/`):
+
+| Granica | Gdje (usporedba) | Danas | Odluka |
+|---|---|---|---|
+| Fond godišnjeg `ExpiresAt` | `Utils/LeaveFundYearCalculator.cs:35` `IsExpired`; `Handlers/Implementations/LeaveFundHandler.cs:69` `GetEligible` | bilo **isključivo** (`ExpiresAt <= danas` = istekao; `ExpiresAt > asOf`) | **Promijenjeno → uključivo** (`danas > ExpiresAt`; `ExpiresAt >= asOf`), CHANGED in T1; komentari u `RosterEntryService` i `LeaveFund` |
+| Kraj članstva `EndsOn` (stanje, pokriće, upiti, kapacitet plana, obnova) | `Utils/MembershipLifecycleRules.cs:30` (`EndsOn < danas` → Ended); `Utils/MembershipCoverageRules.cs:48-49, 96`; `Handlers/Implementations/ClientMembershipHandler.cs` (`EndsOn >= today`); `Utils/MembershipPlanCapacity.cs:28, 34`; `Services/MembershipRenewalService.cs:112` | uključivo | bez promjene |
+| Kraj perioda članstva `EndsOn` | `Utils/MembershipPeriodCalendar.cs:34` (`StartsOn <= d <= EndsOn`), `:116` (`nextStart.AddDays(-1)`); `Utils/MembershipCoverageRules.cs:154` | uključivo (zadnji dan perioda; sljedeći počinje dan poslije) | bez promjene |
+| Datum otkaza članstva (`CancellationEffective`) | `Utils/MembershipLifecycleRules.cs:52-88`, `Services/ClientMembershipService.cs:875-890` → zapisuje se kao `EndsOn` | uključivo (vrijednost je zadnji dan perioda) | bez promjene; opis "datum od kad otkaz djeluje" je nespretan (vrijednost je zadnji valjani dan) |
+| Prijevremeni kraj (`EndEarly`) | `Services/ClientMembershipService.cs:741-760` | uključivo (kraj "danas" = danas još vrijedi) | bez promjene |
+| Kraj pauze (`PlannedEndsOn` / `ActualEndsOn` / `EffectiveEndsOn`) | `Domain/Models/Clients/MembershipPause.cs:71-73`; `Utils/MembershipLifecycleRules.cs:34`; `Utils/MembershipCoverageRules.cs:110, 212`; `Utils/PriceAdjustmentResolver.cs:113` | uključivo (zadnji dan pauze; `Days = EndsOn − StartsOn + 1`) | bez promjene; prijevremeni završetak pauze = jučer (dan povratka je prvi aktivni dan) |
+| Kraj stajanja (`CompanyClosure`) | `Services/MembershipRenewalService.cs:168-182`; `Utils/MembershipPeriodCalendar.cs:126-131, 205` | uključivo (zadnji dan stajanja; otvoreno = 2999-12-31) | bez promjene |
+| Grace period | `Utils/MembershipChargeSettlement.cs:50, 61` (`DueOn + GraceDays < danas` → Delinquent) | uključivo: zadnji dan grace = `DueOn + GraceDays`, dug od dana poslije | bez promjene |
+| Dospijeće zaduženja `DueOn` | `Services/MembershipRenewalService.cs` (`DueOn` = početak perioda) | datum "od", ne "do" | ne primjenjuje se |
+| `PendingEffectiveOn` / `EffectiveOn` izmjene plana | `Utils/MembershipCoverageRules.cs:57`; `Services/MembershipRenewalService.cs:206` | datum "od" (novi uvjeti vrijede tog dana) | ne primjenjuje se |
+| `ValidUntilDate` paketa | `Utils/PackageValidity.cs:25-26`; `Handlers/Implementations/ClientPackageHandler.cs:130, 174`; `Utils/ClientPackageStatusResolver.cs:21`; `Utils/ClientPackageEntryMutator.cs:103` | uključivo | bez promjene |
+| `ValidTo` cjenika | `Services/PriceResolutionService.cs:17`; `Handlers/Implementations/PriceListItemHandler.cs:157-158`; `Utils/DateRangeOverlap.cs` | uključivo (T1-7) | bez promjene |
+| Pravilo provizije `EffectiveFrom` / `DeactivatedFrom` | `Handlers/Implementations/CommissionRuleHandler.cs:60`; `Domain/Models/Commissions/CommissionRule.cs:107` (`date < DeactivatedFrom`) | datumi "od" (`DeactivatedFrom` isključiv jer znači "od tada nema pravila") | ne primjenjuje se (po nalogu) |
+| Roster `DateTo` | `Handlers/Implementations/RosterEntryHandler.cs:41, 82, 97`; `Services/RosterEntryService.cs:677, 777, 787` | uključivo | bez promjene |
+| Kraj ponavljajućeg niza `EndDate` | `Utils/OrganizationCalendar.cs:80` | uključivo (ADR-0035) | bez promjene |
+| Generiranje grupe `ToDate` | `Services/GroupService.cs:1218, 1282` | uključivo | bez promjene |
+| Radno vrijeme (predložak) | `Domain/Models/Roster/WorkingHoursTemplate.cs` | nema datuma kraja (samo `AnchorDate`) | ne primjenjuje se |
+| Kraj zaposlenja `EmploymentEndDate` | `Services/EmployeeService.cs:421-424` | nigdje se ne uspoređuje s danom (samo kraj >= početak) | bez promjene; nalaz ispod |
+
+Nalazi za odluku (ništa nije mijenjano):
+- **Paket `DayCount`:** `PackageExpiryCalculator` daje `ValidUntilDate = PurchaseDate + N`, pa paket "30 dana" uz uključiv kraj vrijedi
+  31 kalendarski dan računajući dan kupnje (kupljen 1.1. → vrijedi do 31.1.). Treba li "N dana" značiti N dana uključujući dan kupnje
+  (`+ N − 1`)? To je pitanje pravila trajanja, ne granice.
+- **`EmploymentEndDate`** nema učinka (zakazivanje, dostupnost i roster ga ne gledaju).
+- `RosterEntryHandler.cs:41`: upit s filtrom `from` ne vraća otvoreno odsustvo (`DateTo = null`) koje je počelo prije `from`, dok upiti
+  preklapanja (`:82`, `:97`) otvoreno odsustvo tretiraju kao beskonačno.
+
+**(2) Provizija i primljeni iznos** (`CommissionService.GenerateForIndividualServiceCompletion`, dopuna ADR-0030):
+- Princip je u ARCH §6 i ADR-0030. Postojeći `WasCapped` (do sada samo Q38) se ponovno koristi; razlog je u objašnjenju:
+  `CommissionRuleEvaluationDto.CappedAt`, `CapReason` ("Ograničeno na naplaćeni iznos 5,00 €.") i `BaseNote` (izvor osnovice
+  paketa). Polja su nova u DTO-u (nullable), pa frontend tipove treba ponovno generirati.
+- **Slučaj 1 (izravno naplaćeno):** min(izračunata, iznos sudjelovanja). Vrijedi za svaku izravno naplaćenu sesiju, pa i za
+  sesiju s popustom za članove (2E, bez claima članarine): uz isključen "oduzmi popuste članstva" osnovica je cjenik, a gornja granica
+  stvarni (sniženi) iznos. Takva sesija nije "pokrivena članarinom", pa iznimka ne vrijedi.
+- **Slučaj 3 (paket), CHANGED in T1:** prije je osnovica bila cijena sesije iz upisa (cjenik / ručni iznos), ne plaćena cijena paketa.
+  Sada `PaidPrice / jedinice` (zajednički fond `TotalEntryCount`, inače zbroj `TotalEntries` usluga), zaokruženo na cent (stupci su
+  `numeric(…,2)`); `SessionPriceAmount` = cijena jedinice, `ListPriceAmount` = cjenik; prekidači ne djeluju; bez ograničenja.
+  **Otvoreno:** neograničen paket (ili usluga bez broja jedinica) nema cijenu jedinice — ostaje dosadašnja osnovica (cijena sesije).
+- **Slučaj 2 (članarina):** prekidač isključen → bez ograničenja (iznimka). Uz uključen prekidač naplaćeno na sesiji je 0 € (iznos
+  sudjelovanja ostaje cjenik, Q9, a namiruje ga članarina), pa je provizija 0 i za fiksno pravilo — CHANGED in T1 (prije puni fiksni
+  iznos, suprotno ADR-0030). Spremanje postavki s isključenim prekidačem vraća upozorenje `COMMISSION_MEMBERSHIP_SESSIONS_AT_LIST_PRICE`
+  (novo polje `OrganizationCommissionSettingsDto.Warnings`; GET vraća prazno).
+- **Kako se ponaša fiksno pravilo (odgovor):** fiksno pravilo je uvijek fiksni iznos — ne ovisi o cijeni sesije ni o prekidačima.
+  Prije T1-10: na sesiji pokrivenoj članarinom davalo je puni iznos i uz "oduzmi popuste članstva" (osnovica 0 nije djelovala), a na
+  paketnoj sesiji puni iznos. Nakon T1-10: članarina + prekidač isključen → puni iznos (iznimka); članarina + prekidač uključen → 0 €
+  (`WasCapped`); paket → puni iznos, bez ograničenja (npr. 30 € uz cijenu jedinice 20 €); izravno → najviše naplaćeni iznos.
+- Izvan opsega (bez promjene): grupna provizija (fiksno po održanom terminu, nema jednog naplaćenog iznosa), provizija na prodaju (od
+  iznosa stavke; fiksno pravilo može premašiti iznos stavke), Q38 (već ograničeno).
+
+**(3) "Osnova" = stvarna registracija.** Nova organizacija nastaje samo kroz `AuthService.Register` (jedino mjesto koje stvara
+`Organization`); `OnboardingService` samo čita status (`GetStatus`) i ništa ne stvara. Što sustav daje sam, u jednoj transakciji:
+1. organizacija (naziv, slug, `CreatedAt`) i osnivač (aktivan korisnik s API ključem, bez profila zaposlenika);
+2. zadani tipovi rostera (`DefaultRosterTypes`: Rad / Godišnji / Bolovanje);
+3. neutralna zadana politika otkazivanja (1440 min, bez naknade i paketne kazne, verzija 1);
+4. Admin grupa ovlasti (`system_key = 'admin'`) sa svim grantovima iz `Grants.Catalog`, s osnivačem kao članom.
+
+Sustav **ne** stvara: razloge otkazivanja (nema početnih), redak postavki organizacije (zadane vrijednosti se čitaju kad retka nema,
+npr. grace 7 dana, prekidači provizija isključeni), vrste angažmana, poslovnice ni praznike. "Osnova"
+(`DemoSeedService.CreateDemoOrganization`) poziva `IAuthService.Register`, a zatim kroz servise dodaje samo podatke studija
+(poslovnice s radnim vremenom, praznik, vrsta angažmana, grupe ovlasti "Treneri"/"Recepcija", zaposlenici, klijenti). Ništa od
+sustavskog ne preskače, ne udvostručuje i ne mijenja. **Odstupanja: nema** (kod nije mijenjan); u opisu T1-4 ispravljeno "bez
+politika" → "osim neutralne zadane iz registracije". Test `T1OnboardingParityTests` uspoređuje svježe registriranu organizaciju i
+"Osnovu" na svim stavkama s popisa.
+
+**Testovi:** novi `UnitTests/T1/T1InclusiveEndTests.cs` (2), `T1CommissionCapTests.cs` (6), `T1OnboardingParityTests.cs` (1).
+`CHANGED in T1`: `CommissionVagaroTests.Base_PackageCoveredSession_IsTheSessionPrice_ThePackageIsAPaymentMethod` (osnovica 50 € → 20 €
+= 100 € / 5 jedinica, provizija 5 € → 2 €), karakterizacijski `IndividualCompletionCharacterizationTests.CompletingParticipations_PackageCoveredBooking_StillEarnsCommissionOnTheRetailAmount`
+(5 € → 2 €) i `MultiEmployeeSegmentTests.Commission_OfAPackageCoveredParticipation_StillUsesTheFinalPrice` (10 € / 15 € → 2 € / 3 €;
+konačna cijena sudjelovanja i dalje 100 €). Ostala očekivanja nepromijenjena. Puna suita: 1352 / 1352 prolazi; build 0 grešaka, bez
+novih produkcijskih upozorenja.
+
+### T1-11 Naknadne odluke (trajanje "N dana", neograničen paket, ograničenje paketne sesije, roster upit, grantovi za čitanje)
+Odluke: dnevnik "T1-11 (1)–(7)". Migracija `[DeveloperMigration(2026, 10, 30, Developer.SilvioHabazin, 4)]` (`T1ReadGrants`, primijenjena
+lokalno). Putanje relativno na `BlueDragon.DuneLight.Infrastructure/`.
+
+**(1) "N dana" = N kalendarskih dana uključujući prvi dan** (ADR-0035, dopuna T1-11). `Utils/PackageExpiryCalculator` (jedino mjesto koje
+računa `ValidUntilDate`; koriste ga `ClientPackageService.Create` i `CheckoutService`): `DayCount` = kupnja + N − 1 (kupljen 1.10., "30 dana"
+→ do 30.10. uključivo) — CHANGED in T1 (prije + N, tj. N + 1 dan). `EndOfMonth` i `FixedDate` bez promjene. Već upisani paketi zadržavaju
+spremljeni `ValidUntilDate` (nema produkcijskih podataka, bez backfilla). Revizija ostalih trajanja:
+
+| Trajanje | Gdje | Semantika danas | Odluka |
+|---|---|---|---|
+| Paket `ValidityDays` (`DayCount`) | `Utils/PackageExpiryCalculator.cs` | bilo kupnja + N (N + 1 dan) | **promijenjeno** → kupnja + N − 1 |
+| Period članstva (mjesečno / godišnje; intervala po danima nema) | `Utils/MembershipPeriodCalendar.cs` (`anchor.AddMonths(k·m)`, kraj = sljedeći početak − 1) | 5.10. + 1 mj. → do 4.11.; "3 mjeseca" od 5.10. → do 4.1. | u skladu, bez promjene |
+| Pauza po danima (`EndsOn` uključivo) i `MaxPauseDays` | `Domain/Models/Clients/MembershipPause.cs`, `Utils/MembershipLifecycleRules.cs` (`OverlapDays` = do − od + 1) | trajanje = `EndsOn − StartsOn + 1`, limit se uspoređuje s tim zbrojem | u skladu |
+| Pomak perioda zbog pauze (`ExtendsPeriod`) | `Utils/MembershipPeriodCalendar.ShiftDays` | pomak = dani pauze (uključivo) | u skladu |
+| 12-mjesečni prozor limita pauza | `Utils/MembershipLifecycleRules.PauseWindow` | početak … početak + 12 mj. − 1 | u skladu |
+| Stajanje (`CompanyClosure`) | `Services/MembershipRenewalService.cs` | zadaje se datumima (kraj = dan prije ponovne aktivacije), ne brojem dana | ne primjenjuje se |
+| Grace `MembershipGraceDays` (zadano 7) | `Utils/MembershipChargeSettlement.cs:50, 61` (`DueOn + G < danas` → Delinquent) | dan dospijeća D nije grace dan; grace = D+1 … D+G (G dana), dug od D+G+1 | u skladu uz čitanje "prvi grace dan je dan nakon dospijeća" — nije mijenjano. Ako grace treba uključivati dan dospijeća (D … D+G−1), to je promjena pravila za odluku. |
+| Otkazni rok `CancellationNoticeDays` | `Utils/MembershipLifecycleRules.CancellationEffective` (`requestedOn + N − 1`) | dan zahtjeva je 1. dan roka; najraniji zadnji dan članstva = zahtjev + N − 1 | u skladu |
+| Rok najave izmjene plana `MembershipChangeNoticeDays` | `Services/MembershipPlanService.ScheduleForExistingMemberships` (`today + N`) | dan objave je 1. dan najave; novi uvjeti najranije od dana N + 1 (pa prvi period na/nakon toga) | u skladu |
+| Najkasniji početak članstva (danas + 1 mj.) | `Utils/MembershipLifecycleRules.cs:41` | granica, ne trajanje | ne primjenjuje se |
+| Prozori limita pokrića (tjedan / mjesec / kvartal) | `Utils/MembershipCoverageRules.cs:197-204` | kalendarski prozori (pon–ned, 1. – zadnji) | ne primjenjuje se |
+| Fond godišnjeg `AnnualDays`, `ExpiresAt` | `Utils/LeaveFundYearCalculator.cs` | količina dana i datum isteka (T1-10), ne trajanje | ne primjenjuje se |
+| P1 prozori otkazivanja | politika otkazivanja | minute | preskočeno (po nalogu) |
+
+**(2) Neograničen paket = članarina za provizije** (procjena: lokalna promjena u `CommissionService.GenerateForIndividualServiceCompletion`,
+bez novog stanja, migracije ni promjene settlementa — implementirano). Paket bez konačnog broja jedinica (zajednički fond bez
+`TotalEntryCount`, ili usluga bez `TotalEntries` — isti uvjet kao "nema cijene jedinice" iz T1-10) obračunava se kao sesija pokrivena
+članarinom: uključen "oduzmi popuste članstva" → osnovica 0 i provizija 0 € i za fiksno pravilo (`WasCapped`, razlog "… neograničenim
+paketom …"); isključen → osnovica = cijena sesije (cjenik / ručni iznos), bez ograničenja; `BaseNote` objašnjava. `PaymentSource` ostaje
+`Package`. Upozorenje `COMMISSION_MEMBERSHIP_SESSIONS_AT_LIST_PRICE` (kod isti) sada ima `Details` = `WarningCommissionListPriceSessionsDetails`
+(`AppliesTo: ["Membership", "UnlimitedPackage"]`) i opis koji spominje neograničene pakete (frontend tipove treba ponovno generirati).
+Napomena: paket po uslugama u kojem je samo dio usluga neograničen nema ukupnu cijenu jedinice, pa se cijeli obračunava kao neograničen
+(isti uvjet kao dosad "bez cijene jedinice").
+
+**(3) Ograničenje fiksnog pravila na paketnoj sesiji** — CHANGED in T1: provizija paketne sesije s cijenom jedinice najviše je ta vrijednost
+(`PaidPrice / jedinice`): fiksno 10 € na sesiji od 5 € → 5 € (`WasCapped`, "Ograničeno na vrijednost sesije iz paketa 5,00 €."). Postotno
+pravilo (0–100 %) granicu ne dosegne. **(4)** Članarina + prekidač uključen → 0 € i za fiksno; ograničenje izravno naplaćene sesije s
+popustom za članove — potvrđeno, bez promjene.
+
+**(5) Roster upit** (`Handlers/Implementations/RosterEntryHandler.GetPaged`) — CHANGED in T1: filter `from`/`to` = preklapanje s [from, to]
+kao u provjerama preklapanja: `DateFrom <= to` i kraj `>= from`, gdje je kraj `DateTo`, a bez `DateTo` otvorena odsutnost traje beskonačno.
+Odstupanje od doslovne formule iz naloga (`DateTo == null || DateTo >= from`): radni zapis ("Rad") uvijek ima `DateTo = null` i traje samo
+dan `DateFrom`, pa bi doslovna formula vraćala sve stare radne zapise; zato je kraj bez `DateTo` beskonačan samo za odsutnost
+(`RosterType.IsAbsence`). Višednevni zapis koji je počeo prije `from` i završava u rasponu vraćao se i prije (`DateTo >= from`); stvarna
+greška je bila otvorena odsutnost. `EmploymentEndDate` bez promjene (P6).
+
+**(6) Grantovi za čitanje** (ADR-0023): `catalog.cancellation-reasons.view`, `organization.settings.view`, `organization.branding.view`,
+`commissions.rules.view` u `Grants.cs` (nazivi/opisi na hrvatskom, moduli catalog / organization / commissions). `CapabilityCatalog`:
+`catalog.cancellation-reasons.manage`, `organization.branding.manage` i `organization.settings.manage` iz `On` u `View/Manage` (View = novi
+grant, Manage uključuje View); View razina `commissions.manage` = `commissions.view` + `commissions.rules.view`. Napomena: postojeća
+ne-Admin grupa koja ima samo `…manage` (bez novog `…view`) do ponovnog spremanja u capability editoru prikazuje taj grant kao ručni (stanje
+se izvodi iz grantova); Admin grupe nove grantove dobivaju migracijom. Endpointi (prihvaćaju view ILI manage): `GET api/catalog/cancellation-reasons`
+(uz dosadašnje `appointments.write.own/all`, `groups.attendance.own/all`), `GET api/organization/settings`, `GET api/organization/branding`
+(javni `public/{slug}` bez promjene), `GET api/commissions/rules`, `GET api/commissions/rules/{id}`, `GET api/commissions/settings`. Pisanje i
+dalje samo manage. 403 bez granta: `MissingGrant`, `requiredGrants` = svi prihvaćeni grantovi, `match = Any`. Migracija `T1ReadGrants`: samo
+grupe `system_key = 'admin'`, idempotentno. Grantovi za izvještaje NISU dodani (dolaze s fazama blagajne / izvještaja); predloženi nazivi:
+`reports.cash.view`, `cash.movements.manage`, `reports.work.view.own`, `reports.work.view.all`.
+
+**(7) Vrsta rostera "Administracija".** Registracija daje samo `DefaultRosterTypes` (Rad / Godišnji / Bolovanje); sustavska zadana vrsta
+se NE dodaje (sustav ne zna za poslove/uloge). Organizacija vlastitu vrstu dodaje kroz `POST api/roster/types` (`roster.types.manage`), npr.
+"Administracija": `CountsAsWork = true`, `IsAbsence = false`, `RequiresTime = true`. Roster pregledi (`GetTeamMonthly`, `GetPersonal`,
+`BuildSums`) zbrajaju sate po vrsti za sve `CountsAsWork` zapise — "Administracija" dobiva vlastiti redak u `WorkHoursByType` i ulazi u
+`TotalWorkHours`. Napomene: (a) dan s bilo kojim stvarnim zapisom više ne dobiva "pretpostavljene" sate iz predloška radnog vremena
+(`HasActualEntryForDay`), pa ako se za dan upiše samo administracija, ostali rad tog dana treba upisati zasebno; (b) zapis bez
+`IsOverride` ne mijenja dostupnost za zakazivanje. "Puni demo" (`DemoSeedService`, samo `FullDemo`) dodaje vrstu "Administracija" kroz
+`IRosterTypeService.Create`.
+
+**Testovi:** novi `UnitTests/T1/T1FollowUpTests.cs` (paket "N dana", roster upit, 200/403 za 6 GET endpointa kroz `RequireGrant` filter,
+čitanje razloga i dalje uz grantove otkazivanja, pisanje i dalje traži manage, capability View/Manage); u `T1CommissionCapTests` 2 nova
+(fiksno 10 € na sesiji 5 € → 5 €; neograničen paket uključeno 0 € / isključeno cjenik); u `T1ForbiddenShapeTests` 1 novi (HTTP 200 samo s
+`organization.settings.view`, 403 na postavkama provizija). `CHANGED in T1`: `T1CommissionCapTests.PackageCovered_FixedRule_IsCappedAtTheSessionValueFromThePackage`
+(prije `…IsAFlatAmount_NotCappedAtTheUnitPrice`, 30 € → 20 €), upozorenje postavki provjerava i `Details.AppliesTo`,
+`T1ForbiddenShapeTests.RequireGrant_WithoutAnyOfTheGrants_Is403…` (`requiredGrants` = view + manage), `PackageValidityCalendarTests` (2 testa,
++ 10 → + 9 dana), `T1PackagesGdprTests.ManualIssue_AlreadyExpiredAtIssue_IsRejectedWithDates` (02.03. → 01.03.; granica kupnja 23.02. →
+24.02.). Puna suita: 1375 / 1375 prolazi; build 0 grešaka, bez novih produkcijskih upozorenja (jedino postojeće CS0105 u
+`DatabaseMigration/Configuration/DatabaseConfiguration.cs`).
+
 ## Dnevnik odluka tijekom implementacije
 
 | Datum | Pitanje | Odgovor | Posljedica |
@@ -405,6 +562,15 @@ prodaju uz sat postavljen na dan kupnje. `T1DemoSeedTests` dopunjen (grupa "bez 
 | 2026-10-09 | Rupa u cjeniku | Zadana cijena usluge ostaje valjan izvor, bez odbijanja. Upozorenje `PRICE_NOT_DEFINED` (usluga, datum, korištena cijena, izvor): (1) usluga ima stavke cjenika, ali nijedna ne pokriva datum → zadana cijena, bez obzira na iznos; (2) 0 € iz zadane cijene, osim izričito besplatne usluge (predložiti najjeftiniji način; ako je velik posao, upozorenje za svaki 0 €). Zbirno pri generiranju grupa (broj termina, datumi). Pri spremanju stavke cjenika koja ostavlja rupu između dvije stavke iste usluge upozorenje (od–do rupe), spremanje se ne odbija. Testovi. | T1-8 |
 | 2026-10-09 | Kupnja paketa unatrag | Grant `clients.packages.write.past` (bez granice; bez granta 403 `MissingGrant`; migracija samo Admin grupama; u mapiranje UI → grant). Checkout uvijek današnji dan. Dopune: bez retroaktivnog pokrića (paket upisan unatrag ne mijenja odrađene/naplaćene/dug termine; javiti kako je danas; izričito prebacivanje po terminu samo ako postoji, inače otvorena tema); istekao pri upisu (`ValidUntilDate` prošao) → odbija se s razlogom (uvoz povijesti samo uz posebnu odluku); ručni upis bez checkouta ne stvara proviziju (test); audit upisa unatrag (tko, kada, `PurchaseDate`); uvoz klijenata je zaseban alat (javiti kako se uklapa). | T1-9 |
 | 2026-10-09 | (na odluku) Fond godišnjeg: vrijedi li i na dan `ExpiresAt`? | Otvoreno. Prije T1-7 `ExpiresAt` je bio UTC ponoć tog dana, pa fond na dan isteka više nije vrijedio; agent T1-7 je to promijenio u "vrijedi zaključno", što je vraćeno na prijašnje ponašanje (nema tihe promjene pravila) dok korisnik ne odluči. | `LeaveFundYearCalculator.IsExpired`, `LeaveFundHandler.GetEligible`. |
+| 2026-10-09 | Tri odluke T1 (1) fond godišnjeg na dan isteka | **Vrijedi i na dan isteka.** Pravilo za cijeli sustav: svaki "vrijedi do" datum (`DateOnly`) uključuje taj dan (kao cjenik i izvještaj provizija). Primijeniti na fond godišnjeg i provjeriti ostala mjesta (kraj članarine, `ValidUntilDate` paketa, kraj pauze, kraj stajanja, grace): gdje je "do" isključiv, promijeniti u uključiv (CHANGED in T1, ADR-0035); ako isključiv kraj ima poslovni smisao — javiti prije promjene. | T1-10 |
+| 2026-10-09 | Tri odluke T1 (2) provizija i naplaćeni iznos | Princip (ARCH + ADR provizija): *provizija nikad nije veća od iznosa primljenog za tu uslugu — izravno naplaćenog ili unaprijed plaćenog kroz paket; jedina iznimka je termin pokriven članarinom uz isključen "oduzmi popuste članstva", kao izričit izbor studija.* Slučaj 1 (fiksno pravilo na niži ručni iznos): ograničiti na min(izračunata, naplaćeno) za izravno naplaćene termine, zapis nosi razlog ograničenja (test 10 € na 5 € → 5 €; na 0 € → 0 €). Slučaj 3 (paket): bez ograničenja, uz uvjet da se cijena sesije računa iz stvarno plaćene cijene paketa (`PaidPrice` / broj jedinica), ne iz cjenika (potvrditi ili javiti; test popust). Slučaj 2 (članarina, prekidač isključen): bez ograničenja; spremanje pravila (postavki) s isključenim prekidačem vraća upozorenje; isto uz prekidač u UI-ju (F1). Javiti kako se fiksno pravilo ponaša na terminu pokrivenom članarinom ili paketom. | T1-10 |
+| 2026-10-09 | Tri odluke T1 (3) "Osnova" | Prazno sve što studio postavlja sam (sobe, resursi, politika otkazivanja, usluge, cjenik, paketi, planovi, grupe), ali sve što sustav daje sam pri stvaranju organizacije (početni razlozi otkazivanja, zadane grupe ovlasti, zadane postavke) mora biti i u "Osnovi"; provjeriti da "Osnova" koristi isti put kao stvarni onboarding i javiti što sustav daje sam. Grupe prvog klijenta čekaju mapiranje (zadatak "Prvi klijent"). | T1-10 |
+| 2026-10-09 | Prvi klijent (1): imaju li radnje bez provjere u UI-ju (otkaz, izostanak, naplata u detalju termina, uređivanje/brisanje pauze, "Spremi" grupe ovlasti) provjeru granta na backendu? | Da — sve pisaće rute tenant API-ja imaju `RequireGrant` (provjereno skriptom nad svim kontrolerima; jedine iznimke su javne rute prijave/registracije). Nedostatak je samo u frontendu (F1-1). | T1 nije blokiran. |
+| 2026-10-09 | Prvi klijent (2–8) i odgovori klijenta (P-21 – P-30, 12.3) | Read grantovi potvrđeni (implementirano u T1-11); B1 Blagajna potvrđena (dizajn nakon P-22/P-23 — odgovoreno; vrste isplate Polog u banku i Isplata vlasniku, naziv po organizaciji); uvoz s `clients.import`, stvarni podaci samo u produkciju pri go-liveu; pristanci kao polja s auditom; izvještaj odrađenog s brojem termina i satima; redoslijed F1 potvrđen; grupe prvog klijenta (Vlasnik, Trener; bez Recepcije) — Trener čeka odgovor rade li treneri za druge trenere. | `docs/klijent/TRENUTNI_ALATI_PRVI_KLIJENT.md` §4–§5; F1 plan. |
+| 2026-10-09 | T1-11 potvrde | Roster: otvoren kraj = "traje dalje" samo za odsutnosti — potvrđeno. Grantovi izvještaja s njihovim fazama (`reports.cash.view`, `cash.movements.manage`, `reports.work.view.own`, `reports.work.view.all`) — potvrđeno. Naziv faze B1 — Blagajna i uvoz klijenata kao F1-8b nakon ★2 — potvrđeno. | — |
+| 2026-10-09 | Vrsta isplate "Ostalo" | **Da**, za sitne izdatke iz gotovine (npr. potrošni materijal); napomena obavezna (bez nje se odbija); naziv vrste mijenja organizacija kao i ostale. ADR B1: bilježi se samo izlaz gotovine radi slaganja blagajne; DuneLight nije knjigovodstvo troškova. | B1 |
+| 2026-10-09 | Grace period i pravilo "N dana" | **Bez promjene.** Grace počinje dan NAKON dospijeća (dospijeće 10., grace 7 dana → 11.–17., dug od 18.). Obrazloženje (da se ne protumači kao nedosljednost s pravilom "N dana uključuje prvi dan"): dan dospijeća je redovni rok plaćanja, a grace su DODATNI dani nakon njega; prvi dan grace perioda je dan nakon dospijeća i od njega se broji N dana. | ADR-0035 dopuna T1-11 vrijedi; nema promjene koda. |
+| 2026-10-09 | Opseg Trenera (prvi klijent) | Neki treneri rade termine i naplatu i za druge trenere → **dvije grupe**: "Trener" (own, bez naplate) i "Trener + recepcija" (all: termini, prisutnost, naplata; bez korekcija, otpisa, overridea i *.write.past). Grupe Vlasnik, Trener i Trener + recepcija dodane u seed ("Osnova" i "Puni demo", po jedan korisnik). | `DemoSeedService.FirstClientGroups`; `T1DemoSeedTests` (CHANGED in T1: 5 → 8 korisnika). |
 | 2026-10-09 | Port 5001/6001 | Usklađuje se u F1-0. | Frontend F1 plan. |
 | 2026-10-09 | F1-Q8 Ručni modeli ili Swagger? | Generirati tipove iz Swaggera, servisi ručni; provjera zastarjelosti, točnost Swaggera (nullable, enumi, datumi), generirane datoteke se ne uređuju, greške u shemi, prijelaz odjednom na početku F1. | T1-6; frontend FE-ADR-0004; pravilo u oba `CLAUDE.md`. |
 | 2026-10-09 | (tehnički, bez pitanja) T1-7: gdje se određuje dan cjenika termina | Jedno mjesto: `IPricingService.ResolveForServiceStart` (lokalni datum početka u zoni poslovnice termina); svi pozivatelji (termin, booking, grupa, lista čekanja, preskakanje člana grupe) ga koriste; `ResolvePriceRequest.Date` bez vrijednosti = danas u zoni poslovnice (bez nje organizacije) | ADR-0035; implementirano. |
@@ -425,3 +591,17 @@ prodaju uz sat postavljen na dan kupnje. `T1DemoSeedTests` dopunjen (grupa "bez 
 | 2026-10-09 | (tehnički, bez pitanja) T1-4: duljina skoka "Punog demoa" | Najmanje 45 dana (mjesečni period + grace 7 dana), do prvog četvrtka (45–51 dan): tekući tjedan ima prošle dane s prisutnošću, sljedeći je budućnost. Sve što nakon skoka mora biti prošlost zakazuje se prije skoka (tada budućnost), ishodi se upisuju nakon skoka. | `ClockAdvancedDays`, `LocalDate` u odgovoru. |
 | 2026-10-09 | (tehnički, bez pitanja) T1-4: aktivna i pauzirana članarina nakon skoka | Obnova tijekom skoka stvara neplaćena zaduženja (bez plaćanja bi bile u dugu); u fazi 2 klijent plaća zaostatak kroz checkout, pa su "uredne". Pauza pauzirane članarine zakazana je prije skoka (počinje u tekućem tjednu nakon skoka). | Stanja se na kraju čitaju iz servisa i broje u odgovoru. |
 | 2026-10-09 | (tehnički, bez pitanja) T1-4: dopuna postojeće organizacije i paketne sesije | Paket vrijedi od dana kupnje, a sat se ne pomiče, pa se jedinice troše samo "upiši odrađeno" današnjim terminima koji su već prošli (8–11 h); ako ih nema dovoljno, stavka ide u `Skipped`. | Test prihvaća oba ishoda. |
+| 2026-10-09 | (tehnički, na potvrdu) T1-10: fiksno pravilo na sesiji pokrivenoj članarinom uz uključen "oduzmi popuste članstva" | Ograničeno na naplaćeno na sesiji = 0 € (primjena principa; ADR-0030 već kaže "pokrivena sesija ima proviziju 0", ali fiksno pravilo je davalo puni iznos) | CHANGED in T1; test `T1CommissionCapTests`. |
+| 2026-10-09 | (tehnički, na potvrdu) T1-10: ograničenje i za izravno naplaćenu sesiju s popustom za članove | Sesija bez claima članarine je izravno naplaćena: provizija najviše stvarni (sniženi) iznos, i uz isključen "oduzmi popuste članstva" (iznimka vrijedi samo za pokrivenu sesiju) | Promijeniti na zahtjev. |
+| 2026-10-09 | (tehnički, otvoreno) T1-10: cijena jedinice neograničenog paketa | `PaidPrice / jedinice` nije definirano bez broja jedinica; ostaje dosadašnja osnovica (cijena sesije). Cijena jedinice se zaokružuje na cent. | Za odluku korisnika. |
+| 2026-10-09 | (nalaz, otvoreno) T1-10: paket `DayCount` | `ValidUntilDate = PurchaseDate + N` → uz uključiv kraj N+1 kalendarskih dana računajući dan kupnje; nije mijenjano (pravilo trajanja, ne granica) | Za odluku korisnika. |
+| 2026-10-09 | T1-11 (1) Paket "N dana" | Dan kupnje je 1. dan: kupljen 1.10., "30 dana" → do 30.10. uključivo; mjeseci: 5.10. + "3 mjeseca" → do 4.1. Ispraviti `PackageExpiryCalculator` (FixedDate bez promjene) i provjeriti sva ostala "N dana" trajanja (pauza, `MaxPauseDays`, grace, stajanje, period članstva, rokovi najave); grace: ako je prvi grace dan dan nakon `DueOn`, dokumentirati, ako je dvosmisleno — javiti. | T1-11 (1); CHANGED in T1; tablica trajanja (grace dokumentiran, nije mijenjan). |
+| 2026-10-09 | T1-11 (2) Neograničen paket i provizija | Kao članarina: prekidač "oduzmi popuste članstva" uključen → 0 €, isključen → cjenik uz isto upozorenje (`COMMISSION_MEMBERSHIP_SESSIONS_AT_LIST_PRICE`, prilagoditi opis/details, kod ostaje); prvo procijeniti veličinu, ako nije lokalno — javiti. | Procjena: lokalno; implementirano (T1-11 (2)). Zatvara "otvoreno" T1-10 (cijena jedinice neograničenog paketa). |
+| 2026-10-09 | T1-11 (3) Fiksno pravilo na paketnoj sesiji | Ograničiti na vrijednost sesije iz paketa (`PaidPrice / jedinice`): fiksno 10 € na sesiji 5 € → 5 €. | CHANGED in T1; testovi. |
+| 2026-10-09 | T1-11 (4) Članarina + prekidač uključen; izravno naplaćena sesija s popustom za članove | Potvrđeno (0 € i za fiksno; ograničenje i uz popust za članove), bez promjene. | Zatvara dva retka T1-10 "na potvrdu". |
+| 2026-10-09 | T1-11 (5) Roster upit s `from` | Semantika preklapanja kao u provjerama preklapanja; `EmploymentEndDate` ostaje otvoreno (P6). | CHANGED in T1; test. Zatvara nalaz T1-10. |
+| 2026-10-09 | (tehnički, bez pitanja) T1-11 (5): radni zapis bez `DateTo` | Kraj bez `DateTo` je beskonačan samo za odsutnost; rad (`DateTo` uvijek null) traje samo dan `DateFrom` — doslovna formula iz naloga vraćala bi sve stare radne zapise | `RosterEntryHandler.GetPaged`. |
+| 2026-10-09 | T1-11 (6) Grantovi za čitanje | `catalog.cancellation-reasons.view`, `organization.settings.view`, `organization.branding.view`, `commissions.rules.view`: katalog, capability View (Manage uključuje View), migracija samo Admin grupama, GET endpointi primaju view ili manage. Izvještajni grantovi tek s fazama blagajne/izvještaja (samo prijedlog naziva). | T1-11 (6); migracija `T1ReadGrants` (order 4). |
+| 2026-10-09 | (tehnički, bez pitanja) T1-11 (6): `commissions.rules.view` u capabilityju | View razina `commissions.manage` = `commissions.view` + `commissions.rules.view` (jedan capability za područje provizija); `catalog.cancellation-reasons.manage`, `organization.branding.manage`, `organization.settings.manage` iz `On` u `View/Manage` | `CapabilityCatalog`. |
+| 2026-10-09 | T1-11 (7) Vrsta rostera "Administracija" | Bez sustavske zadane vrste; provjeriti može li je organizacija dodati i vide li pregledi njezine sate; u "Puni demo" samo ako je trivijalno. | Može (`roster.types.manage`); sati se vide po vrsti i u ukupnom radu; dodano u "Puni demo". |
+| 2026-10-09 | (paket "N dana", T1-10 nalaz) | Riješeno odlukom T1-11 (1). | — |

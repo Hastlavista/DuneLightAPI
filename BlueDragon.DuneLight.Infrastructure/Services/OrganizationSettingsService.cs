@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Threading.Tasks;
 using BlueDragon.DuneLight.Core.Enums;
 using BlueDragon.DuneLight.Core.DTOs.Organization;
@@ -98,7 +99,16 @@ public class OrganizationSettingsService : IOrganizationSettingsService
             settings.CommissionDeductMembershipDiscounts = request.DeductMembershipDiscounts;
             settings.CommissionLateCancellation = lateCancellation;
         });
-        return await GetCommissionSettings(organizationId);
+        OrganizationCommissionSettingsDto result = await GetCommissionSettings(organizationId);
+        // T1-10: uz isključen "oduzmi popuste članstva" provizija za posjete pokrivene članarinom računa se od cijene sesije i nije
+        // ograničena na primljeni iznos (jedina iznimka načela, izričit izbor studija) — studio to mora znati pri spremanju.
+        // T1-11: isto za sesije pokrivene neograničenim paketom (obračun kao članarina).
+        if (!result.DeductMembershipDiscounts)
+            result.Warnings.Add(new WarningDto(WarningCodes.CommissionMembershipSessionsAtListPrice, new WarningCommissionListPriceSessionsDetails
+            {
+                AppliesTo = new List<string> { "Membership", "UnlimitedPackage" }
+            }));
+        return result;
     }
 
     public async Task<OrganizationSettingsDto> UpdateMembershipCoverageRules(

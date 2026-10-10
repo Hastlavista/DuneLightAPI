@@ -1,7 +1,7 @@
 # Arhitektura
 
 > Živi dokument. Ažurira se kad se arhitektura promijeni, ne naknadno "kad stignem".
-> Zadnje ažuriranje: 2026-10-09 (T1 poslovni sat, testni alati, oblik 403, Swagger, ADR-0033 – ADR-0034; §9 veza na frontend dokumentaciju; K2 granularni grantovi i zatvoren termin, ADR-0032; prije toga K1 dorade iz povratnih informacija klijenta, ADR-0031; prije toga P2 Memberships: faze 2A–2F — katalog planova, članstva, periodi/zaduženja/obnova, pokriće članarinom, cjenovna pogodnost, provizije (Vagaro model), ADR-0025 – ADR-0030; prije toga P1 ADR-0015 – ADR-0018)
+> Zadnje ažuriranje: 2026-10-09 (T1-11 paket "N dana" uključuje dan kupnje, neograničen paket kao članarina i ograničenje paketne sesije u provizijama, roster upit s preklapanjem, grantovi za čitanje; T1-10 uključiv kraj "vrijedi do" i provizija ≤ primljeni iznos, ADR-0030/0035 dopune; T1 poslovni sat, testni alati, oblik 403, Swagger, ADR-0033 – ADR-0034; §9 veza na frontend dokumentaciju; K2 granularni grantovi i zatvoren termin, ADR-0032; prije toga K1 dorade iz povratnih informacija klijenta, ADR-0031; prije toga P2 Memberships: faze 2A–2F — katalog planova, članstva, periodi/zaduženja/obnova, pokriće članarinom, cjenovna pogodnost, provizije (Vagaro model), ADR-0025 – ADR-0030; prije toga P1 ADR-0015 – ADR-0018)
 
 Izvori ovog dokumenta, redom prednosti: **stvarni kod** → ADR-ovi u `docs/decisions/` i zapisi faza (`docs/p1/`) → povijesni izvori izvan repozitorija
 (sažetak dosadašnjeg arhitekta, Decision Log v1, Target Architecture v1, Business Rules vodič starog
@@ -281,7 +281,15 @@ Pravila koja se ne krše bez nove odluke (ADR):
 - Preklapanje Employeeja i Clienta, Room i Resource kapacitet su TVRDE blokade; Group kapacitet je MEKI (ADR-0008).
 - Nikad automatski birati između više Employeeja (cijena) ni implicitno izvoditi Segment/selektor (ADR-0009, ADR-0011).
 - Cijena i provizija su odvojene (ADR-0010). Osnovica postotka za odrađeno je cijena sesije (ručni iznos ili cjenik), umanjena
-  samo prema postavkama organizacije; trenutak nastanka je Completed; prošlo razdoblje izvještaja se nikad ne mijenja (ADR-0030).
+  samo prema postavkama organizacije (sesija pokrivena paketom: plaćena cijena paketa po jedinici; neograničen paket kao članarina,
+  T1-11); trenutak nastanka je Completed;
+  prošlo razdoblje izvještaja se nikad ne mijenja (ADR-0030).
+- **Provizija nikad nije veća od iznosa primljenog za tu uslugu — izravno naplaćenog ili unaprijed plaćenog kroz paket. Jedina
+  iznimka je termin pokriven članarinom kad je prekidač "oduzmi popuste članstva" isključen, kao izričit izbor studija**
+  (ADR-0030 dopuna T1-10; ograničenje se bilježi `WasCapped` + razlog u objašnjenju). T1-11: neograničen paket se ponaša kao
+  članarina (ista iznimka uz isključen prekidač, 0 € uz uključen); paketna sesija je ograničena na plaćenu cijenu jedinice.
+- Svaki "vrijedi do / završava" poslovni dan (`DateOnly`) uključuje taj dan (ADR-0035, T1-10); trajanje "N dana" = N kalendarskih dana
+  uključujući prvi dan (T1-11).
 - Paket nije plaćanje; prihod = stvarna plaćanja (ADR-0012).
 - UTC instanti, `DateOnly` poslovni datumi, `TimeOnly` vrijeme dana, efektivna zona Companyja; nikad host zona (ADR-0013, ADR-0035).
 - Uske poslovne naredbe; nema generičkog `PUT` agregata ni promjene Companyja na Appointmentu (ADR-0014).
@@ -347,6 +355,14 @@ Pravila koja se ne krše bez nove odluke (ADR):
   - paket pokriva samo dane usluge `PurchaseDate`…`ValidUntilDate` (`Utils/PackageValidity`, jedno pravilo); upis paketa ne
     mijenja postojeća sudjelovanja;
   - povijest klijenta `client_audit_logs` (`GdprConsent`, `PackageIssuedBackdated`); datum GDPR suglasnosti ne smije biti u budućnosti.
+- [x] T1-11 naknadne odluke ([T1 record](t1/T1_DECISION_RECORD.md) "T1-11") — implementirano 2026-10-09 (migracija `20261030000004`):
+  - paket "N dana" = N kalendarskih dana uključujući dan kupnje (`PackageExpiryCalculator`, ADR-0035 dopuna T1-11);
+  - provizija: neograničen paket se obračunava kao članarina; paketna sesija ograničena na plaćenu cijenu jedinice (ADR-0030 dopuna T1-11);
+  - roster upit `from`/`to` = preklapanje (otvorena odsutnost započeta prije `from` se vraća);
+  - grantovi za čitanje (samo Admin grupe migracijom; GET prima view ili manage): `catalog.cancellation-reasons.view`
+    (`GET api/catalog/cancellation-reasons`, uz grantove otkazivanja), `organization.settings.view` (`GET api/organization/settings`),
+    `organization.branding.view` (`GET api/organization/branding`), `commissions.rules.view` (`GET api/commissions/rules`, `/{id}`,
+    `GET api/commissions/settings`); capability View razina, Manage uključuje View.
 - [ ] Payroll po Vagaro modelu (zasebna faza nakon P2, [plan §26](p2/P2_PLAN.md), [pitanja](payroll/PAYROLL_QUESTIONS.md)): obračunsko
   razdoblje i zatvaranje, tiered po prometu (nadogradnja općeg pravila, bez migracije), klase, trošak usluge, napojnice, satnica
   ili provizija, ovlasti.
@@ -374,7 +390,8 @@ P1 record je uveden u `docs/p1/`; README je usklađen s kodom.
   dodavanje stavke, što nije moguće dok stavka ima aktivnu uplatu. Otvoreno: naredba za osvježavanje stavke (i stavke s uplatom).
 - [ ] Djelomična vrijednost paketa i miješano paket + novac (Decision Log #32, dug O).
 - [ ] Identitet Group occurrencea samo na razini aplikacije (slot advisory lock), bez DB uniquea (Decision Log #37, dug I).
-- [ ] Tko smije zatvoriti Group occurrence u own scopeu (dug B); zarađuje li prazna / sve-NoShow sesija proviziju.
+- [ ] Tko smije zatvoriti Group occurrence u own scopeu (dug B). (Provizija prazne / sve-NoShow sesije: ODLUČENO 2026-10-09, P-21 —
+  zarađuje se kao i danas, bez promjene.)
 - [ ] Postotna grupna provizija (dug D, `GROUP_COMMISSION_RULE_NOT_SUPPORTED`).
 - [ ] Propagacija izmjena templatea na već generirane occurrence ("samo ovaj / ovaj i budući", dug E, faza P5).
 - [ ] Politika deaktivacije kataloga (Employee, Room, Resource, Service, Company) s budućim terminima (dug M, faza P6).
@@ -398,6 +415,28 @@ P1 record je uveden u `docs/p1/`; README je usklađen s kodom.
 - [ ] **Cijena od određenog sata** (T1-7, 2026-10-09): stavka cjenika vrijedi po danima (`DateOnly`, dan = lokalni datum početka
   termina u zoni poslovnice; termin preko ponoći pripada danu početka). Promjena cijene unutar dana namjerno nije podržana —
   dodaje se kao nova odluka samo ako klijent zatraži (uz P-17, cijena po razini zaposlenika).
+- [ ] **Prvi klijent (2026-10-09, `docs/klijent/TRENUTNI_ALATI_PRVI_KLIJENT.md`):** online booking, Stripe i fiskalizacija ne rade se
+  dok prvi klijent ne koristi platformu (osnovni tier). Širina sustava se ne smanjuje (drugi klijent, Vagaro razina). Nedostaje na
+  backendu za zamjenu Excela (prijedlog: uz F1, zasebne male backend faze na potvrdu): uvoz klijenata s brojevima članova;
+  blagajna (polog gotovine po poslovnici i danu, podizanje vlasnika) i dnevni/mjesečni pregled blagajne po kategoriji i poslovnici
+  (+ kategorija usluge za izvještaj); izvještaj odrađenog po zaposleniku; pristanci foto/video i čestitke (uz audit kao GDPR).
+  Zajedničko plaćanje → K3.
+  **Potvrđeno 2026-10-09:** faza **B1 — Blagajna** (naziv prijedlog; ADR; gotova prije F1-6): poslovnica i kategorija na uplati,
+  kategorija usluge za izvještaj, isplate iz blagajne (Polog u banku, Isplata vlasniku — naziv vrste po organizaciji, sustav po
+  kodu; "Ostalo" za sitne izdatke uz obaveznu napomenu; bilježi se samo izlaz gotovine radi slaganja blagajne, DuneLight nije
+  knjigovodstvo troškova), dnevni i mjesečni pregled; alat uvoza klijenata (`clients.import`, stvarni podaci samo u produkciju
+  pri go-liveu); pristanci foto/video i čestitke kao polja s auditom; izvještaj odrađenog (broj termina i sati po zaposleniku i
+  vrsti usluge, uz sate administracije iz rostera). Detalji: `docs/klijent/TRENUTNI_ALATI_PRVI_KLIJENT.md` §4–§5.
+- [ ] **Prekidač funkcija po organizaciji vezan uz cjenovni paket platforme (tier)** (2026-10-09): grantovi ga ne mogu zamijeniti
+  jer ih studio slaže sam; opcije unutar obrazaca (npr. plaćanje paketom kad studio ne koristi pakete) čekaju ovaj prekidač.
+  Rješava se kad se uvode cjenovni paketi, ne sada.
+- [ ] **Grantovi za izvještaje** (2026-10-09): grantovi za čitanje razloga otkazivanja, postavki organizacije, brandinga i pravila /
+  postavki provizija dodani su u T1-11. Izvještaji (blagajna, odrađeno) dobivaju vlastite grantove s fazama blagajne / izvještaja;
+  predloženi nazivi `reports.cash.view`, `cash.movements.manage`, `reports.work.view.own`, `reports.work.view.all`.
+- [ ] **`Employee.EmploymentEndDate`** se nigdje ne uspoređuje (nema učinka) — P6. Ostali nalazi T1-10 riješeni u T1-11 (paket "N dana",
+  roster upit, neograničen paket, potvrde ograničenja provizije).
+- [x] **Grace period i dan dospijeća** (T1-11, ODLUČENO 2026-10-09): grace = G dana NAKON dana dospijeća (D+1 … D+G), bez promjene —
+  dan dospijeća je redovni rok, grace su dodatni dani (obrazloženje u T1 recordu).
 - [ ] **Ručni iznos sudjelovanja** (T1-8, 2026-10-09): treba li ručni iznos različit od predložene cijene poseban grant i/ili
   obavezan razlog. Danas: upis bez posebnog granta i razloga, uz audit. Ne rješava se sada.
 - [ ] **Zona dana: izvještaj provizija vs. cjenik** (T1-7, 2026-10-09): razdoblje izvještaja provizija su dani u zoni

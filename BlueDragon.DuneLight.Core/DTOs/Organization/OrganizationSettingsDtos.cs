@@ -70,7 +70,8 @@ public class OrganizationMembershipCoverageUpdateRequest
 
 /// <summary>P2 (2F, Vagaro, Q38, Q40) — postavke provizija samo na razini organizacije (GET/PUT /api/commissions/settings,
 /// commissions.manage). Svi prekidači isključeni (default) = osnovica je cijena sesije: ručni iznos ako je upisan, inače cjenik;
-/// sesija pokrivena paketom ima osnovicu cijenu sesije (paket je način plaćanja). Promjena ne mijenja zarađene provizije.</summary>
+/// sesija pokrivena paketom ima osnovicu plaćenu cijenu paketa po jedinici (T1-10). Provizija nikad nije veća od primljenog iznosa,
+/// osim za sesiju pokrivenu članarinom uz isključen "oduzmi popuste članstva" (T1-10). Promjena ne mijenja zarađene provizije.</summary>
 public class OrganizationCommissionSettingsDto
 {
     /// <summary>Vagaro "Subtract Discounts" — osnovica je cijena nakon popusta (oznaka, promocija; ne članarinski). Ručni iznos
@@ -84,6 +85,10 @@ public class OrganizationCommissionSettingsDto
     /// <summary>Q38 — Never (default) ili WhenFeePaid (provizija od plaćene P1 naknade).</summary>
     [Required]
     public Enums.CommissionLateCancellationMode? LateCancellation { get; set; }
+
+    /// <summary>T1-10 — neblokirajuća upozorenja odgovora na spremanje (PUT), npr. COMMISSION_MEMBERSHIP_SESSIONS_AT_LIST_PRICE kad je
+    /// "oduzmi popuste članstva" isključen. Prazno u GET-u; u zahtjevu se zanemaruje.</summary>
+    public List<WarningDto> Warnings { get; set; } = new();
 }
 
 public class OrganizationMembershipChangeNoticeUpdateRequest

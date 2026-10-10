@@ -90,6 +90,54 @@ public class DemoSeedService : IDemoSeedService
         Grants.RosterReviewsPersonalViewOwn
     };
 
+    /// <summary>Grupe ovlasti prvog klijenta (T1, potvrđeno 2026-10-09): korekcije nakon zatvaranja, otpisi, override dostupnosti i
+    /// svi *.write.past grantovi samo u grupi Vlasnik. Grantovi izvještaja i blagajne dolaze s fazama B1 / izvještaja.</summary>
+    private static readonly List<(string Name, List<string> Grants, string First, string Last, string Description)> FirstClientGroups = new()
+    {
+        ("Vlasnik", new List<string>
+        {
+            Grants.ClientsView, Grants.ClientsManage, Grants.ClientsStatusManage, Grants.ClientsTagsView, Grants.ClientsTagsManage,
+            Grants.ClientsPackagesView, Grants.ClientsPackagesManage, Grants.ClientsPackagesWritePast,
+            Grants.ClientsMembershipsView, Grants.ClientsMembershipsSell, Grants.ClientsMembershipsCancel, Grants.ClientsMembershipsPause,
+            Grants.ClientsMembershipsPlanChange,
+            Grants.AppointmentsView, Grants.AppointmentsWriteAll, Grants.AppointmentsArrivalMark,
+            Grants.AppointmentsCorrectionsCompleted, Grants.AppointmentsCorrectionsNoShow, Grants.AppointmentsCorrectionsCancelled,
+            Grants.AppointmentsPolicyFeeWaive, Grants.AppointmentsPolicyUnitWaive, Grants.AppointmentsAvailabilityOverride,
+            Grants.ScheduleBreaksView, Grants.ScheduleBreaksWriteAll,
+            Grants.GroupsView, Grants.GroupsManage, Grants.GroupsAttendanceView, Grants.GroupsAttendanceAll,
+            Grants.CheckoutView, Grants.CheckoutManage,
+            Grants.CatalogCompaniesView, Grants.CatalogCompaniesManage, Grants.CatalogServicesView, Grants.CatalogServicesManage,
+            Grants.CatalogPriceListView, Grants.CatalogPriceListManage, Grants.CatalogRoomsView, Grants.CatalogRoomsManage,
+            Grants.CatalogPackagesView, Grants.CatalogPackagesManage, Grants.CatalogMembershipsView, Grants.CatalogMembershipsManage,
+            Grants.CatalogCancellationReasonsView, Grants.CatalogCancellationReasonsManage,
+            Grants.EmployeesDirectoryView, Grants.EmployeesView, Grants.EmployeesManage,
+            Grants.RosterTypesView, Grants.RosterTypesManage, Grants.RosterEntriesView, Grants.RosterEntriesWriteAll,
+            Grants.RosterEntriesWritePast, Grants.RosterReviewsTeamView, Grants.RosterReviewsPersonalViewAll,
+            Grants.RosterTemplatesView, Grants.RosterTemplatesManage,
+            Grants.DashboardView, Grants.PermissionsView, Grants.PermissionsManage, Grants.PermissionsAssignmentsManage,
+            Grants.OrganizationSettingsView
+        }, "Vesna", "Vlasnik", "Prvi klijent — Vlasnik (all; jedina grupa s korekcijama, otpisima, overrideom i upisom unatrag)"),
+        ("Trener", new List<string>
+        {
+            Grants.AppointmentsView, Grants.AppointmentsWriteOwn, Grants.AppointmentsArrivalMark,
+            Grants.ScheduleBreaksView, Grants.ScheduleBreaksWriteOwn,
+            Grants.GroupsView, Grants.GroupsAttendanceView, Grants.GroupsAttendanceOwn,
+            Grants.ClientsView, Grants.ClientsPackagesView, Grants.ClientsMembershipsView, Grants.EmployeesDirectoryView,
+            Grants.RosterEntriesView, Grants.RosterEntriesWriteOwn, Grants.RosterReviewsPersonalViewOwn
+        }, "Tomo", "Trener", "Prvi klijent — Trener (own: svoji termini, grupe i prisutnost; bez naplate)"),
+        ("Trener + recepcija", new List<string>
+        {
+            Grants.AppointmentsView, Grants.AppointmentsWriteAll, Grants.AppointmentsArrivalMark,
+            Grants.ScheduleBreaksView, Grants.ScheduleBreaksWriteOwn,
+            Grants.GroupsView, Grants.GroupsAttendanceView, Grants.GroupsAttendanceAll,
+            Grants.ClientsView, Grants.ClientsManage, Grants.ClientsTagsView,
+            Grants.ClientsPackagesView, Grants.ClientsPackagesManage, Grants.ClientsMembershipsView, Grants.ClientsMembershipsSell,
+            Grants.CheckoutView, Grants.CheckoutManage,
+            Grants.CatalogServicesView, Grants.CatalogPriceListView, Grants.EmployeesDirectoryView,
+            Grants.RosterEntriesView, Grants.RosterEntriesWriteOwn, Grants.RosterReviewsPersonalViewOwn, Grants.RosterReviewsTeamView
+        }, "Rita", "Trener recepcija", "Prvi klijent — Trener + recepcija (all: termini, prisutnost i naplata za sve; bez korekcija, otpisa, overridea i upisa unatrag)")
+    };
+
     private static readonly (string First, string Last)[] ClientNames =
     {
         ("Ana", "Kovač"), ("Ivan", "Horvat"), ("Petra", "Babić"), ("Luka", "Marić"), ("Maja", "Novak"),
@@ -139,6 +187,7 @@ public class DemoSeedService : IDemoSeedService
     private readonly ICommissionRuleService _commissionRuleService;
     private readonly ICommissionService _commissionService;
     private readonly ITestToolsService _testToolsService;
+    private readonly IRosterTypeService _rosterTypeService;
 
     public DemoSeedService(
         TimeProvider timeProvider,
@@ -172,7 +221,8 @@ public class DemoSeedService : IDemoSeedService
         IClientPackageService clientPackageService,
         ICommissionRuleService commissionRuleService,
         ICommissionService commissionService,
-        ITestToolsService testToolsService)
+        ITestToolsService testToolsService,
+        IRosterTypeService rosterTypeService)
     {
         _timeProvider = timeProvider;
         _businessTimeProvider = businessTimeProvider;
@@ -206,6 +256,7 @@ public class DemoSeedService : IDemoSeedService
         _commissionRuleService = commissionRuleService;
         _commissionService = commissionService;
         _testToolsService = testToolsService;
+        _rosterTypeService = rosterTypeService;
     }
 
     /// <summary>Što seed radi: "Osnova", "Puni demo" (nova organizacija, smije pomaknuti sat) ili dopuna postojeće organizacije
@@ -342,6 +393,15 @@ public class DemoSeedService : IDemoSeedService
             new EngagementTypeCreateRequest { Name = Tagged("Puno radno vrijeme") });
         counts.EngagementTypes++;
 
+        // T1-11: "Puni demo" — vlastita vrsta rostera studija "Administracija" (rad bez klijenta: računa se kao rad, s vremenom).
+        // Nije sustavska zadana vrsta (sustav ne zna za uloge/poslove); organizacija je dodaje sama kroz roster.types.manage.
+        if (jumpClock)
+            await _rosterTypeService.Create(organizationId, actorUserId, new RosterTypeCreateRequest
+            {
+                Name = "Administracija", ColorHex = "#8E24AA", CountsAsWork = true, IsAbsence = false, RequiresTime = true,
+                DeductsFromLeaveFund = false, SortOrder = 4
+            });
+
         GrantGroupDto trainerGroup = await _grantGroupService.Create(organizationId, actorUserId,
             new GrantGroupCreateRequest { Name = Tagged("Treneri"), Grants = TrainerGrants.ToList() });
         counts.GrantGroups++;
@@ -377,6 +437,21 @@ public class DemoSeedService : IDemoSeedService
         await AddEmployee(organizationId, actorUserId, "Petar", "Bez ovlasti", tag, fullTime.Id, employmentStart,
             new List<Guid> { centar.Id }, centar.Id, NoServices(), new List<Guid>(),
             "Bez ijedne grupe ovlasti — prijava radi, svaka zaštićena radnja vraća 403", templateAnchor, result);
+
+        // Grupe ovlasti prvog klijenta (potvrđeno 2026-10-09, docs/klijent/TRENUTNI_ALATI_PRVI_KLIJENT.md §5): samo testni podaci u
+        // novim demo organizacijama ("Osnova", "Puni demo"), ne predložak sustava; po jedan korisnik u svakoj grupi.
+        if (mode != SeedMode.ExistingFill)
+        {
+            foreach ((string name, List<string> grants, string first, string last, string description) in FirstClientGroups)
+            {
+                GrantGroupDto firstClientGroup = await _grantGroupService.Create(organizationId, actorUserId,
+                    new GrantGroupCreateRequest { Name = Tagged(name), Grants = grants });
+                counts.GrantGroups++;
+                await AddEmployee(organizationId, actorUserId, first, last, tag, fullTime.Id, employmentStart,
+                    bothCompanies, centar.Id, catalog?.AllServiceIds ?? NoServices(), new List<Guid> { firstClientGroup.Id },
+                    description, templateAnchor, result);
+            }
+        }
 
         // --- Klijenti s GDPR suglasnošću (datum nikad u budućnosti) i rođendanima (dva u tjednu "danas") ---
         List<Guid> clients = new();

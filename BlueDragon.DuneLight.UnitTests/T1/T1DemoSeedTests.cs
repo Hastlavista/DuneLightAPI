@@ -52,7 +52,7 @@ public class T1DemoSeedTests
             Assert.Equal(status.LocalDate, result.LocalDate);
 
             // Osnivač (registracija) + admin, trener, recepcija i korisnik bez ovlasti; lozinke su u odgovoru i vrijede.
-            Assert.Equal(5, result.Users.Count);
+            Assert.Equal(8, result.Users.Count); // + Vlasnik, Trener, Trener + recepcija (grupe prvog klijenta)
             Assert.All(result.Users, u => Assert.False(string.IsNullOrEmpty(u.Password)));
             IAuthService auth = scope.ServiceProvider.GetRequiredService<IAuthService>();
             foreach (DemoSeedUserDto user in result.Users)
@@ -62,7 +62,7 @@ public class T1DemoSeedTests
             }
 
             DemoSeedCountsDto c = result.Counts;
-            Assert.Equal((2, 1, 4, 20, 1, 2), (c.Companies, c.CompanyHolidays, c.Employees, c.Clients, c.EngagementTypes, c.GrantGroups));
+            Assert.Equal((2, 1, 7, 20, 1, 5), (c.Companies, c.CompanyHolidays, c.Employees, c.Clients, c.EngagementTypes, c.GrantGroups));
             Assert.Equal((0, 0, 0, 0, 0, 0, 0, 0), (c.Rooms, c.Resources, c.Services, c.PriceListItems, c.Packages, c.MembershipPlans, c.CancellationPolicies, c.CancellationReasons));
             Assert.Equal((0, 0, 0, 0, 0, 0, 0), (c.Groups, c.GroupAppointments, c.PastAppointments, c.FutureAppointments, c.CheckoutsCompleted, c.MembershipsSold, c.ClientPackagesSold));
             Assert.Equal((0, 0), (c.CommissionRules, c.CommissionEntries));
@@ -78,7 +78,7 @@ public class T1DemoSeedTests
 
             // Admin (registracija) + Treneri + Recepcija; trener bez write.all, recepcija bez K2; jedan korisnik nema nijednu grupu.
             List<GrantGroup> groups = await db.GrantGroups.Include(g => g.Grants).Where(g => g.OrganizationId == org).ToListAsync();
-            Assert.Equal(3, groups.Count);
+            Assert.Equal(6, groups.Count);
             Assert.Single(groups, g => g.SystemKey == SystemGrantGroups.Admin);
             GrantGroup reception = Assert.Single(groups, g => g.Name.StartsWith("Recepcija", StringComparison.Ordinal));
             Assert.Contains(reception.Grants, g => g.GrantKey == Grants.AppointmentsWriteAll);
@@ -90,6 +90,19 @@ public class T1DemoSeedTests
             Assert.Contains(trainers.Grants, g => g.GrantKey == Grants.AppointmentsWriteOwn);
             Assert.Contains(trainers.Grants, g => g.GrantKey == Grants.ClientsView);
             Assert.DoesNotContain(trainers.Grants, g => g.GrantKey == Grants.AppointmentsWriteAll);
+            // Grupe prvog klijenta: korekcije, otpisi, override i *.write.past samo u grupi Vlasnik.
+            bool Restricted(GrantGroupGrant g) => g.GrantKey.StartsWith("appointments.corrections.", StringComparison.Ordinal)
+                || g.GrantKey == Grants.AppointmentsPolicyFeeWaive || g.GrantKey == Grants.AppointmentsPolicyUnitWaive
+                || g.GrantKey == Grants.AppointmentsAvailabilityOverride || g.GrantKey.EndsWith(".write.past", StringComparison.Ordinal);
+            GrantGroup owner = Assert.Single(groups, g => g.Name.StartsWith("Vlasnik", StringComparison.Ordinal));
+            Assert.Contains(owner.Grants, Restricted);
+            Assert.Null(owner.SystemKey);
+            GrantGroup firstClientTrainer = Assert.Single(groups, g => g.Name.StartsWith("Trener #", StringComparison.Ordinal));
+            Assert.DoesNotContain(firstClientTrainer.Grants, Restricted);
+            Assert.DoesNotContain(firstClientTrainer.Grants, g => g.GrantKey == Grants.AppointmentsWriteAll || g.GrantKey == Grants.CheckoutManage);
+            GrantGroup trainerFrontDesk = Assert.Single(groups, g => g.Name.StartsWith("Trener + recepcija", StringComparison.Ordinal));
+            Assert.DoesNotContain(trainerFrontDesk.Grants, Restricted);
+            Assert.Contains(trainerFrontDesk.Grants, g => g.GrantKey == Grants.CheckoutManage);
             List<Guid> usersWithGroups = await db.UserGrantGroups.Where(u => u.GrantGroup.OrganizationId == org).Select(u => u.UserId).Distinct().ToListAsync();
             Assert.Single(result.Users, u => !usersWithGroups.Contains(u.UserId));
 
@@ -117,7 +130,7 @@ public class T1DemoSeedTests
         {
             Assert.Equal(DemoSeedLevel.Full, result.Level);
             Assert.True(result.Skipped.Count == 0, string.Join(Environment.NewLine, result.Skipped));
-            Assert.Equal(5, result.Users.Count);
+            Assert.Equal(8, result.Users.Count);
 
             // Simulirani sat: skok 45–51 dan, novi "danas" je četvrtak (tekući tjedan ima prošle dane, sljedeći je budućnost).
             Assert.InRange(result.ClockAdvancedDays, 45, 51);
@@ -299,7 +312,7 @@ public class T1DemoSeedTests
 
             await using DatabaseContext db = w.NewDb();
             Assert.False(await db.Users.AnyAsync(u => u.OrganizationId == original.OrganizationId && u.IsActive));
-            Assert.Equal(5, await db.Users.CountAsync(u => u.OrganizationId == reset.OrganizationId && u.IsActive));
+            Assert.Equal(8, await db.Users.CountAsync(u => u.OrganizationId == reset.OrganizationId && u.IsActive));
 
             // Umirovljena demo organizacija se ne resetira ponovno.
             BusinessRuleException retired = await Assert.ThrowsAsync<BusinessRuleException>(() => seed.ResetDemoOrganization(original.OrganizationId));

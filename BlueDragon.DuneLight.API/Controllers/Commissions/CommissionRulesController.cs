@@ -23,14 +23,14 @@ public class CommissionRulesController : ControllerBase
     }
 
     [HttpGet]
-    [RequireGrant(Grants.CommissionsManage)]
+    [RequireGrant(Grants.CommissionsRulesView, Grants.CommissionsManage)]
     public async Task<ActionResult<List<CommissionRuleDto>>> GetList([FromQuery] CommissionRuleQuery query)
     {
         return Ok(await _commissionRuleService.GetList(this.CurrentOrganizationId(), query));
     }
 
     [HttpGet("{id:guid}")]
-    [RequireGrant(Grants.CommissionsManage)]
+    [RequireGrant(Grants.CommissionsRulesView, Grants.CommissionsManage)]
     public async Task<ActionResult<CommissionRuleDto>> GetById(Guid id)
     {
         return Ok(await _commissionRuleService.GetById(this.CurrentOrganizationId(), id));

@@ -125,7 +125,8 @@ public class CommissionEntry
     [Column("coverage_source_id")]
     public Guid? CoverageSourceId { get; set; }
 
-    /// <summary>P2 (2F) — cijena sesije prije oduzimanja popusta i pokrića: ručni iznos ako je upisan, inače cjenik.</summary>
+    /// <summary>P2 (2F) — cijena sesije prije oduzimanja popusta i pokrića: ručni iznos ako je upisan, inače cjenik; T1-10: za sesiju
+    /// pokrivenu paketom plaćena cijena paketa po jedinici (PaidPrice / broj jedinica).</summary>
     [Column("session_price_amount")]
     public decimal? SessionPriceAmount { get; set; }
 
@@ -153,7 +154,8 @@ public class CommissionEntry
     [Column("rule_evaluation")]
     public string RuleEvaluation { get; set; }
 
-    /// <summary>P2 (2F, Q38) — Fixed iznos je ograničen na iznos naknade.</summary>
+    /// <summary>P2 (2F, Q38) — Fixed iznos je ograničen na iznos naknade; T1-10: i provizija za odrađeno ograničena na primljeni iznos
+    /// (razlog u RuleEvaluation: CappedAt, CapReason).</summary>
     [Column("was_capped")]
     public bool WasCapped { get; set; }
 

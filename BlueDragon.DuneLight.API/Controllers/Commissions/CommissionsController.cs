@@ -63,7 +63,7 @@ public class CommissionsController : ControllerBase
     /// <summary>P2 (2F, Vagaro) — postavke provizija: "oduzmi popuste", "oduzmi popuste članstva" (sve isključeno = cijena sesije) i
     /// provizija kod kasnog otkaza / izostanka (Never | WhenFeePaid).</summary>
     [HttpGet("settings")]
-    [RequireGrant(Grants.CommissionsManage)]
+    [RequireGrant(Grants.CommissionsRulesView, Grants.CommissionsManage)]
     public async Task<ActionResult<OrganizationCommissionSettingsDto>> GetSettings()
     {
         return Ok(await _settingsService.GetCommissionSettings(this.CurrentOrganizationId()));

@@ -40,7 +40,7 @@ public class OrganizationBrandingController : ControllerBase
     }
 
     [HttpGet]
-    [RequireGrant(Grants.OrganizationBrandingManage)]
+    [RequireGrant(Grants.OrganizationBrandingView, Grants.OrganizationBrandingManage)]
     public async Task<ActionResult<OrganizationBrandingResponse>> GetBranding()
     {
         return Ok(await _organizationBrandingService.GetBranding(this.CurrentOrganizationId()));

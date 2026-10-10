@@ -66,7 +66,7 @@ public class LeaveFundHandler : ILeaveFundHandler
             .Where(f =>
                 f.OrganizationId == organizationId &&
                 f.EmployeeId == employeeId &&
-                f.ExpiresAt > asOf && // T1-7: na dan ExpiresAt fond je već istekao (kao prije T1, kad je ExpiresAt bio početak tog dana)
+                f.ExpiresAt >= asOf && // T1-10: uključiv kraj — fond se smije trošiti i na dan ExpiresAt (ADR-0035)
                 f.AllocatedDays > f.UsedDays)
             .OrderBy(f => f.FundYear)
             .ToListAsync();

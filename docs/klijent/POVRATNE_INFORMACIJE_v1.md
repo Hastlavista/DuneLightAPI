@@ -852,6 +852,48 @@ nova razina (klasa zaposlenika), povezana s klasama iz Payrolla.
   NoShow ili nitko upisan)? Treba li to biti postavka studija? (Danas: grupna provizija je po sesiji i nastaje pri prvom ručnom
   zatvaranju neovisno o prisutnima. Odgovor treba prije Payroll faze, vidi `docs/payroll/PAYROLL_QUESTIONS.md` 3.4.)
 
+**Pitanja iz pregleda trenutnih alata prvog klijenta (dodano 2026-10-09; vidi `TRENUTNI_ALATI_PRVI_KLIJENT.md`):**
+- **P-22** Što znače stupci "vrsta" i "kuća" u mjesečnom pregledu blagajne?
+- **P-23** Što je "polog S" i "polog A"? (Pretpostavka: gotovina odnesena u banku za lokacije Sunset i Ambient.) Podiže li
+  vlasnik gotovinu iz blagajne i kako se to bilježi?
+- **P-24** Što broje stupci "smjena", "bowen" i "rec/dvok" u evidenciji rada (broj termina, sati?) i kako se iz toga računa plaća?
+  Što znače oznake "bo" i "go" (pretpostavka: bolovanje, godišnji)?
+- **P-25** Što znače oznake u rasporedu: `G`/`g`, `b`, `r`/`R`, `y`/`Y`, `tecar`, `bow`, `konz`, `kozm`, `lifting`, `mas`, `friz`,
+  `ol`, `D i R`, `ZG`? Koje su to usluge (naziv, trajanje, cijena) i koji zaposlenik ih radi?
+- **P-26** Što je 240 € (i 160/320/640/960 €) u stupcu "individualno" — paket od N termina? A 50 € u stupcu "grupe" — mjesečna
+  članarina ili paket dolazaka? (Određuje koriste li se paketi i/ili članarine.)
+- **P-27** Uvozimo li sve klijente od 2004. ili samo aktivne (npr. dolazak u zadnjih N godina)? Nastavljaju li se postojeći brojevi
+  članova? Kako postupiti s duplikatima broja člana i neispravnim datumima rođenja?
+- **P-28** Vodi li se dnevna prisutnost na grupama (tko je došao koji dan) i gdje? Evidencija po grupama sadrži samo stalne
+  polaznike po terminu.
+- **P-29** Je li "foto/video" pristanak za objavu fotografija i videa, a "rođendani" pristanak na čestitku? Koji od dva popisa
+  pristanka na čestitku je važeći (u bazi i na popisu rođendana se razlikuju)?
+- **P-30** Tko sve radi na recepciji i tko u kojoj lokaciji (Ambient / Sunset)? Plaća li par zajedno (jedan klijent za drugoga) —
+  koliko često?
+
+**Odgovori prvog klijenta na P-21 – P-30 i 12.3 (2026-10-09):**
+> Mjesečni pregled blagajne miješa kućni budžet i poslovanje; DuneLight pokriva samo poslovni dio, tablice se ne preslikavaju 1:1.
+- **P-21:** trener dobiva proviziju i za grupni trening na koji nitko nije došao — današnje ponašanje, bez promjene; dug B zatvoren
+  (`docs/payroll/PAYROLL_QUESTIONS.md` 3.4).
+- **P-22:** "vrsta" i "kuća" su kućni troškovi vlasnice — izvan opsega.
+- **P-23:** polog = gotovina odnesena u banku, po lokaciji; vlasnik uzima gotovinu iz blagajne. Faza blagajne: isplate iz blagajne
+  vrste **Polog u banku** i **Isplata vlasniku** (zadani naziv), uz poslovnicu, datum, iznos, napomenu i audit. **Naziv vrste isplate
+  može promijeniti svaka organizacija** (npr. prvi klijent: "Dividenda"); sustav vrstu razlikuje po kodu, izvještaji prikazuju naziv
+  organizacije; sustav ne tvrdi ništa o pravnoj ni poreznoj prirodi isplate.
+- **P-24, P-25, P-26:** klijent ne daje detalje; usluge, cijene, pakete i članarine konfigurira vlasnik projekta pri postavljanju
+  organizacije. Izvještaj odrađenog prikazuje **broj termina i sate** po zaposleniku i vrsti usluge. Grupe ovlasti prvog klijenta
+  uključuju pakete i članarine.
+- **P-27:** uvoze se svi klijenti od 2004., postojeći brojevi članova se zadržavaju; alat za uvoz izvještava o duplikatima broja
+  člana i neispravnim datumima (ne ispravlja ih tiho).
+- **P-28:** dnevna prisutnost na grupama se bilježi (bez dokumenta); ekran prisutnosti je dio F1-5.
+- **P-29:** foto/video = pristanak za objavu fotografija i videa; rođendani = pristanak na čestitku. Koji je popis čestitki važeći
+  odlučuje se pri uvozu.
+- **P-30:** recepcije nema. "Recepcija" u evidenciji = administracija bez klijenta → vrsta rada u rosteru (npr. tip "Administracija"
+  koji organizacija dodaje sama), ne uloga; izvještaj odrađenog prikazuje i te sate. Grupa ovlasti "Recepcija" za prvog klijenta
+  otpada.
+- **12.3 razlog otkaza:** neobavezan. Različito postupanje prema klijentima (nekima se naplaćuje, nekima ne) rješava se otpisom
+  naknade (`appointments.policy.fee.waive`), kasnije olakšicama po klijentu (P1+, P-10); ne veže se uz razlog.
+
 ## 3. Proturječne stavke — odluke za vlasnika projekta
 
 1. **18.1 Trenutak potrošnje paketa** — proturječi ADR-0012 (`OnCompletion`) i P1 D6 / D12.

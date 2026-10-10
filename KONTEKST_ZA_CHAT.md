@@ -5,6 +5,10 @@
 > Zadnje ažuriranje: 2026-10-09 (T1 implementiran; F1 spreman za početak).
 
 ## Što je DuneLight
+> **Klijenti (2026-10-09):** prvi klijent (osnovni tier, dvije lokacije, danas Excel) i drugi (veća organizacija, danas Vagaro).
+> Isti backend i frontend za oba; razlika samo u grantovima. Online booking, Stripe i fiskalizacija čekaju da prvi klijent koristi
+> platformu. Širina se ne smanjuje.
+
 Multi-tenant sustav za vođenje manjeg fitness/wellness obrta s više poslovnica — zamjena za Excel. Organization je tenant,
 Company su poslovnice. Pokriva raspored (individualni termini, grupe, lista čekanja), klijente, katalog i cjenik, pakete,
 članarine, naplatu, provizije, roster zaposlenika i ovlasti. Postojeća aplikacija se **inkrementalno modernizira** (bez
@@ -60,13 +64,15 @@ prepisivanja). Sustav nije samo za fitness: **agnostičan je prema ulogama**.
 | P2 Memberships (2A–2F) | ZAKLJUČEN 2026-10-08 (ADR-0025 – ADR-0030); ručno testiranje slijedi |
 | K1 Dorade iz povratnih informacija | ZAKLJUČEN 2026-10-08 (ADR-0031) |
 | K2 Ovlasti (granularni grantovi, zatvoren termin) | implementiran 2026-10-09 (ADR-0032), 1290/1290 testova |
-| T1 Sat sustava i testni alati (backend, preduvjet F1) | implementiran 2026-10-09 (ADR-0033 – ADR-0035, `docs/t1/`, završni pregled `T1_ZAVRSNI_PREGLED.md`), 1343/1343 testova; spreman za commit |
-| F1 Frontend: puno usklađivanje s backendom | opseg i ključne odluke potvrđeni 2026-10-09 (frontend `docs/f1/`, FE-ADR-0003 – 0005); može početi (T1 gotov) |
+| T1 Sat sustava i testni alati (backend, preduvjet F1) | implementiran 2026-10-09 (ADR-0033 – ADR-0035, `docs/t1/`, završni pregled `T1_ZAVRSNI_PREGLED.md`), 1375/1375 testova; spreman za commit |
+| F1 Frontend: puno usklađivanje s backendom | cilj revidiran 2026-10-09: prvi klijent prestaje koristiti Excel (`docs/klijent/TRENUTNI_ALATI_PRVI_KLIJENT.md`); princip "jednostavno za prvog, isto za sve" (FE-ADR-0006 – 0008); temelji dizajna u F1-0, redizajn u F2 nakon prve provjere s klijentom; plan revidiran (frontend `docs/f1/F1_PLAN.md`) |
 
 ## Sljedeći koraci
 1. Commit T1 (korisnik); ručno testiranje po fazama iz `docs/t1/T1_ZAVRSNI_PREGLED.md` c) ("Osnova" → … → "Puni demo");
-   odgovoriti na otvorena pitanja T1 (fond godišnjeg, provizija veća od naplaćenog, grupe prvog klijenta).
-2. F1 po koracima F1-0 … F1-10 (frontend `docs/f1/F1_PLAN.md`), na grani `master` frontend repozitorija.
+   zatim B1 — Blagajna (backend, prije F1-6) i F1-0.
+2. F1 po revidiranom redoslijedu (F1-0 temelji uklj. dizajn → klijenti → raspored i upis → naplata → ★ provjera s klijentom →
+   grupe → blagajna → izvještaj odrađenog → ★ → ostalo), na grani `master` frontend repozitorija. Backend dopune za prvog
+   klijenta (uvoz, blagajna i polog, pregled blagajne, izvještaj odrađenog, pristanci) — male faze na potvrdu.
 3. Ključna pravila F1: frontend nikad ne koristi sat preglednika za poslovnu logiku; prikaz u zoni poslovnice; tipovi iz
    Swaggera; 403 s popisom grantova; jedna navigacija po grantovima.
 4. Backend redoslijed (odluka 2026-10-09): **K3** Nositelj + podračuni → **P3** Client Credit Ledger → **P4** Notifications →

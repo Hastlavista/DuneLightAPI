@@ -9,7 +9,7 @@ namespace BlueDragon.DuneLight.Infrastructure.Utils;
 /// odnosi na broj ulazaka, ne na valjanost: sva tri načina valjanosti uvijek daju konkretan datum. Paket vrijedi do
 /// KRAJA dana isteka (uključivo), bez obzira na vrijeme kupnje — isto pravilo kao prije, sada izraženo kalendarskim
 /// datumom (Phase D3B3A.1):
-/// - DayCount: datum kupnje + ValidityDays dana;
+/// - DayCount: ValidityDays kalendarskih dana uključujući dan kupnje (T1-11) → datum kupnje + ValidityDays − 1;
 /// - EndOfMonth: zadnji dan mjeseca kupnje;
 /// - FixedDate: zadani datum.
 ///
@@ -29,7 +29,9 @@ public static class PackageExpiryCalculator
             case PackageValidityType.DayCount:
                 if (validityDays is null or <= 0)
                     throw new ArgumentException("ValidityDays is required for DayCount validity type.", nameof(validityDays));
-                return purchaseDate.AddDays(validityDays.Value);
+                // CHANGED in T1 (T1-11): "N dana" = točno N kalendarskih dana računajući dan kupnje kao 1. dan (prije: + N, tj.
+                // N + 1 dan uz uključiv kraj). Kupljen 1.10., "30 dana" → vrijedi do 30.10. uključivo.
+                return purchaseDate.AddDays(validityDays.Value - 1);
 
             case PackageValidityType.EndOfMonth:
                 return new DateOnly(purchaseDate.Year, purchaseDate.Month, DateTime.DaysInMonth(purchaseDate.Year, purchaseDate.Month));

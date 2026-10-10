@@ -29,6 +29,13 @@ public static class WarningCodes
     /// Za isključenje usluge treba odabrati "Bez provizije".</summary>
     public const string CommissionServiceRuleGeneralApplies = "COMMISSION_SERVICE_RULE_GENERAL_APPLIES";
 
+    /// <summary>T1-10 — spremljene postavke provizija s isključenim "oduzmi popuste članstva": provizija za posjete pokrivene
+    /// članarinom računa se od cijene sesije (cjenik / ručni iznos) bez obzira na iznos članarine i NIJE ograničena na primljeni
+    /// iznos (jedina iznimka načela "provizija nikad nije veća od primljenog", izričit izbor studija). Spremanje se ne odbija.
+    /// T1-11: isto vrijedi za sesije pokrivene NEOGRANIČENIM paketom (nema cijene jedinice, obračun kao članarina); Details =
+    /// <see cref="WarningCommissionListPriceSessionsDetails"/> (AppliesTo: Membership, UnlimitedPackage). Kod ostaje isti.</summary>
+    public const string CommissionMembershipSessionsAtListPrice = "COMMISSION_MEMBERSHIP_SESSIONS_AT_LIST_PRICE";
+
     // Roster
     public const string RosterEntryOverlap = "ROSTER_ENTRY_OVERLAP";
 

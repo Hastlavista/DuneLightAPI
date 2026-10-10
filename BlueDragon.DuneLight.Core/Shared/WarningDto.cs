@@ -241,3 +241,11 @@ public class WarningPriceListScheduledKeepDetails
     public DateOnly ValidFrom { get; set; }
     public DateOnly? ValidTo { get; set; }
 }
+
+/// <summary>T1-11 — COMMISSION_MEMBERSHIP_SESSIONS_AT_LIST_PRICE: na koje se sesije odnosi isključen "oduzmi popuste članstva"
+/// (provizija od cijene sesije, bez ograničenja na primljeni iznos). Vrijednosti: "Membership" (sesija pokrivena članarinom) i
+/// "UnlimitedPackage" (sesija pokrivena paketom bez konačnog broja jedinica).</summary>
+public class WarningCommissionListPriceSessionsDetails
+{
+    public List<string> AppliesTo { get; set; } = new();
+}

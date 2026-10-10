@@ -177,7 +177,10 @@ public class CommissionVagaroTests
         await w.CompleteNew(w.CompleteRequest(SchedulingWorld.Past(10), clientPackageId: package.Id));
 
         CommissionEntry entry = Assert.Single(await w.LoadCommissionEntries());
-        Assert.Equal((CommissionPaymentSource.Package, package.Id, 50m, 5m), (entry.PaymentSource.Value, entry.CoverageSourceId, entry.BaseAmount, entry.CommissionAmount));
+        // CHANGED in T1 (T1-10, odluka "Tri odluke T1 (2)"): osnovica sesije pokrivene paketom je stvarno plaćena cijena paketa po
+        // jedinici (100 € / 5 = 20 €), ne cjenik (prije: 50 € → provizija 5 €). Paket je i dalje način plaćanja (prekidači ne djeluju).
+        Assert.Equal((CommissionPaymentSource.Package, package.Id, 20m, 2m), (entry.PaymentSource.Value, entry.CoverageSourceId, entry.BaseAmount, entry.CommissionAmount));
+        Assert.Equal(50m, entry.ListPriceAmount);
     }
 
     [Fact]

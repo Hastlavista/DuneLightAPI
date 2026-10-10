@@ -45,8 +45,31 @@ public class T1ForbiddenShapeTests : IClassFixture<MultiSegmentHttpContractTests
         Assert.Equal(ErrorCodes.Forbidden, error.GetProperty("code").GetString());
         JsonElement details = error.GetProperty("details");
         Assert.Equal("MissingGrant", details.GetProperty("reason").GetString());
-        Assert.Equal(new[] { Grants.OrganizationSettingsManage },
+        // CHANGED in T1 (T1-11): GET postavki prima i novi grant za čitanje organization.settings.view (prije samo manage).
+        Assert.Equal(new[] { Grants.OrganizationSettingsView, Grants.OrganizationSettingsManage },
             details.GetProperty("requiredGrants").EnumerateArray().Select(g => g.GetString()).ToArray());
+        Assert.Equal("Any", details.GetProperty("match").GetString());
+    }
+
+    [Fact]
+    public async Task ReadGrant_OrganizationSettingsView_Alone_Is200()
+    {
+        await using SchedulingWorld w = await SchedulingWorld.Create(nameof(ReadGrant_OrganizationSettingsView_Alone_Is200));
+        Guid member = await w.AddMemberUser();
+        await w.GrantUser(member, Grants.OrganizationSettingsView);
+        string token = new JwtService(MultiSegmentHttpContractTests.Jwt).GenerateToken(member, $"{member:N}@http.test", w.OrganizationId);
+
+        foreach ((string path, HttpStatusCode expected) in new[]
+                 {
+                     ("/api/organization/settings", HttpStatusCode.OK),
+                     ("/api/commissions/settings", HttpStatusCode.Forbidden) // drugi grant za čitanje ne otvara tuđe područje
+                 })
+        {
+            using HttpRequestMessage request = new(HttpMethod.Get, path);
+            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+            using HttpResponseMessage response = await _http.SendAsync(request);
+            Assert.Equal(expected, response.StatusCode);
+        }
     }
 
     [Fact]

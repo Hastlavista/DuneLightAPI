@@ -26,7 +26,7 @@ public class CancellationReasonsController : ControllerBase
     }
 
     [HttpGet]
-    [RequireGrant(Grants.CatalogCancellationReasonsManage, Grants.AppointmentsWriteOwn, Grants.AppointmentsWriteAll,
+    [RequireGrant(Grants.CatalogCancellationReasonsView, Grants.CatalogCancellationReasonsManage, Grants.AppointmentsWriteOwn, Grants.AppointmentsWriteAll,
         Grants.GroupsAttendanceOwn, Grants.GroupsAttendanceAll)]
     public async Task<ActionResult<List<CancellationReasonDto>>> GetAll([FromQuery] bool? isActive, [FromQuery] CancellationReasonEvent? appliesTo)
     {

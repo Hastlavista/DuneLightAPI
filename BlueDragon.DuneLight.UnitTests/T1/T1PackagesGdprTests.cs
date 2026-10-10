@@ -135,16 +135,17 @@ public class T1PackagesGdprTests
 
         using (w.ClockAt(SaleNoon))
         {
-            // 2031-02-20 + 10 dana = 2031-03-02 < 2031-03-05.
+            // CHANGED in T1 (T1-11): "10 dana" uključuje dan kupnje → 2031-02-20 .. 2031-03-01 < 2031-03-05 (prije: do 02.03.).
             BusinessRuleException ex = await Assert.ThrowsAsync<BusinessRuleException>(() => Issue(w, tenDays, new DateOnly(2031, 2, 20)));
             Assert.Equal(ErrorCodes.PackageExpiredAtIssue, ex.Code);
-            Assert.Contains("02.03.2031.", ex.Message);
+            Assert.Contains("01.03.2031.", ex.Message);
             // Kraj veljače je prošao.
             Assert.Equal(ErrorCodes.PackageExpiredAtIssue,
                 (await Assert.ThrowsAsync<BusinessRuleException>(() => Issue(w, endOfMonth, new DateOnly(2031, 2, 27)))).Code);
 
-            // Granica: istječe danas → još vrijedi i upisuje se.
-            Assert.Equal(SaleDay, (await Issue(w, tenDays, new DateOnly(2031, 2, 23))).ValidUntilDate);
+            // Granica: istječe danas → još vrijedi i upisuje se. CHANGED in T1 (T1-11): kupnja 24.02. (10 dana: 24.02.–05.03.;
+            // prije 23.02. uz + N).
+            Assert.Equal(SaleDay, (await Issue(w, tenDays, new DateOnly(2031, 2, 24))).ValidUntilDate);
         }
 
         // Nijedan odbijeni upis nije ostavio paket ni audit.

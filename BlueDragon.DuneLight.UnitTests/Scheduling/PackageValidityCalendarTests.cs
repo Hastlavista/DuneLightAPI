@@ -227,11 +227,12 @@ public class PackageValidityCalendarTests
         // 31 Jan 23:30 UTC = 1 Feb 00:30 in Zagreb (the sale company) = 31 Jan 18:30 in New York (the organization).
         using (w.ClockAt(new DateTimeOffset(2031, 1, 31, 23, 30, 0, TimeSpan.Zero)))
         {
+            // CHANGED in T1 (T1-11): "10 dana" uključuje dan kupnje → kupnja + 9 (prije + 10).
             ClientPackageDto atCompany = await Sell(w, dayCount, null, w.Company.Id);
-            Assert.Equal((new DateOnly(2031, 2, 1), new DateOnly(2031, 2, 11)), (atCompany.PurchaseDate, atCompany.ValidUntilDate));
+            Assert.Equal((new DateOnly(2031, 2, 1), new DateOnly(2031, 2, 10)), (atCompany.PurchaseDate, atCompany.ValidUntilDate));
             Assert.Equal(new DateOnly(2031, 2, 28), (await Sell(w, endOfMonth, null, w.Company.Id)).ValidUntilDate);
             ClientPackageDto withoutCompany = await Sell(w, dayCount, null, null);
-            Assert.Equal((new DateOnly(2031, 1, 31), new DateOnly(2031, 2, 10)), (withoutCompany.PurchaseDate, withoutCompany.ValidUntilDate));
+            Assert.Equal((new DateOnly(2031, 1, 31), new DateOnly(2031, 2, 9)), (withoutCompany.PurchaseDate, withoutCompany.ValidUntilDate));
             Assert.Equal(new DateOnly(2031, 1, 31), (await Sell(w, endOfMonth, null, null)).ValidUntilDate);
         }
 
@@ -241,7 +242,7 @@ public class PackageValidityCalendarTests
         using (w.ClockAt(new DateTimeOffset(2031, 1, 31, 12, 0, 0, TimeSpan.Zero)))
         {
             ClientPackageDto explicitDay = await Sell(w, dayCount, new DateOnly(2031, 1, 31), w.Company.Id);
-            Assert.Equal((new DateOnly(2031, 1, 31), new DateOnly(2031, 2, 10)), (explicitDay.PurchaseDate, explicitDay.ValidUntilDate));
+            Assert.Equal((new DateOnly(2031, 1, 31), new DateOnly(2031, 2, 9)), (explicitDay.PurchaseDate, explicitDay.ValidUntilDate));
             Assert.Equal(new DateOnly(2031, 1, 31), (await Sell(w, endOfMonth, new DateOnly(2031, 1, 31), w.Company.Id)).ValidUntilDate);
         }
     }
@@ -251,7 +252,8 @@ public class PackageValidityCalendarTests
     {
         DateOnly purchase = new(2031, 1, 31);
 
-        Assert.Equal(new DateOnly(2031, 2, 10), PackageExpiryCalculator.CalculateValidUntilDate(PackageValidityType.DayCount, purchase, 10, null));
+        // CHANGED in T1 (T1-11): DayCount = N kalendarskih dana uključujući dan kupnje (31.1. + 10 dana → 9.2.; prije 10.2.).
+        Assert.Equal(new DateOnly(2031, 2, 9), PackageExpiryCalculator.CalculateValidUntilDate(PackageValidityType.DayCount, purchase, 10, null));
         Assert.Equal(new DateOnly(2031, 1, 31), PackageExpiryCalculator.CalculateValidUntilDate(PackageValidityType.EndOfMonth, purchase, null, null));
         Assert.Equal(new DateOnly(2032, 2, 29), PackageExpiryCalculator.CalculateValidUntilDate(PackageValidityType.EndOfMonth, new DateOnly(2032, 2, 1), null, null));
         Assert.Equal(new DateOnly(2031, 6, 30), PackageExpiryCalculator.CalculateValidUntilDate(PackageValidityType.FixedDate, purchase, null, new DateOnly(2031, 6, 30)));

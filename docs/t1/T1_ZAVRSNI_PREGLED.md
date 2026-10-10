@@ -16,15 +16,14 @@
 | T1-8 | Pravila cijena: zamrznuta cijena (grupna prisutnost, ručni iznos), ponovno čitanje cjenika samo kad se mijenja dan/usluga/kontekst, `PARTICIPATION_PRICE_CHANGED`, `PRICE_NOT_DEFINED`, `PRICE_LIST_GAP`, `PRICE_LIST_SCHEDULED_KEEP_OLD_PRICE`, `PRICE_OVERLAP` s detaljima, audit ručnog iznosa | gotovo |
 | T1-9 | Paketi i GDPR: `clients.packages.write.past`, bez budućeg datuma kupnje, odbijanje već isteklog, pokriće od dana kupnje, `client_audit_logs`, GDPR datum ne u budućnosti; migracija `20261030000002` | gotovo |
 
-**Rezultat:** build bez grešaka (bez novih upozorenja u produkcijskom kodu); testovi **1343/1343** (53 nova; namjerno
+**Rezultat:** build bez grešaka (bez novih upozorenja u produkcijskom kodu); testovi **1375/1375** (85 novih; namjerno
 promijenjeni označeni `CHANGED in T1`: 409 → 403 `NOT_OWNER`, tipovi datuma, pokriće paketa od dana kupnje). Migracije
-`20261030000000` – `20261030000003` primijenjene lokalno.
+`20261030000000` – `20261030000004` primijenjene lokalno (T1-10 i T1-11: uključiv kraj, ograničenje provizije, "N dana", read grantovi, roster upit; detalji u T1 recordu).
 
 ## b) Namjerno otvoreno
-- Fond godišnjeg: vrijedi li i na dan `ExpiresAt` (zadržano prijašnje ponašanje: ne vrijedi) — na odluku.
-- Provizija može biti veća od naplaćenog (fiksno pravilo na niži ručni iznos; pokriće članarinom bez "oduzmi popuste članstva";
-  paket) — opisano u T1-8, na odluku.
-- Grupe ovlasti prvog klijenta u seedu — nakon potvrde popisa.
+- Grace period: D+1 … D+G, potvrđeno bez promjene (dan dospijeća je redovni rok, grace su dodatni dani).
+- Grupe ovlasti prvog klijenta su u seedu (Vlasnik, Trener, Trener + recepcija); grantovi izvještaja i blagajne dolaze s B1 / izvještajem.
+- `Employee.EmploymentEndDate` bez učinka — P6.
 - Nesigurni nullable nazivi preko navigacija (ostavljeni nullable) — T1 record T1-6.
 - Uklanjanje testnih alata prije go-livea — ARCH §7.4.
 

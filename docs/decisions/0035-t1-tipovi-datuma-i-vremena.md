@@ -35,3 +35,28 @@ instant se pri pretvorbi zone pomakne na prethodni/sljedeći dan; servisi su dan
 - Migracija `20261030000001` (T1DateTypes) pretvara postojeće `timestamptz` stupce u `date` u mjerodavnoj zoni (vidi migraciju).
 - `CalendarDates` (pogađanje dana iz offseta) je uklonjen.
 - Karakterizacijski i ugovorni testovi s promijenjenim očekivanjem nose oznaku `CHANGED in T1`.
+
+## Uključiv kraj (T1-10, 2026-10-09)
+Odluka (T1 dnevnik "Tri odluke T1 (1)"): **svaki "vrijedi do / završava" dan (`DateOnly`) uključuje taj dan** — kao cjenik i
+izvještaj provizija. Datumi "od" (`EffectiveFrom`, `DeactivatedFrom`, `PendingEffectiveOn`, početak perioda, `DueOn`) nisu "do" i
+ostaju kakvi jesu.
+
+- **Promijenjeno (CHANGED in T1):** fond godišnjeg — `LeaveFundYearCalculator.IsExpired` = danas > `ExpiresAt`;
+  `LeaveFundHandler.GetEligible` = `ExpiresAt >= asOf` (prije: na dan `ExpiresAt` fond je već istekao).
+- **Već uključivo, bez promjene:** kraj članstva `EndsOn`, kraj perioda članstva, `ValidUntilDate` paketa, kraj pauze (klijentove i
+  sustavne `CompanyClosure`), zadnji dan grace perioda (`DueOn + GraceDays`), datum otkaza članstva (zapisuje se kao `EndsOn` = zadnji
+  dan), `ValidTo` cjenika, `DateTo` roster zapisa, kraj ponavljajućeg niza, `ToDate` generiranja grupe.
+- Puna tablica (datoteka:redak, usporedba, razlog) i otvorena pitanja: [T1 record, T1-10](../t1/T1_DECISION_RECORD.md).
+
+## Dopuna T1-11 (2026-10-09): trajanje "N dana"
+Odluka (T1 dnevnik "T1-11 (1)"): **"N dana" znači točno N kalendarskih dana uključujući prvi dan.** Paket kupljen 1.10. s valjanošću
+"30 dana" vrijedi do 30.10. uključivo; "3 mjeseca" od 5.10. → do 4.1. (zadnji dan = početak + trajanje − 1 dan).
+
+- **Promijenjeno (CHANGED in T1):** `PackageExpiryCalculator` za `DayCount` = dan kupnje + N − 1 (prije + N, tj. N + 1 dan uz uključiv
+  kraj). `EndOfMonth` i `FixedDate` bez promjene.
+- **Već u skladu, bez promjene:** periodi članstva (mjesečno/godišnje, kraj = sljedeći početak − 1), pauza po danima i `MaxPauseDays`
+  (`EndsOn − StartsOn + 1`), pomak perioda zbog pauze, 12-mjesečni prozor limita pauza, otkazni rok (`zahtjev + N − 1` = najraniji zadnji
+  dan), rok najave izmjene plana (dan objave je 1. dan, novi uvjeti najranije od dana N + 1).
+- **Grace:** zadnji grace dan = `DueOn + GraceDays` (grace su dani nakon dana dospijeća); nije mijenjano — ako grace treba uključivati
+  dan dospijeća, to je zasebna odluka.
+- Tablica: [T1 record, T1-11](../t1/T1_DECISION_RECORD.md).

@@ -37,8 +37,13 @@ public class RosterEntryHandler : IRosterEntryHandler
         if (rosterTypeId.HasValue)
             query = query.Where(e => e.RosterTypeId == rosterTypeId.Value);
 
+        // CHANGED in T1 (T1-11): semantika preklapanja s [from, to], ista kao provjere preklapanja. Zapis se preklapa ako
+        // DateFrom <= to i njegov kraj >= from; kraj je DateTo, a bez DateTo: otvorena odsutnost traje beskonačno (prije se nije
+        // vraćala ako je počela prije from), a rad (DateTo uvijek null) traje samo dan DateFrom.
         if (from.HasValue)
-            query = query.Where(e => e.DateTo == null ? e.DateFrom >= from.Value : e.DateTo >= from.Value);
+            query = query.Where(e => e.DateTo != null
+                ? e.DateTo >= from.Value
+                : e.RosterType.IsAbsence || e.DateFrom >= from.Value);
 
         if (to.HasValue)
             query = query.Where(e => e.DateFrom <= to.Value);

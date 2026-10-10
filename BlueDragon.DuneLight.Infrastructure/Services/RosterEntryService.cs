@@ -505,7 +505,7 @@ public class RosterEntryService : IRosterEntryService
         if (toYear != fromYear)
             await _leaveFundHandler.GetOrCreateForYear(uow, organizationId, employeeId, settings, toYear, userId);
 
-        // T1-7: fond se smije trošiti do dana prije ExpiresAt (danas po kalendaru organizacije, kao IsExpired u LeaveFundService).
+        // T1-10: fond se smije trošiti zaključno s danom ExpiresAt (danas po kalendaru organizacije, kao IsExpired u LeaveFundService).
         DateOnly today = (await _organizationCalendarService.GetCalendar(organizationId)).LocalDate(_timeProvider.GetUtcNow());
         List<LeaveFund> eligible = await _leaveFundHandler.GetEligible(uow, organizationId, employeeId, today);
         List<(LeaveFund Fund, int Days)> allocation = LeaveFundAllocator.Deduct(eligible, requestedDays);

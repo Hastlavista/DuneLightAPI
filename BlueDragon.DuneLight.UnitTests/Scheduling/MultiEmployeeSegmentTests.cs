@@ -350,7 +350,9 @@ public class MultiEmployeeSegmentTests
         Assert.True(booking.Participations.Single().PackageCovered);
         Assert.Equal(100m, booking.Participations.Single().Amount); // coverage does not zero the final price
         List<CommissionEntry> entries = await EntriesOf(w, participation);
-        Assert.Equal(new[] { 10m, 15m }, entries.OrderBy(e => e.CommissionAmount).Select(e => e.CommissionAmount));
+        // CHANGED in T1 (T1-10): osnovica provizije sesije pokrivene paketom je plaćena cijena paketa po jedinici (100 € / 5 = 20 €),
+        // ne konačna cijena sesije (prije: 100 € → 10 € i 15 €). Konačna cijena sudjelovanja i dalje ostaje 100 € (gore).
+        Assert.Equal(new[] { 2m, 3m }, entries.OrderBy(e => e.CommissionAmount).Select(e => e.CommissionAmount));
     }
 
     [Fact]

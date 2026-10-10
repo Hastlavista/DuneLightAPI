@@ -30,6 +30,8 @@ public static class Grants
     public const string CatalogResourcesManage = "catalog.resources.manage";
 
     /// <summary>K1-4 — upravljanje šifrarnikom razloga otkazivanja/izostanka (pregled šifri imaju svi koji otkazuju).</summary>
+    /// <summary>T1-11 — pregled šifrarnika razloga otkazivanja/izostanka (bez uređivanja); šifre i dalje čitaju i svi koji otkazuju.</summary>
+    public const string CatalogCancellationReasonsView = "catalog.cancellation-reasons.view";
     public const string CatalogCancellationReasonsManage = "catalog.cancellation-reasons.manage";
     public const string CatalogCancellationPoliciesView = "catalog.cancellation-policies.view";
     public const string CatalogCancellationPoliciesManage = "catalog.cancellation-policies.manage";
@@ -119,7 +121,10 @@ public static class Grants
     public const string RosterLeaveFundViewAll = "roster.leave-fund.view.all";
     public const string RosterLeaveFundManage = "roster.leave-fund.manage";
 
+    /// <summary>T1-11 — pregled vizualnog identiteta i poslovnih postavki organizacije bez uređivanja.</summary>
+    public const string OrganizationBrandingView = "organization.branding.view";
     public const string OrganizationBrandingManage = "organization.branding.manage";
+    public const string OrganizationSettingsView = "organization.settings.view";
     public const string OrganizationSettingsManage = "organization.settings.manage";
 
     /// <summary>Grant-only Tenant Authorization Refactor — zamjenjuju stari [RequireOwner] Owner bypass na
@@ -141,9 +146,11 @@ public static class Grants
 
     /// <summary>Namjerno bez own/all podjele — provizija je internа staff-compensation evidencija koju vidi
     /// menadžment, ne "vlastita" provizija pojedinog zaposlenika (vidi spec section 47). View pokriva samo
-    /// čitanje CommissionEntry povijesti/sažetka; konfiguracija pravila (uklj. čitanje pravila) je Manage.</summary>
+    /// čitanje CommissionEntry povijesti/sažetka; konfiguracija pravila je Manage; čitanje pravila i postavki je CommissionsRulesView (T1-11) ili Manage.</summary>
     public const string CommissionsView = "commissions.view";
     public const string CommissionsManage = "commissions.manage";
+    /// <summary>T1-11 — pregled pravila i postavki provizija bez uređivanja (Manage uključuje i ovo čitanje).</summary>
+    public const string CommissionsRulesView = "commissions.rules.view";
 
     /// <summary>Namjerno bez own/all podjele — operativna nadzorna ploča je vezana uz poslovnicu (Company), isto
     /// obrazloženje kao CheckoutView. Read-only (nema Manage parnjaka) jer dashboard ništa ne mutira.</summary>
@@ -174,6 +181,7 @@ public static class Grants
         new(CatalogRoomsManage, "Upravljanje prostorijama", "catalog", "Uređivanje prostorija po poslovnici."),
         new(CatalogResourcesView, "Pregled resursa", "catalog", "Pregled resursa (oprema/mjesta s kapacitetom) po poslovnici."),
         new(CatalogResourcesManage, "Upravljanje resursima", "catalog", "Uređivanje resursa (oprema/mjesta s kapacitetom) po poslovnici."),
+        new(CatalogCancellationReasonsView, "Pregled razloga otkazivanja", "catalog", "Pregled šifrarnika razloga otkazivanja i izostanka (bez uređivanja)."),
         new(CatalogCancellationReasonsManage, "Upravljanje razlozima otkazivanja", "catalog", "Šifrarnik razloga otkazivanja i izostanka (naziv, aktivnost, za koje događaje vrijedi)."),
         new(CatalogCancellationPoliciesView, "Pregled politika otkazivanja", "catalog", "Pregled politika otkazivanja, njihovih verzija i dodjela."),
         new(CatalogCancellationPoliciesManage, "Upravljanje politikama otkazivanja", "catalog", "Kreiranje politika otkazivanja i verzija, dodjele po poslovnici/usluzi i zadana politika organizacije."),
@@ -240,7 +248,9 @@ public static class Grants
         new(RosterLeaveFundViewAll, "Fond godišnjeg odmora svih zaposlenika", "roster", "Pregled fonda godišnjeg odmora — bilo čiji."),
         new(RosterLeaveFundManage, "Korekcija fonda godišnjeg odmora", "roster", "Ručno otvaranje/korekcija fonda godišnjeg odmora za određenu godinu."),
 
+        new(OrganizationBrandingView, "Pregled vizualnog identiteta", "organization", "Pregled vizualnog identiteta organizacije (logo, favicon, boje) bez uređivanja."),
         new(OrganizationBrandingManage, "Vizualni identitet", "organization", "Uređivanje vizualnog identiteta organizacije (logo, favicon, boje)."),
+        new(OrganizationSettingsView, "Pregled postavki organizacije", "organization", "Pregled poslovnih postavki organizacije bez uređivanja."),
         new(OrganizationSettingsManage, "Postavke organizacije", "organization", "Uređivanje poslovnih postavki organizacije (npr. potrošnja paketa, vremenska zona)."),
 
         new(PermissionsView, "Pregled dozvola", "organization", "Pregled GrantGroup-a i konfiguracije dozvola."),
@@ -257,6 +267,7 @@ public static class Grants
 
         new(CommissionsView, "Pregled provizija", "commissions", "Pregled zarađene provizije osoblja (povijest i sažetak)."),
         new(CommissionsManage, "Pravila provizija", "commissions", "Konfiguracija pravila provizije po zaposleniku/predmetu."),
+        new(CommissionsRulesView, "Pregled pravila provizija", "commissions", "Pregled pravila provizija i postavki obračuna provizija bez uređivanja."),
 
         new(DashboardView, "Nadzorna ploča", "dashboard", "Pregled operativne nadzorne ploče (raspored, osoblje, financije, upozorenja) po poslovnici."),
 

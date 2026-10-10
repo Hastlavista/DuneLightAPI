@@ -129,6 +129,17 @@ public class CommissionRuleEvaluationDto
 {
     public CommissionRuleEvaluationItemDto Applied { get; set; }
     public List<CommissionRuleEvaluationItemDto> NotApplied { get; set; } = new();
+
+    /// <summary>T1-10 — odakle je osnovica, kad nije cijena sesije iz upisa (npr. sesija pokrivena paketom: "plaćena cijena
+    /// paketa 300,00 € / 10 jedinica = 30,00 €"). Null kad je osnovica uobičajena cijena sesije.</summary>
+    public string? BaseNote { get; set; }
+
+    /// <summary>T1-10 — iznos na koji je provizija ograničena (iznos primljen za uslugu); null kad ograničenja nije bilo.
+    /// Uz to je na zapisu <c>WasCapped = true</c>.</summary>
+    public decimal? CappedAt { get; set; }
+
+    /// <summary>T1-10 — razlog ograničenja, npr. "Ograničeno na naplaćeni iznos 5,00 €."; null kad ograničenja nije bilo.</summary>
+    public string? CapReason { get; set; }
 }
 
 public class CommissionRuleEvaluationItemDto

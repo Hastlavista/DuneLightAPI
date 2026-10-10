@@ -30,9 +30,9 @@ public static class LeaveFundYearCalculator
         return SafeDate(fundYear + 1, settings.CarryoverExpiryMonth, settings.CarryoverExpiryDay);
     }
 
-    /// <summary>Fond je istekao od dana ExpiresAt (uključivo) po kalendaru organizacije — isto ponašanje kao prije T1-7, kad je
-    /// ExpiresAt bio početak tog dana. Treba li fond vrijediti i na dan isteka: otvoreno pitanje (T1 dnevnik).</summary>
-    public static bool IsExpired(LeaveFund fund, DateOnly today) => fund.ExpiresAt <= today;
+    /// <summary>T1-10 (uključiv kraj, ADR-0035): fond vrijedi i na dan ExpiresAt; istekao je tek kad je danas (kalendar
+    /// organizacije) NAKON ExpiresAt.</summary>
+    public static bool IsExpired(LeaveFund fund, DateOnly today) => today > fund.ExpiresAt;
 
     private static DateOnly SafeDate(int year, int month, int day)
     {

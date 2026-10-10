@@ -25,7 +25,10 @@ public static class CapabilityCatalog
         ViewManage("catalog.memberships.manage", "catalog", CapabilitySensitivity.Sensitive,
             view: new[] { Grants.CatalogMembershipsView },
             manage: new[] { Grants.CatalogMembershipsManage }),
-        On("catalog.cancellation-reasons.manage", "catalog", CapabilitySensitivity.Normal, Grants.CatalogCancellationReasonsManage),
+        // T1-11: View/Manage (prije samo On) — pregled šifrarnika bez uređivanja; Manage uključuje View.
+        ViewManage("catalog.cancellation-reasons.manage", "catalog", CapabilitySensitivity.Normal,
+            view: new[] { Grants.CatalogCancellationReasonsView },
+            manage: new[] { Grants.CatalogCancellationReasonsManage }),
         ViewManage("catalog.resources.manage", "catalog", CapabilitySensitivity.Normal,
             view: new[] { Grants.CatalogResourcesView },
             manage: new[] { Grants.CatalogResourcesManage }),
@@ -58,7 +61,7 @@ public static class CapabilityCatalog
             manage: new[] { Grants.ClientsTagsManage }),
 
         ViewManage("commissions.manage", "commissions", CapabilitySensitivity.Sensitive,
-            view: new[] { Grants.CommissionsView },
+            view: new[] { Grants.CommissionsView, Grants.CommissionsRulesView }, // T1-11: i pregled pravila i postavki
             manage: new[] { Grants.CommissionsManage }),
 
         On("employees.directory.view", "employees", CapabilitySensitivity.Normal, Grants.EmployeesDirectoryView),
@@ -79,11 +82,16 @@ public static class CapabilityCatalog
         On("operations.dashboard.view", "operations", CapabilitySensitivity.Normal, Grants.DashboardView),
         On("operations.notifications.view", "operations", CapabilitySensitivity.Normal, Grants.NotificationsView),
 
-        On("organization.branding.manage", "organization", CapabilitySensitivity.Normal, Grants.OrganizationBrandingManage),
+        // T1-11: View/Manage (prije samo On).
+        ViewManage("organization.branding.manage", "organization", CapabilitySensitivity.Normal,
+            view: new[] { Grants.OrganizationBrandingView },
+            manage: new[] { Grants.OrganizationBrandingManage }),
         ViewManage("organization.permissions.manage", "organization", CapabilitySensitivity.HighRisk,
             view: new[] { Grants.PermissionsView },
             manage: new[] { Grants.PermissionsManage, Grants.PermissionsAssignmentsManage }),
-        On("organization.settings.manage", "organization", CapabilitySensitivity.Sensitive, Grants.OrganizationSettingsManage),
+        ViewManage("organization.settings.manage", "organization", CapabilitySensitivity.Sensitive,
+            view: new[] { Grants.OrganizationSettingsView },
+            manage: new[] { Grants.OrganizationSettingsManage }),
 
         ViewManage("products.manage", "products", CapabilitySensitivity.Normal,
             view: new[] { Grants.ProductsView },

@@ -102,3 +102,43 @@ paketa.
 - Sljedeća zasebna faza nakon P2 je **Payroll po Vagaro modelu**: obračunsko razdoblje i zatvaranje, tiered po prometu, klase,
   trošak usluge, napojnice, satnica ili provizija, ovlasti. Pitanja su u [docs/payroll](../payroll/PAYROLL_QUESTIONS.md).
 - Otvoreno: provizija na prodaju usluge i obnova (Q52b), postotna grupna provizija (dug D), zaokruživanje postotka.
+
+## Dopuna T1-10 (2026-10-09): provizija i primljeni iznos
+Izvor: [T1 record](../t1/T1_DECISION_RECORD.md) (dnevnik "Tri odluke T1 (2)", sekcija T1-10). Ima prednost pred gornjim tekstom
+gdje se razlikuju.
+
+**Princip:** *Provizija nikad nije veća od iznosa primljenog za tu uslugu — izravno naplaćenog ili unaprijed plaćenog kroz paket.
+Jedina iznimka je termin pokriven članarinom kad je prekidač "oduzmi popuste članstva" isključen, kao izričit izbor studija.*
+
+- **Izravno naplaćena sesija** (`PaymentSource = Direct`): provizija za odrađeno = min(izračunata, iznos sudjelovanja). Npr. fiksno
+  10 € uz ručni iznos 5 € → 5 €; uz 0 € → 0 €. Postotno pravilo (0–100 %) od uobičajene osnovice to ograničenje ne dosegne.
+  Ograničenje se bilježi: `WasCapped = true`, a u objašnjenju (`rule_evaluation`) `CappedAt` i `CapReason` ("Ograničeno na
+  naplaćeni iznos 5,00 €.").
+- **Sesija pokrivena paketom:** osnovica je **stvarno plaćena cijena paketa po jedinici** (`ClientPackage.PaidPrice` / broj jedinica:
+  zajednički fond `TotalEntryCount` ili zbroj jedinica po uslugama), zaokruženo na cent; prekidači se ne primjenjuju; bez
+  ograničenja (fiksno pravilo je fiksni iznos). U objašnjenju `BaseNote` ("Osnovica je plaćena cijena paketa 60,00 € / 5 jedinica =
+  12,00 €."). Prije: cijena sesije iz upisa (cjenik). Paket bez konačnog broja jedinica (neograničen) nema cijenu jedinice — tada
+  osnovica ostaje cijena sesije (otvoreno, vidi T1-10).
+- **Sesija pokrivena članarinom:** uz isključen "oduzmi popuste članstva" osnovica je cijena sesije, bez ograničenja (iznimka). Uz
+  uključen prekidač naplaćeno na sesiji je 0 €, pa je provizija 0 i za fiksno pravilo (prije je fiksno pravilo davalo puni iznos,
+  suprotno gornjem "pokrivena sesija ima proviziju za odrađeno 0").
+- **Spremanje postavki** (`PUT /api/commissions/settings`) s isključenim "oduzmi popuste članstva" vraća neblokirajuće upozorenje
+  `COMMISSION_MEMBERSHIP_SESSIONS_AT_LIST_PRICE` (`OrganizationCommissionSettingsDto.Warnings`).
+- Izvan opsega dopune (bez promjene): grupna provizija (fiksno po održanom terminu), provizija na prodaju (od iznosa stavke),
+  Q38 naknada (već ograničena na naknadu).
+
+## Dopuna T1-11 (2026-10-09): neograničen paket, ograničenje paketne sesije, grant za čitanje
+Izvor: [T1 record](../t1/T1_DECISION_RECORD.md) (dnevnik "T1-11 (2)–(4), (6)"). Ima prednost pred gornjim tekstom i dopunom T1-10 gdje se
+razlikuju.
+
+- **Sesija pokrivena paketom s cijenom jedinice** (`PaidPrice / jedinice`): provizija najviše ta vrijednost — i za fiksno pravilo (fiksno
+  10 € na sesiji od 5 € → 5 €; `WasCapped`, `CapReason` "Ograničeno na vrijednost sesije iz paketa 5,00 €."). Zamjenjuje "bez
+  ograničenja" iz dopune T1-10.
+- **Neograničen paket** (bez konačnog broja jedinica, pa bez cijene jedinice) obračunava se **kao članarina**: uključen "oduzmi popuste
+  članstva" → 0 € (i za fiksno pravilo); isključen → osnovica je cijena sesije (cjenik / ručni iznos), bez ograničenja — ista iznimka
+  načela kao za članarinu. `PaymentSource` ostaje `Package`; `BaseNote` objašnjava. Zatvara "otvoreno" iz dopune T1-10.
+- Upozorenje `COMMISSION_MEMBERSHIP_SESSIONS_AT_LIST_PRICE` (kod nepromijenjen) odnosi se i na neograničene pakete; `Details` =
+  `{ appliesTo: ["Membership", "UnlimitedPackage"] }`.
+- Potvrđeno bez promjene: članarina + uključen prekidač → 0 € i za fiksno pravilo; ograničenje izravno naplaćene sesije s popustom za članove.
+- **Čitanje pravila i postavki:** `GET /api/commissions/rules`, `/rules/{id}` i `GET /api/commissions/settings` primaju `commissions.rules.view`
+  ili `commissions.manage`; pisanje i dalje samo `commissions.manage` (mijenja gornju rečenicu "postavke traže `commissions.manage`" za čitanje).

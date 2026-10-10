@@ -17,3 +17,6 @@ appsettings.*.json
 publish/
 sqlscript.sql
 NuGet.Config
+
+# Stvarni podaci klijenata (osobni podaci) — nikad u repozitorij; datoteke za izradu uvoza drže se samo ovdje lokalno.
+/klijent-podaci/

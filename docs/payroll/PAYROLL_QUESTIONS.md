@@ -53,6 +53,8 @@
 3.4. Prazna klasa ili klasa u kojoj su svi izostali: ima li provizije po klasi (dug B iz ARCHITECTURE)?
      Postavljeno klijentu kao **P-21** (`docs/klijent/POVRATNE_INFORMACIJE_v1.md`, 2026-10-09, K2). Odgovor treba **prije
      početka Payroll faze**. K2 ga ne odlučuje: korekcija polaznika ne dira grupnu proviziju (po sesiji, ADR-0030).
+     **ZATVORENO 2026-10-09 (odgovor prvog klijenta na P-21):** trener dobiva proviziju i za grupni trening na koji nitko nije
+     došao (prazna sesija ili svi izostali) — današnje ponašanje (provizija po sesiji pri zatvaranju), bez promjene.
 
 ### 4. Trošak usluge (business cost)
 4.1. Trošak po usluzi ili varijanti: fiksan iznos ili postotak? Ima li povijest s datumom važenja?

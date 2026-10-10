@@ -32,7 +32,7 @@ public class LeaveFund
     [Column("opened_at")]
     public DateOnly OpenedAt { get; set; }
 
-    /// <summary>Nakon ovog datuma neiskorišteni ostatak ovog fonda više nije prihvatljiv za trošenje (vidi LeaveFundHandler.GetEligible).</summary>
+    /// <summary>Zadnji dan na koji se fond smije trošiti (uključivo, T1-10). Nakon ovog datuma neiskorišteni ostatak ovog fonda više nije prihvatljiv za trošenje (vidi LeaveFundHandler.GetEligible).</summary>
     [Column("expires_at")]
     public DateOnly ExpiresAt { get; set; }
 

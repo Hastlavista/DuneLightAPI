@@ -41,6 +41,11 @@ namespace BlueDragon.DuneLight.Infrastructure.Services;
 /// (pokrivena sesija → 0); sesija pokrivena paketom = cijena sesije. Uz svaku proviziju objašnjenje izbora pravila. Provizija na
 /// prodaju ide korisniku odabranom na stavci (članarina: na članstvu); naknadna dodjela kad korisnika nije bilo. Q38 provizija od
 /// plaćene P1 naknade. Brojanje po događajima.
+///
+/// T1-10 (dopuna ADR-0030): provizija nikad nije veća od iznosa primljenog za uslugu — izravno naplaćenog ili unaprijed plaćenog
+/// kroz paket. Izravno naplaćena sesija (i sesija pokrivena članarinom uz "oduzmi popuste članstva"): provizija = min(izračunata,
+/// iznos sudjelovanja), uz WasCapped i razlog u objašnjenju. Sesija pokrivena paketom: osnovica = plaćena cijena paketa / broj
+/// jedinica, bez ograničenja. Jedina iznimka: sesija pokrivena članarinom uz isključen "oduzmi popuste članstva" (izbor studija).
 /// </summary>
 public class CommissionService : ICommissionRuleService, ICommissionService, ICommissionLedgerService
 {
@@ -742,7 +747,7 @@ public class CommissionService : ICommissionRuleService, ICommissionService, ICo
 
         // Osnovica (Vagaro): cijena sesije = ručni iznos ako je upisan (nije popust), inače cjenik. "Oduzmi popuste" i "oduzmi
         // popuste članstva" uzimaju cijenu nakon odgovarajuće prilagodbe; sesija koju članarina pokriva u cijelosti uz "oduzmi
-        // popuste članstva" ima osnovicu 0. Paket je način plaćanja: osnovica ostaje cijena sesije.
+        // popuste članstva" ima osnovicu 0.
         bool manual = participation.IsAmountManuallyOverridden;
         decimal sessionPrice = manual ? participation.Amount : participation.BaseAmount ?? participation.Amount;
         decimal baseAmount = sessionPrice;
@@ -754,13 +759,68 @@ public class CommissionService : ICommissionRuleService, ICommissionService, ICo
         }
         if (source == CommissionPaymentSource.Membership && settings.DeductMembershipDiscounts)
             baseAmount = 0m;
+
+        // CHANGED in T1 (T1-10): sesija pokrivena paketom — osnovica je STVARNO plaćena cijena paketa po jedinici
+        // (PaidPrice / broj jedinica paketa), ne cjenik; prekidači se ne primjenjuju (paket je već plaćen).
+        // CHANGED in T1 (T1-11): paket bez konačnog broja jedinica (neograničen) nema cijenu jedinice — obračunava se KAO
+        // ČLANARINA: uz "oduzmi popuste članstva" 0 €, uz isključen prekidač cijena sesije (cjenik / ručni iznos), bez ograničenja.
+        string baseNote = null;
+        bool packageUnitPrice = false;
+        bool unlimitedPackage = false;
+        if (source == CommissionPaymentSource.Package && coverageSourceId.HasValue)
+        {
+            (decimal PaidPrice, int Units)? unit = await PackageUnitPrice(uow, organizationId, coverageSourceId.Value);
+            if (unit.HasValue)
+            {
+                packageUnitPrice = true;
+                sessionPrice = Math.Round(unit.Value.PaidPrice / unit.Value.Units, 2, MidpointRounding.AwayFromZero);
+                baseAmount = sessionPrice;
+                baseNote = $"Osnovica je plaćena cijena paketa {Money(unit.Value.PaidPrice)} / {unit.Value.Units} jedinica = {Money(sessionPrice)}.";
+            }
+            else
+            {
+                unlimitedPackage = true;
+                baseAmount = settings.DeductMembershipDiscounts ? 0m : sessionPrice;
+                baseNote = settings.DeductMembershipDiscounts
+                    ? "Neograničen paket obračunava se kao članarina: uključen \"oduzmi popuste članstva\", osnovica 0,00 €."
+                    : $"Neograničen paket obračunava se kao članarina: isključen \"oduzmi popuste članstva\", osnovica je cijena sesije {Money(sessionPrice)}.";
+            }
+        }
         baseAmount = Math.Max(baseAmount, 0m);
+
+        // T1-10: provizija nikad nije veća od iznosa primljenog za uslugu. Ograničava se izravno naplaćena sesija i sesija
+        // pokrivena članarinom uz "oduzmi popuste članstva". Naplaćeno: izravno = iznos sudjelovanja; sesija pokrivena članarinom
+        // nema naplate na sesiji (iznos sudjelovanja ostaje cjenik, Q9, a namiruje ga članarina) = 0 € — isto kao ADR-0030
+        // "pokrivena sesija ima proviziju za odrađeno 0", sada i za fiksno pravilo. Bez ograničenja: članarina uz isključen
+        // "oduzmi popuste članstva" (izričit izbor studija).
+        // CHANGED in T1 (T1-11): paketna sesija s cijenom jedinice ograničena je na tu vrijednost (fiksno 10 € na sesiji od 5 € →
+        // 5 €); neograničen paket kao članarina (uz prekidač 0 €, bez njega bez ograničenja).
+        bool membershipLike = source == CommissionPaymentSource.Membership || unlimitedPackage;
+        bool capApplies = source == CommissionPaymentSource.Direct || packageUnitPrice ||
+                          (membershipLike && settings.DeductMembershipDiscounts);
+        decimal chargedAmount = membershipLike ? 0m
+            : packageUnitPrice ? sessionPrice
+            : Math.Max(participation.Amount, 0m);
 
         foreach (Guid employeeId in execution.EmployeeIds.Distinct().OrderBy(id => id))
         {
             RuleChoice choice = await ChooseServiceRule(organizationId, employeeId, execution.ServiceId, sessionDate, includeGeneral: true);
             if (choice == null)
                 continue;
+
+            decimal amount = Calculate(choice.CalculationType, choice.Value, baseAmount);
+            bool capped = capApplies && amount > chargedAmount;
+            string capReason = !capped ? null
+                : source == CommissionPaymentSource.Membership
+                    ? $"Ograničeno na naplaćeni iznos {Money(chargedAmount)} (sesija pokrivena članarinom, uključen \"oduzmi popuste članstva\")."
+                : unlimitedPackage
+                    ? $"Ograničeno na naplaćeni iznos {Money(chargedAmount)} (sesija pokrivena neograničenim paketom, uključen \"oduzmi popuste članstva\")."
+                : packageUnitPrice
+                    ? $"Ograničeno na vrijednost sesije iz paketa {Money(chargedAmount)}."
+                    : $"Ograničeno na naplaćeni iznos {Money(chargedAmount)}.";
+            string evaluationJson = baseNote == null && !capped
+                ? choice.EvaluationJson
+                : WithNotes(choice.EvaluationJson, baseNote, capped ? chargedAmount : null, capReason);
 
             await TryAdd(uow, new CommissionEntry
             {
@@ -776,7 +836,7 @@ public class CommissionService : ICommissionRuleService, ICommissionService, ICo
                 BaseAmount = baseAmount,
                 CalculationType = choice.CalculationType,
                 RuleValue = choice.Value,
-                CommissionAmount = Calculate(choice.CalculationType, choice.Value, baseAmount),
+                CommissionAmount = capped ? chargedAmount : amount,
                 PaymentSource = source,
                 CoverageSourceId = coverageSourceId,
                 SessionPriceAmount = sessionPrice,
@@ -785,7 +845,8 @@ public class CommissionService : ICommissionRuleService, ICommissionService, ICo
                 DeductDiscounts = settings.DeductDiscounts,
                 DeductMembershipDiscounts = settings.DeductMembershipDiscounts,
                 AppliedRuleScope = choice.Scope,
-                RuleEvaluation = choice.EvaluationJson,
+                RuleEvaluation = evaluationJson,
+                WasCapped = capped,
                 Status = CommissionEntryStatus.Earned,
                 // StatusVersion IZVORNOG SUDJELOVANJA NAKON prijelaza u Completed — zaseban identitet ove completion-pojave.
                 SourceVersion = participation.StatusVersion,
@@ -1068,6 +1129,40 @@ public class CommissionService : ICommissionRuleService, ICommissionService, ICo
     private static decimal Calculate(CommissionCalculationType calculationType, decimal value, decimal baseAmount)
     {
         return calculationType == CommissionCalculationType.Percentage ? baseAmount * value / 100m : value;
+    }
+
+    /// <summary>Iznos u eurima za objašnjenje provizije ("5,00 €").</summary>
+    private static string Money(decimal amount) =>
+        amount.ToString("0.00", System.Globalization.CultureInfo.GetCultureInfo("hr-HR")) + " €";
+
+    /// <summary>T1-10 — objašnjenje izbora pravila dopunjeno izvorom osnovice i/ili ograničenjem na primljeni iznos.</summary>
+    private static string WithNotes(string evaluationJson, string baseNote, decimal? cappedAt, string capReason)
+    {
+        CommissionRuleEvaluationDto evaluation = JsonSerializer.Deserialize<CommissionRuleEvaluationDto>(evaluationJson);
+        evaluation.BaseNote = baseNote;
+        evaluation.CappedAt = cappedAt;
+        evaluation.CapReason = capReason;
+        return JsonSerializer.Serialize(evaluation);
+    }
+
+    /// <summary>T1-10 — plaćena cijena paketa klijenta i ukupan broj jedinica: zajednički fond (TotalEntryCount) ili zbroj
+    /// jedinica po uslugama. Null kad paket nema konačan broj jedinica (neograničen fond ili neograničena usluga) — tada cijena
+    /// jedinice nije definirana.</summary>
+    private static async Task<(decimal PaidPrice, int Units)?> PackageUnitPrice(IUnitOfWork uow, Guid organizationId, Guid clientPackageId)
+    {
+        ClientPackage package = await uow.Context.ClientPackages
+            .AsNoTracking()
+            .Include(p => p.ServiceEntries)
+            .SingleOrDefaultAsync(p => p.OrganizationId == organizationId && p.Id == clientPackageId);
+        if (package == null)
+            return null;
+
+        int? units = package.EntryMode == PackageEntryMode.SharedPool
+            ? package.TotalEntryCount
+            : package.ServiceEntries.Count > 0 && package.ServiceEntries.All(e => e.TotalEntries.HasValue)
+                ? package.ServiceEntries.Sum(e => e.TotalEntries.Value)
+                : null;
+        return units is > 0 ? (package.PaidPrice, units.Value) : null;
     }
 
     #endregion
